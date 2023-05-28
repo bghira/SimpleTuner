@@ -3,7 +3,7 @@ from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 
 # Directory where the images are located
-output_dir = '/models/training/datasets/lotr'
+output_dir = '/models/training/datasets/processed_animals'
 
 def content_to_filename(content):
     """
@@ -71,4 +71,4 @@ def process_directory(image_dir = 'images', terms_file = None):
             
 
 if __name__ == "__main__":
-    process_directory('/models/training/datasets/images')
+    process_directory('/models/training/datasets/animals')
