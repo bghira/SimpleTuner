@@ -37,6 +37,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
+from torch.optim.lr_scheduler import LambdaLR
 
 import diffusers
 from diffusers import (
