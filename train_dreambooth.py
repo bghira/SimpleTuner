@@ -23,6 +23,9 @@ from .helpers.arguments import parse_args
 from .helpers.files import import_model_class_from_model_name_or_path
 from .helpers.validation import log_validation
 from .helpers.metadata import save_model_card
+from .helpers.custom_schedule import patch_scheduler_betas, get_polynomial_decay_schedule_with_warmup
+from .helpers.dreambooth_dataset import DreamBoothDataset
+from .helpers.prompt_dataset import PromptDataset
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -34,11 +37,8 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from PIL import Image
-from torch.utils.data import Dataset
-from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
-from torch.optim.lr_scheduler import LambdaLR
 
 import diffusers
 from diffusers import (
@@ -52,123 +52,10 @@ from diffusers import (
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
-
-if is_wandb_available():
-    import wandb
-
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
 
 logger = get_logger(__name__)
-
-
-
-class DreamBoothDataset(Dataset):
-    """
-    A dataset to prepare the instance and class images with the prompts for fine-tuning the model.
-    It pre-processes the images and the tokenizes prompts.
-    """
-
-    def __init__(
-        self,
-        instance_data_root,
-        instance_prompt,
-        tokenizer,
-        class_data_root=None,
-        class_prompt=None,
-        class_num=None,
-        size=512,
-        center_crop=False,
-    ):
-        self.size = size
-        self.center_crop = center_crop
-        self.tokenizer = tokenizer
-
-        self.instance_data_root = Path(instance_data_root)
-        if not self.instance_data_root.exists():
-            raise ValueError(
-                f"Instance {self.instance_data_root} images root doesn't exists."
-            )
-
-        self.instance_images_path = list(Path(instance_data_root).iterdir())
-        self.num_instance_images = len(self.instance_images_path)
-        self.instance_prompt = instance_prompt
-        self._length = self.num_instance_images
-
-        if class_data_root is not None:
-            self.class_data_root = Path(class_data_root)
-            self.class_data_root.mkdir(parents=True, exist_ok=True)
-            self.class_images_path = list(self.class_data_root.iterdir())
-            if class_num is not None:
-                self.num_class_images = min(len(self.class_images_path), class_num)
-            else:
-                self.num_class_images = len(self.class_images_path)
-            self._length = max(self.num_class_images, self.num_instance_images)
-            self.class_prompt = class_prompt
-        else:
-            self.class_data_root = None
-
-        self.image_transforms = transforms.Compose(
-            [
-                transforms.Resize(
-                    size, interpolation=transforms.InterpolationMode.BILINEAR
-                ),
-                transforms.CenterCrop(size)
-                if center_crop
-                else transforms.RandomCrop(size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-
-    def __len__(self):
-        return self._length
-
-    def __getitem__(self, index):
-        example = {}
-        instance_image = Image.open(
-            self.instance_images_path[index % self.num_instance_images]
-        )
-        instance_prompt = self.instance_images_path[
-            index % self.num_instance_images
-        ].stem
-        # Remove underscores and swap with spaces:
-        instance_prompt = instance_prompt.replace("_", " ")
-        instance_prompt = instance_prompt.split("upscaled by")[0]
-        instance_prompt = instance_prompt.split("upscaled beta")[0]
-        if not instance_image.mode == "RGB":
-            instance_image = instance_image.convert("RGB")
-        example["instance_images"] = self.image_transforms(instance_image)
-        example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt or self.instance_prompt,
-            truncation=True,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids
-
-        if self.class_data_root:
-            class_image = Image.open(
-                self.class_images_path[index % self.num_class_images]
-            )
-            class_prompt = self.class_images_path[index % self.num_class_images].stem
-            # Remove underscores and swap with spaces:
-            class_prompt = class_prompt.replace("_", " ")
-            class_prompt = class_prompt.replace("araffed", "")
-            class_prompt = class_prompt.replace("araffe", "")
-            if not class_image.mode == "RGB":
-                class_image = class_image.convert("RGB")
-            example["class_images"] = self.image_transforms(class_image)
-            example["class_prompt_ids"] = self.tokenizer(
-                class_prompt,
-                truncation=True,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
-            ).input_ids
-
-        return example
-
 
 def collate_fn(examples, with_prior_preservation=False):
     input_ids = [example["instance_prompt_ids"] for example in examples]
@@ -190,97 +77,6 @@ def collate_fn(examples, with_prior_preservation=False):
         "pixel_values": pixel_values,
     }
     return batch
-
-
-class PromptDataset(Dataset):
-    "A simple dataset to prepare the prompts to generate class images on multiple GPUs."
-
-    def __init__(self, prompt, num_samples):
-        self.prompt = prompt
-        self.num_samples = num_samples
-
-    def __len__(self):
-        return self.num_samples
-
-    def __getitem__(self, index):
-        example = {}
-        example["prompt"] = self.prompt
-        example["index"] = index
-        return example
-
-def get_polynomial_decay_schedule_with_warmup(
-    optimizer, num_warmup_steps, num_training_steps, lr_end=1e-7, power=1.0, last_epoch=-1
-):
-    """
-    Create a schedule with a learning rate that decreases as a polynomial decay from the initial lr set in the
-    optimizer to end lr defined by *lr_end*, after a warmup period during which it increases linearly from 0 to the
-    initial lr set in the optimizer.
-
-    Args:
-        optimizer ([`~torch.optim.Optimizer`]):
-            The optimizer for which to schedule the learning rate.
-        num_warmup_steps (`int`):
-            The number of steps for the warmup phase.
-        num_training_steps (`int`):
-            The total number of training steps.
-        lr_end (`float`, *optional*, defaults to 1e-7):
-            The end LR.
-        power (`float`, *optional*, defaults to 1.0):
-            Power factor.
-        last_epoch (`int`, *optional*, defaults to -1):
-            The index of the last epoch when resuming training.
-
-    Note: *power* defaults to 1.0 as in the fairseq implementation, which in turn is based on the original BERT
-    implementation at
-    https://github.com/google-research/bert/blob/f39e881b169b9d53bea03d2d341b31707a6c052b/optimization.py#L37
-
-    Return:
-        `torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
-
-    """
-
-    lr_init = optimizer.defaults["lr"]
-    if not (lr_init > lr_end):
-        raise ValueError(f"lr_end ({lr_end}) must be be smaller than initial lr ({lr_init})")
-
-    def lr_lambda(current_step: int):
-        if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        elif current_step > num_training_steps:
-            return lr_end / lr_init  # as LambdaLR multiplies by lr_init
-        else:
-            lr_range = lr_init - lr_end
-            decay_steps = num_training_steps - num_warmup_steps
-            pct_remaining = 1 - (current_step - num_warmup_steps) / decay_steps
-            decay = lr_range * pct_remaining**power + lr_end
-            return decay / lr_init  # as LambdaLR multiplies by lr_init
-
-    return LambdaLR(optimizer, lr_lambda, last_epoch)
-
-
-def enforce_zero_terminal_snr(betas):
-    # Convert betas to alphas_bar_sqrt
-    alphas = 1 - betas
-    alphas_bar = alphas.cumprod(0)
-    alphas_bar_sqrt = alphas_bar.sqrt()
-
-     # Store old values.
-    alphas_bar_sqrt_0 = alphas_bar_sqrt[0].clone()
-    alphas_bar_sqrt_T = alphas_bar_sqrt[-1].clone()
-    # Shift so last timestep is zero.
-    alphas_bar_sqrt -= alphas_bar_sqrt_T
-    # Scale so first timestep is back to old value.
-    alphas_bar_sqrt *= alphas_bar_sqrt_0 / (
-    alphas_bar_sqrt_0 - alphas_bar_sqrt_T)
-     # Convert alphas_bar_sqrt to betas
-    alphas_bar = alphas_bar_sqrt ** 2
-    alphas = alphas_bar[1:] / alphas_bar[:-1]
-    alphas = torch.cat([alphas_bar[0:1], alphas])
-    betas = 1 - alphas
-    return betas
-
-def patch_scheduler_betas(scheduler):
-    scheduler.betas = enforce_zero_terminal_snr(scheduler.betas)
 
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)

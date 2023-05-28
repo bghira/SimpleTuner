@@ -1,4 +1,9 @@
-import logging, torch, numpy as np, wandb
+import logging, torch, numpy as np
+
+from diffusers.utils import is_wandb_available
+if is_wandb_available():
+    import wandb
+
 from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 
 def log_validation(
