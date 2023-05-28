@@ -228,7 +228,7 @@ def main(args):
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
         revision=args.revision,
-    ))
+    ), 'before', 19)
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
     )
@@ -451,30 +451,6 @@ def main(args):
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         if args.train_text_encoder:
-            first_unfrozen_layer = 17
-            final_unfrozen_layer = 22
-            total_count = 0
-            for name, param in text_encoder.named_parameters():
-                total_count += 1
-                pieces = name.split(".")
-                if pieces[1] != "encoder" and pieces[2] != "layers":
-                    print(f"Ignoring non-encoder layer: {name}")
-                    continue
-                print(f'Pieces: {pieces}')
-                current_layer = int(pieces[3])
-                print(f'Current layer: {current_layer}, first unfrozen: {first_unfrozen_layer}, final unfrozen: {final_unfrozen_layer}')
-                if (
-                    current_layer <= first_unfrozen_layer or current_layer >= final_unfrozen_layer
-                ):  # we freeze the early and late layers.
-                    if hasattr(param, 'requires_grad'):
-                        param.requires_grad = False
-                        print(f'Froze layer because {current_layer} <= {first_unfrozen_layer} and {current_layer} >= {final_unfrozen_layer}: {name}')
-                    else:
-                        print(f'Ignoring layer that does not mark as gradient capable: {name}')
-            print(
-                f"Thawed text encoder layers between {first_unfrozen_layer} to {final_unfrozen_layer} (exclusive) out of {total_count} total discovered."
-            )
-
             text_encoder.train()
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
