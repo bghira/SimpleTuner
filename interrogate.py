@@ -51,7 +51,11 @@ def process_directory(image_dir = 'images', terms_file = None):
         table = load_terms(terms_file, active_interrogator)
 
     for filename in os.listdir(image_dir):
-        if filename.endswith(".jpg") or filename.endswith(".png"):
+        # Is the file a directory?
+        if os.path.isdir(os.path.join(image_dir, filename)):
+            # Recursively process the directory
+            process_directory(os.path.join(image_dir, filename), terms_file)
+        elif filename.endswith(".jpg") or filename.endswith(".png"):
             # Open and convert the image
             image = Image.open(os.path.join(image_dir, filename)).convert('RGB')
             if terms_file is not None:
