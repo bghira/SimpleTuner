@@ -1,4 +1,6 @@
 from transformers import PretrainedConfig
+from diffusers import UNet2DConditionModel
+import os
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str
@@ -22,3 +24,40 @@ def import_model_class_from_model_name_or_path(
         return RobertaSeriesModelWithTransformation
     else:
         raise ValueError(f"{model_class} is not supported.")
+
+def register_file_hooks(accelerator, unet, text_encoder, text_encoder_cls):    
+    # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
+    def save_model_hook(models, weights, output_dir):
+        for model in models:
+            sub_dir = (
+                "unet"
+                if isinstance(model, type(accelerator.unwrap_model(unet)))
+                else "text_encoder"
+            )
+            model.save_pretrained(os.path.join(output_dir, sub_dir))
+
+            # make sure to pop weight so that corresponding model is not saved again
+            weights.pop()
+
+    def load_model_hook(models, input_dir):
+        while len(models) > 0:
+            # pop models so that they are not loaded again
+            model = models.pop()
+            if isinstance(model, type(accelerator.unwrap_model(text_encoder))):
+                # load transformers style into model
+                load_model = text_encoder_cls.from_pretrained(
+                    input_dir, subfolder="text_encoder"
+                )
+                model.config = load_model.config
+            else:
+                # load diffusers style into model
+                load_model = UNet2DConditionModel.from_pretrained(
+                    input_dir, subfolder="unet"
+                )
+                model.register_to_config(**load_model.config)
+
+            model.load_state_dict(load_model.state_dict())
+            del load_model
+
+    accelerator.register_save_state_pre_hook(save_model_hook)
+    accelerator.register_load_state_pre_hook(load_model_hook)

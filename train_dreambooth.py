@@ -20,10 +20,11 @@ import math
 import os
 from pathlib import Path
 from helpers.arguments import parse_args
-from helpers.files import import_model_class_from_model_name_or_path
+from helpers.files import import_model_class_from_model_name_or_path, register_file_hooks
 from helpers.validation import log_validation
 from helpers.metadata import save_model_card
 from helpers.custom_schedule import patch_scheduler_betas, get_polynomial_decay_schedule_with_warmup
+from helpers.model import freeze_encoder
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.prompt_dataset import PromptDataset
 import numpy as np
@@ -223,36 +224,11 @@ def main(args):
     )
     patch_scheduler_betas(noise_scheduler)
 
-
-    text_encoder = text_encoder_cls.from_pretrained(
+    text_encoder = freeze_encoder(text_encoder_cls.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
         revision=args.revision,
-    )
-    last_frozen_layer = 0
-    first_unfrozen_layer = 17
-    final_unfrozen_layer = 22
-    total_count = 0
-    for name, param in text_encoder.named_parameters():
-        total_count += 1
-        pieces = name.split(".")
-        if pieces[1] != "encoder" and pieces[2] != "layers":
-            print(f"Ignoring non-encoder layer: {name}")
-            continue
-        print(f'Pieces: {pieces}')
-        current_layer = int(pieces[3])
-        if (
-            current_layer <= first_unfrozen_layer or current_layer >= final_unfrozen_layer
-        ):  # we freeze the early and late layers.
-            last_frozen_layer = current_layer
-            if hasattr(param, 'requires_grad'):
-                param.requires_grad = False
-                print(f'Froze layer because {current_layer} <= {first_unfrozen_layer} and {current_layer} >= {final_unfrozen_layer}: {name}')
-            else:
-                print(f'Ignoring layer that does not mark as gradient capable: {name}')
-    print(
-        f"Thawed text encoder layers between {first_unfrozen_layer} to {final_unfrozen_layer} (exclusive) out of {total_count} total discovered."
-    )
+    ))
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
     )
@@ -260,41 +236,7 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
 
-    # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-    def save_model_hook(models, weights, output_dir):
-        for model in models:
-            sub_dir = (
-                "unet"
-                if isinstance(model, type(accelerator.unwrap_model(unet)))
-                else "text_encoder"
-            )
-            model.save_pretrained(os.path.join(output_dir, sub_dir))
-
-            # make sure to pop weight so that corresponding model is not saved again
-            weights.pop()
-
-    def load_model_hook(models, input_dir):
-        while len(models) > 0:
-            # pop models so that they are not loaded again
-            model = models.pop()
-            if isinstance(model, type(accelerator.unwrap_model(text_encoder))):
-                # load transformers style into model
-                load_model = text_encoder_cls.from_pretrained(
-                    input_dir, subfolder="text_encoder"
-                )
-                model.config = load_model.config
-            else:
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(
-                    input_dir, subfolder="unet"
-                )
-                model.register_to_config(**load_model.config)
-
-            model.load_state_dict(load_model.state_dict())
-            del load_model
-
-    accelerator.register_save_state_pre_hook(save_model_hook)
-    accelerator.register_load_state_pre_hook(load_model_hook)
+    register_file_hooks(accelerator, unet, text_encoder, text_encoder_cls)
 
     vae.requires_grad_(False)
     if not args.train_text_encoder:
