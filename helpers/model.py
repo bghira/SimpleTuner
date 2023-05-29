@@ -13,13 +13,13 @@ def freeze_encoder(text_encoder, method='between', first_layer=17, last_layer=22
 
         freeze_param = False
         if method == 'between':
-            freeze_param = current_layer < first_layer or current_layer > last_layer
+            freeze_param = current_layer > first_layer or current_layer < last_layer
         elif method == 'outside':
             freeze_param = first_layer <= current_layer <= last_layer
         elif method == 'before':
-            freeze_param = current_layer >= first_layer
+            freeze_param = current_layer < first_layer
         elif method == 'after':
-            freeze_param = current_layer <= first_layer
+            freeze_param = current_layer > first_layer
         else:
             raise ValueError(f"Invalid method {method}. Choose between 'between', 'outside', 'before' or 'after'.")
 
