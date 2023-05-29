@@ -60,6 +60,11 @@ for checkpoint in checkpoints:
         continue
     try:
         print(f'Loading checkpoint: {model_path}/checkpoint-{checkpoint}')
+        # Does the checkpoint path exist?
+        if not os.path.exists(f'{model_path}/checkpoint-{checkpoint}'):
+            print(f'Checkpoint {checkpoint} does not exist.')
+            continue
+        
         if checkpoint != "0":
             unet = UNet2DConditionModel.from_pretrained(f"{model_path}/checkpoint-{checkpoint}/unet")
             unet = torch.compile(unet)
