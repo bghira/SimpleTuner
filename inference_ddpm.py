@@ -1,43 +1,26 @@
+# Use Pytorch 2!
 import torch
 from diffusers import StableDiffusionPipeline, DiffusionPipeline, AutoencoderKL, UNet2DConditionModel, DDPMScheduler
 from transformers import CLIPTextModel
 
+# Any model currently on Huggingface Hub.
+# model_id = 'junglerally/digital-diffusion'
+# model_id = 'ptx0/realism-engine'
+# model_id = 'ptx0/artius_v21'
+# model_id = 'ptx0/pseudo-journey'
 model_id = 'ptx0/pseudo-journey-v2'
 pipeline = DiffusionPipeline.from_pretrained(model_id)
 
 # Optimize!
 pipeline.unet = torch.compile(pipeline.unet)
-def enforce_zero_terminal_snr(betas):
-    # Convert betas to alphas_bar_sqrt
-    alphas = 1 - betas
-    alphas_bar = alphas.cumprod(0)
-    alphas_bar_sqrt = alphas_bar.sqrt()
-
-     # Store old values.
-    alphas_bar_sqrt_0 = alphas_bar_sqrt[0].clone()
-    alphas_bar_sqrt_T = alphas_bar_sqrt[-1].clone()
-    # Shift so last timestep is zero.
-    alphas_bar_sqrt -= alphas_bar_sqrt_T
-    # Scale so first timestep is back to old value.
-    alphas_bar_sqrt *= alphas_bar_sqrt_0 / (
-    alphas_bar_sqrt_0 - alphas_bar_sqrt_T)
-     # Convert alphas_bar_sqrt to betas
-    alphas_bar = alphas_bar_sqrt ** 2
-    alphas = alphas_bar[1:] / alphas_bar[:-1]
-    alphas = torch.cat([alphas_bar[0:1], alphas])
-    betas = 1 - alphas
-    return betas
-
-def patch_scheduler_betas(scheduler):
-    scheduler.betas = enforce_zero_terminal_snr(scheduler.betas)
-    return scheduler
-
 scheduler = DDPMScheduler.from_pretrained(
     model_id,
     subfolder="scheduler"
 )
-#pipeline.scheduler = patch_scheduler_betas(scheduler)
+
+# Remove this if you get an error.
 torch.set_float32_matmul_precision('high')
+
 pipeline.to('cuda')
 prompts = {
     "woman": "a woman, hanging out on the beach",
