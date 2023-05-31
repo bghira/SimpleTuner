@@ -21,10 +21,11 @@ import os
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.files import import_model_class_from_model_name_or_path, register_file_hooks
+from helpers.min_snr_gamma import compute_snr
 from helpers.validation import log_validation
 from helpers.metadata import save_model_card
 from helpers.custom_schedule import patch_scheduler_betas, get_polynomial_decay_schedule_with_warmup
-from helpers.model import freeze_encoder
+from helpers.model import freeze_encoder, freeze_entire_encoder
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.prompt_dataset import PromptDataset
 import numpy as np
@@ -58,16 +59,9 @@ check_min_version("0.17.0.dev0")
 
 logger = get_logger(__name__)
 
-def collate_fn(examples, with_prior_preservation=False):
+def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
     pixel_values = [example["instance_images"] for example in examples]
-
-    # Concat class and instance examples for prior preservation.
-    # We do this to avoid doing two forward passes.
-    if with_prior_preservation:
-        input_ids += [example["class_prompt_ids"] for example in examples]
-        pixel_values += [example["class_images"] for example in examples]
-
     pixel_values = torch.stack(pixel_values)
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
@@ -131,74 +125,6 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed)
 
-    # Generate class images if prior preservation is enabled.
-    if args.with_prior_preservation:
-        class_images_dir = Path(args.class_data_dir)
-        if not class_images_dir.exists():
-            class_images_dir.mkdir(parents=True)
-        cur_class_images = len(list(class_images_dir.iterdir()))
-
-        if cur_class_images < args.num_class_images and False:
-            torch_dtype = (
-                torch.float16 if accelerator.device.type == "cuda" else torch.float32
-            )
-            if args.prior_generation_precision == "fp32":
-                torch_dtype = torch.float32
-            elif args.prior_generation_precision == "fp16":
-                torch_dtype = torch.float16
-            elif args.prior_generation_precision == "bf16":
-                torch_dtype = torch.bfloat16
-            pipeline = DiffusionPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                torch_dtype=torch_dtype,
-                safety_checker=None,
-                revision=args.revision,
-            )
-            pipeline.set_progress_bar_config(disable=True)
-
-            # num_new_images = args.num_class_images - cur_class_images
-            num_new_images = 0
-            logger.info(f"Number of class images to sample: {num_new_images}.")
-
-            sample_dataset = PromptDataset(args.class_prompt, num_new_images)
-            sample_dataloader = torch.utils.data.DataLoader(
-                sample_dataset, batch_size=args.sample_batch_size
-            )
-
-            sample_dataloader = accelerator.prepare(sample_dataloader)
-            pipeline.to(accelerator.device)
-
-            for example in tqdm(
-                sample_dataloader,
-                desc="Generating class images",
-                disable=not accelerator.is_local_main_process,
-            ):
-                images = pipeline(example["prompt"]).images
-
-                for i, image in enumerate(images):
-                    hash_image = hashlib.sha1(image.tobytes()).hexdigest()
-                    image_filename = (
-                        class_images_dir
-                        / f"{example['index'][i] + cur_class_images}-{hash_image}.jpg"
-                    )
-                    image.save(image_filename)
-
-            del pipeline
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    # Handle the repository creation
-    if accelerator.is_main_process:
-        if args.output_dir is not None:
-            os.makedirs(args.output_dir, exist_ok=True)
-
-        if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name,
-                exist_ok=True,
-                token=args.hub_token,
-            ).repo_id
-
     # Load the tokenizer
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -224,11 +150,11 @@ def main(args):
     )
     patch_scheduler_betas(noise_scheduler)
 
-    text_encoder = freeze_encoder(text_encoder_cls.from_pretrained(
+    text_encoder = freeze_encoder(args, text_encoder_cls.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
         revision=args.revision,
-    ), 'before', 19)
+    ))
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
     )
@@ -317,9 +243,6 @@ def main(args):
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
         instance_prompt=args.instance_prompt,
-        class_data_root=args.class_data_dir if args.with_prior_preservation else None,
-        class_prompt=args.class_prompt,
-        class_num=args.num_class_images,
         tokenizer=tokenizer,
         size=args.resolution,
         center_crop=args.center_crop,
@@ -392,7 +315,7 @@ def main(args):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers("dreambooth", config=vars(args))
+        accelerator.init_trackers(args.tracker_project_name, config=vars(args))
 
     # Train!
     total_batch_size = (
@@ -447,7 +370,7 @@ def main(args):
         disable=not accelerator.is_local_main_process,
     )
     progress_bar.set_description("Steps")
-
+    current_percent_completion = 0
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         if args.train_text_encoder:
@@ -470,11 +393,14 @@ def main(args):
                 ).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
-                # Sample noise that we'll add to the latents
+                # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 if args.offset_noise:
-                    noise = torch.randn_like(latents) + 0.1 * torch.randn(
+                    noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
                         latents.shape[0], latents.shape[1], 1, 1, device=latents.device
                     )
+                if args.input_pertubation:
+                    new_noise = noise + args.input_pertubation * torch.randn_like(noise)
+
                 else:
                     noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
@@ -489,15 +415,14 @@ def main(args):
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                if args.input_pertubation:
+                    noisy_latents = noise_scheduler.add_noise(latents, new_noise, timesteps)
+                else:
+                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
 
-                # Predict the noise residual
-                model_pred = unet(
-                    noisy_latents, timesteps, encoder_hidden_states
-                ).sample
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -509,27 +434,27 @@ def main(args):
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
                     )
 
-                if args.with_prior_preservation:
-                    # Chunk the noise and model_pred into two parts and compute the loss on each part separately.
-                    model_pred, model_pred_prior = torch.chunk(model_pred, 2, dim=0)
-                    target, target_prior = torch.chunk(target, 2, dim=0)
+                # Predict the noise residual
+                model_pred = unet(
+                    noisy_latents, timesteps, encoder_hidden_states
+                ).sample
 
-                    # Compute instance loss
-                    loss = F.mse_loss(
-                        model_pred.float(), target.float(), reduction="mean"
-                    )
-
-                    # Compute prior loss
-                    prior_loss = F.mse_loss(
-                        model_pred_prior.float(), target_prior.float(), reduction="mean"
-                    )
-
-                    # Add the prior loss to the instance loss.
-                    loss = loss + args.prior_loss_weight * prior_loss
+                if args.snr_gamma is None:
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 else:
-                    loss = F.mse_loss(
-                        model_pred.float(), target.float(), reduction="mean"
+                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                    # This is discussed in Section 4.2 of the same paper.
+                    snr = compute_snr(timesteps, noise_scheduler)
+                    mse_loss_weights = (
+                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
                     )
+                    # We first calculate the original loss. Then we mean over the non-batch dimensions and
+                    # rebalance the sample-wise losses with their respective loss weights.
+                    # Finally, we take the mean of the rebalanced loss.
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                    loss = loss.mean()
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -546,6 +471,14 @@ def main(args):
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
+                current_percent_completion = int(progress_bar.n / progress_bar.total * 100)
+                if args.freeze_encoder and current_percent_completion > args.text_encoder_limit:
+                    # We want to stop training the text_encoder around 25% by default.
+                    freeze_entire_encoder(text_encoder)
+                    logging.info(f'Frozen text_encoder at {current_percent_completion}%!')
+                    # This will help ensure we don't run this check every time from now on.
+                    args.freeze_encoder = False
+
                 global_step += 1
 
                 if accelerator.is_main_process:

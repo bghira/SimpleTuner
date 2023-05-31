@@ -1,6 +1,20 @@
 import logging
 
-def freeze_encoder(text_encoder, method='between', first_layer=17, last_layer=22):
+def freeze_entire_encoder(text_encoder):
+    for name, param in text_encoder.named_parameters():
+        if hasattr(param, 'requires_grad'):
+            param.requires_grad = False
+    return text_encoder
+
+def freeze_encoder(args, text_encoder):
+    if not args.freeze_encoder:
+        logging.info(
+            f'Not freezing text encoder. Live dangerously and prosper!'
+        )
+        return text_encoder
+    method = args.freeze_encoder_strategy
+    first_layer = args.freeze_encoder_before
+    last_layer = args.freeze_encoder_after
     total_count = 0
     for name, param in text_encoder.named_parameters():
         total_count += 1
@@ -8,7 +22,6 @@ def freeze_encoder(text_encoder, method='between', first_layer=17, last_layer=22
         if pieces[1] != "encoder" and pieces[2] != "layers":
             logging.info(f"Ignoring non-encoder layer: {name}")
             continue
-        logging.info(f'Pieces: {pieces}')
         current_layer = int(pieces[3])
 
         freeze_param = False
@@ -19,7 +32,7 @@ def freeze_encoder(text_encoder, method='between', first_layer=17, last_layer=22
         elif method == 'before':
             freeze_param = current_layer < first_layer
         elif method == 'after':
-            freeze_param = current_layer > first_layer
+            freeze_param = current_layer > last_layer
         else:
             raise ValueError(f"Invalid method {method}. Choose between 'between', 'outside', 'before' or 'after'.")
 

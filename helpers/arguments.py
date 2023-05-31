@@ -3,6 +3,13 @@ import argparse, os, warnings
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
+        "--snr_gamma",
+        type=float,
+        default=None,
+        help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
+        "More details here: https://arxiv.org/abs/2303.09556.",
+    )
+    parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
@@ -33,45 +40,11 @@ def parse_args(input_args=None):
         help="A folder containing the training data of instance images.",
     )
     parser.add_argument(
-        "--class_data_dir",
-        type=str,
-        default=None,
-        required=False,
-        help="A folder containing the training data of class images.",
-    )
-    parser.add_argument(
         "--instance_prompt",
         type=str,
         default=None,
-        required=True,
-        help="The prompt with identifier specifying the instance",
-    )
-    parser.add_argument(
-        "--class_prompt",
-        type=str,
-        default=None,
-        help="The prompt to specify images in the same class as provided instance images.",
-    )
-    parser.add_argument(
-        "--with_prior_preservation",
-        default=False,
-        action="store_true",
-        help="Flag to add prior preservation loss.",
-    )
-    parser.add_argument(
-        "--prior_loss_weight",
-        type=float,
-        default=1.0,
-        help="The weight of prior preservation loss.",
-    )
-    parser.add_argument(
-        "--num_class_images",
-        type=int,
-        default=100,
-        help=(
-            "Minimal class images for prior preservation loss. If there are not enough images already present in"
-            " class_data_dir, additional images will be sampled with class_prompt."
-        ),
+        required=False,
+        help="This is unused. Filenames will be the captions instead.",
     )
     parser.add_argument(
         "--output_dir",
@@ -85,7 +58,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--resolution",
         type=int,
-        default=512,
+        default=768,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
@@ -169,7 +142,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=5e-6,
+        default=1e-8,
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
@@ -181,7 +154,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="constant",
+        default="polynomial",
         help=(
             'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
             ' "constant", "constant_with_warmup"]'
@@ -319,16 +292,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--prior_generation_precision",
-        type=str,
-        default=None,
-        choices=["no", "fp32", "fp16", "bf16"],
-        help=(
-            "Choose prior generation precision between fp32, fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
-            " 1.10.and an Nvidia Ampere GPU.  Default to  fp16 if a GPU is available else fp32."
-        ),
-    )
-    parser.add_argument(
         "--local_rank",
         type=int,
         default=-1,
@@ -348,7 +311,69 @@ def parse_args(input_args=None):
             " https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html"
         ),
     )
+    parser.add_argument("--noise_offset", type=float, default=0.1, help="The scale of noise offset. Default: 0.1")
+    parser.add_argument(
+        "--validation_epochs",
+        type=int,
+        default=5,
+        help="Run validation every X epochs.",
+    )
+    parser.add_argument(
+        "--tracker_project_name",
+        type=str,
+        default="dreambooth-fine-tune",
+        help=(
+            "The `project_name` argument passed to Accelerator.init_trackers for"
+            " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
+        ),
+    )
+    parser.add_argument(
+        "--freeze_encoder_before",
+        type=int,
+        default=12,
+        help=(
+            "When using 'before' strategy, we will freeze layers earlier than this."
+        ),
+    )
+    parser.add_argument(
+        "--freeze_encoder_after",
+        type=int,
+        default=17,
+        help=(
+            "When using 'after' strategy, we will freeze layers later than this."
+        ),
+    )
+    parser.add_argument(
+        "--freeze_encoder_strategy",
+        type=str,
+        default="after",
+        help=(
+            "When freezing the text_encoder, we can use the 'before', 'between', or 'after' strategy."
+            "The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen."
+            "The default strategy is to freeze all layers from 17 up."
+            "This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style."
+        ),
+    )
+    parser.add_argument(
+        "--freeze_encoder",
+        action="store_true",
+        default=True,
+        help=(
+            "Whether or not to freeze the text_encoder. The default is true."
+        ),
+    )
+    parser.add_argument(
+        "--text_encoder_limit",
+        type=int,
+        default=25,
+        help=(
+            "When training the text_encoder, we want to limit how long it trains for to avoid catastrophic loss."
+        ),
+    )
 
+    parser.add_argument(
+        "--input_pertubation", type=float, default=0, help="The scale of input pretubation. Recommended 0.1."
+    )
     parser.add_argument(
         "--offset_noise",
         action="store_true",
@@ -367,21 +392,5 @@ def parse_args(input_args=None):
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
-
-    if args.with_prior_preservation:
-        if args.class_data_dir is None:
-            raise ValueError("You must specify a data directory for class images.")
-        if args.class_prompt is None:
-            raise ValueError("You must specify prompt for class images.")
-    else:
-        # logger is not available yet
-        if args.class_data_dir is not None:
-            warnings.warn(
-                "You need not use --class_data_dir without --with_prior_preservation."
-            )
-        if args.class_prompt is not None:
-            warnings.warn(
-                "You need not use --class_prompt without --with_prior_preservation."
-            )
 
     return args

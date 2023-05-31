@@ -32,25 +32,25 @@ accelerate launch  \
   train_dreambooth.py \
   --pretrained_model_name_or_path="${MODEL_NAME}"  \
   --instance_data_dir="${INSTANCE_DIR}" \
-  --class_data_dir="${CLASS_DIR}" \
   --output_dir="${OUTPUT_DIR}" \
-  --class_prompt="${CLASS_PROMPT}" \
   --resolution=${RESOLUTION} \
   --train_batch_size=${TRAIN_BATCH_SIZE} \
   --use_8bit_adam \
+  --seed 420420420 \
+  --scale_lr \
   --learning_rate=${LEARNING_RATE} \
   --lr_scheduler=${LR_SCHEDULE} \
   --lr_warmup_steps=${LR_WARMUP_STEPS} \
   --num_train_epochs=${NUM_EPOCHS} \
-  --num_class_images=${NUM_CLASS_IMAGES} \
   --mixed_precision=${MIXED_PRECISION} \
   --checkpointing_steps=${CHECKPOINTING_STEPS} \
+  --checkpoints_total_limit=10 \
   --allow_tf32 \
   --resume_from_checkpoint=${RESUME_CHECKPOINT} \
   --train_text_encoder \
-  --with_prior_preservation --prior_loss_weight=0.5 \
-  --instance_prompt="midjourney"
-
+  --freeze_encoder --freeze_encoder_strategy='after' --freeze_encoder_after=17 \
+  --offset_noise --noise_offset=0.1 \
+  --snr_gamma 5.0 
   #--max_train_steps=${MAX_NUM_STEPS} \
   #--gradient_accumulation_steps=2 \  
   #--gradient_checkpointing
