@@ -32,18 +32,6 @@ class DreamBoothDataset(Dataset):
         self.instance_prompt = instance_prompt
         self._length = self.num_instance_images
 
-        if class_data_root is not None:
-            self.class_data_root = Path(class_data_root)
-            self.class_data_root.mkdir(parents=True, exist_ok=True)
-            self.class_images_path = list(self.class_data_root.iterdir())
-            if class_num is not None:
-                self.num_class_images = min(len(self.class_images_path), class_num)
-            else:
-                self.num_class_images = len(self.class_images_path)
-            self._length = max(self.num_class_images, self.num_instance_images)
-            self.class_prompt = class_prompt
-        else:
-            self.class_data_root = None
 
         self.image_transforms = transforms.Compose(
             [
@@ -83,25 +71,5 @@ class DreamBoothDataset(Dataset):
             max_length=self.tokenizer.model_max_length,
             return_tensors="pt",
         ).input_ids
-
-        if self.class_data_root:
-            class_image = Image.open(
-                self.class_images_path[index % self.num_class_images]
-            )
-            class_prompt = self.class_images_path[index % self.num_class_images].stem
-            # Remove underscores and swap with spaces:
-            class_prompt = class_prompt.replace("_", " ")
-            class_prompt = class_prompt.replace("araffed", "")
-            class_prompt = class_prompt.replace("araffe", "")
-            if not class_image.mode == "RGB":
-                class_image = class_image.convert("RGB")
-            example["class_images"] = self.image_transforms(class_image)
-            example["class_prompt_ids"] = self.tokenizer(
-                class_prompt,
-                truncation=True,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
-            ).input_ids
 
         return example
