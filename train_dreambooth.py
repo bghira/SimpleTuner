@@ -252,7 +252,7 @@ def main(args):
         train_dataset,
         batch_size=args.train_batch_size,
         shuffle=True,
-        collate_fn=lambda examples: collate_fn(examples, args.with_prior_preservation),
+        collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
 
