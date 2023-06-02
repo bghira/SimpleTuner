@@ -1,0 +1,47 @@
+# Python and virtual environment files
+*.pem
+*/config/config.json
+__pycache__/
+.venv/
+cache/
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+dist/
+build/
+*.egg
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+*.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+<<<<<<< HEAD
+*/config/auth.json
+work
+=======
+*/config/auth.json
+>>>>>>> 221cdc5 (Add gitignore)
