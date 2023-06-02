@@ -246,6 +246,7 @@ def main(args):
         tokenizer=tokenizer,
         size=args.resolution,
         center_crop=args.center_crop,
+        print_names=args.print_filenames,
     )
 
     train_dataloader = torch.utils.data.DataLoader(

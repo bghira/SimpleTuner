@@ -16,11 +16,12 @@ class DreamBoothDataset(Dataset):
         tokenizer,
         size=768,
         center_crop=False,
+        print_names=False
     ):
         self.size = size
         self.center_crop = center_crop
         self.tokenizer = tokenizer
-
+        self.print_names = print_names
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
             raise ValueError(
@@ -51,6 +52,8 @@ class DreamBoothDataset(Dataset):
 
     def __getitem__(self, index):
         example = {}
+        if self.print_names:
+            print(f'Open image: {self.instance_images_path[index % self.num_instance_images]}')
         instance_image = Image.open(
             self.instance_images_path[index % self.num_instance_images]
         )

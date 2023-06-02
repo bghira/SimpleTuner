@@ -50,6 +50,7 @@ accelerate launch  \
   --train_text_encoder \
   --freeze_encoder --freeze_encoder_strategy='after' --freeze_encoder_after=17 \
   --offset_noise --noise_offset=0.1 \
+  --print_filenames \
   --snr_gamma 5.0 
   #--max_train_steps=${MAX_NUM_STEPS} \
   #--gradient_accumulation_steps=2 \  
