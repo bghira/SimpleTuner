@@ -356,7 +356,6 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--print_filenames",
-        type=bool,
         action="store_true",
         help=(
             "If any image files are stopping the process eg. due to corruption or truncation, this will help identify which is at fault."
