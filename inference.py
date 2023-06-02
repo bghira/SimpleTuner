@@ -76,8 +76,7 @@ for checkpoint in checkpoints:
             pipeline.unet = torch.compile(pipeline.unet)
         pipeline.scheduler = DDPMScheduler.from_pretrained(
             model_id,
-            subfolder="scheduler",
-            use_karras_sigmas=True
+            subfolder="scheduler"
         )
         patch_scheduler_betas(pipeline.scheduler)
         pipeline.to("cuda")

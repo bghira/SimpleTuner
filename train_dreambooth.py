@@ -247,6 +247,8 @@ def main(args):
         size=args.resolution,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
+        prepend_instance_prompt=args.prepend_instance_prompt or False,
+        use_captions=not args.only_instance_prompt or False,
     )
 
     train_dataloader = torch.utils.data.DataLoader(

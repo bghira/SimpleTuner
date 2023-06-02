@@ -16,8 +16,12 @@ class DreamBoothDataset(Dataset):
         tokenizer,
         size=768,
         center_crop=False,
-        print_names=False
+        print_names=False,
+        use_captions=True,
+        prepend_instance_prompt=False
     ):
+        self.prepend_instance_prompt = prepend_instance_prompt
+        self.use_captions = use_captions
         self.size = size
         self.center_crop = center_crop
         self.tokenizer = tokenizer
@@ -57,18 +61,23 @@ class DreamBoothDataset(Dataset):
         instance_image = Image.open(
             self.instance_images_path[index % self.num_instance_images]
         )
-        instance_prompt = self.instance_images_path[
-            index % self.num_instance_images
-        ].stem
-        # Remove underscores and swap with spaces:
-        instance_prompt = instance_prompt.replace("_", " ")
-        instance_prompt = instance_prompt.split("upscaled by")[0]
-        instance_prompt = instance_prompt.split("upscaled beta")[0]
+        instance_prompt = self.instance_prompt
+        if self.use_captions:
+            instance_prompt = self.instance_images_path[
+                index % self.num_instance_images
+            ].stem
+            # Remove underscores and swap with spaces:
+            instance_prompt = instance_prompt.replace("_", " ")
+            instance_prompt = instance_prompt.split("upscaled by")[0]
+            instance_prompt = instance_prompt.split("upscaled beta")[0]
+            if self.prepend_instance_prompt:
+                instance_prompt = self.instance_prompt + " " + instance_prompt
+
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
         example["instance_images"] = self.image_transforms(instance_image)
         example["instance_prompt_ids"] = self.tokenizer(
-            instance_prompt or self.instance_prompt,
+            instance_prompt,
             truncation=True,
             padding="max_length",
             max_length=self.tokenizer.model_max_length,

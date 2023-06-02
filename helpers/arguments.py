@@ -377,7 +377,20 @@ def parse_args(input_args=None):
             "When training the text_encoder, we want to limit how long it trains for to avoid catastrophic loss."
         ),
     )
-
+    parser.add_argument(
+        "--prepend_instance_prompt",
+        action="store_true",
+        help=(
+            "When determining the captions from the filename, prepend the instance prompt as an enforced keyword."
+        ),
+    )
+    parser.add_argument(
+        "--only_instance_prompt",
+        action="store_true",
+        help=(
+            "Use the instance prompt instead of the caption from filename."
+        ),
+    )
     parser.add_argument(
         "--input_pertubation", type=float, default=0, help="The scale of input pretubation. Recommended 0.1."
     )
