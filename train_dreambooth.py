@@ -481,6 +481,7 @@ def main(args):
                     logging.info(f'Frozen text_encoder at {current_percent_completion}%!')
                     # This will help ensure we don't run this check every time from now on.
                     args.freeze_encoder = False
+                    args.train_text_encoder = False
 
                 global_step += 1
 
