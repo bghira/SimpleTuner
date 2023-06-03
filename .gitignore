@@ -1,4 +1,5 @@
 # Python and virtual environment files
+env.sh
 *.pem
 */config/config.json
 __pycache__/

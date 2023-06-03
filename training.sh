@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Pull config from env.sh
-. < ./env.sh
+source env.sh
 
 accelerate launch  \
   --num_processes=2 --num_machines=1 --mixed_precision=${MIXED_PRECISION} --dynamo_backend='no' \
