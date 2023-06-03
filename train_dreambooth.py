@@ -23,6 +23,7 @@ from helpers.arguments import parse_args
 from helpers.files import import_model_class_from_model_name_or_path, register_file_hooks
 from helpers.min_snr_gamma import compute_snr
 from helpers.validation import log_validation
+from helpers.broken_images import handle_broken_images
 from helpers.metadata import save_model_card
 from helpers.custom_schedule import patch_scheduler_betas, get_polynomial_decay_schedule_with_warmup
 from helpers.model import freeze_encoder, freeze_entire_encoder
@@ -240,6 +241,7 @@ def main(args):
     )
 
     # Dataset and DataLoaders creation:
+    handle_broken_images(args.instance_data_dir, args.delete_broken_images)
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
         instance_prompt=args.instance_prompt,

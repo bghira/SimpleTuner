@@ -22,7 +22,7 @@ accelerate launch  \
   --resume_from_checkpoint=${RESUME_CHECKPOINT} \
   --offset_noise --noise_offset=0.1 --input_pertubation=0.1 \
   --use_8bit_adam \
-  --train_text_encoder \
+  --train_text_encoder --text_encoder_limit=100 \
   --freeze_encoder --freeze_encoder_strategy='before' --freeze_encoder_before=17 --freeze_encoder_after=23 \
   --scale_lr --gradient_accumulation_steps 1 --gradient_checkpointing --snr_gamma 5.0
 
