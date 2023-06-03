@@ -57,7 +57,7 @@ class DreamBoothDataset(Dataset):
     def __getitem__(self, index):
         example = {}
         if self.print_names:
-            print(f'Open image: {self.instance_images_path[index % self.num_instance_images]}')
+            print(f'\nOpen image: {self.instance_images_path[index % self.num_instance_images]}')
         instance_image = Image.open(
             self.instance_images_path[index % self.num_instance_images]
         )
@@ -72,7 +72,8 @@ class DreamBoothDataset(Dataset):
             instance_prompt = instance_prompt.split("upscaled beta")[0]
             if self.prepend_instance_prompt:
                 instance_prompt = self.instance_prompt + " " + instance_prompt
-
+        if self.print_names:
+            print(f'Prompt: {instance_prompt}')
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
         example["instance_images"] = self.image_transforms(instance_image)
