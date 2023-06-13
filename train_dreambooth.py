@@ -20,12 +20,17 @@ import math
 import os
 from pathlib import Path
 from helpers.arguments import parse_args
-from helpers.files import import_model_class_from_model_name_or_path, register_file_hooks
+from helpers.files import (
+    import_model_class_from_model_name_or_path,
+    register_file_hooks,
+)
 from helpers.min_snr_gamma import compute_snr
 from helpers.validation import log_validation
-from helpers.broken_images import handle_broken_images
 from helpers.metadata import save_model_card
-from helpers.custom_schedule import patch_scheduler_betas, get_polynomial_decay_schedule_with_warmup
+from helpers.custom_schedule import (
+    patch_scheduler_betas,
+    get_polynomial_decay_schedule_with_warmup,
+)
 from helpers.model import freeze_encoder, freeze_entire_encoder
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.prompt_dataset import PromptDataset
@@ -46,6 +51,7 @@ from transformers import AutoTokenizer
 import diffusers
 from diffusers import (
     AutoencoderKL,
+    DDIMScheduler,
     DDPMScheduler,
     DiffusionPipeline,
     DPMSolverMultistepScheduler,
@@ -60,6 +66,7 @@ check_min_version("0.17.0.dev0")
 
 logger = get_logger(__name__)
 
+
 def collate_fn(examples):
     input_ids = [example["instance_prompt_ids"] for example in examples]
     pixel_values = [example["instance_images"] for example in examples]
@@ -73,6 +80,7 @@ def collate_fn(examples):
         "pixel_values": pixel_values,
     }
     return batch
+
 
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
@@ -147,15 +155,18 @@ def main(args):
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
-        subfolder="scheduler"
+        subfolder="scheduler",
+        rescale_betas_zero_snr=True,
     )
-    patch_scheduler_betas(noise_scheduler)
 
-    text_encoder = freeze_encoder(args, text_encoder_cls.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="text_encoder",
-        revision=args.revision,
-    ))
+    text_encoder = freeze_encoder(
+        args,
+        text_encoder_cls.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder",
+            revision=args.revision,
+        ),
+    )
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
     )
@@ -241,7 +252,6 @@ def main(args):
     )
 
     # Dataset and DataLoaders creation:
-    handle_broken_images(args.instance_data_dir, args.delete_broken_images)
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
         instance_prompt=args.instance_prompt,
@@ -270,13 +280,15 @@ def main(args):
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
+    if args.lr_scheduler != 'polynomial':
+        raise ValueError('Can not use anything other than polynomial LR scheduler as of this moment.')
     lr_scheduler = get_polynomial_decay_schedule_with_warmup(
         optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-        lr_end=1e-8,
+        lr_end=4e-8,
         power=1.0,
-        last_epoch=-1
+        last_epoch=-1,
     )
 
     # Prepare everything with our `accelerator`.
@@ -421,13 +433,14 @@ def main(args):
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 if args.input_pertubation:
-                    noisy_latents = noise_scheduler.add_noise(latents, new_noise, timesteps)
+                    noisy_latents = noise_scheduler.add_noise(
+                        latents, new_noise, timesteps
+                    )
                 else:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
-
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -445,20 +458,30 @@ def main(args):
                 ).sample
 
                 if args.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="mean"
+                    )
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
                     snr = compute_snr(timesteps, noise_scheduler)
                     mse_loss_weights = (
-                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                        torch.stack(
+                            [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
+                        ).min(dim=1)[0]
+                        / snr
                     )
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                    loss = (
+                        loss.mean(dim=list(range(1, len(loss.shape))))
+                        * mse_loss_weights
+                    )
                     loss = loss.mean()
 
                 accelerator.backward(loss)
@@ -476,11 +499,18 @@ def main(args):
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
-                current_percent_completion = int(progress_bar.n / progress_bar.total * 100)
-                if args.freeze_encoder and current_percent_completion > args.text_encoder_limit:
+                current_percent_completion = int(
+                    progress_bar.n / progress_bar.total * 100
+                )
+                if (
+                    args.freeze_encoder
+                    and current_percent_completion > args.text_encoder_limit
+                ):
                     # We want to stop training the text_encoder around 25% by default.
                     freeze_entire_encoder(text_encoder)
-                    logging.info(f'Frozen text_encoder at {current_percent_completion}%!')
+                    logging.info(
+                        f"Frozen text_encoder at {current_percent_completion}%!"
+                    )
                     # This will help ensure we don't run this check every time from now on.
                     args.freeze_encoder = False
                     args.train_text_encoder = False
