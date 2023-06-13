@@ -378,13 +378,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--delete_broken_images",
-        action="store_true",
-        help=(
-            "Delete broken images from the training data directory. This is disabled by default."
-        ),
-    )
-    parser.add_argument(
         "--prepend_instance_prompt",
         action="store_true",
         help=(
