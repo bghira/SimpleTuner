@@ -1,6 +1,6 @@
 import logging
 
-def freeze_entire_encoder(text_encoder):
+def freeze_entire_component(text_encoder):
     for name, param in text_encoder.named_parameters():
         if hasattr(param, 'requires_grad'):
             param.requires_grad = False

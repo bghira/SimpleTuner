@@ -24,6 +24,7 @@ from helpers.files import (
     import_model_class_from_model_name_or_path,
     register_file_hooks,
 )
+from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.min_snr_gamma import compute_snr
 from helpers.validation import log_validation
 from helpers.metadata import save_model_card
@@ -31,7 +32,7 @@ from helpers.custom_schedule import (
     patch_scheduler_betas,
     get_polynomial_decay_schedule_with_warmup,
 )
-from helpers.model import freeze_encoder, freeze_entire_encoder
+from helpers.model import freeze_encoder, freeze_entire_component, freeze_unet, freeze_entire_unet
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.prompt_dataset import PromptDataset
 import numpy as np
@@ -259,6 +260,7 @@ def main(args):
         size=args.resolution,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
+        use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
     )
@@ -266,7 +268,8 @@ def main(args):
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
-        shuffle=True,
+        shuffle=False,  # The sampler handles shuffling
+        sampler=BalancedBucketSampler(train_dataset.aspect_ratio_bucket_indices, batch_size=args.train_batch_size),
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
@@ -507,7 +510,7 @@ def main(args):
                     and current_percent_completion > args.text_encoder_limit
                 ):
                     # We want to stop training the text_encoder around 25% by default.
-                    freeze_entire_encoder(text_encoder)
+                    freeze_entire_component(text_encoder)
                     logging.info(
                         f"Frozen text_encoder at {current_percent_completion}%!"
                     )

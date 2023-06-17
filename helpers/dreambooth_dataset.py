@@ -14,11 +14,13 @@ class DreamBoothDataset(Dataset):
         instance_data_root,
         instance_prompt,
         tokenizer,
+        aspect_ratio_buckets=[],
         size=768,
         center_crop=False,
         print_names=False,
         use_captions=True,
-        prepend_instance_prompt=False
+        prepend_instance_prompt=False,
+        use_original_images=False,
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -36,20 +38,33 @@ class DreamBoothDataset(Dataset):
         self.num_instance_images = len(self.instance_images_path)
         self.instance_prompt = instance_prompt
         self._length = self.num_instance_images
+        self.aspect_ratio_buckets = aspect_ratio_buckets
+        self.aspect_ratio_bucket_indices = self.assign_to_buckets()
+        self.use_original_images = use_original_images
+        if not use_original_images:
+            self.image_transforms = transforms.Compose(
+                [
+                    transforms.Resize(
+                        size, interpolation=transforms.InterpolationMode.BILINEAR
+                    ),
+                    transforms.CenterCrop(size)
+                    if center_crop
+                    else transforms.RandomCrop(size),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5], [0.5]),
+                ]
+            )
 
-
-        self.image_transforms = transforms.Compose(
-            [
-                transforms.Resize(
-                    size, interpolation=transforms.InterpolationMode.BILINEAR
-                ),
-                transforms.CenterCrop(size)
-                if center_crop
-                else transforms.RandomCrop(size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
+    def assign_to_buckets(self):
+        aspect_ratio_bucket_indices = {bucket: [] for bucket in self.aspect_ratio_buckets}
+        for i, image_path in enumerate(self.instance_images_path):
+            image = Image.open(image_path)
+            if not self.use_original_images:
+                image = self._resize_for_condition_image(image, self.size)
+            aspect_ratio = image.width / image.height
+            bucket = min(self.aspect_ratio_buckets, key=lambda x: abs(x - aspect_ratio))
+            aspect_ratio_bucket_indices[bucket].append(i)
+        return aspect_ratio_bucket_indices
 
     def __len__(self):
         return self._length
@@ -86,3 +101,13 @@ class DreamBoothDataset(Dataset):
         ).input_ids
 
         return example
+    def _resize_for_condition_image(self, input_image: Image, resolution: int):
+        input_image = input_image.convert("RGB")
+        W, H = input_image.size
+        k = float(resolution) / min(H, W)
+        H *= k
+        W *= k
+        H = int(round(H / 64.0)) * 64
+        W = int(round(W / 64.0)) * 64
+        img = input_image.resize((W, H), resample=Image.BICUBIC)
+        return img

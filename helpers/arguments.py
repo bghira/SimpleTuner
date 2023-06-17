@@ -395,6 +395,12 @@ def parse_args(input_args=None):
         "--input_pertubation", type=float, default=0, help="The scale of input pretubation. Recommended 0.1."
     )
     parser.add_argument(
+        '--use_original_images',
+        type=str,
+        default='false',
+        help='When this option is provided, image cropping and processing will be disabled. It is a good idea to use this with caution, for training multiple aspect ratios.',
+    )
+    parser.add_argument(
         "--offset_noise",
         action="store_true",
         default=False,
