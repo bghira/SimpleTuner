@@ -16,7 +16,10 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     else:
                         break
                 if len(batch_indices) == self.batch_size:  # Only yield complete batches
+                    print(f'Yielding batch for bucket {bucket}')
                     yield batch_indices
+                else:
+                    print(f'Incomplete bucket for aspect discarded: {bucket}')
 
     def __len__(self):
         return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
