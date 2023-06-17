@@ -39,8 +39,8 @@ class DreamBoothDataset(Dataset):
         self.instance_prompt = instance_prompt
         self._length = self.num_instance_images
         self.aspect_ratio_buckets = aspect_ratio_buckets
-        self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.use_original_images = use_original_images
+        self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         if not use_original_images:
             self.image_transforms = transforms.Compose(
                 [
