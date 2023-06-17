@@ -1,22 +1,22 @@
 import logging
 
-def freeze_entire_component(text_encoder):
-    for name, param in text_encoder.named_parameters():
+def freeze_entire_component(component):
+    for name, param in component.named_parameters():
         if hasattr(param, 'requires_grad'):
             param.requires_grad = False
-    return text_encoder
+    return component
 
-def freeze_encoder(args, text_encoder):
+def freeze_text_encoder(args, component):
     if not args.freeze_encoder:
         logging.info(
             f'Not freezing text encoder. Live dangerously and prosper!'
         )
-        return text_encoder
+        return component
     method = args.freeze_encoder_strategy
     first_layer = args.freeze_encoder_before
     last_layer = args.freeze_encoder_after
     total_count = 0
-    for name, param in text_encoder.named_parameters():
+    for name, param in component.named_parameters():
         total_count += 1
         pieces = name.split(".")
         if pieces[1] != "encoder" and pieces[2] != "layers":
@@ -45,4 +45,46 @@ def freeze_encoder(args, text_encoder):
     logging.info(
         f"Applied {method} method with range {first_layer} - {last_layer} to {total_count} total layers."
     )
-    return text_encoder
+    return component
+def freeze_unet(args, component):
+    if not args.freeze_unet:
+        logging.info(
+            f'Not freezing unet. Live dangerously and prosper!'
+        )
+        return component
+    method = args.freeze_unet_strategy
+    first_layer = args.freeze_unet_before
+    last_layer = args.freeze_unet_after
+    total_count = 0
+    for name, param in component.named_parameters():
+        total_count += 1
+        pieces = name.split(".")
+        print(f'Pieces of the unet: {pieces}')
+        continue
+        if pieces[1] != "encoder" and pieces[2] != "layers":
+            logging.info(f"Ignoring non-encoder layer: {name}")
+            continue
+        current_layer = int(pieces[3])
+
+        freeze_param = False
+        if method == 'between':
+            freeze_param = current_layer > first_layer or current_layer < last_layer
+        elif method == 'outside':
+            freeze_param = first_layer <= current_layer <= last_layer
+        elif method == 'before':
+            freeze_param = current_layer < first_layer
+        elif method == 'after':
+            freeze_param = current_layer > last_layer
+        else:
+            raise ValueError(f"Invalid method {method}. Choose between 'between', 'outside', 'before' or 'after'.")
+
+        if freeze_param:
+            if hasattr(param, 'requires_grad'):
+                param.requires_grad = False
+                logging.info(f'Froze layer {name} with method {method} and range {first_layer} - {last_layer}')
+            else:
+                logging.info(f'Ignoring layer that does not mark as gradient capable: {name}')
+    logging.info(
+        f"Applied {method} method with range {first_layer} - {last_layer} to {total_count} total layers."
+    )
+    return component

@@ -32,7 +32,7 @@ from helpers.custom_schedule import (
     patch_scheduler_betas,
     get_polynomial_decay_schedule_with_warmup,
 )
-from helpers.model import freeze_encoder, freeze_entire_component, freeze_unet, freeze_entire_unet
+from helpers.model import freeze_entire_component, freeze_text_encoder, freeze_unet
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.prompt_dataset import PromptDataset
 import numpy as np
@@ -160,7 +160,7 @@ def main(args):
         rescale_betas_zero_snr=True,
     )
 
-    text_encoder = freeze_encoder(
+    text_encoder = freeze_text_encoder(
         args,
         text_encoder_cls.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -171,8 +171,11 @@ def main(args):
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
     )
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+    unet = freeze_unet(
+        args,
+        UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+        )
     )
 
     register_file_hooks(accelerator, unet, text_encoder, text_encoder_cls)
