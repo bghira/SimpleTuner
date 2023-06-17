@@ -355,33 +355,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--freeze_unet_before",
-        type=int,
-        default=12,
-        help=(
-            "When using 'before' strategy, we will freeze layers earlier than this."
-        ),
-    )
-    parser.add_argument(
-        "--freeze_unet_after",
-        type=int,
-        default=17,
-        help=(
-            "When using 'after' strategy, we will freeze layers later than this."
-        ),
-    )
-    parser.add_argument(
-        "--freeze_unet_strategy",
-        type=str,
-        default="after",
-        help=(
-            "When freezing the unet, we can use the 'before', 'between', or 'after' strategy."
-            "The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen."
-            "This option is a WIP."
-        ),
-    )
-
-    parser.add_argument(
         "--print_filenames",
         action="store_true",
         help=(
@@ -396,15 +369,6 @@ def parse_args(input_args=None):
             "Whether or not to freeze the text_encoder. The default is true."
         ),
     )
-    parser.add_argument(
-        "--freeze_unet",
-        action="store_true",
-        default=True,
-        help=(
-            "Whether or not to freeze the unet. The default is true."
-        ),
-    )
-
     parser.add_argument(
         "--text_encoder_limit",
         type=int,
