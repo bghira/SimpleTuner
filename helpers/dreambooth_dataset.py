@@ -42,6 +42,7 @@ class DreamBoothDataset(Dataset):
         self.use_original_images = use_original_images
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         if not use_original_images:
+            print(f'Building transformations.')
             self.image_transforms = transforms.Compose(
                 [
                     transforms.Resize(
@@ -57,13 +58,17 @@ class DreamBoothDataset(Dataset):
 
     def assign_to_buckets(self):
         aspect_ratio_bucket_indices = {bucket: [] for bucket in self.aspect_ratio_buckets}
+        print(f'Enumerating buckets!')
         for i, image_path in enumerate(self.instance_images_path):
+            print(f'Loading image: {image_path}')
             image = Image.open(image_path)
             if not self.use_original_images:
+                print(f'Resizing image: {image_path}')
                 image = self._resize_for_condition_image(image, self.size)
             aspect_ratio = image.width / image.height
             bucket = min(self.aspect_ratio_buckets, key=lambda x: abs(x - aspect_ratio))
             aspect_ratio_bucket_indices[bucket].append(i)
+        print(f'Finished loading buckets.')
         return aspect_ratio_bucket_indices
 
     def __len__(self):
