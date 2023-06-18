@@ -57,20 +57,28 @@ class DreamBoothDataset(Dataset):
             )
 
     def assign_to_buckets(self):
-        aspect_ratio_bucket_indices = {bucket: [] for bucket in self.aspect_ratio_buckets}
-        print(f'Enumerating buckets!')
-        for i, image_path in enumerate(self.instance_images_path):
-            print(f'Loading image: {image_path}')
-            image = Image.open(image_path)
-            if not self.use_original_images:
-                print(f'Resizing image: {image_path}')
-                image = self._resize_for_condition_image(image, self.size)
-            aspect_ratio = image.width / image.height
-            bucket = min(self.aspect_ratio_buckets, key=lambda x: abs(x - aspect_ratio))
-            aspect_ratio_bucket_indices[bucket].append(i)
-        print(f'Finished loading buckets.')
-        return aspect_ratio_bucket_indices
-
+        cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
+        if cache_file.exists():
+            print("Loading aspect ratio bucket indices from cache file.")
+            with cache_file.open("r") as f:
+                self.aspect_ratio_bucket_indices = json.load(f)
+        else:
+            print("Computing aspect ratio bucket indices.")
+            self.aspect_ratio_bucket_indices = {
+                str(bucket): [] for bucket in self.aspect_ratio_buckets
+            }  # We need to use strings as keys to save as JSON.
+            for i, image_path in enumerate(self.instance_images_path):
+                image = Image.open(image_path)
+                if not self.use_original_images:
+                    image = self._resize_for_condition_image(image, self.size)
+                aspect_ratio = image.width / image.height
+                bucket = min(
+                    self.aspect_ratio_buckets, key=lambda x: abs(x - aspect_ratio)
+                )
+                self.aspect_ratio_bucket_indices[str(bucket)].append(i)
+            with cache_file.open("w") as f:
+                json.dump(self.aspect_ratio_bucket_indices, f)
+        return self.aspect_ratio_bucket_indices
     def __len__(self):
         return self._length
 
