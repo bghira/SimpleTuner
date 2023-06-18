@@ -13,7 +13,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             # Choose the bucket to yield from
             bucket = self.buckets[self.current_bucket]
             # Check if there are enough indices left in the bucket for a batch
-            if len(self.aspect_ratio_bucket_indices[bucket]) > 0:
+            if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
                 print(f'Yielding a sample for bucket {bucket}.')
                 yield self.aspect_ratio_bucket_indices[bucket].pop()
                 self.current_count += 1
