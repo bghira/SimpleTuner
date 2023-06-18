@@ -425,6 +425,9 @@ def main(args):
                         logging.info(f"Starting training, as resume_step has been reached.")
                         StateTracker.start_training()
                 continue
+            if type(batch) is list:
+                logging.warning('Burning a step due to dummy data.')
+                continue
             logging.debug(f"Accumulating...")
             with accelerator.accumulate(unet):
                 logging.debug(f"Convert to latent space")
