@@ -71,7 +71,7 @@ class DreamBoothDataset(Dataset):
                 try:
                     image_path = self.instance_images_path[i]
                     image = Image.open(image_path)
-                    image = self._resize_for_condition_image(image, self.size)
+                    # image = self._resize_for_condition_image(image, self.size)
                     aspect_ratio = image.width / image.height
                     aspect_ratio = round(aspect_ratio, 2) # Round to 2 decimal places to avoid excessive unique buckets
 
