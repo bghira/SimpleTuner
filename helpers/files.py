@@ -1,6 +1,6 @@
 from transformers import PretrainedConfig
 from diffusers import UNet2DConditionModel
-import os
+import os, logging, shutil
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str
@@ -25,10 +25,29 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
-def register_file_hooks(accelerator, unet, text_encoder, text_encoder_cls):    
+def register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls):    
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
         for model in models:
+            # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
+            if args.checkpoints_total_limit is not None:
+                checkpoints = os.listdir(args.output_dir)
+                checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
+                checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+
+                # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
+                if len(checkpoints) >= args.checkpoints_total_limit:
+                    num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
+                    removing_checkpoints = checkpoints[0:num_to_remove]
+
+                    logging.info(
+                        f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
+                    )
+                    logging.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+
+                    for removing_checkpoint in removing_checkpoints:
+                        removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
+                        shutil.rmtree(removing_checkpoint)
             sub_dir = (
                 "unet"
                 if isinstance(model, type(accelerator.unwrap_model(unet)))

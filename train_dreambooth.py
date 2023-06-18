@@ -91,7 +91,7 @@ def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
     accelerator_project_config = ProjectConfiguration(
-        total_limit=args.checkpoints_total_limit
+        project_dir=args.output_dir, logging_dir=logging_dir
     )
 
     accelerator = Accelerator(
@@ -179,7 +179,7 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
 
-    register_file_hooks(accelerator, unet, text_encoder, text_encoder_cls)
+    register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls)
 
     vae.requires_grad_(False)
     if not args.train_text_encoder:
@@ -293,8 +293,8 @@ def main(args):
         optimizer=optimizer,
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-        lr_end=4e-8,
-        power=1.0,
+        lr_end=args.learning_rate_end,
+        power=args.lr_power,
         last_epoch=-1,
     )
 

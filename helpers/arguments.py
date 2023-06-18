@@ -1,5 +1,6 @@
 import argparse, os, warnings
 
+
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument(
@@ -114,9 +115,7 @@ def parse_args(input_args=None):
         type=int,
         default=None,
         help=(
-            "Max number of checkpoints to store. Passed as `total_limit` to the `Accelerator` `ProjectConfiguration`."
-            " See Accelerator::save_state https://huggingface.co/docs/accelerate/package_reference/accelerator#accelerate.Accelerator.save_state"
-            " for more details"
+            "Max number of checkpoints to store."
         ),
     )
     parser.add_argument(
@@ -311,7 +310,12 @@ def parse_args(input_args=None):
             " https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html"
         ),
     )
-    parser.add_argument("--noise_offset", type=float, default=0.1, help="The scale of noise offset. Default: 0.1")
+    parser.add_argument(
+        "--noise_offset",
+        type=float,
+        default=0.1,
+        help="The scale of noise offset. Default: 0.1",
+    )
     parser.add_argument(
         "--validation_epochs",
         type=int,
@@ -331,17 +335,13 @@ def parse_args(input_args=None):
         "--freeze_encoder_before",
         type=int,
         default=12,
-        help=(
-            "When using 'before' strategy, we will freeze layers earlier than this."
-        ),
+        help=("When using 'before' strategy, we will freeze layers earlier than this."),
     )
     parser.add_argument(
         "--freeze_encoder_after",
         type=int,
         default=17,
-        help=(
-            "When using 'after' strategy, we will freeze layers later than this."
-        ),
+        help=("When using 'after' strategy, we will freeze layers later than this."),
     )
     parser.add_argument(
         "--freeze_encoder_strategy",
@@ -365,9 +365,7 @@ def parse_args(input_args=None):
         "--freeze_encoder",
         action="store_true",
         default=True,
-        help=(
-            "Whether or not to freeze the text_encoder. The default is true."
-        ),
+        help=("Whether or not to freeze the text_encoder. The default is true."),
     )
     parser.add_argument(
         "--text_encoder_limit",
@@ -387,18 +385,19 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--only_instance_prompt",
         action="store_true",
-        help=(
-            "Use the instance prompt instead of the caption from filename."
-        ),
+        help=("Use the instance prompt instead of the caption from filename."),
     )
     parser.add_argument(
-        "--input_pertubation", type=float, default=0, help="The scale of input pretubation. Recommended 0.1."
+        "--input_pertubation",
+        type=float,
+        default=0,
+        help="The scale of input pretubation. Recommended 0.1.",
     )
     parser.add_argument(
-        '--use_original_images',
+        "--use_original_images",
         type=str,
-        default='false',
-        help='When this option is provided, image cropping and processing will be disabled. It is a good idea to use this with caution, for training multiple aspect ratios.',
+        default="false",
+        help="When this option is provided, image cropping and processing will be disabled. It is a good idea to use this with caution, for training multiple aspect ratios.",
     )
     parser.add_argument(
         "--offset_noise",
@@ -409,7 +408,12 @@ def parse_args(input_args=None):
             " See: https://www.crosslabs.org//blog/diffusion-with-offset-noise for more information."
         ),
     )
-
+    parser.add_argument(
+        "--learning_rate_end",
+        type=str,
+        default="1e-7",
+        help="A polynomial learning rate will end up at this value after the specified number of warmup steps.",
+    )
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:
