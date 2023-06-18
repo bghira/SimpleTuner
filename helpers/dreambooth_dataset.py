@@ -108,7 +108,9 @@ class DreamBoothDataset(Dataset):
             print(f'Prompt: {instance_prompt}')
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
-        example["instance_images"] = self.image_transforms(instance_image)
+        example["instance_images"] = instance_image
+        if not self.use_original_images:
+            example["instance_images"] = self.image_transforms(instance_image)
         example["instance_prompt_ids"] = self.tokenizer(
             instance_prompt,
             truncation=True,
