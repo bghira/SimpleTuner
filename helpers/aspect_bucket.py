@@ -1,5 +1,5 @@
 import torch, logging
-
+from .state_tracker import StateTracker
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(self, aspect_ratio_bucket_indices, batch_size=15):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices
@@ -15,7 +15,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
                 logging.info(f'Yielding a batch for bucket {bucket}.')
                 for _ in range(self.batch_size):
-                    yield self.aspect_ratio_bucket_indices[bucket].pop()
+                    if StateTracker.status_training():
+                        yield self.aspect_ratio_bucket_indices[bucket].pop()
+                    else:
+                        # Yield a dummy image if we're not started yet.
+                        yield self.aspect_ratio_bucket_indices[bucket][0]
                 # Move on to the next bucket after yielding a batch
                 self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
             else:
