@@ -1,4 +1,4 @@
-import torch, time
+import torch
 
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(self, aspect_ratio_bucket_indices, batch_size=15):
@@ -6,24 +6,22 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.buckets = list(aspect_ratio_bucket_indices.keys())
         self.batch_size = batch_size
         self.current_bucket = 0
-        self.current_count = 0
 
     def __iter__(self):
         while True:
             # Choose the bucket to yield from
             bucket = self.buckets[self.current_bucket]
-            # Check if there are enough indices left in the bucket for a batch
+            # If the bucket has enough samples for a full batch, yield from it
             if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
-                print(f'Yielding a sample for bucket {bucket}.')
-                yield self.aspect_ratio_bucket_indices[bucket].pop()
-                self.current_count += 1
-                # If we've reached the batch size, move to the next bucket
-                if self.current_count >= self.batch_size:
-                    self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
-                    self.current_count = 0
+                print(f'Yielding a batch for bucket {bucket}.')
+                for _ in range(self.batch_size):
+                    yield self.aspect_ratio_bucket_indices[bucket].pop()
             else:
-                print(f'Bucket {bucket} is empty. Moving to the next bucket.')
+                print(f'Bucket {bucket} is empty or doesn\'t have enough samples for a full batch. Moving to the next bucket.')
                 self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
+                # If all buckets are empty or don't have enough samples for a full batch, break the loop
+                if all(len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size for bucket in self.buckets):
+                    break
 
     def __len__(self):
         return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
