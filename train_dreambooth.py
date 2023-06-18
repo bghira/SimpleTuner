@@ -269,7 +269,7 @@ def main(args):
         train_dataset,
         batch_size=args.train_batch_size,
         shuffle=False,  # The sampler handles shuffling
-        sampler=BalancedBucketSampler(train_dataset.aspect_ratio_bucket_indices, batch_size=args.train_batch_size),
+        sampler=BalancedBucketSampler(train_dataset.aspect_ratio_bucket_indices),
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
