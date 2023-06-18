@@ -30,3 +30,6 @@ for handler in logger.handlers[:]:
     logger.removeHandler(handler)
 if not logger.handlers:
     logger.addHandler(new_handler)
+
+pil_logger = logging.getLogger('PIL')
+pil_logger.setLevel(logging.INFO)

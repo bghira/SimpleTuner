@@ -2,6 +2,8 @@
 
 This repository contains a set of experimental scripts that will not be well-supported, should you choose to make use of them.
 
+The name is incorrect, because this project is anything BUT simple to use. However, the code is simple in its implementations.
+
 This code is public merely as a learning resource and so that hopefully I can also learn from anyone else who comes along.
 
 ## Why?
@@ -18,7 +20,11 @@ SD 1.5's CLIP has 12 layers while SD 2.1's OpenCLIP has 24. We don't know the de
 
 * Not using enforced zero SNR on the terminal timestep. This results in a more noisy image. It's possible to train past this with traditional fine-tuning, but not without harming the text encoder's foundational concepts in the process.
 
-To resolve them, the parameters that can be tweaked when training are minimised or eliminated if they were discovered to have an adverse impact. SNR Gamma and Offset noise are not supported by SimpleTuner, because they are not good techniques.
+* Training on only square, 768x768 images, that will result in the model losing the ability to (or at the very least, simply not improving) super-resolution its output into other aspect ratios.
+
+* Overfitting the unet on textures, results in "burning". So far, I've not worked around this much other than mix-matching text encoder and unet checkpoints.
+
+Additionally, if something does not provide value to the training process by default, it is simply not included.
 
 ## Scripts
 
@@ -27,6 +33,8 @@ To resolve them, the parameters that can be tweaked when training are minimised 
 
 * `interrogate.py` - This is useful for labelling datasets using BLIP. Not very accurate, but good enough for a LARGE dataset that's being used for fine-tuning.
 
+* `analyze_laion_data.py` - After downloading a lot of LAION's data, you can use this to throw a lot of it away.
+* `analyze_aspect_ratios_json.py` - Use the output from `analyze_laion_data.py` to nuke images that do not fit our aspect goals.
 * `helpers/broken_images.py` - Scan and remove any images that will not load properly.
 
 Another note here: You might want to make sure it knows your most important concepts. If it doesn't, you can try to fine-tune BLIP using a subset of your data with manually created captions. This generally has a lot of success.
