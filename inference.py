@@ -7,7 +7,7 @@ from compel import Compel
 import torch, os
 
 # Load the pipeline with the same arguments (model, revision) that were used for training
-model_id = "ptx0/pseudo-real"
+model_id = "ptx0/pseudo-real-beta"
 base_dir = "/notebooks/datasets"
 model_path = os.path.join(base_dir, 'models')
 #output_test_dir = os.path.join(base_dir, 'test_results')
@@ -21,6 +21,7 @@ checkpoints = [ int(x.split('-')[1]) for x in os.listdir(model_path) if x.starts
 checkpoints.sort()
 range_begin = 0
 range_step = 100
+base_checkpoint_for_unet = 0 # Use the unet from this model for comparison against text encoder progress.
 try:
     range_end = checkpoints[-1]
 except Exception as e:
@@ -32,11 +33,10 @@ print(f'Highest checkpoint found so far: {range_end}')
 checkpoints.reverse()
 torch.set_float32_matmul_precision('high')
 negative = "deep fried watermark cropped out-of-frame low quality low res oorly drawn bad anatomy wrong anatomy extra limb missing limb floating limbs (mutated hands and fingers)1.4 disconnected limbs mutation mutated ugly disgusting blurry amputation synthetic rendering"
-checkpoints = [ "0", "13200" ]
 for checkpoint in checkpoints:
     for enable_textencoder in [True, False, None]:
         suffix = 't' if enable_textencoder else 'b' if enable_textencoder is None else 'u'
-        if len(checkpoints) > 1 and os.path.isfile(f'{output_test_dir}/target-{checkpoint}_4200{suffix}.png'):
+        if len(checkpoints) > 1 and os.path.isfile(f'{output_test_dir}/target-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png'):
             continue
         try:
             print(f'Loading checkpoint: {model_path}/checkpoint-{checkpoint}')
@@ -85,14 +85,14 @@ for checkpoint in checkpoints:
         # Does the file exist already?
         import os
         for shortname, prompt in prompts.items():
-            if not os.path.isfile(f'{output_test_dir}/{shortname}-{checkpoint}_4200{suffix}.png'):
-                print(f'Generating {shortname} at {checkpoint}_4200{suffix}')
+            if not os.path.isfile(f'{output_test_dir}/{shortname}-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png'):
+                print(f'Generating {shortname} at {checkpoint}_{base_checkpoint_for_unet}{suffix}')
                 print(f'Shortname: {shortname}, Prompt: {prompt}')
                 print(f'Negative: {negative}')
                 conditioning = compel.build_conditioning_tensor(prompt)
                 generator = torch.Generator(device="cuda").manual_seed(torch_seed)
                 output = pipeline(generator=generator, negative_prompt_embeds=negative_embed, prompt_embeds=conditioning, guidance_scale=9.2, guidance_rescale=0.3, width=1152, height=768, num_inference_steps=15).images[0]
-                output.save(f'{output_test_dir}/{shortname}-{checkpoint}_4200{suffix}.png')
+                output.save(f'{output_test_dir}/{shortname}-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png')
                 del output
             
         if save_pretrained and not os.path.exists(f'{model_path}/pipeline'):
