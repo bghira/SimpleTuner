@@ -398,6 +398,7 @@ def main(args):
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         if args.train_text_encoder:
+            print(f'Bumping text encoder.')
             text_encoder.train()
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
@@ -460,11 +461,13 @@ def main(args):
                     )
 
                 # Predict the noise residual
+                print(f'Running prediction')
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states
                 ).sample
 
                 if args.snr_gamma is None:
+                    print(f'Calculating loss')
                     loss = F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
@@ -490,7 +493,7 @@ def main(args):
                         * mse_loss_weights
                     )
                     loss = loss.mean()
-
+                print(f'Backwards pass.')
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     params_to_clip = (
@@ -498,11 +501,13 @@ def main(args):
                         if args.train_text_encoder
                         else unet.parameters()
                     )
+                    print(f'Syncing gradients')
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
+                print(f'Stepped')
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
-
+                print(f'Optimizer set grads.')
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
@@ -547,12 +552,13 @@ def main(args):
                             weight_dtype,
                             epoch,
                         )
-
+            print(f'Writing logs.')
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
+                print(f'Reached stopper.')
                 break
 
     # Create the pipeline using using the trained modules and save it.
