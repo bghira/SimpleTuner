@@ -68,19 +68,24 @@ class DreamBoothDataset(Dataset):
             print("Computing aspect ratio bucket indices.")
             self.aspect_ratio_bucket_indices = {}
             for i in tqdm(range(len(self.instance_images_path)), desc="Assigning to buckets"):
-                image_path = self.instance_images_path[i]
-                image = Image.open(image_path)
-                image = self._resize_for_condition_image(image, self.size)
-                aspect_ratio = image.width / image.height
-                aspect_ratio = round(aspect_ratio, 2) # Round to 2 decimal places to avoid excessive unique buckets
+                try:
+                    image_path = self.instance_images_path[i]
+                    image = Image.open(image_path)
+                    image = self._resize_for_condition_image(image, self.size)
+                    aspect_ratio = image.width / image.height
+                    aspect_ratio = round(aspect_ratio, 2) # Round to 2 decimal places to avoid excessive unique buckets
 
-                # Create a new bucket if it doesn't exist
-                if str(aspect_ratio) not in self.aspect_ratio_bucket_indices:
-                    self.aspect_ratio_bucket_indices[str(aspect_ratio)] = []
+                    # Create a new bucket if it doesn't exist
+                    if str(aspect_ratio) not in self.aspect_ratio_bucket_indices:
+                        self.aspect_ratio_bucket_indices[str(aspect_ratio)] = []
 
-                self.aspect_ratio_bucket_indices[str(aspect_ratio)].append(i)
-            with cache_file.open("w") as f:
-                json.dump(self.aspect_ratio_bucket_indices, f)
+                    self.aspect_ratio_bucket_indices[str(aspect_ratio)].append(i)
+                    with cache_file.open("w") as f:
+                        json.dump(self.aspect_ratio_bucket_indices, f)
+                except Exception as e:
+                    print(f'Error processing image {image_path}.')
+                    print(e)
+                    continue
         return self.aspect_ratio_bucket_indices
 
 
