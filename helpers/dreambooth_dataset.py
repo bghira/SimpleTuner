@@ -72,8 +72,7 @@ class DreamBoothDataset(Dataset):
             for i in tqdm(range(len(self.instance_images_path)), desc="Assigning to buckets"):
                 image_path = self.instance_images_path[i]
                 image = Image.open(image_path)
-                if not self.use_original_images:
-                    image = self._resize_for_condition_image(image, self.size)
+                image = self._resize_for_condition_image(image, self.size)
                 aspect_ratio = image.width / image.height
                 bucket = min(
                     self.aspect_ratio_buckets, key=lambda x: abs(x - aspect_ratio)
@@ -108,7 +107,7 @@ class DreamBoothDataset(Dataset):
             print(f'Prompt: {instance_prompt}')
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
-        example["instance_images"] = instance_image
+        image = self._resize_for_condition_image(image, self.size)
         if not self.use_original_images:
             example["instance_images"] = self.image_transforms(instance_image)
         example["instance_prompt_ids"] = self.tokenizer(
