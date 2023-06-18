@@ -1,6 +1,8 @@
 from torch.utils.data import Dataset
 from pathlib import Path
 from torchvision import transforms
+from PIL.ImageOps import exif_transpose
+
 from PIL import Image
 import json
 from tqdm import tqdm
@@ -71,6 +73,8 @@ class DreamBoothDataset(Dataset):
                 try:
                     image_path = self.instance_images_path[i]
                     image = Image.open(image_path)
+                    # Apply EXIF transforms
+                    image = exif_transpose(image)
                     # image = self._resize_for_condition_image(image, self.size)
                     aspect_ratio = image.width / image.height
                     aspect_ratio = round(aspect_ratio, 2) # Round to 2 decimal places to avoid excessive unique buckets
@@ -99,6 +103,8 @@ class DreamBoothDataset(Dataset):
         instance_image = Image.open(
             self.instance_images_path[index % self.num_instance_images]
         )
+        # Apply EXIF transformations.
+        instance_image = exif_transpose(instance_image)
         instance_prompt = self.instance_prompt
         if self.use_captions:
             instance_prompt = self.instance_images_path[
