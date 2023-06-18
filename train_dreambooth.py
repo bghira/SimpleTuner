@@ -438,7 +438,8 @@ def main(args):
                         ).latent_dist.sample()
                         break
                     except Exception as e:
-                        logging.error(f"Error: {e}")
+                        import traceback
+                        logging.error(f"Error: {e}, traceback: {traceback.format_exc()}")
                         torch.clear_autocast_cache()
                         time.sleep(5)
                 latents = latents * vae.config.scaling_factor
