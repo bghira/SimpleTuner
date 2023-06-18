@@ -1,3 +1,5 @@
+import torch
+
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(self, aspect_ratio_bucket_indices):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices
