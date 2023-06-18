@@ -430,6 +430,8 @@ def main(args):
                         break
                     except Exception as e:
                         print(f"Error: {e}")
+                        torch.clear_autocast_cache()
+                        time.sleep(5)
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
