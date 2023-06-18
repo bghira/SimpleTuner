@@ -2,6 +2,9 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from torchvision import transforms
 from PIL import Image
+import json
+from tqdm import tqdm
+
 
 class DreamBoothDataset(Dataset):
     """
@@ -55,7 +58,6 @@ class DreamBoothDataset(Dataset):
                     transforms.Normalize([0.5], [0.5]),
                 ]
             )
-
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
         if cache_file.exists():
@@ -67,7 +69,8 @@ class DreamBoothDataset(Dataset):
             self.aspect_ratio_bucket_indices = {
                 str(bucket): [] for bucket in self.aspect_ratio_buckets
             }  # We need to use strings as keys to save as JSON.
-            for i, image_path in enumerate(self.instance_images_path):
+            for i in tqdm(range(len(self.instance_images_path)), desc="Assigning to buckets"):
+                image_path = self.instance_images_path[i]
                 image = Image.open(image_path)
                 if not self.use_original_images:
                     image = self._resize_for_condition_image(image, self.size)
@@ -79,6 +82,7 @@ class DreamBoothDataset(Dataset):
             with cache_file.open("w") as f:
                 json.dump(self.aspect_ratio_bucket_indices, f)
         return self.aspect_ratio_bucket_indices
+
     def __len__(self):
         return self._length
 
