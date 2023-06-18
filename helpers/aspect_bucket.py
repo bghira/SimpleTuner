@@ -1,9 +1,10 @@
 import torch
 
 class BalancedBucketSampler(torch.utils.data.Sampler):
-    def __init__(self, aspect_ratio_bucket_indices):
+    def __init__(self, aspect_ratio_bucket_indices, batch_size = 15):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices
         self.buckets = list(aspect_ratio_bucket_indices.keys())
+        self.batch_size = batch_size
 
     def __iter__(self):
         batch_size_per_bucket = self.batch_size // len(self.buckets)
