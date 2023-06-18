@@ -18,12 +18,12 @@ if not os.path.exists(OUTPUT_DIR):
     try:
         os.makedirs(OUTPUT_DIR)
     except Exception as e:
-        print(f'Could not create output directory: {e}')
+        logging(f'Could not create output directory: {e}')
         sys.exit(1)
 
 # Check if CSV file exists
 if not os.path.exists(FILE):
-    print(f'Could not find CSV file: {FILE}')
+    logging(f'Could not find CSV file: {FILE}')
     sys.exit(1)
 
 import random
@@ -64,7 +64,7 @@ def load_csv(file):
             for row in reader:
                 data.append(row)
         except Exception as e:
-            print(f'Could not advance reader: {e}')
+            logging(f'Could not advance reader: {e}')
     return data
 
 conn_timeout = 6
@@ -80,7 +80,7 @@ def fetch_image(info):
     current_file_path = os.path.join(OUTPUT_DIR, filename)
     # Skip download if file already exists
     if os.path.exists(current_file_path):
-        print(f'{filename} already exists, skipping download...')
+        logging(f'{filename} already exists, skipping download...')
         return
 
     try:
@@ -92,17 +92,17 @@ def fetch_image(info):
             image = Image.open(current_file_path)
             width, height = image.size
             if width != height:
-                print(f'Image {filename} is not square ({width}x{height}), deleting...')
+                logging(f'Image {filename} is not square ({width}x{height}), deleting...')
                 os.remove(current_file_path)
                 return
-            print(f'Resizing image to {current_file_path}')
+            logging(f'Resizing image to {current_file_path}')
             image = image.resize((768, 768), resample=Image.LANCZOS)
             image.save(current_file_path, format='PNG')
             image.close()
         else:
-            print(f'Could not fetch {filename} from {url} (status code {r.status_code})')
+            logging(f'Could not fetch {filename} from {url} (status code {r.status_code})')
     except Exception as e:
-        print(f'Could not fetch {filename} from {url}: {e}')
+        logging(f'Could not fetch {filename} from {url}: {e}')
 
 
 def fetch_data(data):
@@ -116,7 +116,7 @@ def fetch_data(data):
             continue
         if new_filename not in to_fetch:
             to_fetch[new_filename] = {'url': row['Attachments'], 'filename': new_filename}
-    print(f'Fetching {len(to_fetch)} images...')
+    logging(f'Fetching {len(to_fetch)} images...')
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
         executor.map(fetch_image, to_fetch.values())
 

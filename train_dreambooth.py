@@ -379,12 +379,12 @@ def main(args):
             path = dirs[-1] if len(dirs) > 0 else None
 
         if path is None:
-            accelerator.print(
+            accelerator.logging(
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             args.resume_from_checkpoint = None
         else:
-            accelerator.print(f"Resuming from checkpoint {path}")
+            accelerator.logging(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             global_step = int(path.split("-")[1])
 
@@ -404,7 +404,7 @@ def main(args):
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
         if args.train_text_encoder:
-            print(f"Bumping text encoder.")
+            logging(f"Bumping text encoder.")
             text_encoder.train()
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
@@ -416,9 +416,9 @@ def main(args):
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
                 continue
-            print(f"Accumulating...")
+            logging(f"Accumulating...")
             with accelerator.accumulate(unet):
-                print(f"Convert to latent space")
+                logging(f"Convert to latent space")
                 # Convert images to latent space. This could run out of VRAM, so we'll try again.
                 attempts = 5
                 current_attempt = 0
@@ -429,7 +429,7 @@ def main(args):
                         ).latent_dist.sample()
                         break
                     except Exception as e:
-                        print(f"Error: {e}")
+                        logging(f"Error: {e}")
                         torch.clear_autocast_cache()
                         time.sleep(5)
                 latents = latents * vae.config.scaling_factor
@@ -465,7 +465,7 @@ def main(args):
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
-                print(f"Calculate target for loss")
+                logging(f"Calculate target for loss")
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -477,13 +477,13 @@ def main(args):
                     )
 
                 # Predict the noise residual
-                print(f"Running prediction")
+                logging(f"Running prediction")
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states
                 ).sample
 
                 if args.snr_gamma is None:
-                    print(f"Calculating loss")
+                    logging(f"Calculating loss")
                     loss = F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
@@ -509,7 +509,7 @@ def main(args):
                         * mse_loss_weights
                     )
                     loss = loss.mean()
-                print(f"Backwards pass.")
+                logging(f"Backwards pass.")
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     params_to_clip = (
@@ -517,13 +517,13 @@ def main(args):
                         if args.train_text_encoder
                         else unet.parameters()
                     )
-                    print(f"Syncing gradients")
+                    logging(f"Syncing gradients")
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
-                print(f"Stepped")
+                logging(f"Stepped")
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
-                print(f"Optimizer set grads.")
+                logging(f"Optimizer set grads.")
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
@@ -568,13 +568,13 @@ def main(args):
                             weight_dtype,
                             epoch,
                         )
-            print(f"Writing logs.")
+            logging(f"Writing logs.")
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
             accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
-                print(f"Reached stopper.")
+                logging(f"Reached stopper.")
                 break
 
     # Create the pipeline using using the trained modules and save it.

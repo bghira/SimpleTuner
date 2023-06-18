@@ -65,7 +65,7 @@ def process_directory(image_dir = 'images', terms_file = None):
                 best_match = active_interrogator.generate_caption(image)
 
             # Print the result
-            print(f'Best match for {filename}: {best_match}')
+            logging(f'Best match for {filename}: {best_match}')
             # Write the best match to {filename}.txt:
             image.save(os.path.join(output_dir, content_to_filename(best_match)))
             

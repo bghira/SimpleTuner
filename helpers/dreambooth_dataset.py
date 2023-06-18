@@ -4,7 +4,7 @@ from torchvision import transforms
 from PIL.ImageOps import exif_transpose
 
 from PIL import Image
-import json
+import json, logging
 from tqdm import tqdm
 
 
@@ -47,7 +47,7 @@ class DreamBoothDataset(Dataset):
         self.use_original_images = use_original_images
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         if not use_original_images:
-            print(f'Building transformations.')
+            logging(f'Building transformations.')
             self.image_transforms = transforms.Compose(
                 [
                     transforms.Resize(
@@ -63,11 +63,11 @@ class DreamBoothDataset(Dataset):
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
         if cache_file.exists():
-            print("Loading aspect ratio bucket indices from cache file.")
+            logging("Loading aspect ratio bucket indices from cache file.")
             with cache_file.open("r") as f:
                 self.aspect_ratio_bucket_indices = json.load(f)
         else:
-            print("Computing aspect ratio bucket indices.")
+            logging("Computing aspect ratio bucket indices.")
             self.aspect_ratio_bucket_indices = {}
             for i in tqdm(range(len(self.instance_images_path)), desc="Assigning to buckets"):
                 try:
@@ -87,8 +87,8 @@ class DreamBoothDataset(Dataset):
                     with cache_file.open("w") as f:
                         json.dump(self.aspect_ratio_bucket_indices, f)
                 except Exception as e:
-                    print(f'Error processing image {image_path}.')
-                    print(e)
+                    logging(f'Error processing image {image_path}.')
+                    logging(e)
                     continue
         return self.aspect_ratio_bucket_indices
 
@@ -99,7 +99,7 @@ class DreamBoothDataset(Dataset):
     def __getitem__(self, index):
         example = {}
         if self.print_names:
-            print(f'\nOpen image: {self.instance_images_path[index % self.num_instance_images]}')
+            logging(f'\nOpen image: {self.instance_images_path[index % self.num_instance_images]}')
         instance_image = Image.open(
             self.instance_images_path[index % self.num_instance_images]
         )
@@ -117,7 +117,7 @@ class DreamBoothDataset(Dataset):
             if self.prepend_instance_prompt:
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
-            print(f'Prompt: {instance_prompt}')
+            logging(f'Prompt: {instance_prompt}')
         if not instance_image.mode == "RGB":
             instance_image = instance_image.convert("RGB")
         example["instance_images"] = self._resize_for_condition_image(instance_image, self.size)

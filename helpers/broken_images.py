@@ -16,7 +16,7 @@ def handle_broken_images(dir_path, delete=False):
                 with Image.open(img_path) as img:
                     img.verify()  # verify that it is, in fact an image
             except (IOError, SyntaxError) as e:
-                print(f'Bad file: {img_path} - {e}')
+                logging(f'Bad file: {img_path} - {e}')
                 if delete:
                     os.remove(img_path)
-                    print(f'Removed: {img_path}')
+                    logging(f'Removed: {img_path}')

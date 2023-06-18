@@ -12,9 +12,9 @@ with open('aspect_ratios.json', 'r') as f:
 
 new_bucket = {}
 for bucket, indices in aspect_ratios.items():
-    print(f'{bucket}: {len(indices)}')
+    logging(f'{bucket}: {len(indices)}')
     if float(bucket) in allowed:
-        print(f'Bucket {bucket} in {allowed}')
+        logging(f'Bucket {bucket} in {allowed}')
         new_bucket[bucket] = aspect_ratios[bucket]
     
 least_amount = None
@@ -26,14 +26,14 @@ for bucket, indices in aspect_ratios.items():
 # buckets_to_skip = [ 1.0 ]
 # for bucket, files in aspect_ratios.items():
 #     if float(bucket) not in buckets_to_skip and len(files) > least_amount:
-#         print(f'We have to reduce the number of items in the bucket: {bucket}')
+#         logging(f'We have to reduce the number of items in the bucket: {bucket}')
 #         # 'files' is a list of full file paths. we need to delete them randomly until the value of least_amount is reached.
         
 #         # Get a random sample of files to delete.
 #         import random
 #         random.shuffle(files)
 #         files_to_delete = files[least_amount:]
-#         print(f'Files to delete: {len(files_to_delete)}')
+#         logging(f'Files to delete: {len(files_to_delete)}')
 #         for file in files_to_delete:
 #             import os
 #             os.remove(file)
@@ -51,15 +51,15 @@ def process_file(file):
     image = Image.open(file).convert('RGB')
     width, height = image.size
     if width < 900 or height < 900:
-        print(f'Image does not meet minimum size requirements: {file}, size {image.size}')
+        logging(f'Image does not meet minimum size requirements: {file}, size {image.size}')
         os.remove(file)
     else:
-        print(f'Image meets minimum size requirements for conditioning: {file}, size {image.size}')
+        logging(f'Image meets minimum size requirements for conditioning: {file}, size {image.size}')
         image = _resize_for_condition_image(image, 1024)
         image.save(file)
 
 def process_bucket(bucket, files):
-    print(f'Processing bucket {bucket}: {len(files)} files')
+    logging(f'Processing bucket {bucket}: {len(files)} files')
     with ThreadPoolExecutor(max_workers=32) as executor:
         executor.map(process_file, files)
 

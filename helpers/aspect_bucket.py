@@ -1,4 +1,4 @@
-import torch
+import torch, logging
 
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(self, aspect_ratio_bucket_indices, batch_size=15):
@@ -13,11 +13,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             bucket = self.buckets[self.current_bucket]
             # If the bucket has enough samples for a full batch, yield from it
             if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
-                print(f'Yielding a batch for bucket {bucket}.')
+                logging(f'Yielding a batch for bucket {bucket}.')
                 for _ in range(self.batch_size):
                     yield self.aspect_ratio_bucket_indices[bucket].pop()
             else:
-                print(f'Bucket {bucket} is empty or doesn\'t have enough samples for a full batch. Moving to the next bucket.')
+                logging(f'Bucket {bucket} is empty or doesn\'t have enough samples for a full batch. Moving to the next bucket.')
                 self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
                 # If all buckets are empty or don't have enough samples for a full batch, break the loop
                 if all(len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size for bucket in self.buckets):
