@@ -419,11 +419,12 @@ def main(args):
             ):
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
+                if step + 1 == resume_step:
+                    # We want to trigger the batch to be properly generated when we start.
+                    if not StateTracker.status_training():
+                        logging.info(f"Starting training, as resume_step has been reached.")
+                        StateTracker.start_training()
                 continue
-            else:
-                if not StateTracker.status_training():
-                    logging.info(f"Starting training, as resume_step has been reached.")
-                    StateTracker.start_training()
             logging.debug(f"Accumulating...")
             with accelerator.accumulate(unet):
                 logging.debug(f"Convert to latent space")
