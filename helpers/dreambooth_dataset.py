@@ -66,21 +66,23 @@ class DreamBoothDataset(Dataset):
                 self.aspect_ratio_bucket_indices = json.load(f)
         else:
             print("Computing aspect ratio bucket indices.")
-            self.aspect_ratio_bucket_indices = {
-                str(bucket): [] for bucket in self.aspect_ratio_buckets
-            }  # We need to use strings as keys to save as JSON.
+            self.aspect_ratio_bucket_indices = {}
             for i in tqdm(range(len(self.instance_images_path)), desc="Assigning to buckets"):
                 image_path = self.instance_images_path[i]
                 image = Image.open(image_path)
                 image = self._resize_for_condition_image(image, self.size)
                 aspect_ratio = image.width / image.height
-                bucket = min(
-                    self.aspect_ratio_buckets, key=lambda x: abs(x - aspect_ratio)
-                )
-                self.aspect_ratio_bucket_indices[str(bucket)].append(i)
+                aspect_ratio = round(aspect_ratio, 2) # Round to 2 decimal places to avoid excessive unique buckets
+
+                # Create a new bucket if it doesn't exist
+                if str(aspect_ratio) not in self.aspect_ratio_bucket_indices:
+                    self.aspect_ratio_bucket_indices[str(aspect_ratio)] = []
+
+                self.aspect_ratio_bucket_indices[str(aspect_ratio)].append(i)
             with cache_file.open("w") as f:
                 json.dump(self.aspect_ratio_bucket_indices, f)
         return self.aspect_ratio_bucket_indices
+
 
     def __len__(self):
         return self._length
