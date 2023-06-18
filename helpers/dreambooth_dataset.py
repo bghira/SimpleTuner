@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from torchvision import transforms
 from PIL.ImageOps import exif_transpose
-from state_tracker import StateTracker
+from .state_tracker import StateTracker
 from PIL import Image
 import json, logging
 from tqdm import tqdm
@@ -104,7 +104,7 @@ class DreamBoothDataset(Dataset):
             self.instance_images_path[index % self.num_instance_images]
         )
         # Apply EXIF transformations.
-        if StateTracker.has_training_started():
+        if StateTracker.status_training():
             instance_image = exif_transpose(instance_image)
         instance_prompt = self.instance_prompt
         if self.use_captions:
@@ -119,16 +119,16 @@ class DreamBoothDataset(Dataset):
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
             logging.debug(f'Prompt: {instance_prompt}')
-        if not instance_image.mode == "RGB" and StateTracker.has_training_started():
+        if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
-        if StateTracker.has_training_started():
+        if StateTracker.status_training():
             example["instance_images"] = self._resize_for_condition_image(instance_image, self.size)
         else:
             example["instance_images"] = instance_image
-        if not self.use_original_images and StateTracker.has_training_started():
+        if not self.use_original_images and StateTracker.status_training():
             example["instance_images"] = self.image_transforms(instance_image)
         example['instance_prompt_ids'] = None
-        if StateTracker.has_training_started():
+        if StateTracker.status_training():
             example["instance_prompt_ids"] = self.tokenizer(
                 instance_prompt,
                 truncation=True,

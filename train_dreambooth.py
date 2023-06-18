@@ -418,7 +418,7 @@ def main(args):
                     progress_bar.update(1)
                 continue
             else:
-                if not StateTracker.has_training_started():
+                if not StateTracker.status_training():
                     logging.info(f"Starting training, as resume_step has been reached.")
                     StateTracker.start_training()
             logging.debug(f"Accumulating...")
