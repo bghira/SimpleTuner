@@ -63,7 +63,7 @@ def detect_faces_in_image(image):
     faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
     faces_str = f'{faces}'
     if faces_str != "()":
-        logging(f'Found faces {faces}')
+        logging.info(f'Found faces {faces}')
     return faces
 
 def image_difference(imageA, imageB):
@@ -72,7 +72,7 @@ def image_difference(imageA, imageB):
     grayB = cv2.cvtColor(imageB, cv2.COLOR_BGR2GRAY)
     # compute the Structural Similarity Index (SSIM) between the two images, ensuring that the difference image is returned
     (score, diff) = compare_ssim(grayA, grayB, full=True)
-    logging(f'Returning score {score}')
+    logging.info(f'Returning score {score}')
     return score
 
 from pathlib import Path
@@ -86,7 +86,7 @@ def process(input_path, output_folder, detect_faces=False):
         for image_file in Path(input_path).glob("*"):
             image = cv2.imread(str(image_file))
             if image is None:
-                logging(f'Image had ERROR: {input_path}')
+                logging.info(f'Image had ERROR: {input_path}')
                 continue
             process_image(image, output_folder, detect_faces)
     else:

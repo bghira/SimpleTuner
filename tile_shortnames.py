@@ -43,7 +43,7 @@ def get_wrapped_text(text: str, font: ImageFont.ImageFont,
 shortname_to_files = {}
 for file in image_files:
     shortname = os.path.basename(file).split('-')[0]
-    logging(f'Shortname: {shortname}')
+    logging.info(f'Shortname: {shortname}')
     if shortname not in shortname_to_files:
         shortname_to_files[shortname] = []
     shortname_to_files[shortname].append(file)
@@ -70,16 +70,16 @@ for shortname, files in shortname_to_files.items():
     grid_img = Image.new('RGB', (total_width + 210, max_height + 50))  # +210 for prompt frame and border
     grid_draw = ImageDraw.Draw(grid_img)
     x_offset = 210  # start from the right of the prompt frame
-    logging(f'Loop begin')
+    logging.info(f'Loop begin')
     for img, label in zip(images, labels):
         grid_draw.text((x_offset, 0), get_wrapped_text(label, font, 25), font=font, fill='white')
         grid_img.paste(img, (x_offset, 50))
         x_offset += img.width + 10  # +10 for border
-    logging(f'Loop end')
+    logging.info(f'Loop end')
 
     # Paste the prompt image to the grid image
     grid_img.paste(prompt_img, (0, 50))
-    logging(f'Saving...')
+    logging.info(f'Saving...')
     grid_img.save(f'{grid_dir}/{shortname}_grid.png')
 exit(0)
 
@@ -87,7 +87,7 @@ grouped_files = {}
 for file in image_files:
     # get parameters from filename
     basename = '.'.join(os.path.basename(file).split('.')[:-1])
-    logging(f'Found basename: {basename}')
+    logging.info(f'Found basename: {basename}')
     shortname, TIMESTEP_TYPE, RESCALE_BETAS_ZEROS_SNR, GUIDANCE, GUIDANCE_RESCALE = basename.split('_')
     GUIDANCE = int(GUIDANCE[:-1])  # remove 'g' and convert to int
     GUIDANCE_RESCALE = float(GUIDANCE_RESCALE[:-1])  # remove 'r' and convert to float
@@ -126,16 +126,16 @@ for key, GUIDANCE_dict in grouped_files.items():
     all_guidance_images = []  # Store all grid images for each GUIDANCE level
     for GUIDANCE, GUIDANCE_RESCALE_dict in GUIDANCE_dict.items():
         # sort GUIDANCE_RESCALE_dict by GUIDANCE_RESCALE
-        logging(f'Working on GUIDANCE {GUIDANCE}')
+        logging.info(f'Working on GUIDANCE {GUIDANCE}')
         GUIDANCE_RESCALE_dict = {k: GUIDANCE_RESCALE_dict[k] for k in sorted(GUIDANCE_RESCALE_dict)}
         images = [Image.open(GUIDANCE_RESCALE_dict[GUIDANCE_RESCALE]) for GUIDANCE_RESCALE in GUIDANCE_RESCALE_dict]
         image_grid = create_image_grid(images, len(GUIDANCE_RESCALE_dict))  # create grid for each GUIDANCE
-        logging(f'Saving image..')
+        logging.info(f'Saving image..')
         image_grid.save(f'{grid_dir}/{shortname}_{TIMESTEP_TYPE}_{RESCALE_BETAS_ZEROS_SNR}_{GUIDANCE}g_grid.png')
         all_guidance_images.append(image_grid)
 
     # Stack all GUIDANCE level grids vertically
-    logging(f'Stacking images like shit on a log.')
+    logging.info(f'Stacking images like shit on a log.')
     stacked_image = stack_images_vertically(all_guidance_images)
-    logging(f'Saving stack')
+    logging.info(f'Saving stack')
     stacked_image.save(f'{grid_dir}/{shortname}_{TIMESTEP_TYPE}_{RESCALE_BETAS_ZEROS_SNR}_stacked.png')

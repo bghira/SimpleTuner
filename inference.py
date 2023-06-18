@@ -26,7 +26,7 @@ try:
     range_end = checkpoints[-1]
 except Exception as e:
     range_end = range_begin
-logging(f'Highest checkpoint found so far: {range_end}')
+logging.info(f'Highest checkpoint found so far: {range_end}')
 
 # Convert numeric range to an array of string numerics:
 #checkpoints = [ str(x) for x in range(range_begin, range_end + range_step, range_step) ]
@@ -39,33 +39,33 @@ for checkpoint in checkpoints:
         if len(checkpoints) > 1 and os.path.isfile(f'{output_test_dir}/target-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png'):
             continue
         try:
-            logging(f'Loading checkpoint: {model_path}/checkpoint-{checkpoint}')
+            logging.info(f'Loading checkpoint: {model_path}/checkpoint-{checkpoint}')
             # Does the checkpoint path exist?
             if checkpoint != "0" and not os.path.exists(f'{model_path}/checkpoint-{checkpoint}'):
-                logging(f'Checkpoint {checkpoint} does not exist.')
+                logging.info(f'Checkpoint {checkpoint} does not exist.')
                 continue
             
             if checkpoint != "0":
-                logging(f'Loading non-base ckpt.')
+                logging.info(f'Loading non-base ckpt.')
                 if enable_textencoder is None:
-                    logging(f'Loading full unet and te')
+                    logging.info(f'Loading full unet and te')
                     # Enable fully-trained text_encoder and unet
                     text_encoder = CLIPTextModel.from_pretrained(f"{model_path}/checkpoint-{checkpoint}/text_encoder")
                     unet = UNet2DConditionModel.from_pretrained(f"{model_path}/checkpoint-{checkpoint}/unet")
                     pipeline = DiffusionPipeline.from_pretrained(model_id, unet=unet, text_encoder=text_encoder)
                 elif enable_textencoder:
                     # Enable the fully-trained text encoder with the 4200 ckpt unet
-                    logging(f'Loading full te and base unet')
+                    logging.info(f'Loading full te and base unet')
                     text_encoder = CLIPTextModel.from_pretrained(f"{model_path}/checkpoint-{checkpoint}/text_encoder")
                     pipeline = DiffusionPipeline.from_pretrained(model_id, text_encoder=text_encoder)
                 else:
                     # Enable the fully-trained unet with the 4200 ckpt text encoder
-                    logging(f'Loading full unet and base te')
+                    logging.info(f'Loading full unet and base te')
                     unet = UNet2DConditionModel.from_pretrained(f"{model_path}/checkpoint-{checkpoint}/unet")
                     pipeline = DiffusionPipeline.from_pretrained(model_id, unet=unet)
             else:
                 # Do the base model.
-                logging(f'Loading base ckpt.')
+                logging.info(f'Loading base ckpt.')
                 pipeline = DiffusionPipeline.from_pretrained(model_id)
             pipeline.unet = torch.compile(pipeline.unet)
             compel = Compel(tokenizer=pipeline.tokenizer, text_encoder=pipeline.text_encoder)
@@ -80,15 +80,15 @@ for checkpoint in checkpoints:
             )
             pipeline.to("cuda")
         except Exception as e:
-            logging(f'Could not generate pipeline for checkpoint {checkpoint}: {e}')
+            logging.info(f'Could not generate pipeline for checkpoint {checkpoint}: {e}')
             continue
         # Does the file exist already?
         import os
         for shortname, prompt in prompts.items():
             if not os.path.isfile(f'{output_test_dir}/{shortname}-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png'):
-                logging(f'Generating {shortname} at {checkpoint}_{base_checkpoint_for_unet}{suffix}')
-                logging(f'Shortname: {shortname}, Prompt: {prompt}')
-                logging(f'Negative: {negative}')
+                logging.info(f'Generating {shortname} at {checkpoint}_{base_checkpoint_for_unet}{suffix}')
+                logging.info(f'Shortname: {shortname}, Prompt: {prompt}')
+                logging.info(f'Negative: {negative}')
                 conditioning = compel.build_conditioning_tensor(prompt)
                 generator = torch.Generator(device="cuda").manual_seed(torch_seed)
                 output = pipeline(generator=generator, negative_prompt_embeds=negative_embed, prompt_embeds=conditioning, guidance_scale=9.2, guidance_rescale=0.3, width=1152, height=768, num_inference_steps=15).images[0]
@@ -96,8 +96,8 @@ for checkpoint in checkpoints:
                 del output
             
         if save_pretrained and not os.path.exists(f'{model_path}/pipeline'):
-            logging(f'Saving pretrained pipeline.')
+            logging.info(f'Saving pretrained pipeline.')
             pipeline.save_pretrained(f'{model_path}/pseudo-real', safe_serialization=True)
         elif save_pretrained:
             raise Exception('Can not save pretrained model, path already exists.')
-logging(f'Exit.')
+logging.info(f'Exit.')
