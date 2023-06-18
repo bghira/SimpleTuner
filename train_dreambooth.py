@@ -67,8 +67,8 @@ from diffusers.utils.import_utils import is_xformers_available
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
 
-logger = get_logger(__name__)
-
+logger = get_logger('root')
+from helpers import log_format
 from torchvision.transforms import ToTensor
 
 # Convert PIL Image to PyTorch Tensor
