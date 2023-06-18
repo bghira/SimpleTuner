@@ -410,8 +410,9 @@ def main(args):
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
                 continue
-
+            print(f'Accumulating...')
             with accelerator.accumulate(unet):
+                print(f'Convert to latent space')
                 # Convert images to latent space
                 latents = vae.encode(
                     batch["pixel_values"].to(dtype=weight_dtype)
@@ -449,7 +450,7 @@ def main(args):
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"])[0]
-
+                print(f'Calculate target for loss')
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise

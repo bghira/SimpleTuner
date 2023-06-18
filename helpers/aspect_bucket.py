@@ -21,6 +21,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 if self.current_count >= self.batch_size:
                     self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
                     self.current_count = 0
+            else:
+                print(f'Bucket {bucket} is empty. Moving to the next bucket.')
 
     def __len__(self):
         return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
