@@ -298,7 +298,7 @@ def main(args):
         overrode_max_train_steps = True
 
     if args.lr_scheduler != "polynomial":
-        get_scheduler(
+        lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
@@ -395,6 +395,7 @@ def main(args):
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             args.resume_from_checkpoint = None
+            StateTracker.start_training()
         else:
             logging.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
@@ -405,7 +406,11 @@ def main(args):
             resume_step = resume_global_step % (
                 num_update_steps_per_epoch * args.gradient_accumulation_steps
             )
-
+    else:
+        StateTracker.start_training()
+    
+    import time
+    time.sleep(10)
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
         range(global_step, args.max_train_steps),
@@ -435,6 +440,8 @@ def main(args):
                 continue
             if type(batch) is list:
                 logging.warning('Burning a step due to dummy data.')
+                time.sleep(10)
+                
                 continue
             logging.debug(f"Accumulating...")
             with accelerator.accumulate(unet):
