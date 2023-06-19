@@ -19,8 +19,6 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 logging.info(f'Yielding a batch for bucket {bucket}.')
                 for _ in range(self.batch_size):
                     yield random.choice(self.aspect_ratio_bucket_indices[bucket])
-                # Move on to the next bucket after yielding a batch
-                self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
                 # Log the state of buckets
                 self.log_buckets()
             else:
@@ -39,6 +37,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     self.current_bucket %= len(self.buckets)
                     print(f'Changing bucket from {bucket} to {self.buckets[self.current_bucket]}.')
                     time.sleep(1)
+            # Move on to the next bucket after yielding a batch
+            self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
     def __len__(self):
         return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
 
