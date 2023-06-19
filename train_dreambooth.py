@@ -31,7 +31,7 @@ from helpers.min_snr_gamma import compute_snr
 from helpers.validation import log_validation
 from helpers.metadata import save_model_card
 from helpers.custom_schedule import (
-    patch_scheduler_betas,
+    enforce_zero_terminal_snr,
     get_polynomial_decay_schedule_with_warmup,
 )
 from helpers.model import freeze_entire_component, freeze_text_encoder
@@ -166,12 +166,9 @@ def main(args):
     )
 
     # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="scheduler",
-        rescale_betas_zero_snr=True,
-    )
-    patch_scheduler_betas(noise_scheduler)
+    temp_scheduler = DDIMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    trained_betas = enforce_zero_terminal_snr(temp_scheduler.betas).numpy().tolist()
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", trained_betas=trained_betas)
     text_encoder = freeze_text_encoder(
         args,
         text_encoder_cls.from_pretrained(
