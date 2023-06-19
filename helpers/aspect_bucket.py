@@ -36,7 +36,6 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
     def change_bucket(self):
         self.current_bucket %= len(self.buckets)
         logging.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
-        time.sleep(1)
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
