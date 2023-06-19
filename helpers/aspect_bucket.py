@@ -1,4 +1,4 @@
-import torch, logging, random
+import torch, logging, random, time
 from .state_tracker import StateTracker
 
 class BalancedBucketSampler(torch.utils.data.Sampler):
@@ -38,6 +38,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 else:
                     # Calculate next bucket index
                     self.current_bucket %= len(self.buckets)
+                    print(f'Changing bucket from {bucket} to {self.buckets[self.current_bucket]}.')
+                    time.sleep(1)
     def __len__(self):
         return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
 
