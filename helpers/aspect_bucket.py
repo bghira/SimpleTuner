@@ -19,7 +19,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 )
                 self.log_state()
             else:
-                if StateTracker.status_training():
+                if StateTracker.status_training() and bucket not in self.exhausted_buckets:
                     self.move_to_exhausted()
                 if not self.buckets:
                     logging.info(f"All buckets are exhausted. Exiting...")
