@@ -45,6 +45,7 @@ import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
+from diffusers.optimization import get_scheduler
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from PIL import Image
@@ -297,17 +298,23 @@ def main(args):
         overrode_max_train_steps = True
 
     if args.lr_scheduler != "polynomial":
-        raise ValueError(
-            "Can not use anything other than polynomial LR scheduler as of this moment."
+        get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power
         )
-    lr_scheduler = get_polynomial_decay_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-        lr_end=args.learning_rate_end,
-        power=args.lr_power,
-        last_epoch=-1,
-    )
+    else:
+        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            lr_end=args.learning_rate_end,
+            power=args.lr_power,
+            last_epoch=-1,
+        )
 
     # Prepare everything with our `accelerator`.
     if args.train_text_encoder:
