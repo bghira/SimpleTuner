@@ -15,7 +15,6 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             bucket = self.buckets[self.current_bucket]
 
             # If the bucket has enough samples for a full batch, yield from it
-            logging.debug('Querying bucket for item.')
             if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
                 logging.info(f'Yielding a batch for bucket {bucket}.')
                 for _ in range(self.batch_size):
