@@ -15,17 +15,22 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             bucket = self.buckets[self.current_bucket]
 
             # If the bucket has enough samples for a full batch, yield from it
+            logging.debug('Querying bucket for item.')
             if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
                 logging.info(f'Yielding a batch for bucket {bucket}.')
                 for _ in range(self.batch_size):
                     yield random.choice(self.aspect_ratio_bucket_indices[bucket])
                 # Move on to the next bucket after yielding a batch
                 self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
+                # Log the state of buckets
+                self.log_buckets()
             else:
                 # If we're in training mode, move this bucket to the exhausted list and remove from active buckets
                 if StateTracker.status_training():
                     logging.info(f'Bucket {bucket} is empty or doesn\'t have enough samples for a full batch. Moving to the next bucket.')
                     self.exhausted_buckets.append(self.buckets[self.current_bucket])
+                    # Log the state of buckets
+                    self.log_buckets()
                 # If all buckets are empty or don't have enough samples for a full batch, break the loop
                 if not self.buckets:
                     logging.info(f'All buckets are exhausted. Exiting...')
@@ -33,9 +38,6 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 else:
                     # Calculate next bucket index
                     self.current_bucket %= len(self.buckets)
-
-            # Log the state of buckets
-            self.log_buckets()
     def __len__(self):
         return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
 
