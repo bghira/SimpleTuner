@@ -25,7 +25,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 # If we're in training mode, move this bucket to the exhausted list and remove from active buckets
                 if StateTracker.status_training():
                     logging.info(f'Bucket {bucket} is empty or doesn\'t have enough samples for a full batch. Moving to the next bucket.')
-                    self.exhausted_buckets.append(self.buckets.pop(self.current_bucket))
+                    self.exhausted_buckets.append(self.buckets[self.current_bucket])
                 # If all buckets are empty or don't have enough samples for a full batch, break the loop
                 if not self.buckets:
                     logging.info(f'All buckets are exhausted. Exiting...')
