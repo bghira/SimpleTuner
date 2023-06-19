@@ -77,10 +77,6 @@ to_tensor = ToTensor()
 
 
 def collate_fn(examples):
-    if not StateTracker.status_training():
-        logging.debug('collate_fn: not training, returning examples.')
-        return examples
-
     input_ids = [example["instance_prompt_ids"] for example in examples]
     pixel_values = [to_tensor(example["instance_images"]) for example in examples]
     pixel_values = torch.stack(pixel_values)
