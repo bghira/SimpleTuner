@@ -171,7 +171,7 @@ def main(args):
         subfolder="scheduler",
         rescale_betas_zero_snr=True,
     )
-
+    patch_scheduler_betas(noise_scheduler)
     text_encoder = freeze_text_encoder(
         args,
         text_encoder_cls.from_pretrained(
