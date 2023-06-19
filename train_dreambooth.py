@@ -77,6 +77,10 @@ to_tensor = ToTensor()
 
 
 def collate_fn(examples):
+    if not StateTracker.status_training():
+        logging.debug('collate_fn: not training, returning examples.')
+        return examples
+
     input_ids = [example["instance_prompt_ids"] for example in examples]
     pixel_values = [to_tensor(example["instance_images"]) for example in examples]
     pixel_values = torch.stack(pixel_values)
@@ -406,7 +410,6 @@ def main(args):
         StateTracker.start_training()
     
     import time
-    time.sleep(10)
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
         range(global_step, args.max_train_steps),
