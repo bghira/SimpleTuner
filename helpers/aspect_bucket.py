@@ -1,6 +1,7 @@
 import torch, logging, random, time
 from .state_tracker import StateTracker
 
+
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(self, aspect_ratio_bucket_indices, batch_size=15):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices
@@ -11,59 +12,67 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def __iter__(self):
         while True:
-            # Choose the bucket to yield from
             bucket = self.buckets[self.current_bucket]
-
-            # If the bucket has enough samples for a full batch, yield from it
             if len(self.aspect_ratio_bucket_indices[bucket]) >= self.batch_size:
-                logging.info(f'Yielding a batch for bucket {bucket}.')
-                for _ in range(self.batch_size):
-                    yield random.choice(self.aspect_ratio_bucket_indices[bucket])
-                # Log the state of buckets
-                self.log_buckets()
+                yield from random.choices(
+                    self.aspect_ratio_bucket_indices[bucket], k=self.batch_size
+                )
+                self.log_state()
             else:
-                # If we're in training mode, move this bucket to the exhausted list and remove from active buckets
                 if StateTracker.status_training():
-                    logging.info(f'Bucket {bucket} is empty or doesn\'t have enough samples for a full batch. Moving to the next bucket.')
-                    self.exhausted_buckets.append(self.buckets[self.current_bucket])
-                    # Log the state of buckets
-                    self.log_buckets()
-                # If all buckets are empty or don't have enough samples for a full batch, break the loop
+                    self.move_to_exhausted()
                 if not self.buckets:
-                    logging.info(f'All buckets are exhausted. Exiting...')
+                    logging.info(f"All buckets are exhausted. Exiting...")
                     break
                 else:
-                    # Calculate next bucket index
-                    self.current_bucket %= len(self.buckets)
-                    print(f'Changing bucket from {bucket} to {self.buckets[self.current_bucket]}.')
-                    time.sleep(1)
-            # Move on to the next bucket after yielding a batch
+                    self.change_bucket()
             self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
-    def __len__(self):
-        return sum(len(indices) for indices in self.aspect_ratio_bucket_indices.values())
 
-    def log_buckets(self):
-        def convert_to_human_readable(ratio_float):
-            ratio_float = round(ratio_float, 2)
-            if ratio_float == 1.0:
-                return "1:1"
-            if ratio_float == 0.5:
-                return "1:2"
-            if ratio_float == 0.67:
-                return "2:3"
-            if ratio_float == 0.75:
-                return "3:4"
-            if ratio_float == 0.8:
-                return "4:5"
-            if ratio_float == 1.33:
-                return "4:3"
-            if ratio_float == 1.5:
-                return "3:2"
-            if ratio_float == 1.78:
-                return "16:9"
-            if ratio_float == 2.0:
-                return "2:1"
-            return str(ratio_float)
-        # Log active and exhausted buckets in human-readable format
-        logging.debug(f'Active Buckets: {", ".join(convert_to_human_readable(float(b)) for b in self.buckets)}')
-        logging.debug(f'Exhausted Buckets: {", ".join(convert_to_human_readable(float(b)) for b in self.exhausted_buckets)}')
+    def __len__(self):
+        return sum(
+            len(indices) for indices in self.aspect_ratio_bucket_indices.values()
+        )
+
+    def change_bucket(self):
+        self.current_bucket %= len(self.buckets)
+        logging.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
+        time.sleep(1)
+
+    def move_to_exhausted(self):
+        bucket = self.buckets[self.current_bucket]
+        self.exhausted_buckets.append(bucket)
+        logging.info(
+            f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
+        )
+        self.log_state()
+
+    def log_state(self):
+        logging.debug(
+            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b)) for b in self.buckets)}'
+        )
+        logging.debug(
+            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b)) for b in self.exhausted_buckets)}'
+        )
+
+    @staticmethod
+    def convert_to_human_readable(ratio_float):
+        ratio_float = round(ratio_float, 2)
+        if ratio_float == 1.0:
+            return "1:1"
+        if ratio_float == 0.5:
+            return "1:2"
+        if ratio_float == 0.67:
+            return "2:3"
+        if ratio_float == 0.75:
+            return "3:4"
+        if ratio_float == 0.8:
+            return "4:5"
+        if ratio_float == 1.33:
+            return "4:3"
+        if ratio_float == 1.5:
+            return "3:2"
+        if ratio_float == 1.78:
+            return "16:9"
+        if ratio_float == 2.0:
+            return "2:1"
+        return str(ratio_float)
