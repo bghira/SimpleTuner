@@ -63,7 +63,7 @@ class DreamBoothDataset(Dataset):
                 ]
             )
 
-    def process_image(image_path):
+    def process_image(self, image_path):
         try:
             image = Image.open(image_path)
             # Apply EXIF transforms
