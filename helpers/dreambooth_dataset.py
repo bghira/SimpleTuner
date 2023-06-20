@@ -7,8 +7,6 @@ from PIL import Image
 import json, logging
 from tqdm import tqdm
 
-from concurrent.futures import ProcessPoolExecutor
-from functools import partial
 
 class DreamBoothDataset(Dataset):
     """
@@ -21,7 +19,7 @@ class DreamBoothDataset(Dataset):
         instance_data_root,
         instance_prompt,
         tokenizer,
-        aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
+        aspect_ratio_buckets=[ 1.0, 1.5, 0.67, 0.75, 1.78 ],
         size=768,
         center_crop=False,
         print_names=False,
@@ -49,7 +47,7 @@ class DreamBoothDataset(Dataset):
         self.use_original_images = use_original_images
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         if not use_original_images:
-            logging.debug(f"Building transformations.")
+            logging.debug(f'Building transformations.')
             self.image_transforms = transforms.Compose(
                 [
                     transforms.Resize(
@@ -62,23 +60,6 @@ class DreamBoothDataset(Dataset):
                     transforms.Normalize([0.5], [0.5]),
                 ]
             )
-
-    def process_image(self, image_path):
-        try:
-            image = Image.open(image_path)
-            # Apply EXIF transforms
-            image = exif_transpose(image)
-            aspect_ratio = image.width / image.height
-            aspect_ratio = round(
-                aspect_ratio, 2
-            )  # Round to 2 decimal places to avoid excessive unique buckets
-
-            return aspect_ratio, image_path
-        except Exception as e:
-            logging.error(f"Error processing image {image_path}.")
-            logging.error(e)
-            return None
-
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
         if cache_file.exists():
@@ -88,29 +69,29 @@ class DreamBoothDataset(Dataset):
         else:
             logging.warning("Computing aspect ratio bucket indices.")
             self.aspect_ratio_bucket_indices = {}
-
-            with ProcessPoolExecutor() as executor:
-                for aspect_ratio, image_path in tqdm(
-                    executor.map(self.process_image, self.instance_images_path),
-                    total=len(self.instance_images_path),
-                    desc="Assigning to buckets",
-                ):
-                    if aspect_ratio is None:
-                        continue
+            for i in tqdm(range(len(self.instance_images_path)), desc="Assigning to buckets"):
+                try:
+                    image_path = self.instance_images_path[i]
+                    image = Image.open(image_path)
+                    # Apply EXIF transforms
+                    image = exif_transpose(image)
+                    # image = self._resize_for_condition_image(image, self.size)
+                    aspect_ratio = image.width / image.height
+                    aspect_ratio = round(aspect_ratio, 2) # Round to 2 decimal places to avoid excessive unique buckets
 
                     # Create a new bucket if it doesn't exist
-                    aspect_ratio_str = str(aspect_ratio)
-                    if aspect_ratio_str not in self.aspect_ratio_bucket_indices:
-                        self.aspect_ratio_bucket_indices[aspect_ratio_str] = []
+                    if str(aspect_ratio) not in self.aspect_ratio_bucket_indices:
+                        self.aspect_ratio_bucket_indices[str(aspect_ratio)] = []
 
-                    self.aspect_ratio_bucket_indices[aspect_ratio_str].append(
-                        self.instance_images_path.index(image_path)
-                    )
-
-            with cache_file.open("w") as f:
-                json.dump(self.aspect_ratio_bucket_indices, f)
-
+                    self.aspect_ratio_bucket_indices[str(aspect_ratio)].append(i)
+                    with cache_file.open("w") as f:
+                        json.dump(self.aspect_ratio_bucket_indices, f)
+                except Exception as e:
+                    logging.error(f'Error processing image {image_path}.')
+                    logging.error(e)
+                    continue
         return self.aspect_ratio_bucket_indices
+
 
     def __len__(self):
         return self._length
@@ -118,9 +99,7 @@ class DreamBoothDataset(Dataset):
     def __getitem__(self, index):
         example = {}
         if self.print_names:
-            logging.debug(
-                f"Open image: {self.instance_images_path[index % self.num_instance_images]}"
-            )
+            logging.debug(f'Open image: {self.instance_images_path[index % self.num_instance_images]}')
         instance_image = Image.open(
             self.instance_images_path[index % self.num_instance_images]
         )
@@ -139,18 +118,16 @@ class DreamBoothDataset(Dataset):
             if self.prepend_instance_prompt:
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
-            logging.debug(f"Prompt: {instance_prompt}")
+            logging.debug(f'Prompt: {instance_prompt}')
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():
-            example["instance_images"] = self._resize_for_condition_image(
-                instance_image, self.size
-            )
+            example["instance_images"] = self._resize_for_condition_image(instance_image, self.size)
         else:
             example["instance_images"] = instance_image
         if not self.use_original_images and StateTracker.status_training():
             example["instance_images"] = self.image_transforms(instance_image)
-        example["instance_prompt_ids"] = None
+        example['instance_prompt_ids'] = None
         if StateTracker.status_training():
             example["instance_prompt_ids"] = self.tokenizer(
                 instance_prompt,
@@ -161,7 +138,6 @@ class DreamBoothDataset(Dataset):
             ).input_ids
 
         return example
-
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
         W, H = input_image.size
