@@ -38,7 +38,6 @@ class DreamBoothDataset(Dataset):
             raise ValueError(
                 f"Instance {self.instance_data_root} images root doesn't exists."
             )
-
         self.instance_images_path = list(Path(instance_data_root).iterdir())
         self.num_instance_images = len(self.instance_images_path)
         self.instance_prompt = instance_prompt
@@ -48,77 +47,73 @@ class DreamBoothDataset(Dataset):
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         if not use_original_images:
             logging.debug(f"Building transformations.")
-            self.image_transforms = transforms.Compose(
-                [
-                    transforms.Resize(
-                        size, interpolation=transforms.InterpolationMode.BILINEAR
-                    ),
-                    transforms.CenterCrop(size)
-                    if center_crop
-                    else transforms.RandomCrop(size),
-                    transforms.ToTensor(),
-                    transforms.Normalize([0.5], [0.5]),
+            self.image_transforms = self._get_image_transforms()
+
+    def _get_image_transforms(self):
+        return transforms.Compose(
+            [
+                transforms.Resize(
+                    self.size, interpolation=transforms.InterpolationMode.BILINEAR
+                ),
+                transforms.CenterCrop(self.size)
+                if self.center_crop
+                else transforms.RandomCrop(self.size),
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
+
+    def load_aspect_ratio_bucket_indices(self, cache_file):
+        logging.info("Loading aspect ratio bucket indices from cache file.")
+        with cache_file.open("r") as f:
+            aspect_ratio_bucket_indices = json.load(f)
+            for bucket in aspect_ratio_bucket_indices:
+                bucket[:] = [
+                    image_file for image_file in bucket if Path(image_file).exists()
                 ]
-            )
+        with cache_file.open("w") as f:
+            json.dump(aspect_ratio_bucket_indices, f)
+        return aspect_ratio_bucket_indices
+
+    def compute_aspect_ratio_bucket_indices(self, cache_file):
+        logging.warning("Computing aspect ratio bucket indices.")
+        aspect_ratio_bucket_indices = {}
+        for i in tqdm(
+            range(len(self.instance_images_path)), desc="Assigning to buckets"
+        ):
+            try:
+                image_path = str(self.instance_images_path[i])
+                image = Image.open(image_path)
+                # Apply EXIF transforms
+                image = exif_transpose(image)
+                aspect_ratio = round(
+                    image.width / image.height, 3
+                )  # Round to avoid excessive unique buckets
+                # Create a new bucket if it doesn't exist
+                if str(aspect_ratio) not in aspect_ratio_bucket_indices:
+                    aspect_ratio_bucket_indices[str(aspect_ratio)] = []
+                aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path)
+                with cache_file.open("w") as f:
+                    json.dump(aspect_ratio_bucket_indices, f)
+            except Exception as e:
+                logging.error(f"Error processing image {image_path}.")
+                logging.error(e)
+                continue
+            finally:
+                image.close()
+        return aspect_ratio_bucket_indices
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
         if cache_file.exists():
-            logging.info("Loading aspect ratio bucket indices from cache file.")
-            with cache_file.open("r") as f:
-                self.aspect_ratio_bucket_indices = json.load(f)
-                for bucket in self.aspect_ratio_bucket_indices:
-                    for image_file in bucket:
-                        # Remove files that no longer exist:
-                        if not Path(image_file).exists():
-                            bucket.remove(image_file)
-            with cache_file.open("w") as f:
-                json.dump(self.aspect_ratio_bucket_indices, f)
+            return self.load_aspect_ratio_bucket_indices(cache_file)
         else:
-            logging.warning("Computing aspect ratio bucket indices.")
-            self.aspect_ratio_bucket_indices = {}
-            for i in tqdm(
-                range(len(self.instance_images_path)), desc="Assigning to buckets"
-            ):
-                try:
-                    image_path = str(self.instance_images_path[i])
-                    image = Image.open(image_path)
-                    # Apply EXIF transforms
-                    image = exif_transpose(image)
-                    # image = self._resize_for_condition_image(image, self.size)
-                    aspect_ratio = image.width / image.height
-                    aspect_ratio = round(
-                        aspect_ratio, 3
-                    )  # Round to 2 decimal places to avoid excessive unique buckets
-
-                    # Create a new bucket if it doesn't exist
-                    if str(aspect_ratio) not in self.aspect_ratio_bucket_indices:
-                        self.aspect_ratio_bucket_indices[str(aspect_ratio)] = []
-
-                    self.aspect_ratio_bucket_indices[str(aspect_ratio)].append(
-                        image_path
-                    )
-                    with cache_file.open("w") as f:
-                        json.dump(self.aspect_ratio_bucket_indices, f)
-                except Exception as e:
-                    logging.error(f"Error processing image {image_path}.")
-                    logging.error(e)
-                    continue
-                finally:
-                    image.close()
-        return self.aspect_ratio_bucket_indices
+            return self.compute_aspect_ratio_bucket_indices(cache_file)
 
     def __len__(self):
         return self._length
 
-    def __getitem__(self, image_path):
-        example = {}
-        if self.print_names:
-            logging.debug(f"Open image: {image_path}")
-        instance_image = Image.open(image_path)
-        # Apply EXIF transformations.
-        if StateTracker.status_training():
-            instance_image = exif_transpose(instance_image)
+    def _prepare_instance_prompt(self, image_path):
         instance_prompt = self.instance_prompt
         if self.use_captions:
             instance_prompt = Path(image_path).stem
@@ -130,6 +125,17 @@ class DreamBoothDataset(Dataset):
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
             logging.debug(f"Prompt: {instance_prompt}")
+        return instance_prompt
+
+    def __getitem__(self, image_path):
+        example = {}
+        if self.print_names:
+            logging.debug(f"Open image: {image_path}")
+        instance_image = Image.open(image_path)
+        # Apply EXIF transformations.
+        if StateTracker.status_training():
+            instance_image = exif_transpose(instance_image)
+        instance_prompt = self._prepare_instance_prompt(image_path)
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():
@@ -149,7 +155,6 @@ class DreamBoothDataset(Dataset):
                 max_length=self.tokenizer.model_max_length,
                 return_tensors="pt",
             ).input_ids
-
         return example
 
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
