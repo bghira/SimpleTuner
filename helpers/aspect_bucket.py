@@ -30,6 +30,28 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         with open(self.seen_images_path, "w") as f:
             json.dump(self.seen_images, f)
 
+    def remove_image(self, image_path, bucket):
+        if image_path in self.aspect_ratio_bucket_indices[bucket]:
+            self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+
+    def handle_small_image(self, image_path, bucket):
+        logging.warn(f"Image too small: DELETING image and continuing search.")
+        os.remove(image_path)
+        self.remove_image(image_path, bucket)
+
+    def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
+        logging.warn(
+            f"Found an image in a bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}"
+        )
+        self.remove_image(image_path, bucket)
+        if actual_bucket in self.aspect_ratio_bucket_indices:
+            logging.warn(f"Moved image to bucket, it already existed.")
+            self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
+        else:
+            # Create a new bucket if it doesn't exist
+            logging.warn(f"Created new bucket for that pesky image.")
+            self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
+
     def __iter__(self):
         while True:
             if not self.buckets:
@@ -37,9 +59,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 break
 
             bucket = self.buckets[self.current_bucket]
-            bucket_length = len(self.aspect_ratio_bucket_indices[bucket])
 
-            if bucket_length < self.batch_size:
+            if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
                 if bucket not in self.exhausted_buckets:
                     self.move_to_exhausted()
                 self.change_bucket()
@@ -58,52 +79,20 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
             samples = random.choices(available_images, k=self.batch_size)
             to_yield = []
-            for i in range(len(samples)):
-                # Reassign the bucket an image is in if its aspect ratio is incorrect
-                image_path = samples[i]
-                # Does the path exist?
+            for image_path in samples:
                 if not os.path.exists(image_path):
                     logging.warn(f"Image path does not exist: {image_path}")
-                    # Remove from the bucket:
-                    if image_path in self.aspect_ratio_bucket_indices[bucket]:
-                        self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+                    self.remove_image(image_path, bucket)
                     continue
                 image = Image.open(image_path)
                 if image.width < 1024 or image.height < 1024:
-                    logging.warn(
-                        f"Image too small: DELETING image and continuing search."
-                    )
                     image.close()
-                    os.remove(image_path)
+                    self.handle_small_image(image_path, bucket)
                     continue
                 aspect_ratio = round(image.width / image.height, 3)
                 actual_bucket = str(aspect_ratio)
                 if actual_bucket != bucket:
-                    logging.warn(
-                        f"Found an image in a bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}"
-                    )
-                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
-                    if actual_bucket in self.aspect_ratio_bucket_indices:
-                        logging.warn(f"Moved image to bucket, it already existed.")
-                        self.aspect_ratio_bucket_indices[actual_bucket].append(
-                            image_path
-                        )
-                    else:
-                        # Create a new bucket if it doesn't exist
-                        logging.warn(f"Created new bucket for that pesky image.")
-                        self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
-                    # Get a new sample from the same bucket
-                    if self.aspect_ratio_bucket_indices[bucket]:
-                        logging.debug(f"Yielding sample from bucket: {bucket}")
-                        new_sample = self.aspect_ratio_bucket_indices[bucket].pop()
-                        new_image = Image.open(new_sample)
-                        if new_image.width < 1024 or new_image.height < 1024:
-                            logging.warn(
-                                f"Image too small: discarding and continuing search."
-                            )
-                            new_image.close()
-                            os.remove(new_sample)
-                        to_yield.append(new_sample)
+                    self.handle_incorrect_bucket(image_path, bucket, actual_bucket)
                 else:
                     logging.debug(
                         f"Yielding {image.width}x{image.height} sample from bucket: {bucket} with aspect {actual_bucket}"
@@ -111,11 +100,16 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     to_yield.append(image_path)
                     if StateTracker.status_training():
                         self.seen_images[image_path] = actual_bucket
+
             if len(to_yield) == self.batch_size:
-                logging.debug(f"Done yielding.")
                 self.log_state()
                 if StateTracker.status_training():
+                    logging.debug(f"Done yielding: saving SEEN images.")
                     self.save_seen_images()  # Save seen images
+                else:
+                    logging.debug(
+                        f"Done yielding, but we are not yet training. Not saving seen images."
+                    )
                 self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
                 for image_to_yield in to_yield:
                     yield image_to_yield
