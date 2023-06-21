@@ -1,5 +1,5 @@
 import json, os
-import threading
+import threading, logging
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
