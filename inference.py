@@ -75,8 +75,7 @@ for checkpoint in checkpoints:
                 model_id,
                 subfolder="scheduler",
                 rescale_betas_zero_snr=True,
-                guidance_rescale=0.3,
-                timestep_scaling="trailing"
+                timestep_spacing="trailing"
             )
             pipeline.to("cuda")
         except Exception as e:

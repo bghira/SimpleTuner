@@ -68,7 +68,7 @@ from diffusers.utils.import_utils import is_xformers_available
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
 
-logger = get_logger('root')
+logger = get_logger("root")
 from helpers import log_format
 from torchvision.transforms import ToTensor
 
@@ -78,7 +78,7 @@ to_tensor = ToTensor()
 
 def collate_fn(examples):
     if not StateTracker.status_training():
-        logging.debug('collate_fn: not training, returning examples.')
+        logging.debug("collate_fn: not training, returning examples.")
         return examples
 
     input_ids = [example["instance_prompt_ids"] for example in examples]
@@ -166,9 +166,17 @@ def main(args):
     )
 
     # Load scheduler and models
-    temp_scheduler = DDIMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    temp_scheduler = DDIMScheduler.from_pretrained(
+        args.pretrained_model_name_or_path,
+        subfolder="scheduler",
+        timestep_spacing="trailing",
+    )
     trained_betas = enforce_zero_terminal_snr(temp_scheduler.betas).numpy().tolist()
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", trained_betas=trained_betas)
+    noise_scheduler = DDPMScheduler.from_pretrained(
+        args.pretrained_model_name_or_path,
+        subfolder="scheduler",
+        trained_betas=trained_betas,
+    )
     text_encoder = freeze_text_encoder(
         args,
         text_encoder_cls.from_pretrained(
@@ -273,14 +281,14 @@ def main(args):
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
     )
-
+    custom_balanced_sampler = BalancedBucketSampler(
+        train_dataset.aspect_ratio_bucket_indices, batch_size=args.train_batch_size
+    )
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
         shuffle=False,  # The sampler handles shuffling
-        sampler=BalancedBucketSampler(
-            train_dataset.aspect_ratio_bucket_indices, batch_size=args.train_batch_size
-        ),
+        sampler=custom_balanced_sampler,
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
@@ -301,7 +309,7 @@ def main(args):
             num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
             num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
             num_cycles=args.lr_num_cycles,
-            power=args.lr_power
+            power=args.lr_power,
         )
     else:
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
@@ -405,8 +413,9 @@ def main(args):
             )
     else:
         StateTracker.start_training()
-    
+
     import time
+
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
         range(global_step, args.max_train_steps),
@@ -431,13 +440,15 @@ def main(args):
                 if step + 1 == resume_step:
                     # We want to trigger the batch to be properly generated when we start.
                     if not StateTracker.status_training():
-                        logging.info(f"Starting training, as resume_step has been reached.")
+                        logging.info(
+                            f"Starting training, as resume_step has been reached."
+                        )
                         StateTracker.start_training()
                 continue
             if type(batch) is list:
-                logging.warning('Burning a step due to dummy data.')
+                logging.warning("Burning a step due to dummy data.")
                 time.sleep(10)
-                
+
                 continue
             logging.debug(f"Accumulating...")
             with accelerator.accumulate(unet):
@@ -453,7 +464,10 @@ def main(args):
                         break
                     except Exception as e:
                         import traceback
-                        logging.error(f"Error: {e}, traceback: {traceback.format_exc()}")
+
+                        logging.error(
+                            f"Error: {e}, traceback: {traceback.format_exc()}"
+                        )
                         torch.clear_autocast_cache()
                         time.sleep(5)
                 latents = latents * vae.config.scaling_factor
@@ -576,6 +590,7 @@ def main(args):
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
+                        custom_balanced_sampler.save_state()
                         logger.info(f"Saved state to {save_path}")
 
                     if (

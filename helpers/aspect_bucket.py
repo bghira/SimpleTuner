@@ -5,7 +5,14 @@ import os, json
 
 
 class BalancedBucketSampler(torch.utils.data.Sampler):
-    def __init__(self, aspect_ratio_bucket_indices, batch_size=15):
+    def __init__(
+        self,
+        aspect_ratio_bucket_indices,
+        batch_size:int = 15,
+        seen_images_path:str = "/notebooks/SimpleTuner/seen_images.json",
+        state_path:str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
+        drop_caption_every_n_percent:int = 5
+    ):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices  # A dictionary of string float buckets and their image paths.
         self.buckets = list(
             aspect_ratio_bucket_indices.keys()
@@ -15,8 +22,25 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         )  # Buckets that have been exhausted, eg. all samples have been used.
         self.batch_size = batch_size  # How many images per sample during training. They MUST all be the same aspect.
         self.current_bucket = 0
-        self.seen_images_path = "/notebooks/SimpleTuner/seen_images.json"
+        self.seen_images_path = seen_images_path
+        self.state_path = state_path
         self.seen_images = self.load_seen_images()
+        self.drop_caption_every_n_percent = drop_caption_every_n_percent
+        self.caption_loop_count = 0 # Store a value and increment on each sample until we hit 100.
+
+    def save_state(self):
+        state = {
+            "aspect_ratio_bucket_indices": self.aspect_ratio_bucket_indices,
+            "buckets": self.buckets,
+            "exhausted_buckets": self.exhausted_buckets,
+            "batch_size": self.batch_size,
+            "current_bucket": self.current_bucket,
+            "seen_images": self.seen_images,
+        }
+        with open(self.state_path, "w") as f:
+            json.dump(state, f)
+        self.save_seen_images()
+        self.log_state()
 
     def load_seen_images(self):
         if os.path.exists(self.seen_images_path):
@@ -36,7 +60,12 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def handle_small_image(self, image_path, bucket):
         logging.warn(f"Image too small: DELETING image and continuing search.")
-        os.remove(image_path)
+        try:
+            os.remove(image_path)
+        except Exception as e:
+            logging.warn(
+                f"The image was already deleted. Another GPU must have gotten to it."
+            )
         self.remove_image(image_path, bucket)
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
@@ -71,7 +100,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 for image in self.aspect_ratio_bucket_indices[bucket]
                 if image not in self.seen_images
             ]
-            if len(available_images) < self.batch_size:
+            # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
+            if len(available_images) < (self.batch_size * 2):
                 logging.warn(f"Not enough unseen images in the bucket: {bucket}")
                 self.move_to_exhausted()
                 self.change_bucket()
@@ -102,15 +132,10 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                         self.seen_images[image_path] = actual_bucket
 
             if len(to_yield) == self.batch_size:
-                self.log_state()
-                if StateTracker.status_training():
-                    logging.debug(f"Done yielding: saving SEEN images.")
-                    self.save_seen_images()  # Save seen images
-                else:
-                    logging.debug(
-                        f"Done yielding, but we are not yet training. Not saving seen images."
-                    )
-                self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
+                # Select a random bucket:
+                self.current_bucket = random.randint(
+                    0, len(self.buckets) - 1
+                )  # This is a random integer.
                 for image_to_yield in to_yield:
                     yield image_to_yield
 
@@ -135,14 +160,14 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def log_state(self):
         logging.debug(
-            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b)) for b in self.buckets)}'
+            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.buckets)}'
         )
-        logging.debug(
-            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b)) for b in self.exhausted_buckets)}'
-        )
+        # logging.debug(
+        #     f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+        # )
 
     @staticmethod
-    def convert_to_human_readable(aspect_ratio_float: float):
+    def convert_to_human_readable(aspect_ratio_float: float, bucket):
         from math import gcd
 
         # The smallest side is always 1024. It could be portrait or landscape (eg. under or over 1)
@@ -154,5 +179,5 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             ratio_height = 1024
 
         # Return the aspect ratio as a string in the format "width:height"
-        return f"{aspect_ratio_float}"
+        return f"{aspect_ratio_float} (remaining: {len(bucket)})"
         return f"{ratio_width}:{ratio_height}"

@@ -20,7 +20,7 @@ class DreamBoothDataset(Dataset):
         instance_prompt,
         tokenizer,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
-        size=768,
+        size=1024,
         center_crop=False,
         print_names=False,
         use_captions=True,
