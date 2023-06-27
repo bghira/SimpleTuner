@@ -24,7 +24,9 @@ accelerate launch  \
   --train_text_encoder --text_encoder_limit="${TEXT_ENCODER_LIMIT}" \
   --freeze_encoder --freeze_encoder_strategy="${TEXT_ENCODER_FREEZE_STRATEGY}" --freeze_encoder_before="${TEXT_ENCODER_FREEZE_BEFORE}" --freeze_encoder_after="${TEXT_ENCODER_FREEZE_AFTER}" \
   --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}" --gradient_checkpointing \
-  --use_original_images="${USE_ORIGINAL_IMAGES}"
+  --use_original_images="${USE_ORIGINAL_IMAGES}" \
+  --seen_state_path="${SEEN_STATE_PATH}" \
+  --state_path="${STATE_PATH}"
 
 
   #--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \

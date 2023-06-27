@@ -11,6 +11,18 @@ def parse_args(input_args=None):
         "More details here: https://arxiv.org/abs/2303.09556.",
     )
     parser.add_argument(
+        "--seen_state_path",
+        type=str,
+        default=None,
+        help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times."
+    )
+    parser.add_argument(
+        "--state_path",
+        type=str,
+        default=None,
+        help="A JSON document containing the current state of training, will be placed here."
+    )
+    parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,

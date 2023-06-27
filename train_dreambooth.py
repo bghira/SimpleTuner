@@ -255,6 +255,14 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
+    if args.seen_state_path is None:
+        raise ValueError(
+            'Please specify a path to a "seen" state dict via the --seen_state_path parameter.'
+        )
+    if args.state_path is None:
+        raise ValueError(
+            "Please specify a location of your training state status file via the --state_path parameter."
+        )
     # Optimizer creation
     params_to_optimize = (
         itertools.chain(unet.parameters(), text_encoder.parameters())
@@ -282,7 +290,10 @@ def main(args):
         use_captions=not args.only_instance_prompt or False,
     )
     custom_balanced_sampler = BalancedBucketSampler(
-        train_dataset.aspect_ratio_bucket_indices, batch_size=args.train_batch_size
+        train_dataset.aspect_ratio_bucket_indices,
+        batch_size=args.train_batch_size,
+        seen_images_path=args.seen_state_path,
+        state_path=args.state_path,
     )
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
