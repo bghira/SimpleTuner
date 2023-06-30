@@ -400,6 +400,17 @@ def parse_args(input_args=None):
         help=("Use the instance prompt instead of the caption from filename."),
     )
     parser.add_argument(
+        "--caption_dropout_interval",
+        type=int,
+        default=0,
+        help=(
+            "Every X steps, we will drop the caption from the input to assist in classifier-free guidance training."
+            "When StabilityAI trained Stable Diffusion, a value of 10 was used."
+            "Very high values might be useful to do some sort of enforced style training."
+            "Default value is zero, maximum value is 100."
+        ),
+    )
+    parser.add_argument(
         "--input_pertubation",
         type=float,
         default=0,

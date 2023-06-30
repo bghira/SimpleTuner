@@ -166,16 +166,19 @@ def main(args):
     )
 
     # Load scheduler and models
+    scheduler_model = args.pretrained_model_name_or_path
     temp_scheduler = DDIMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
+        scheduler_model,
         subfolder="scheduler",
         timestep_spacing="trailing",
+        prediction_type="v_prediction"
     )
     trained_betas = enforce_zero_terminal_snr(temp_scheduler.betas).numpy().tolist()
     noise_scheduler = DDPMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
+        scheduler_model,
         subfolder="scheduler",
         trained_betas=trained_betas,
+        prediction_type="v_prediction"
     )
     text_encoder = freeze_text_encoder(
         args,
@@ -263,6 +266,10 @@ def main(args):
         raise ValueError(
             "Please specify a location of your training state status file via the --state_path parameter."
         )
+    if args.caption_dropout_interval > 100:
+        raise ValueError(
+            "Please specify a caption dropout interval equal to or less than 100 via the --caption_dropout_interval parameter."
+        )
     # Optimizer creation
     params_to_optimize = (
         itertools.chain(unet.parameters(), text_encoder.parameters())
@@ -288,6 +295,7 @@ def main(args):
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
+        caption_dropout_interval=args.caption_dropout_interval,
     )
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
@@ -518,11 +526,14 @@ def main(args):
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
+                    logging.debug(f'Using Epsilon target.')
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                    logging.debug(f'Using v-prediction target.')
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
+                        "Supported types are 'epsilon' and 'v_prediction'."
                     )
 
                 # Predict the noise residual
