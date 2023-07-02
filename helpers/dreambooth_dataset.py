@@ -215,8 +215,7 @@ class DreamBoothDataset(Dataset):
             logging.debug(f"Open image: {image_path}")
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
-        if StateTracker.status_training():
-            instance_image = exif_transpose(instance_image)
+        instance_image = exif_transpose(instance_image)
         instance_prompt = self._prepare_instance_prompt(image_path)
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
@@ -231,7 +230,7 @@ class DreamBoothDataset(Dataset):
         example["instance_prompt_ids"] = None
         if StateTracker.status_training():
             if self.caption_dropout_interval > 0:
-                if self.caption_loop_count % self.drop_caption_every_n_percent == 0:
+                if self.caption_loop_count % self.caption_dropout_interval == 0:
                     logging.debug(f'Caption dropout, removing caption: {instance_prompt}')
                     instance_prompt = ''
                 self.caption_loop_interval_bump()

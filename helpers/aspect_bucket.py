@@ -2,6 +2,7 @@ import torch, logging, random, time
 from PIL import Image
 from .state_tracker import StateTracker
 import os, json
+from PIL.ImageOps import exif_transpose
 
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -117,10 +118,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     self.remove_image(image_path, bucket)
                     continue
                 image = Image.open(image_path)
-                if image.width < 1024 or image.height < 1024:
+                if image.width < 960 or image.height < 960:
                     image.close()
                     self.handle_small_image(image_path, bucket)
                     continue
+                image = exif_transpose(image)
                 aspect_ratio = round(image.width / image.height, 3)
                 actual_bucket = str(aspect_ratio)
                 if actual_bucket != bucket:
