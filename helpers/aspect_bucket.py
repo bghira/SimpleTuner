@@ -62,26 +62,26 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
     def handle_small_image(self, image_path, bucket):
-        logging.warn(f"Image too small: DELETING image and continuing search.")
+        logging.warning(f"Image too small: DELETING image and continuing search.")
         try:
             os.remove(image_path)
         except Exception as e:
-            logging.warn(
+            logging.warning(
                 f"The image was already deleted. Another GPU must have gotten to it."
             )
         self.remove_image(image_path, bucket)
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
-        logging.warn(
+        logging.warning(
             f"Found an image in a bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}"
         )
         self.remove_image(image_path, bucket)
         if actual_bucket in self.aspect_ratio_bucket_indices:
-            logging.warn(f"Moved image to bucket, it already existed.")
+            logging.warning(f"Moved image to bucket, it already existed.")
             self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
         else:
             # Create a new bucket if it doesn't exist
-            logging.warn(f"Created new bucket for that pesky image.")
+            logging.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
 
     def __iter__(self):
@@ -105,7 +105,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             ]
             # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
             if len(available_images) < (self.batch_size * 2):
-                logging.warn(f"Not enough unseen images in the bucket: {bucket}")
+                logging.warning(f"Not enough unseen images in the bucket: {bucket}")
                 self.move_to_exhausted()
                 self.change_bucket()
                 continue
@@ -114,11 +114,15 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             to_yield = []
             for image_path in samples:
                 if not os.path.exists(image_path):
-                    logging.warn(f"Image path does not exist: {image_path}")
+                    logging.warning(f"Image path does not exist: {image_path}")
                     self.remove_image(image_path, bucket)
                     continue
-                image = Image.open(image_path)
-                if image.width < 960 or image.height < 960:
+                try:
+                    image = Image.open(image_path)
+                except:
+                    logging.warning(f'Image was bad or in-progress: {image_path}')
+                    continue
+                if image.width < 880 or image.height < 880:
                     image.close()
                     self.handle_small_image(image_path, bucket)
                     continue
