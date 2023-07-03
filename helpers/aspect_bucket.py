@@ -17,9 +17,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         drop_caption_every_n_percent:int = 5
     ):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices  # A dictionary of string float buckets and their image paths.
-        self.buckets = list(
-            aspect_ratio_bucket_indices.keys()
-        )  # These keys are a float value, eg. 1.78.
+        self.buckets = self.load_buckets()
         self.exhausted_buckets = (
             []
         )  # Buckets that have been exhausted, eg. all samples have been used.
@@ -44,6 +42,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             json.dump(state, f)
         self.save_seen_images()
         self.log_state()
+
+    def load_buckets(self):
+        return list(
+            self.aspect_ratio_bucket_indices.keys()
+        )  # These keys are a float value, eg. 1.78.
 
     def load_seen_images(self):
         if os.path.exists(self.seen_images_path):
@@ -87,8 +90,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
     def __iter__(self):
         while True:
             if not self.buckets:
-                logging.info(f"All buckets are exhausted. Exiting...")
-                break
+                logging.info(f"All buckets are exhausted. Resetting...")
+                self.buckets = self.load_buckets()
 
             bucket = self.buckets[self.current_bucket]
 
