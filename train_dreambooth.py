@@ -64,7 +64,7 @@ from diffusers import (
 
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-
+torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
 
@@ -552,12 +552,21 @@ def main(args):
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
                     snr = compute_snr(timesteps, noise_scheduler)
+
+                    if torch.any(torch.isnan(snr)):
+                        print("snr contains NaN values")
+                    if torch.any(snr == 0):
+                        print("snr contains zero values")
+
                     mse_loss_weights = (
                         torch.stack(
                             [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
                         ).min(dim=1)[0]
                         / snr
                     )
+
+                    if torch.any(torch.isnan(mse_loss_weights)):
+                        print("mse_loss_weights contains NaN values")
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.

@@ -220,6 +220,7 @@ class DreamBoothDataset(Dataset):
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():
+            logging.debug(f'Resizing sample to {self.size}')
             example["instance_images"] = self._resize_for_condition_image(
                 instance_image, self.size
             )
@@ -254,9 +255,6 @@ class DreamBoothDataset(Dataset):
         elif H < W:
             H = resolution
             W = int(resolution * aspect_ratio)  # Calculate the new width
-        if W == resolution and H == resolution:
-            logging.debug(f"Returning square image of size {resolution}x{resolution}")
-            return input_image
         if W == H:
             W = resolution
             H = resolution
