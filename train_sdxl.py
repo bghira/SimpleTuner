@@ -155,7 +155,7 @@ def parse_args():
         help='If set, will print excessive debugging for aspect bucket operations.'
     )
     parser.add_argument(
-        '--debug_data_loader',
+        '--debug_dataset_loader',
         action='store_true',
         help='If set, will print excessive debugging for data loader operations.'
     )
