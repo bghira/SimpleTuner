@@ -505,18 +505,18 @@ def main():
     )
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
-    if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity_warning()
-        diffusers.utils.logging.set_verbosity_info()
-    else:
-        datasets.utils.logging.set_verbosity_error()
-        transformers.utils.logging.set_verbosity_error()
-        diffusers.utils.logging.set_verbosity_error()
+    # if accelerator.is_local_main_process:
+    #     datasets.utils.logging.set_verbosity_warning()
+    #     transformers.utils.logging.set_verbosity_warning()
+    #     diffusers.utils.logging.set_verbosity_info()
+    # else:
+    #     datasets.utils.logging.set_verbosity_error()
+    #     transformers.utils.logging.set_verbosity_error()
+    #     diffusers.utils.logging.set_verbosity_error()
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
+        level=logging.DEBUG,
     )
     generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
@@ -750,7 +750,7 @@ def main():
     )
 
     # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler", prediction_type='v_prediction')
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
@@ -857,11 +857,13 @@ def main():
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
 
     add_time_ids = compute_time_ids()
-    logger.debug(f'Starting training via StateTracker.')
-    StateTracker.start_training()
 
     def collate_fn(examples):
         logger.debug(f'Running collate_fn')
+        if not StateTracker.status_training():
+            logger.debug(f'Not training, returning nothing from collate_fn')
+            return
+        logger.debug(f'Examples: {examples}')
         pixel_values = torch.stack([to_tensor(example["instance_images"]) for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         
@@ -870,8 +872,8 @@ def main():
         
         # Compute the embeddings using the captions.
         prompt_embeds_all, add_text_embeds_all = compute_embeddings_for_prompts(captions, text_encoders, tokenizers)
-        prompt_embeds_all = torch.concat(prompt_embeds_all for _ in range(args.gradient_accumulation_steps)], dim=0)
-        add_text_embeds_all = torch.concat(add_text_embeds_all for _ in range(args.gradient_accumulation_steps)], dim=0)
+        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+        add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
         logger.debug(f'Returning collate_fn results.')
         return {
             "pixel_values": pixel_values,
@@ -1011,11 +1013,12 @@ def main():
     progress_bar.set_description("Steps")
 
     for epoch in range(first_epoch, args.num_train_epochs):
+        logger.debug(f'Starting into epoch: {epoch}')
         unet.train()
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            # logger.debug(f'Step {step} batch size {len(batch)}: {batch}')
             # Skip steps until we reach the resumed step
+            logger.debug(f'Current step: {step}, resume step: {resume_step}')
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
@@ -1026,8 +1029,12 @@ def main():
                             f"Starting training, as resume_step has been reached."
                         )
                         StateTracker.start_training()
+                logger.warning('Skipping step.')
                 continue
 
+            if batch is None:
+                logging.warning(f'Burning a None size batch.')
+                continue
             with accelerator.accumulate(unet):
                 pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
                 latents = vae.encode(pixel_values).latent_dist.sample()
@@ -1152,7 +1159,7 @@ def main():
             progress_bar.set_postfix(**logs)
 
             ### BEGIN: Perform validation every `validation_epochs` steps
-            if global_step % args.validation_steps == 0 or global_step == 1:
+            if global_step % args.validation_steps == 0 and global_step > 1:
                 pass
                 if args.validation_prompt is None or args.num_validation_images is None or args.num_validation_images <= 0:
                     logging.warning(f'Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!')
@@ -1180,6 +1187,7 @@ def main():
                     revision=args.revision,
                     torch_dtype=weight_dtype,
                 )
+                pipeline.scheduler.config.prediction_type = 'v_prediction'
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
 
@@ -1190,7 +1198,8 @@ def main():
                     os.makedirs(val_save_dir)
 
                 with torch.autocast(
-                    str(accelerator.device).replace(":0", ""), enabled=(accelerator.mixed_precision == "fp16" or accelerator.mixed_precision == "bf16")
+                    str(accelerator.device).replace(":0", ""),
+                    enabled=(accelerator.mixed_precision == "fp16" or accelerator.mixed_precision == "bf16")
                 ):
                     edited_images = pipeline(
                         args.validation_prompt,

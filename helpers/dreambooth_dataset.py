@@ -6,7 +6,8 @@ from .state_tracker import StateTracker
 from PIL import Image
 import json, logging, os
 from tqdm import tqdm
-
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
@@ -54,10 +55,10 @@ class DreamBoothDataset(Dataset):
         self.caption_loop_count = 0
         self.use_precomputed_token_ids = use_precomputed_token_ids
         if len(self.aspect_ratio_bucket_indices) > 0:
-            logging.debug(f"Updating cache...")
+            logger.debug(f"Updating cache...")
             self.update_cache()
         if not use_original_images:
-            logging.debug(f"Building transformations.")
+            logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
 
     def _get_image_transforms(self):
@@ -203,7 +204,7 @@ class DreamBoothDataset(Dataset):
             if self.prepend_instance_prompt:
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
-            logging.debug(f"Prompt: {instance_prompt}")
+            logger.debug(f"Prompt: {instance_prompt}")
         return instance_prompt
 
     def caption_loop_interval_bump(self):
@@ -212,9 +213,13 @@ class DreamBoothDataset(Dataset):
             self.caption_loop_count = 0
 
     def __getitem__(self, image_path):
+        logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
+        if not StateTracker.status_training():
+            logger.warning(f'Skipping getitem because we are not yet training.')
+            return None
         example = {}
         if self.print_names:
-            logging.debug(f"Open image: {image_path}")
+            logger.debug(f"Open image: {image_path}")
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
         instance_image = exif_transpose(instance_image)
@@ -222,7 +227,7 @@ class DreamBoothDataset(Dataset):
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():
-            logging.debug(f'Resizing sample to {self.size}')
+            logger.debug(f'Resizing sample to {self.size}')
             example["instance_images"] = self._resize_for_condition_image(
                 instance_image, self.size
             )
@@ -234,7 +239,7 @@ class DreamBoothDataset(Dataset):
         if StateTracker.status_training():
             if self.caption_dropout_interval > 0:
                 if self.caption_loop_count % self.caption_dropout_interval == 0:
-                    logging.debug(f'Caption dropout, removing caption: {instance_prompt}')
+                    logger.debug(f'Caption dropout, removing caption: {instance_prompt}')
                     instance_prompt = ''
                 self.caption_loop_interval_bump()
             if not self.use_precomputed_token_ids:
@@ -246,6 +251,7 @@ class DreamBoothDataset(Dataset):
                     return_tensors="pt",
                 ).input_ids
         example["instance_prompt_text"] = instance_prompt
+        logger.debug(f"Returning from __getitem__ for {image_path} inside Dataloader.")
         return example
 
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
@@ -263,6 +269,6 @@ class DreamBoothDataset(Dataset):
             W = resolution
             H = resolution
         msg = f"{msg} {W}x{H}."
-        logging.debug(msg)
+        logger.debug(msg)
         img = input_image.resize((W, H), resample=Image.BICUBIC)
         return img

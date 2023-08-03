@@ -1,4 +1,7 @@
 import torch, logging, random, time
+
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
 from PIL import Image
 from .state_tracker import StateTracker
 import os, json
@@ -7,14 +10,15 @@ from PIL.ImageOps import exif_transpose
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
+
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(
         self,
         aspect_ratio_bucket_indices,
-        batch_size:int = 15,
-        seen_images_path:str = "/notebooks/SimpleTuner/seen_images.json",
-        state_path:str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
-        drop_caption_every_n_percent:int = 5
+        batch_size: int = 15,
+        seen_images_path: str = "/notebooks/SimpleTuner/seen_images.json",
+        state_path: str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
+        drop_caption_every_n_percent: int = 5,
     ):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices  # A dictionary of string float buckets and their image paths.
         self.buckets = self.load_buckets()
@@ -27,7 +31,9 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.state_path = state_path
         self.seen_images = self.load_seen_images()
         self.drop_caption_every_n_percent = drop_caption_every_n_percent
-        self.caption_loop_count = 0 # Store a value and increment on each sample until we hit 100.
+        self.caption_loop_count = (
+            0  # Store a value and increment on each sample until we hit 100.
+        )
 
     def save_state(self):
         state = {
@@ -65,32 +71,40 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
     def handle_small_image(self, image_path, bucket):
-        logging.warning(f"Image too small: DELETING image and continuing search.")
+        logger.warning(f"Image too small: DELETING image and continuing search.")
         try:
             os.remove(image_path)
         except Exception as e:
-            logging.warning(
+            logger.warning(
                 f"The image was already deleted. Another GPU must have gotten to it."
             )
         self.remove_image(image_path, bucket)
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
-        logging.warning(
+        logger.warning(
             f"Found an image in a bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}"
         )
         self.remove_image(image_path, bucket)
         if actual_bucket in self.aspect_ratio_bucket_indices:
-            logging.warning(f"Moved image to bucket, it already existed.")
+            logger.warning(f"Moved image to bucket, it already existed.")
             self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
         else:
             # Create a new bucket if it doesn't exist
-            logging.warning(f"Created new bucket for that pesky image.")
+            logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
 
     def __iter__(self):
         while True:
+            logger.debug(f"Running __iter__ for AspectBuckets.")
+            if not StateTracker.status_training():
+                logger.debug(f"Skipping Aspect bucket logic, not training yet.")
+                # Yield random image:
+                bucket = random.choice(self.buckets)
+                image_path = random.choice(self.aspect_ratio_bucket_indices[bucket])
+                yield image_path
+                continue
             if not self.buckets:
-                logging.info(f"All buckets are exhausted. Resetting...")
+                logger.info(f"All buckets are exhausted. Resetting...")
                 self.buckets = self.load_buckets()
 
             bucket = self.buckets[self.current_bucket]
@@ -108,7 +122,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             ]
             # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
             if len(available_images) < (self.batch_size * 2):
-                logging.warning(f"Not enough unseen images in the bucket: {bucket}")
+                logger.warning(f"Not enough unseen images in the bucket: {bucket}")
                 self.move_to_exhausted()
                 self.change_bucket()
                 continue
@@ -117,13 +131,14 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             to_yield = []
             for image_path in samples:
                 if not os.path.exists(image_path):
-                    logging.warning(f"Image path does not exist: {image_path}")
+                    logger.warning(f"Image path does not exist: {image_path}")
                     self.remove_image(image_path, bucket)
                     continue
                 try:
+                    logger.debug(f"AspectBucket is loading image: {image_path}")
                     image = Image.open(image_path)
                 except:
-                    logging.warning(f'Image was bad or in-progress: {image_path}')
+                    logger.warning(f"Image was bad or in-progress: {image_path}")
                     continue
                 if image.width < 880 or image.height < 880:
                     image.close()
@@ -135,12 +150,15 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 if actual_bucket != bucket:
                     self.handle_incorrect_bucket(image_path, bucket, actual_bucket)
                 else:
-                    logging.debug(
+                    logger.debug(
                         f"Yielding {image.width}x{image.height} sample from bucket: {bucket} with aspect {actual_bucket}"
                     )
                     to_yield.append(image_path)
                     if StateTracker.status_training():
                         self.seen_images[image_path] = actual_bucket
+                logger.debug(
+                    f"Completed internal for loop inside __iter__ for AspectBuckets."
+                )
 
             if len(to_yield) == self.batch_size:
                 # Select a random bucket:
@@ -148,6 +166,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     0, len(self.buckets) - 1
                 )  # This is a random integer.
                 for image_to_yield in to_yield:
+                    logger.debug(f"Yielding from __iter__ for AspectBuckets.")
                     yield image_to_yield
 
     def __len__(self):
@@ -157,23 +176,38 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def change_bucket(self):
         if self.buckets:
+            old_bucket = self.current_bucket
             self.current_bucket %= len(self.buckets)
-            logging.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
+            if old_bucket != self.current_bucket:
+                logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
+                return
+            logger.warning(
+                f"Only one bucket left, and it doesn't have enough samples. Resetting..."
+            )
+            logger.warning(
+                f'Exhausted buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+            )
+            self.exhausted_buckets = []
+            self.seen_images = {}
+            self.current_bucket %= len(self.buckets)
+            logger.info(
+                f"After resetting, changed bucket to {self.buckets[self.current_bucket]}."
+            )
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
         self.exhausted_buckets.append(bucket)
         self.buckets.remove(bucket)
-        logging.info(
+        logger.info(
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
         )
         self.log_state()
 
     def log_state(self):
-        logging.debug(
+        logger.debug(
             f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.buckets)}'
         )
-        # logging.debug(
+        # logger.debug(
         #     f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
         # )
 
