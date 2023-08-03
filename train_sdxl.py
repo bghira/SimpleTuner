@@ -81,7 +81,7 @@ logger = get_logger(__name__, log_level="DEBUG")
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
-WANDB_TABLE_COL_NAMES = ["image", "text"]
+WANDB_TABLE_COL_NAMES = ["step", "image", "text"]
 
 
 def import_model_class_from_model_name_or_path(
@@ -244,7 +244,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="instruct-pix2pix-model",
+        default="simpletuner-sdxl",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -420,6 +420,12 @@ def parse_args():
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
         ),
+    )
+    parser.add_argument(
+        "--tracker_run_name",
+        type=str,
+        default="simpletuner-sdxl-test",
+        help="The name of the run to track with the tracker.",
     )
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument(
@@ -864,8 +870,8 @@ def main():
         
         # Compute the embeddings using the captions.
         prompt_embeds_all, add_text_embeds_all = compute_embeddings_for_prompts(captions, text_encoders, tokenizers)
-        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(args.gradient_accumulation_steps)], dim=0)
-        add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(args.gradient_accumulation_steps)], dim=0)
+        prompt_embeds_all = torch.concat(prompt_embeds_all for _ in range(args.gradient_accumulation_steps)], dim=0)
+        add_text_embeds_all = torch.concat(add_text_embeds_all for _ in range(args.gradient_accumulation_steps)], dim=0)
         logger.debug(f'Returning collate_fn results.')
         return {
             "pixel_values": pixel_values,
@@ -955,7 +961,7 @@ def main():
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers("instruct-pix2pix-xl", config=vars(args))
+        accelerator.init_trackers(args.tracker_run_name, config=vars(args))
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -1203,7 +1209,7 @@ def main():
                         wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
                         for edited_image in edited_images:
                             wandb_table.add_data(
-                                wandb.Image(edited_image), args.validation_prompt
+                                step, wandb.Image(edited_image), args.validation_prompt
                             )
                         tracker.log({"validation": wandb_table})
                 if args.use_ema:
