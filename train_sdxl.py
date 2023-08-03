@@ -150,6 +150,16 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        '--debug_aspect_buckets',
+        action='store_true',
+        help='If set, will print excessive debugging for aspect bucket operations.'
+    )
+    parser.add_argument(
+        '--debug_data_loader',
+        action='store_true',
+        help='If set, will print excessive debugging for data loader operations.'
+    )
+    parser.add_argument(
         "--use_original_images",
         type=str,
         default="false",
@@ -201,7 +211,7 @@ def parse_args():
             " must exist to provide the captions for the images. Ignored if `dataset_name` is specified."
         ),
     )
-    # TODO: Fix this
+    # TODO: Fix Huggingface dataset handling.
     parser.add_argument(
         "--image_column",
         type=str,
@@ -341,6 +351,12 @@ def parse_args():
     )
     parser.add_argument(
         "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
+    )
+    parser.add_argument(
+        '--dadaptation_learning_rate', type=float, default=1.0, help="Learning rate for the discriminator adaptation. Default: 1.0"
+    )
+    parser.add_argument(
+        '--use_dadapt_optimizer', action="store_true", help="Whether or not to use the discriminator adaptation optimizer."
     )
     parser.add_argument(
         "--allow_tf32",
@@ -626,7 +642,7 @@ def main():
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
     logger.info(f'Learning rate: {args.learning_rate}')
-
+    extra_optimizer_args = {}
     # Initialize the optimizer
     if args.use_8bit_adam:
         logger.info('Using 8bit AdamW optimizer.')
@@ -638,6 +654,21 @@ def main():
             )
 
         optimizer_cls = bnb.optim.AdamW8bit
+    elif hasattr(args, 'use_dadapt_optimizer') and args.use_dadapt_optimizer:
+        logger.info('Using D-Adaptation optimizer.')
+        try:
+            from dadaptation import DAdaptAdam
+        except ImportError:
+            raise ImportError(
+                "Please install the dadaptation library to make use of DaDapt optimizer."
+                "You can do so by running `pip install dadaptation`"
+            )
+
+        optimizer_cls = DAdaptAdam
+        if hasattr(args, 'dadaptation_learning_rate') and args.dadaptation_learning_rate is not None:
+            logger.debug(f'Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer.')
+            args.learning_rate = args.dadaptation_learning_rate
+            extra_optimizer_args['decouple'] = True
     else:
         logger.info('Using AdamW optimizer.')
         optimizer_cls = torch.optim.AdamW
@@ -648,6 +679,7 @@ def main():
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
+        **extra_optimizer_args
     )
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
@@ -891,13 +923,15 @@ def main():
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
         caption_dropout_interval=args.caption_dropout_interval,
-        use_precomputed_token_ids=True
+        use_precomputed_token_ids=True,
+        debug_dataset_loader=args.debug_dataset_loader,
     )
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
+        debug_aspect_buckets=args.debug_aspect_buckets,
     )
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -977,6 +1011,7 @@ def main():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
+    resume_step = 0
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -1005,7 +1040,6 @@ def main():
             resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
     else:
         StateTracker.start_training()
-        resume_step = 0
 
 
     # Only show the progress bar once on each machine.
@@ -1018,7 +1052,6 @@ def main():
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
-            logger.debug(f'Current step: {step}, resume step: {resume_step}')
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)

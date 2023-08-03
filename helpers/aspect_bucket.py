@@ -19,6 +19,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         seen_images_path: str = "/notebooks/SimpleTuner/seen_images.json",
         state_path: str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
         drop_caption_every_n_percent: int = 5,
+        debug_aspect_buckets: bool = False,
     ):
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices  # A dictionary of string float buckets and their image paths.
         self.buckets = self.load_buckets()
@@ -31,6 +32,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.state_path = state_path
         self.seen_images = self.load_seen_images()
         self.drop_caption_every_n_percent = drop_caption_every_n_percent
+        self.debug_aspect_buckets = debug_aspect_buckets
         self.caption_loop_count = (
             0  # Store a value and increment on each sample until we hit 100.
         )
@@ -95,16 +97,18 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def __iter__(self):
         while True:
-            logger.debug(f"Running __iter__ for AspectBuckets.")
+            if self.debug_aspect_buckets:
+                logger.debug(f"Running __iter__ for AspectBuckets.")
             if not StateTracker.status_training():
-                logger.debug(f"Skipping Aspect bucket logic, not training yet.")
+                if self.debug_aspect_buckets:
+                    logger.debug(f"Skipping Aspect bucket logic, not training yet.")
                 # Yield random image:
                 bucket = random.choice(self.buckets)
                 image_path = random.choice(self.aspect_ratio_bucket_indices[bucket])
                 yield image_path
                 continue
             if not self.buckets:
-                logger.info(f"All buckets are exhausted. Resetting...")
+                logger.warning(f"All buckets are exhausted. Resetting...")
                 self.buckets = self.load_buckets()
 
             bucket = self.buckets[self.current_bucket]
@@ -135,7 +139,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     self.remove_image(image_path, bucket)
                     continue
                 try:
-                    logger.debug(f"AspectBucket is loading image: {image_path}")
+                    if self.debug_aspect_buckets:
+                        logger.debug(f"AspectBucket is loading image: {image_path}")
                     image = Image.open(image_path)
                 except:
                     logger.warning(f"Image was bad or in-progress: {image_path}")
@@ -150,15 +155,17 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 if actual_bucket != bucket:
                     self.handle_incorrect_bucket(image_path, bucket, actual_bucket)
                 else:
-                    logger.debug(
-                        f"Yielding {image.width}x{image.height} sample from bucket: {bucket} with aspect {actual_bucket}"
-                    )
+                    if self.debug_aspect_buckets:
+                        logger.debug(
+                            f"Yielding {image.width}x{image.height} sample from bucket: {bucket} with aspect {actual_bucket}"
+                        )
                     to_yield.append(image_path)
                     if StateTracker.status_training():
                         self.seen_images[image_path] = actual_bucket
-                logger.debug(
-                    f"Completed internal for loop inside __iter__ for AspectBuckets."
-                )
+                if self.debug_aspect_buckets:
+                    logger.debug(
+                        f"Completed internal for loop inside __iter__ for AspectBuckets."
+                    )
 
             if len(to_yield) == self.batch_size:
                 # Select a random bucket:
@@ -166,7 +173,8 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     0, len(self.buckets) - 1
                 )  # This is a random integer.
                 for image_to_yield in to_yield:
-                    logger.debug(f"Yielding from __iter__ for AspectBuckets.")
+                    if self.debug_aspect_buckets:
+                        logger.debug(f"Yielding from __iter__ for AspectBuckets.")
                     yield image_to_yield
 
     def __len__(self):

@@ -6,6 +6,7 @@ from .state_tracker import StateTracker
 from PIL import Image
 import json, logging, os
 from tqdm import tqdm
+
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +22,7 @@ class DreamBoothDataset(Dataset):
     def __init__(
         self,
         instance_data_root,
-        instance_prompt:str = None,
+        instance_prompt: str = None,
         tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
         size=1024,
@@ -30,8 +31,9 @@ class DreamBoothDataset(Dataset):
         use_captions=True,
         prepend_instance_prompt=False,
         use_original_images=False,
-        caption_dropout_interval:int = 0,
-        use_precomputed_token_ids:bool = True
+        caption_dropout_interval: int = 0,
+        use_precomputed_token_ids: bool = True,
+        debug_dataset_loader: bool = False,
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -39,6 +41,7 @@ class DreamBoothDataset(Dataset):
         self.center_crop = center_crop
         self.tokenizer = tokenizer
         self.print_names = print_names
+        self.debug_dataset_loader = debug_dataset_loader
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
             raise ValueError(
@@ -213,12 +216,14 @@ class DreamBoothDataset(Dataset):
             self.caption_loop_count = 0
 
     def __getitem__(self, image_path):
-        logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
+        if self.debug_dataset_loader:
+            logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
         if not StateTracker.status_training():
-            logger.warning(f'Skipping getitem because we are not yet training.')
+            if self.debug_dataset_loader:
+                logger.warning(f"Skipping getitem because we are not yet training.")
             return None
         example = {}
-        if self.print_names:
+        if self.print_names and self.debug_dataset_loader:
             logger.debug(f"Open image: {image_path}")
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
@@ -227,7 +232,7 @@ class DreamBoothDataset(Dataset):
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():
-            logger.debug(f'Resizing sample to {self.size}')
+            logger.debug(f"Resizing sample to {self.size}")
             example["instance_images"] = self._resize_for_condition_image(
                 instance_image, self.size
             )
@@ -239,8 +244,11 @@ class DreamBoothDataset(Dataset):
         if StateTracker.status_training():
             if self.caption_dropout_interval > 0:
                 if self.caption_loop_count % self.caption_dropout_interval == 0:
-                    logger.debug(f'Caption dropout, removing caption: {instance_prompt}')
-                    instance_prompt = ''
+                    if self.debug_dataset_loader:
+                        logger.debug(
+                            f"Caption dropout, removing caption: {instance_prompt}"
+                        )
+                    instance_prompt = ""
                 self.caption_loop_interval_bump()
             if not self.use_precomputed_token_ids:
                 example["instance_prompt_ids"] = self.tokenizer(
@@ -251,7 +259,10 @@ class DreamBoothDataset(Dataset):
                     return_tensors="pt",
                 ).input_ids
         example["instance_prompt_text"] = instance_prompt
-        logger.debug(f"Returning from __getitem__ for {image_path} inside Dataloader.")
+        if self.debug_dataset_loader:
+            logger.debug(
+                f"Returning from __getitem__ for {image_path} inside Dataloader."
+            )
         return example
 
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
@@ -269,6 +280,7 @@ class DreamBoothDataset(Dataset):
             W = resolution
             H = resolution
         msg = f"{msg} {W}x{H}."
-        logger.debug(msg)
+        if self.debug_dataset_loader:
+            logger.debug(msg)
         img = input_image.resize((W, H), resample=Image.BICUBIC)
         return img
