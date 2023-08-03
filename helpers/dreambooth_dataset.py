@@ -20,8 +20,8 @@ class DreamBoothDataset(Dataset):
     def __init__(
         self,
         instance_data_root,
-        instance_prompt,
-        tokenizer,
+        instance_prompt:str = None,
+        tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
         size=1024,
         center_crop=False,
@@ -29,7 +29,8 @@ class DreamBoothDataset(Dataset):
         use_captions=True,
         prepend_instance_prompt=False,
         use_original_images=False,
-        caption_dropout_interval:int = 0
+        caption_dropout_interval:int = 0,
+        use_precomputed_token_ids:bool = True
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -51,6 +52,7 @@ class DreamBoothDataset(Dataset):
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
+        self.use_precomputed_token_ids = use_precomputed_token_ids
         if len(self.aspect_ratio_bucket_indices) > 0:
             logging.debug(f"Updating cache...")
             self.update_cache()
@@ -235,13 +237,15 @@ class DreamBoothDataset(Dataset):
                     logging.debug(f'Caption dropout, removing caption: {instance_prompt}')
                     instance_prompt = ''
                 self.caption_loop_interval_bump()
-            example["instance_prompt_ids"] = self.tokenizer(
-                instance_prompt,
-                truncation=True,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
-            ).input_ids
+            if not self.use_precomputed_token_ids:
+                example["instance_prompt_ids"] = self.tokenizer(
+                    instance_prompt,
+                    truncation=True,
+                    padding="max_length",
+                    max_length=self.tokenizer.model_max_length,
+                    return_tensors="pt",
+                ).input_ids
+        example["instance_prompt_text"] = instance_prompt
         return example
 
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
