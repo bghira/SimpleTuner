@@ -894,10 +894,14 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing text embeds / updating cache.')
         embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
-
+    # Grab GPU memory used:
+    if accelerator.is_main_process:
+        logger.info(f'Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB')
     del text_encoders
     gc.collect()
     torch.cuda.empty_cache()
+    if accelerator.is_main_process:
+        logger.info(f'After nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB')
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
