@@ -573,6 +573,7 @@ def main():
         revision=args.revision,
         force_upcast=False
     )
+    vae.enable_slicing()
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
