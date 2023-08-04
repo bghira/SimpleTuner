@@ -1173,82 +1173,82 @@ def main():
             progress_bar.set_postfix(**logs)
 
             ### BEGIN: Perform validation every `validation_epochs` steps
-        if accelerator.is_main_process:
-            if global_step % args.validation_steps == 0 and global_step > 1:
-                pass
-                if args.validation_prompt is None or args.num_validation_images is None or args.num_validation_images <= 0:
-                    logging.warning(f'Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!')
-                    continue
+            if accelerator.is_main_process:
+                if global_step % args.validation_steps == 0 and global_step > 1:
+                    pass
+                    if args.validation_prompt is None or args.num_validation_images is None or args.num_validation_images <= 0:
+                        logging.warning(f'Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!')
+                        continue
 
-                logger.info(
-                    f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-                    f" {args.validation_prompt}."
-                )
-                # create pipeline
-                if args.use_ema:
-                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
-                    ema_unet.store(unet.parameters())
-                    ema_unet.copy_to(unet.parameters())
+                    logger.info(
+                        f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
+                        f" {args.validation_prompt}."
+                    )
+                    # create pipeline
+                    if args.use_ema:
+                        # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
+                        ema_unet.store(unet.parameters())
+                        ema_unet.copy_to(unet.parameters())
 
-                # The models need unwrapping because for compatibility in distributed training mode.
-                pipeline = StableDiffusionXLPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    unet=accelerator.unwrap_model(unet),
-                    text_encoder=None,
-                    text_encoder_2=None,
-                    tokenizer=None,
-                    tokenizer_2=None,
-                    vae=vae,
-                    revision=args.revision,
-                    torch_dtype=weight_dtype,
-                )
-                pipeline.scheduler.config.prediction_type = 'v_prediction'
-                pipeline = pipeline.to(accelerator.device)
-                pipeline.set_progress_bar_config(disable=True)
+                    # The models need unwrapping because for compatibility in distributed training mode.
+                    pipeline = StableDiffusionXLPipeline.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        unet=accelerator.unwrap_model(unet),
+                        text_encoder=None,
+                        text_encoder_2=None,
+                        tokenizer=None,
+                        tokenizer_2=None,
+                        vae=vae,
+                        revision=args.revision,
+                        torch_dtype=weight_dtype,
+                    )
+                    pipeline.scheduler.config.prediction_type = 'v_prediction'
+                    pipeline = pipeline.to(accelerator.device)
+                    pipeline.set_progress_bar_config(disable=True)
 
-                # run inference
-                # Save validation images
-                val_save_dir = os.path.join(args.output_dir, "validation_images")
-                if not os.path.exists(val_save_dir):
-                    os.makedirs(val_save_dir)
+                    # run inference
+                    # Save validation images
+                    val_save_dir = os.path.join(args.output_dir, "validation_images")
+                    if not os.path.exists(val_save_dir):
+                        os.makedirs(val_save_dir)
 
-                with torch.autocast(
-                    str(accelerator.device).replace(":0", ""),
-                    enabled=(accelerator.mixed_precision == "fp16" or accelerator.mixed_precision == "bf16")
-                ):
-                    validation_generator = torch.Generator(device=accelerator.device).manual_seed(args.seed or 0)
-                    edited_images = pipeline(
-                        prompt_embeds=validation_prompt_embeds[0],
-                        pooled_prompt_embeds=validation_pooled_embeds[0],
-                        num_images_per_prompt=args.num_validation_images,
-                        num_inference_steps=20,
-                        guidance_scale=7,
-                        generator=validation_generator,
-                        height=args.validation_resolution,
-                        width=args.validation_resolution
-                    ).images
-                    val_img_idx = 0
-                    for a_val_img in edited_images:
-                        a_val_img.save(os.path.join(val_save_dir, f"step_{global_step}_val_img_{val_img_idx}.png"))
-                        val_img_idx += 1
+                    with torch.autocast(
+                        str(accelerator.device).replace(":0", ""),
+                        enabled=(accelerator.mixed_precision == "fp16" or accelerator.mixed_precision == "bf16")
+                    ):
+                        validation_generator = torch.Generator(device=accelerator.device).manual_seed(args.seed or 0)
+                        edited_images = pipeline(
+                            prompt_embeds=validation_prompt_embeds[0],
+                            pooled_prompt_embeds=validation_pooled_embeds[0],
+                            num_images_per_prompt=args.num_validation_images,
+                            num_inference_steps=20,
+                            guidance_scale=7,
+                            generator=validation_generator,
+                            height=args.validation_resolution,
+                            width=args.validation_resolution
+                        ).images
+                        val_img_idx = 0
+                        for a_val_img in edited_images:
+                            a_val_img.save(os.path.join(val_save_dir, f"step_{global_step}_val_img_{val_img_idx}.png"))
+                            val_img_idx += 1
 
-                for tracker in accelerator.trackers:
-                    if tracker.name == "wandb":
-                        wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
-                        idx = 0
-                        for edited_image in edited_images:
-                            tracker.log({f"image-{idx}": wandb.Image(edited_images[idx])})
-                            idx += 1
-                if args.use_ema:
-                    # Switch back to the original UNet parameters.
-                    ema_unet.restore(unet.parameters())
+                    for tracker in accelerator.trackers:
+                        if tracker.name == "wandb":
+                            wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
+                            idx = 0
+                            for edited_image in edited_images:
+                                tracker.log({f"image-{idx}": wandb.Image(edited_images[idx])})
+                                idx += 1
+                    if args.use_ema:
+                        # Switch back to the original UNet parameters.
+                        ema_unet.restore(unet.parameters())
 
-                del pipeline
-                torch.cuda.empty_cache()
-            ### END: Perform validation every `validation_epochs` steps
+                    del pipeline
+                    torch.cuda.empty_cache()
+                ### END: Perform validation every `validation_epochs` steps
 
-        if global_step >= args.max_train_steps:
-            break
+            if global_step >= args.max_train_steps:
+                break
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
