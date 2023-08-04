@@ -110,7 +110,4 @@ class TextEmbeddingCache:
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
-        logger.debug(
-            f"Returning computed embeddings: {prompt_embeds_all}, {add_text_embeds_all}"
-        )
         return prompt_embeds_all, add_text_embeds_all
