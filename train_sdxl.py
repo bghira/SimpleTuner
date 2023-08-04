@@ -28,6 +28,8 @@ from helpers.state_tracker import StateTracker
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger('filelock')
+connection_logger = logging.getLogger('urllib3.connectionpool')
+connection_logger.setLevel('WARNING')
 filelock_logger.setLevel('WARNING')
 logger.setLevel('DEBUG')
 logger.info('Import accelerate')
