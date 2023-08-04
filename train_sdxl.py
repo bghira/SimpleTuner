@@ -234,6 +234,12 @@ def parse_args():
         help="Number of images that should be generated during validation with `validation_prompt`.",
     )
     parser.add_argument(
+        "--validation_resolution",
+        type=int,
+        default=256,
+        help="Square resolution images will be output at this resolution (256x256).",
+    )
+    parser.add_argument(
         "--validation_steps",
         type=int,
         default=100,
@@ -1234,12 +1240,15 @@ def main():
                     str(accelerator.device).replace(":0", ""),
                     enabled=(accelerator.mixed_precision == "fp16" or accelerator.mixed_precision == "bf16")
                 ):
+                    validation_generator = torch.Generator(device=accelerator.device).manual_seed(args.seed or 0)
                     edited_images = pipeline(
                         args.validation_prompt,
                         num_images_per_prompt=args.num_validation_images,
                         num_inference_steps=20,
                         guidance_scale=7,
-                        generator=generator,
+                        generator=validation_generator,
+                        height=args.validation_resolution,
+                        width=args.validation_resolution
                     ).images
                     val_img_idx = 0
                     for a_val_img in edited_images:
@@ -1249,11 +1258,10 @@ def main():
                 for tracker in accelerator.trackers:
                     if tracker.name == "wandb":
                         wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
+                        idx = 0
                         for edited_image in edited_images:
-                            wandb_table.add_data(
-                                step, wandb.Image(edited_image), args.validation_prompt
-                            )
-                        tracker.log({"validation": wandb_table})
+                            tracker.log({f"image-{idx}": wandb.Image(edited_images[idx])})
+                            idx += 1
                 if args.use_ema:
                     # Switch back to the original UNet parameters.
                     ema_unet.restore(unet.parameters())
