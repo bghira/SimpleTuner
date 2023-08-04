@@ -1168,6 +1168,7 @@ def main():
             progress_bar.set_postfix(**logs)
 
             ### BEGIN: Perform validation every `validation_epochs` steps
+        if accelerator.is_main_process:
             if global_step % args.validation_steps == 0 and global_step > 1:
                 pass
                 if args.validation_prompt is None or args.num_validation_images is None or args.num_validation_images <= 0:
@@ -1240,8 +1241,8 @@ def main():
                 torch.cuda.empty_cache()
             ### END: Perform validation every `validation_epochs` steps
 
-            if global_step >= args.max_train_steps:
-                break
+        if global_step >= args.max_train_steps:
+            break
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
