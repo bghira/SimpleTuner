@@ -31,9 +31,16 @@ from helpers.sdxl_embeds import TextEmbeddingCache
 logger = logging.getLogger()
 filelock_logger = logging.getLogger('filelock')
 connection_logger = logging.getLogger('urllib3.connectionpool')
-connection_logger.setLevel('WARNING')
-filelock_logger.setLevel('WARNING')
+training_logger = logging.getLogger('training-loop')
+
+# More important logs.
 logger.setLevel('DEBUG')
+training_logger.setLevel('DEBUG')
+
+# Less important logs.
+filelock_logger.setLevel('WARNING')
+connection_logger.setLevel('WARNING')
+
 logger.info('Import accelerate')
 import accelerate
 logger.info('Import datasets')
@@ -1030,26 +1037,32 @@ def main():
                 logging.warning(f'Burning a None size batch.')
                 continue
             with accelerator.accumulate(unet):
+                training_logger.debug(f'Beginning another step.')
                 pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
+                training_logger.debug('Moved pixels to accelerator.')
                 latents = vae.encode(pixel_values).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
-
+                training_logger.debug(f'Scaled latents by scaling factor {vae.config.scaling_factor}')
                 # Sample noise that we'll add to the latents
+                training_logger.debug(f'Sampling random noise')
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
+                training_logger.debug(f'Working on batch size: {bsz}')
                 # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()
+                training_logger.debug(f'Generated and converted timesteps to float64.')
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                training_logger.debug(f'Generated noisy latent frame from latents and noise.')
 
                 # SDXL additional inputs
                 encoder_hidden_states = batch["prompt_embeds"]
                 add_text_embeds = batch["add_text_embeds"]
-                logger.debug(f'Encoder hidden states: {encoder_hidden_states.shape}')
-                logger.debug(f'Added text embeds: {add_text_embeds.shape}')
+                training_logger.debug(f'Encoder hidden states: {encoder_hidden_states.shape}')
+                training_logger.debug(f'Added text embeds: {add_text_embeds.shape}')
                 # Get the additional image embedding for conditioning.
                 # Instead of getting a diagonal Gaussian here, we simply take the mode.
                 if args.pretrained_vae_model_name_or_path is not None:
@@ -1062,7 +1075,7 @@ def main():
 
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
-                logger.debug(f'Conditioning dropout: {args.conditioning_dropout_prob}')
+                training_logger.debug(f'Conditioning dropout: {args.conditioning_dropout_prob}')
                 if args.conditioning_dropout_prob is not None:
                     random_p = torch.rand(bsz, device=latents.device, generator=generator)
                     # Sample masks for the edit prompts.
@@ -1081,31 +1094,23 @@ def main():
                     # Final image conditioning.
                     original_image_embeds = image_mask * original_image_embeds
 
-                # logger.debug(f'Concatenate the `original_image_embeds` {original_image_embeds.shape} with the `noisy_latents` {noisy_latents.shape}.')
-                # concatenated_noisy_latents = torch.cat([noisy_latents, original_image_embeds], dim=1)
-
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
-                    logger.debug('Using epsilon prediction.')
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
-                    logger.debug('Using v-prediction objective loss.')
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                logger.debug(f'add_text_embeds: {add_text_embeds.shape}, time_ids: {add_time_ids}')
+                # training_logger.debug(f'add_text_embeds: {add_text_embeds.shape}, time_ids: {add_time_ids}')
                 added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+                training_logger.debug('Predicting noise residual.')
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states, added_cond_kwargs=added_cond_kwargs
                 ).sample
-                if accelerator.is_main_process:
-                    logger.info(f'GPU memory use before removing embeds: {torch.cuda.memory_allocated() / 1024 ** 3} GB')
-                del add_text_embeds, encoder_hidden_states
-                if accelerator.is_main_process:
-                    logger.info(f'GPU memory use after removing embeds: {torch.cuda.memory_allocated() / 1024 ** 3} GB')
 
+                training_logger.debug(f'Calculating loss')
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
@@ -1113,9 +1118,12 @@ def main():
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 # Backpropagate
+                training_logger.debug(f'Backwards pass.')
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
+                    training_logger.debug(f'Accelerator is syncing gradients')
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
+                training_logger.debug(f'Stepping components forward.')
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -1123,6 +1131,7 @@ def main():
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 if args.use_ema:
+                    training_logger.debug(f'Stepping EMA unet forward')
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
