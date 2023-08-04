@@ -502,10 +502,7 @@ def convert_to_np(image, resolution):
 
 
 def main():
-    logger.info('Begin! Parsing commandline arguments.')
     args = parse_args()
-    logger.debug(f'args: {args}')
-
     if args.non_ema_revision is not None:
         deprecate(
             "non_ema_revision!=None",
@@ -517,8 +514,6 @@ def main():
         )
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-    logger.debug(f'Accelerate project config: {accelerator_project_config}')
-    logger.info(f'Loading up Accelerator using {args.mixed_precision} precision.')
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
