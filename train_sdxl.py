@@ -902,11 +902,17 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing text embeds / updating cache.')
         embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
-        validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
-            'a cute and sweet teddy bear sitting on a picnic blanket'
-        ])
-        logger.debug(f'Validation prompt embeds: {validation_prompt_embeds}')
-        logger.debug(f'Validation prompt embeds: {validation_pooled_embeds}')
+        if args.validation_prompt is not None:
+            validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
+                args.validation_prompt
+            ])
+            logger.debug(f'Validation prompt embeds: {validation_prompt_embeds}')
+            logger.debug(f'Validation prompt embeds: {validation_pooled_embeds}')
+            validation_negative_prompt_embeds, validation_negative_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
+                'blurry, cropped, ugly'
+            ])
+            logger.debug(f'Validation negative prompt embeds: {validation_negative_prompt_embeds}')
+            logger.debug(f'Validation negative prompt embeds: {validation_negative_pooled_embeds}')
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(f'Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB')
@@ -1220,6 +1226,8 @@ def main():
                         edited_images = pipeline(
                             prompt_embeds=validation_prompt_embeds[0],
                             pooled_prompt_embeds=validation_pooled_embeds[0],
+                            negative_prompt_embeds=validation_negative_prompt_embeds[0],
+                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds[0],
                             num_images_per_prompt=args.num_validation_images,
                             num_inference_steps=20,
                             guidance_scale=7,
