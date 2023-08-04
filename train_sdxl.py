@@ -902,6 +902,11 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing text embeds / updating cache.')
         embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
+        validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
+            'a cute and sweet teddy bear sitting on a picnic blanket'
+        ])
+        logger.debug(f'Validation prompt embeds: {validation_prompt_embeds}')
+        logger.debug(f'Validation prompt embeds: {validation_pooled_embeds}')
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(f'Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB')
