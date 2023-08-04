@@ -1099,6 +1099,12 @@ def main():
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states, added_cond_kwargs=added_cond_kwargs
                 ).sample
+                if accelerator.is_main_process:
+                    logger.info(f'GPU memory use before removing embeds: {torch.cuda.memory_allocated() / 1024 ** 3} GB')
+                del add_text_embeds, add_time_ids, encoder_hidden_states
+                if accelerator.is_main_process:
+                    logger.info(f'GPU memory use after removing embeds: {torch.cuda.memory_allocated() / 1024 ** 3} GB')
+
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
