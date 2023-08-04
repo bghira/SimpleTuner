@@ -1194,10 +1194,10 @@ def main():
                 pipeline = StableDiffusionXLPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     unet=accelerator.unwrap_model(unet),
-                    text_encoder=text_encoder_1,
-                    text_encoder_2=text_encoder_2,
-                    tokenizer=tokenizer_1,
-                    tokenizer_2=tokenizer_2,
+                    text_encoder=None,
+                    text_encoder_2=None,
+                    tokenizer=None,
+                    tokenizer_2=None,
                     vae=vae,
                     revision=args.revision,
                     torch_dtype=weight_dtype,
@@ -1218,7 +1218,8 @@ def main():
                 ):
                     validation_generator = torch.Generator(device=accelerator.device).manual_seed(args.seed or 0)
                     edited_images = pipeline(
-                        args.validation_prompt,
+                        prompt_embeds=validation_prompt_embeds[0],
+                        pooled_prompt_embeds=validation_pooled_embeds[0],
                         num_images_per_prompt=args.num_validation_images,
                         num_inference_steps=20,
                         guidance_scale=7,
