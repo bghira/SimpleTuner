@@ -812,71 +812,6 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
-    # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-    def encode_prompt(text_encoders, tokenizers, prompt):
-        prompt_embeds_list = []
-
-        for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-            text_inputs = tokenizer(
-                prompt,
-                padding="max_length",
-                max_length=tokenizer.model_max_length,
-                truncation=True,
-                return_tensors="pt",
-            )
-            text_input_ids = text_inputs.input_ids
-            untruncated_ids = tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
-
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-                text_input_ids, untruncated_ids
-            ):
-                removed_text = tokenizer.batch_decode(untruncated_ids[:, tokenizer.model_max_length - 1 : -1])
-                logger.warning(
-                    "The following part of your input was truncated because CLIP can only handle sequences up to"
-                    f" {tokenizer.model_max_length} tokens: {removed_text}"
-                )
-
-            prompt_embeds = text_encoder(
-                text_input_ids.to(text_encoder.device),
-                output_hidden_states=True,
-            )
-
-            # We are only ALWAYS interested in the pooled output of the final text encoder
-            pooled_prompt_embeds = prompt_embeds[0]
-            prompt_embeds = prompt_embeds.hidden_states[-2]
-            bs_embed, seq_len, _ = prompt_embeds.shape
-            prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
-            prompt_embeds_list.append(prompt_embeds)
-
-        prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
-        pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
-        return prompt_embeds, pooled_prompt_embeds
-
-    # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-    def encode_prompts(text_encoders, tokenizers, prompts):
-        prompt_embeds_all = []
-        pooled_prompt_embeds_all = []
-
-        for prompt in prompts:
-            prompt_embeds, pooled_prompt_embeds = encode_prompt(text_encoders, tokenizers, prompt)
-            prompt_embeds_all.append(prompt_embeds)
-            pooled_prompt_embeds_all.append(pooled_prompt_embeds)
-
-        return torch.stack(prompt_embeds_all).squeeze(dim=1), torch.stack(pooled_prompt_embeds_all).squeeze(dim=1)
-    # Adapted from examples.dreambooth.train_dreambooth_lora_sdxl
-    # Here, we compute not just the text embeddings but also the additional embeddings
-    # needed for the SD XL UNet to operate.
-    def compute_embeddings_for_prompts(prompts, text_encoders, tokenizers):
-        with torch.no_grad():
-            logger.debug(f'Beginning compute_embeddings_for_prompts: {prompts}')
-            prompt_embeds_all, pooled_prompt_embeds_all = encode_prompts(text_encoders, tokenizers, prompts)
-            add_text_embeds_all = pooled_prompt_embeds_all
-
-            prompt_embeds_all = prompt_embeds_all.to(accelerator.device)
-            add_text_embeds_all = add_text_embeds_all.to(accelerator.device)
-        logger.debug(f'Returning computed embeddings: {prompt_embeds_all}, {add_text_embeds_all}')
-        return prompt_embeds_all, add_text_embeds_all
-
     # Get null conditioning
     def compute_null_conditioning():
         null_conditioning_list = []
@@ -913,7 +848,7 @@ def main():
         captions = [example["instance_prompt_text"] for example in examples]
         
         # Compute the embeddings using the captions.
-        prompt_embeds_all, add_text_embeds_all = compute_embeddings_for_prompts(captions, text_encoders, tokenizers)
+        prompt_embeds_all, add_text_embeds_all = embed_cache.compute_embeddings_for_prompts(captions)
         prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
         add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
         logger.debug(f'Returning collate_fn results.')
