@@ -189,6 +189,9 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             if old_bucket != self.current_bucket:
                 logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
                 return
+            if len(self.buckets) == 1:
+                logger.debug(f'Changing bucket to the only one present.')
+                return
             logger.warning(
                 f"Only one bucket left, and it doesn't have enough samples. Resetting..."
             )
