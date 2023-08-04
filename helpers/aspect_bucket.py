@@ -2,6 +2,10 @@ import torch, logging, random, time
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
+
+pil_logger = logging.getLogger('PIL.Image')
+pil_logger.setLevel(logging.WARNING)
+
 from PIL import Image
 from .state_tracker import StateTracker
 import os, json
