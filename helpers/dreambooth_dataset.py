@@ -198,9 +198,26 @@ class DreamBoothDataset(Dataset):
 
     def get_all_captions(self):
         captions = []
-        for image_path in self.instance_images_path:
-            caption = self._prepare_instance_prompt(image_path)
+
+        def rglob_follow_symlinks(path: Path, pattern: str):
+            for p in path.glob(pattern):
+                yield p
+            for p in path.iterdir():
+                if p.is_dir() and not p.is_symlink():
+                    yield from rglob_follow_symlinks(p, pattern)
+                elif p.is_symlink():
+                    real_path = Path(os.readlink(p))
+                    if real_path.is_dir():
+                        yield from rglob_follow_symlinks(real_path, pattern)
+
+        all_image_files = list(
+            rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
+        )
+
+        for image_path in all_image_files:
+            caption = self._prepare_instance_prompt(str(image_path))
             captions.append(caption)
+
         return captions
 
     def _prepare_instance_prompt(self, image_path):
