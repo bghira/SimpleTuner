@@ -27,6 +27,8 @@ from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 
 logger = logging.getLogger()
+filelock_logger = logging.getLogger('filelock')
+filelock_logger.setLevel('WARNING')
 logger.setLevel('DEBUG')
 logger.info('Import accelerate')
 import accelerate
