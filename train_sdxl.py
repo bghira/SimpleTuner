@@ -632,6 +632,9 @@ def main():
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+        if args.train_text_encoder:
+            text_encoder_1.gradient_checkpointing_enable()
+            text_encoder_2.gradient_checkpointing_enable()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -986,8 +989,8 @@ def main():
         elif args.vae_dtype == 'none' or args.vae_dtype == 'default':
             vae_dtype = torch.float32
     if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f'Initialising VAE with weight dtype {weight_dtype}')
-        vae.to(accelerator.device, dtype=weight_dtype)
+        logger.debug(f'Initialising VAE with weight dtype {vae_dtype}')
+        vae.to(accelerator.device, dtype=vae_dtype)
     else:
         logger.debug(f'Initialising VAE with custom dtype {vae_dtype}')
         vae.to(accelerator.device, dtype=vae_dtype)
