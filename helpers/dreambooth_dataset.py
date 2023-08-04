@@ -196,6 +196,13 @@ class DreamBoothDataset(Dataset):
     def __len__(self):
         return self._length
 
+    def get_all_captions(self):
+        captions = []
+        for image_path in self.instance_images_path:
+            caption = self._prepare_instance_prompt(image_path)
+            captions.append(caption)
+        return captions
+
     def _prepare_instance_prompt(self, image_path):
         instance_prompt = self.instance_prompt
         if self.use_captions:

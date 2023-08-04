@@ -19,12 +19,14 @@ import math
 import os
 import shutil
 import random
+import gc
 import warnings
 from pathlib import Path
 from urllib.parse import urlparse
 from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
+from helpers.sdxl_embeds import TextEmbeddingCache
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger('filelock')
@@ -949,7 +951,18 @@ def main():
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
+    embed_cache = TextEmbeddingCache(
+        text_encoders=text_encoders,
+        tokenizers=tokenizers,
+        accelerator=accelerator        
+    )
+    if accelerator.is_main_process:
+        logger.info(f'Pre-computing text embeds / updating cache.')
+        embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
 
+    del text_encoders
+    gc.collect()
+    torch.cuda.empty_cache()
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
