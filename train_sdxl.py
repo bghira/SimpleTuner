@@ -899,9 +899,6 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing text embeds / updating cache.')
         embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
-        logger.info(f'Pre-computing VAE latent space.')
-        vaecache = VAECache(vae, accelerator)
-        vaecache.process_directory('path/to/directory')
 
     if args.validation_prompt is not None:
         validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
@@ -967,7 +964,10 @@ def main():
         logger.debug(f'Initialising VAE with custom dtype {vae_dtype}')
         vae.to(accelerator.device, dtype=vae_dtype)
     logger.debug(f'Loaded VAE into VRAM.')
-
+    if accelerator.is_main_process:
+        logger.info(f'Pre-computing VAE latent space.')
+        vaecache = VAECache(vae, accelerator)
+        vaecache.process_directory('path/to/directory')
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
