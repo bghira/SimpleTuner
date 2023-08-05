@@ -1,7 +1,7 @@
 import os, torch, hashlib, logging
 
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger('TextEmbeddingCache')
+logger.setLevel(logging.INFO)
 
 
 class TextEmbeddingCache:
