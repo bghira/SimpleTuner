@@ -1086,30 +1086,6 @@ def main():
                     pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
                 else:
                     pixel_values = batch["pixel_values"]
-                original_image_embeds = vae.encode(pixel_values).latent_dist.sample()
-                if args.pretrained_vae_model_name_or_path is None:
-                    original_image_embeds = original_image_embeds.to(weight_dtype)
-
-                # Conditioning dropout to support classifier-free guidance during inference. For more details
-                # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
-                training_logger.debug(f'Conditioning dropout: {args.conditioning_dropout_prob}')
-                if args.conditioning_dropout_prob is not None:
-                    random_p = torch.rand(bsz, device=latents.device, generator=generator)
-                    # Sample masks for the edit prompts.
-                    prompt_mask = random_p < 2 * args.conditioning_dropout_prob
-                    prompt_mask = prompt_mask.reshape(bsz, 1, 1)
-                    # Final text conditioning.
-                    encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
-
-                    # Sample masks for the original images.
-                    image_mask_dtype = original_image_embeds.dtype
-                    image_mask = 1 - (
-                        (random_p >= args.conditioning_dropout_prob).to(image_mask_dtype)
-                        * (random_p < 3 * args.conditioning_dropout_prob).to(image_mask_dtype)
-                    )
-                    image_mask = image_mask.reshape(bsz, 1, 1, 1)
-                    # Final image conditioning.
-                    original_image_embeds = image_mask * original_image_embeds
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
