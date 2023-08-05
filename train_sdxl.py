@@ -902,17 +902,17 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing text embeds / updating cache.')
         embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
-        if args.validation_prompt is not None:
-            validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
-                args.validation_prompt
-            ])
-            logger.debug(f'Validation prompt embeds: {validation_prompt_embeds}')
-            logger.debug(f'Validation prompt embeds: {validation_pooled_embeds}')
-            validation_negative_prompt_embeds, validation_negative_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
-                'blurry, cropped, ugly'
-            ])
-            logger.debug(f'Validation negative prompt embeds: {validation_negative_prompt_embeds}')
-            logger.debug(f'Validation negative prompt embeds: {validation_negative_pooled_embeds}')
+    if args.validation_prompt is not None:
+        validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
+            args.validation_prompt
+        ])
+        logger.debug(f'Validation prompt embeds: {validation_prompt_embeds}')
+        logger.debug(f'Validation prompt embeds: {validation_pooled_embeds}')
+        validation_negative_prompt_embeds, validation_negative_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
+            'blurry, cropped, ugly'
+        ])
+        logger.debug(f'Validation negative prompt embeds: {validation_negative_prompt_embeds}')
+        logger.debug(f'Validation negative prompt embeds: {validation_negative_pooled_embeds}')
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(f'Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB')
