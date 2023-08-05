@@ -843,7 +843,10 @@ def main():
 
         pixel_values = []
         for example in examples:
-            pixel_values.append(to_tensor(example["instance_images"]).to(memory_format=torch.contiguous_format).float())
+            image_data = example["instance_images"]
+            width = image_data.width
+            height = image_data.height
+            pixel_values.append(to_tensor(image_data).to(memory_format=torch.contiguous_format, dtype=vae_dtype))
 
         # Compute the VAE embeddings for individual images
         latents = [vaecache.encode_image(pv) for pv in pixel_values]
@@ -862,7 +865,7 @@ def main():
             "pixel_values": pixel_values,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
-            "add_time_ids": compute_time_ids(examples[0]['width'], examples[0]['height'])
+            "add_time_ids": compute_time_ids(width, height)
         }
 
     # DataLoaders creation:
