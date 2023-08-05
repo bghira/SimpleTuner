@@ -818,14 +818,16 @@ def main():
 
     null_conditioning = compute_null_conditioning()
 
-    def compute_time_ids():
+    def compute_time_ids(width = None, height = None):
+        if width is None:
+            width = args.resolution
+        if height is None:
+            height = args.resolution
         crops_coords_top_left = (args.crops_coords_top_left_h, args.crops_coords_top_left_w)
-        original_size = target_size = (args.resolution, args.resolution)
+        original_size = target_size = (width, height)
         add_time_ids = list(original_size + crops_coords_top_left + target_size)
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
-
-    add_time_ids = compute_time_ids()
 
     def collate_fn(examples):
         logger.debug(f'Running collate_fn')
@@ -860,6 +862,7 @@ def main():
             "pixel_values": pixel_values,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
+            "add_time_ids": compute_time_ids(examples[0]['width'], examples[0]['height'])
         }
 
     # DataLoaders creation:
@@ -1117,7 +1120,7 @@ def main():
 
                 # Predict the noise residual and compute loss
                 # training_logger.debug(f'add_text_embeds: {add_text_embeds.shape}, time_ids: {add_time_ids}')
-                added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+                added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": batch["add_time_ids"]}
                 training_logger.debug('Predicting noise residual.')
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states, added_cond_kwargs=added_cond_kwargs
