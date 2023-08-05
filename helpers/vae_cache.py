@@ -14,9 +14,9 @@ class VAECache:
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def create_hash(self, image):
-        # Convert the image to float32 before converting to numpy and computing the hash
-        image_float32 = image.to(dtype=torch.float32)
-        return hashlib.sha256(image_float32.cpu().numpy().tobytes()).hexdigest()
+        # Ensure the image is on CPU and then convert to float32
+        image_float32 = image.cpu().to(dtype=torch.float32)
+        return hashlib.sha256(image_float32.numpy().tobytes()).hexdigest()
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)
