@@ -25,6 +25,7 @@ class VAECache:
     def encode_image(self, pixel_values):
         image_hash = self.create_hash(pixel_values)
         filename = os.path.join(self.cache_dir, image_hash + ".pt")
+        transform = transforms.ToTensor()
 
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
@@ -34,7 +35,7 @@ class VAECache:
             latents = latents * self.vae.config.scaling_factor
             self.save_to_cache(filename, latents.squeeze())
 
-        return latents.squeeze()
+        return transform(latents.squeeze()).to(self.accelerator.device, dtype=self.vae.dtype)
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
@@ -59,7 +60,7 @@ class VAECache:
 
             # Convert the image to a tensor
             try:
-                pixel_values = transform(image).to(self.accelerator.device, dtype=torch.bfloat16)
+                pixel_values = transform(image).to(self.accelerator.device, dtype=self.vae.dtype)
             except OSError as e:
                 logger.error(f'Encountered error converting image to tensor: {e}')
                 continue
