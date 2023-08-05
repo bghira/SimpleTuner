@@ -850,6 +850,7 @@ def main():
 
         # Compute the VAE embeddings for individual images
         latents = [vaecache.encode_image(pv) for pv in pixel_values]
+        logger.debug(f'Latents {latents.shape} gathered: {latents}')
         pixel_values = torch.stack(latents)
 
         # Extract the captions from the examples.
