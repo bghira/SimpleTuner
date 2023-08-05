@@ -7,11 +7,12 @@ logger = logging.getLogger('VAECache')
 logger.setLevel('DEBUG')
 
 class VAECache:
-    def __init__(self, vae, accelerator, cache_dir="vae_cache"):
+    def __init__(self, vae, accelerator, cache_dir="vae_cache", resolution: int = 1024):
         self.vae = vae
         self.vae.enable_slicing()
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        self.resolution = resolution
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def create_hash(self, filename):
@@ -67,6 +68,7 @@ class VAECache:
                 logger.debug(f'Loading image: {filepath}')
                 image = Image.open(filepath)
                 image = image.convert('RGB')
+                image = self._resize_for_condition_image(image, self.resolution)
                 # Create a hash based on the filename
                 file_hash = self.create_hash(filepath)
             except Exception as e:
@@ -85,3 +87,22 @@ class VAECache:
             self.encode_image(pixel_values, file_hash)
 
             logger.debug(f'Processed image {filepath}')
+    def _resize_for_condition_image(self, input_image: Image, resolution: int):
+        input_image = input_image.convert("RGB")
+        W, H = input_image.size
+        aspect_ratio = round(W / H, 3)
+        msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
+        if W < H:
+            W = resolution
+            H = int(resolution / aspect_ratio)  # Calculate the new height
+        elif H < W:
+            H = resolution
+            W = int(resolution * aspect_ratio)  # Calculate the new width
+        if W == H:
+            W = resolution
+            H = resolution
+        msg = f"{msg} {W}x{H}."
+        if self.debug_dataset_loader:
+            logger.debug(msg)
+        img = input_image.resize((W, H), resample=Image.BICUBIC)
+        return img
