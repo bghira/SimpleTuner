@@ -27,7 +27,7 @@ from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
-from helpers.fake_encoder import FakeTextEncoder
+from helpers.vae_cache import VAECache
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger('filelock')
@@ -771,23 +771,6 @@ def main():
         )
         return inputs.input_ids
 
-    # Preprocessing the datasets.
-    train_transforms = transforms.Compose(
-        [
-            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
-            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
-        ]
-    )
-
-    def preprocess_images(examples):
-        logger.debug(f'Received examples for preprocess_images: {examples}')
-        images = np.concatenate(
-            [convert_to_np(image, args.resolution) for image in examples]
-        )
-        images = torch.tensor(images)
-        images = 2 * (images / 255) - 1
-        return train_transforms(images)
-
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision, use_fast=False
@@ -812,15 +795,7 @@ def main():
     # We ALWAYS pre-compute the additional condition embeddings needed for SDXL
     # UNet as the model is already big and it uses two text encoders.
     text_encoder_1.to(accelerator.device, dtype=weight_dtype)
-    fake_text_encoder_1 = FakeTextEncoder(
-        text_encoder=text_encoder_1,
-        dtype=text_encoder_1.dtype
-    )
     text_encoder_2.to(accelerator.device, dtype=weight_dtype)
-    fake_text_encoder_2 = FakeTextEncoder(
-        text_encoder=text_encoder_2,
-        dtype=text_encoder_2.dtype
-    )
     tokenizers = [tokenizer_1, tokenizer_2]
     text_encoders = [text_encoder_1, text_encoder_2]
 
@@ -858,22 +833,35 @@ def main():
             logger.debug(f'Not training, returning nothing from collate_fn')
             return
         logger.debug(f'Examples: {examples}')
-        pixel_values = torch.stack([to_tensor(example["instance_images"]) for example in examples])
-        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
         
+        # Initialize the VAE Cache if it doesn't exist
+        global vaecache
+        if 'vaecache' not in globals():
+            vaecache = VAECache(vae, accelerator)
+
+        pixel_values = []
+        for example in examples:
+            pixel_values.append(to_tensor(example["instance_images"]).to(memory_format=torch.contiguous_format).float())
+
+        # Compute the VAE embeddings for individual images
+        latents = [vaecache.encode_image(pv) for pv in pixel_values]
+        pixel_values = torch.stack(latents)
+
         # Extract the captions from the examples.
         captions = [example["instance_prompt_text"] for example in examples]
-        
+
         # Compute the embeddings using the captions.
         prompt_embeds_all, add_text_embeds_all = embed_cache.compute_embeddings_for_prompts(captions)
         prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
         add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
+        
         logger.debug(f'Returning collate_fn results.')
         return {
             "pixel_values": pixel_values,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
         }
+
     # DataLoaders creation:
     # Dataset and DataLoaders creation:
     train_dataset = DreamBoothDataset(
@@ -911,6 +899,10 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing text embeds / updating cache.')
         embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
+        logger.info(f'Pre-computing VAE latent space.')
+        vaecache = VAECache(vae, accelerator)
+        vaecache.process_directory('path/to/directory')
+
     if args.validation_prompt is not None:
         validation_prompt_embeds, validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts([
             args.validation_prompt
