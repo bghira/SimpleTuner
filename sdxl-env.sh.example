@@ -11,13 +11,15 @@ export CHECKPOINTING_STEPS=150
 # This is how many checkpoints we will keep. Two is safe, but three is safer.
 export CHECKPOINTING_LIMIT=2
 
-export LEARNING_RATE=4e-7 #@param {type:"number"}
+export LEARNING_RATE=8e-7 #@param {type:"number"}
 
 # Configure these values.
 # Using a Huggingface Hub model:
 export MODEL_NAME="stabilityai/stable-diffusion-xl-base-1.0"
 # Using a local path to a huggingface hub model or saved checkpoint:
 #export MODEL_NAME="/datasets/models/pipeline"
+
+export TRACKER_RUN_NAME="simpletuner-sdxl"
 
 # Use this to append an instance prompt to each caption, used for adding trigger words.
 # This has not been tested in SDXL.
@@ -51,7 +53,7 @@ export TRAIN_BATCH_SIZE=10
 
 # Leave these alone unless you know what you are doing.
 export RESOLUTION=1024
-export GRADIENT_ACCUMULATION_STEPS=15        # Yes, it slows training down. No, you don't want to change this.
+export GRADIENT_ACCUMULATION_STEPS=4          # Yes, it slows training down. No, you don't want to change this.
 
 # SDXL text encoder training is not currently tested.
 #export TEXT_ENCODER_LIMIT=101                # Train the text encoder for % of the process. Buggy.
@@ -67,7 +69,7 @@ export MIXED_PRECISION="bf16"                # Might not be supported on all GPU
 export TRAINING_DYNAMO_BACKEND='no'          # or 'inductor' if you want to brave PyTorch 2 compile issues
 
 # This has to be changed if you're training with multiple GPUs.
-export TRAINING_NUM_PROCESSES=1
+export TRAINING_NUM_PROCESSES=10
 export TRAINING_NUM_MACHINES=1
 
 # These should remain empty if you remove their options.

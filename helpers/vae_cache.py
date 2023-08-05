@@ -14,10 +14,15 @@ class VAECache:
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def create_hash(self, image):
-        # Ensure the image is on CPU and then convert to float32
-        image_float32 = image.cpu().to(dtype=torch.float32)
-        return hashlib.sha256(image_float32.numpy().tobytes()).hexdigest()
+    def create_hash(self, filename):
+        # Create a sha256 hash
+        sha256_hash = hashlib.sha256()
+
+        # Feed the hash function with the filename
+        sha256_hash.update(filename.encode())
+
+        # Get the hexadecimal representation of the hash
+        return sha256_hash.hexdigest()
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)
@@ -25,9 +30,8 @@ class VAECache:
     def load_from_cache(self, filename):
         return torch.load(filename)
 
-    def encode_image(self, pixel_values):
-        image_hash = self.create_hash(pixel_values)
-        filename = os.path.join(self.cache_dir, image_hash + ".pt")
+    def encode_image(self, pixel_values, file_hash: str):
+        filename = os.path.join(self.cache_dir, file_hash + ".pt")
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
             logger.debug(f'Loading latents of shape {latents.shape} from existing cache file: {filename}')
@@ -63,6 +67,8 @@ class VAECache:
                 logger.debug(f'Loading image: {filepath}')
                 image = Image.open(filepath)
                 image = image.convert('RGB')
+                # Create a hash based on the filename
+                file_hash = self.create_hash(filepath)
             except Exception as e:
                 logger.error(f'Encountered error opening image: {e}')
                 os.remove(filepath)
@@ -76,6 +82,6 @@ class VAECache:
                 continue
 
             # Process the image with the VAE
-            self.encode_image(pixel_values)
+            self.encode_image(pixel_values, file_hash)
 
             logger.debug(f'Processed image {filepath}')
