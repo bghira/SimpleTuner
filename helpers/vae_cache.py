@@ -35,7 +35,7 @@ class VAECache:
             latents = latents * self.vae.config.scaling_factor
             self.save_to_cache(filename, latents.squeeze())
 
-        return transform(latents.squeeze()).to(self.accelerator.device, dtype=self.vae.dtype)
+        return latents.squeeze().to(self.accelerator.device, dtype=self.vae.dtype)
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
