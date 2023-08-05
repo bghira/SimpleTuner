@@ -5,9 +5,11 @@ from prompts import prompts
 from compel import Compel
 
 import torch, os, logging
-
+logger = logging.getLogger('root')
+logger.setLevel(logging.INFO)
 # Load the pipeline with the same arguments (model, revision) that were used for training
-model_id = "ptx0/pseudo-real-beta"
+model_id = "stabilityai/stable-diffusion-2"
+model_id = "ptx0/pseudo-flex-base"
 base_dir = "/notebooks/datasets"
 model_path = os.path.join(base_dir, 'models')
 #output_test_dir = os.path.join(base_dir, 'test_results')
@@ -34,7 +36,7 @@ checkpoints.reverse()
 torch.set_float32_matmul_precision('high')
 negative = "deep fried watermark cropped out-of-frame low quality low res oorly drawn bad anatomy wrong anatomy extra limb missing limb floating limbs (mutated hands and fingers)1.4 disconnected limbs mutation mutated ugly disgusting blurry amputation synthetic rendering"
 for checkpoint in checkpoints:
-    for enable_textencoder in [True, False, None]:
+    for enable_textencoder in [False]:
         suffix = 't' if enable_textencoder else 'b' if enable_textencoder is None else 'u'
         if len(checkpoints) > 1 and os.path.isfile(f'{output_test_dir}/target-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png'):
             continue
@@ -90,7 +92,7 @@ for checkpoint in checkpoints:
                 logging.info(f'Negative: {negative}')
                 conditioning = compel.build_conditioning_tensor(prompt)
                 generator = torch.Generator(device="cuda").manual_seed(torch_seed)
-                output = pipeline(generator=generator, negative_prompt_embeds=negative_embed, prompt_embeds=conditioning, guidance_scale=9.2, guidance_rescale=0.3, width=1152, height=768, num_inference_steps=15).images[0]
+                output = pipeline(generator=generator, negative_prompt_embeds=negative_embed, prompt_embeds=conditioning, guidance_scale=7.5, guidance_rescale=0.0, width=1152, height=768, num_inference_steps=25).images[0]
                 output.save(f'{output_test_dir}/{shortname}-{checkpoint}_{base_checkpoint_for_unet}{suffix}.png')
                 del output
             
