@@ -925,7 +925,8 @@ def main():
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(f'Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB')
-    del text_encoders
+    text_encoder_1.to('cpu')
+    text_encoder_2.to('cpu')
     gc.collect()
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
