@@ -1,4 +1,5 @@
-import hashlib, os, torch, tqdm, logging
+import hashlib, os, torch, logging
+from tqdm import tqdm
 from PIL import Image
 import torchvision.transforms as transforms
 
