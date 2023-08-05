@@ -1059,9 +1059,7 @@ def main():
                 training_logger.debug(f'Beginning another step.')
                 pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
                 training_logger.debug('Moved pixels to accelerator.')
-                latents = vae.encode(pixel_values).latent_dist.sample()
-                latents = latents * vae.config.scaling_factor
-                training_logger.debug(f'Scaled latents by scaling factor {vae.config.scaling_factor}')
+                latents = pixel_values
                 # Sample noise that we'll add to the latents
                 training_logger.debug(f'Sampling random noise')
                 noise = torch.randn_like(latents)
