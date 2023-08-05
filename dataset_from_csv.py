@@ -5,6 +5,9 @@ import shutil
 import requests
 import re
 import sys
+import logging
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
 
 from concurrent.futures import ThreadPoolExecutor
 

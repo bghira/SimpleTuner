@@ -1,5 +1,6 @@
 prompts = {
     "zen_garden_snowfall": "A serene Zen garden during a gentle snowfall.",
+    "jester": "stunning++ photographs of jesters+ at the twisted carnival-",
     "woman": "Blonde female model, white shirt, white pants, white background, studio",
     "woman2": "autumn portrait of a russian young woman inside cafe, knitted fox-hat, fog close-up, storm clouds, wearing red sunglasses, red shirt, (artstation, deviantart)",
     "woman3": "cinematic portrait of girl, award winning photography, short fluffy auburn hair, freckles, photorealistic, hyperrealistic, green eyes, (ultra detailed face), athletic petite toned body, (huge boobs:1. 2), belly button , (smile:0. 7), Best quality, masterpiece, white wet tight spacesuit, surprised, in space capsule",

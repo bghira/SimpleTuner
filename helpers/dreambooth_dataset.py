@@ -7,6 +7,8 @@ from PIL import Image
 import json, logging, os
 from tqdm import tqdm
 
+logger = logging.getLogger('DatasetLoader')
+logger.setLevel(logging.INFO)
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
@@ -20,8 +22,8 @@ class DreamBoothDataset(Dataset):
     def __init__(
         self,
         instance_data_root,
-        instance_prompt,
-        tokenizer,
+        instance_prompt: str = None,
+        tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
         size=1024,
         center_crop=False,
@@ -29,7 +31,9 @@ class DreamBoothDataset(Dataset):
         use_captions=True,
         prepend_instance_prompt=False,
         use_original_images=False,
-        caption_dropout_interval:int = 0
+        caption_dropout_interval: int = 0,
+        use_precomputed_token_ids: bool = True,
+        debug_dataset_loader: bool = False,
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -37,6 +41,7 @@ class DreamBoothDataset(Dataset):
         self.center_crop = center_crop
         self.tokenizer = tokenizer
         self.print_names = print_names
+        self.debug_dataset_loader = debug_dataset_loader
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
             raise ValueError(
@@ -51,11 +56,12 @@ class DreamBoothDataset(Dataset):
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
+        self.use_precomputed_token_ids = use_precomputed_token_ids
         if len(self.aspect_ratio_bucket_indices) > 0:
-            logging.debug(f"Updating cache...")
+            logger.debug(f"Updating cache...")
             self.update_cache()
         if not use_original_images:
-            logging.debug(f"Building transformations.")
+            logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
 
     def _get_image_transforms(self):
@@ -190,6 +196,30 @@ class DreamBoothDataset(Dataset):
     def __len__(self):
         return self._length
 
+    def get_all_captions(self):
+        captions = []
+
+        def rglob_follow_symlinks(path: Path, pattern: str):
+            for p in path.glob(pattern):
+                yield p
+            for p in path.iterdir():
+                if p.is_dir() and not p.is_symlink():
+                    yield from rglob_follow_symlinks(p, pattern)
+                elif p.is_symlink():
+                    real_path = Path(os.readlink(p))
+                    if real_path.is_dir():
+                        yield from rglob_follow_symlinks(real_path, pattern)
+
+        all_image_files = list(
+            rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
+        )
+
+        for image_path in all_image_files:
+            caption = self._prepare_instance_prompt(str(image_path))
+            captions.append(caption)
+
+        return captions
+
     def _prepare_instance_prompt(self, image_path):
         instance_prompt = self.instance_prompt
         if self.use_captions:
@@ -201,7 +231,7 @@ class DreamBoothDataset(Dataset):
             if self.prepend_instance_prompt:
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
-            logging.debug(f"Prompt: {instance_prompt}")
+            logger.debug(f"Prompt: {instance_prompt}")
         return instance_prompt
 
     def caption_loop_interval_bump(self):
@@ -210,9 +240,15 @@ class DreamBoothDataset(Dataset):
             self.caption_loop_count = 0
 
     def __getitem__(self, image_path):
+        if self.debug_dataset_loader:
+            logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
+        if not StateTracker.status_training():
+            if self.debug_dataset_loader:
+                logger.warning(f"Skipping getitem because we are not yet training.")
+            return None
         example = {}
-        if self.print_names:
-            logging.debug(f"Open image: {image_path}")
+        if self.print_names and self.debug_dataset_loader:
+            logger.debug(f"Open image: {image_path}")
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
         instance_image = exif_transpose(instance_image)
@@ -220,7 +256,7 @@ class DreamBoothDataset(Dataset):
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():
-            logging.debug(f'Resizing sample to {self.size}')
+            logger.debug(f"Resizing sample to {self.size}")
             example["instance_images"] = self._resize_for_condition_image(
                 instance_image, self.size
             )
@@ -232,16 +268,25 @@ class DreamBoothDataset(Dataset):
         if StateTracker.status_training():
             if self.caption_dropout_interval > 0:
                 if self.caption_loop_count % self.caption_dropout_interval == 0:
-                    logging.debug(f'Caption dropout, removing caption: {instance_prompt}')
-                    instance_prompt = ''
+                    if self.debug_dataset_loader:
+                        logger.debug(
+                            f"Caption dropout, removing caption: {instance_prompt}"
+                        )
+                    instance_prompt = ""
                 self.caption_loop_interval_bump()
-            example["instance_prompt_ids"] = self.tokenizer(
-                instance_prompt,
-                truncation=True,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
-            ).input_ids
+            if not self.use_precomputed_token_ids:
+                example["instance_prompt_ids"] = self.tokenizer(
+                    instance_prompt,
+                    truncation=True,
+                    padding="max_length",
+                    max_length=self.tokenizer.model_max_length,
+                    return_tensors="pt",
+                ).input_ids
+        example["instance_prompt_text"] = instance_prompt
+        if self.debug_dataset_loader:
+            logger.debug(
+                f"Returning from __getitem__ for {image_path} inside Dataloader."
+            )
         return example
 
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
@@ -259,6 +304,7 @@ class DreamBoothDataset(Dataset):
             W = resolution
             H = resolution
         msg = f"{msg} {W}x{H}."
-        logging.debug(msg)
+        if self.debug_dataset_loader:
+            logger.debug(msg)
         img = input_image.resize((W, H), resample=Image.BICUBIC)
         return img

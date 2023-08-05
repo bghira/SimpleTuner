@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "simpletuner"
+version = "0.1.0"
+description = "Stable Diffusion 2.x and XL tuner."
+authors = ["bghira"]
+license = "SUL"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13"
+torch = "^2.0.1"
+torchvision = "^0.15.2"
+diffusers = {git = "https://github.com/huggingface/diffusers", rev = "improve_backprop"}
+transformers = "^4.31.0"
+datasets = "^2.14.3"
+xformers = "^0.0.20"
+bitsandbytes = "^0.41.1"
+dadaptation = "^3.1"
+wandb = "^0.15.8"
+requests = "^2.31.0"
+pillow = "^10.0.0"
+opencv-python = "^4.8.0.74"
+deepspeed = "^0.10.0"
+accelerate = "^0.21.0"
+safetensors = "^0.3.1"
+compel = "^2.0.1"
+clip-interrogator = "^0.6.0"
+open-clip-torch = "^2.20.0"
+iterutils = "^0.1.6"
+scipy = "^1.11.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/nightly/cu118"

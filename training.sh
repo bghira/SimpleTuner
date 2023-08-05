@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Pull the default config.
+source env.sh.example
 # Pull config from env.sh
 source env.sh
 
@@ -26,7 +28,8 @@ accelerate launch  \
   --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}" --gradient_checkpointing \
   --use_original_images="${USE_ORIGINAL_IMAGES}" \
   --seen_state_path="${SEEN_STATE_PATH}" \
-  --state_path="${STATE_PATH}"
+  --state_path="${STATE_PATH}" \
+  --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}"
 
 
   #--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \

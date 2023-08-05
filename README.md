@@ -6,7 +6,24 @@ The name is incorrect, because this project is anything BUT simple to use. Howev
 
 This code is public merely as a learning resource and so that hopefully I can also learn from anyone else who comes along.
 
-## Why?
+## Why? (SDXL)
+
+The popular trainers available have complicated code that seems to intentionally make things as difficult to understand.
+
+Alternatively, I'm simply just one who needs things written a bit simpler! There are others!
+
+The functionality of this script is shared between SD 2.1 and SDXL as much as possible, with room for improvement;
+
+* Aspect bucketing is shared
+* Latent caching is currently only done for SDXL
+* Prompt embed caching is also only done for SDXL
+* Multi-GPU support has been enhanced and fixed
+
+With this script, at 1024x1024 batch size 10, we can nearly saturate a single 80G A100!
+
+At 1024x1024 batch size 4, we can use a 48G A6000 GPU, which reduces the cost of multi-GPU training!
+
+## Why? (Stable Diffusion 2.1)
 
 Stable Diffusion 2.1 is notoriously difficult to fine-tune. Many of the default scripts are not making the smartest choices, and result in poor-quality outputs.
 
@@ -29,7 +46,8 @@ Additionally, if something does not provide value to the training process by def
 ## Scripts
 
 * `training.sh` - some variables are here, but if they are, they're not meant to be tuned.
-* `env.sh.example` - These are the training parameters you will want to set up.
+* `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
+* `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
 
 * `interrogate.py` - This is useful for labelling datasets using BLIP. Not very accurate, but good enough for a LARGE dataset that's being used for fine-tuning.
 
@@ -49,16 +67,48 @@ Another note here: You might want to make sure it knows your most important conc
 
 ## Setup
 
-I'm sorry it's not easier to set this repo up locally. I do that to add a barrier of entry to those unprepared for dealing with Python issues or incompatibilities.
+1. Clone the repository and install the dependencies:
 
-1. Clone the repository and install the dependencies. That's your first barrier.
+```bash
+git clone https://github.com/bghira/SimpleTuner --branch release
+python -m venv .venv
+pip3 install -U poetry pip
+poetry install
+```
 
-2. Copy env.sh.example to env.sh. Be sure to fill out the details. Try to change as little as possible.
+2. For SD2.1, copy `sd21-env.sh.example` to `env.sh` - be sure to fill out the details. Try to change as little as possible.
 
-3. Run the training.sh script, probably by redirecting the output to a log file:
+For SDXL, copy `sdxl-env.sh.example` to `sdxl-env.sh` and then fill in the details.
+
+For both training scripts, any missing values from your user config will fallback to the defaults.
+
+3. If you are using `--report_to='wandb'` (the default), the following will help you report your statistics:
+
+```bash
+wandb login
+```
+
+Follow the instructions that are printed, to locate your API key and configure it.
+
+Once that is done, any of your training sessions and validation data will be available on Weights & Biases.
+
+4. For SD2.1, run the `training.sh` script, probably by redirecting the output to a log file:
 
 ```bash
 bash training.sh > /path/to/training-$(date +%s).log 2>&1
 ```
 
+For SDXL, run the `train_sdxl.sh` script, redirecting outputs to the log file:
+
+```bash
+bash train_sdxl.sh > /path/to/training-$(date +%s).log 2>&1
+```
+
 From here, that's really up to you.
+
+
+## Known issues
+
+* For very poorly distributed aspect buckets, some problems with uneven training are being worked on.
+* Some hardcoded values need to be adjusted/removed - images under 860x860 are discarded.
+* SDXL latent caching is currently non-deterministic, and will be adjusted for a better hashing method soon.
