@@ -967,7 +967,7 @@ def main():
     if accelerator.is_main_process:
         logger.info(f'Pre-computing VAE latent space.')
         vaecache = VAECache(vae, accelerator)
-        vaecache.process_directory('path/to/directory')
+        vaecache.process_directory(args.instance_data_dir)
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if overrode_max_train_steps:
