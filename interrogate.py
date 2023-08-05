@@ -1,4 +1,4 @@
-import os, logging, xformers, accelerate, re
+import os, logging, xformers, accelerate, re, random
 from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 
