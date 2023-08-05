@@ -7,8 +7,8 @@ from PIL import Image
 import json, logging, os
 from tqdm import tqdm
 
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger('DatasetLoader')
+logger.setLevel(logging.INFO)
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
