@@ -30,7 +30,7 @@ class VAECache:
             latents = self.load_from_cache(filename)
         else:
             with torch.no_grad():
-                latents = self.vae.encode(pixel_values.unsqueeze(0)).latent_dist.sample()
+                latents = self.vae.encode(pixel_values.unsqueeze(0).to(self.accelerator.device, dtype=torch.bfloat16)).latent_dist.sample()
             latents = latents * self.vae.config.scaling_factor
             self.save_to_cache(filename, latents.squeeze())
 
