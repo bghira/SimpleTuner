@@ -59,7 +59,7 @@ class VAECache:
 
             # Convert the image to a tensor
             try:
-                pixel_values = transform(image).float().to(self.accelerator.device)
+                pixel_values = transform(image).to(self.accelerator.device, dtype=self.vae.dtype)
             except OSError as e:
                 logger.error(f'Encountered error converting image to tensor: {e}')
                 continue
