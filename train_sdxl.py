@@ -27,6 +27,7 @@ from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
+from helpers.fake_encoder import FakeTextEncoder
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger('filelock')
@@ -811,7 +812,15 @@ def main():
     # We ALWAYS pre-compute the additional condition embeddings needed for SDXL
     # UNet as the model is already big and it uses two text encoders.
     text_encoder_1.to(accelerator.device, dtype=weight_dtype)
+    fake_text_encoder_1 = FakeTextEncoder(
+        text_encoder=text_encoder_1,
+        dtype=text_encoder_1.dtype
+    )
     text_encoder_2.to(accelerator.device, dtype=weight_dtype)
+    fake_text_encoder_2 = FakeTextEncoder(
+        text_encoder=text_encoder_2,
+        dtype=text_encoder_2.dtype
+    )
     tokenizers = [tokenizer_1, tokenizer_2]
     text_encoders = [text_encoder_1, text_encoder_2]
 
@@ -1200,8 +1209,8 @@ def main():
                     pipeline = StableDiffusionXLPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=accelerator.unwrap_model(unet),
-                        text_encoder=None,
-                        text_encoder_2=None,
+                        text_encoder=fake_text_encoder_1,
+                        text_encoder_2=fake_text_encoder_2,
                         tokenizer=None,
                         tokenizer_2=None,
                         vae=vae,
