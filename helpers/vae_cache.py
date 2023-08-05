@@ -55,6 +55,7 @@ class VAECache:
             # Open the image using PIL
             try:
                 image = Image.open(filepath)
+                image = image.convert('RGB')
             except Exception as e:
                 logger.error(f'Encountered error opening image: {e}')
                 os.remove(filepath)
