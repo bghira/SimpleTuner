@@ -50,7 +50,12 @@ class VAECache:
         # Iterate through the files, displaying a progress bar
         for filepath in tqdm(files_to_process, desc='Processing images'):
             # Open the image using PIL
-            image = Image.open(filepath)
+            try:
+                image = Image.open(filepath)
+            except Exception as e:
+                logger.error(f'Encountered error opening image: {e}')
+                os.remove(filepath)
+                continue
 
             # Convert the image to a tensor
             pixel_values = transform(image).float().to(self.accelerator.device)
