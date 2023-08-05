@@ -1210,8 +1210,8 @@ def main():
                     pipeline = StableDiffusionXLPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=accelerator.unwrap_model(unet),
-                        text_encoder=fake_text_encoder_1,
-                        text_encoder_2=fake_text_encoder_2,
+                        text_encoder=text_encoder_1,
+                        text_encoder_2=text_encoder_2,
                         tokenizer=None,
                         tokenizer_2=None,
                         vae=vae,
