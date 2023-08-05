@@ -9,6 +9,7 @@ logger.setLevel('DEBUG')
 class VAECache:
     def __init__(self, vae, accelerator, cache_dir="vae_cache"):
         self.vae = vae
+        self.vae.enable_slicing()
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
