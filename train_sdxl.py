@@ -1224,10 +1224,10 @@ def main():
                     ):
                         validation_generator = torch.Generator(device=accelerator.device).manual_seed(args.seed or 0)
                         edited_images = pipeline(
-                            prompt_embeds=validation_prompt_embeds[0],
-                            pooled_prompt_embeds=validation_pooled_embeds[0],
-                            negative_prompt_embeds=validation_negative_prompt_embeds[0],
-                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds[0],
+                            prompt_embeds=validation_prompt_embeds,
+                            pooled_prompt_embeds=validation_pooled_embeds,
+                            negative_prompt_embeds=validation_negative_prompt_embeds,
+                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
                             num_images_per_prompt=args.num_validation_images,
                             num_inference_steps=20,
                             guidance_scale=7,
