@@ -507,14 +507,6 @@ def parse_args():
 
     return args
 
-
-def convert_to_np(image, resolution):
-    if isinstance(image, str):
-        image = PIL.Image.open(image)
-    image = image.convert("RGB").resize((resolution, resolution))
-    return np.array(image).transpose(2, 0, 1)
-
-
 def main():
     args = parse_args()
     if args.non_ema_revision is not None:
