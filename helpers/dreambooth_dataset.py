@@ -246,7 +246,7 @@ class DreamBoothDataset(Dataset):
             if self.debug_dataset_loader:
                 logger.warning(f"Skipping getitem because we are not yet training.")
             return None
-        example = {}
+        example = {"instance_images_path": image_path}
         if self.print_names and self.debug_dataset_loader:
             logger.debug(f"Open image: {image_path}")
         instance_image = Image.open(image_path)

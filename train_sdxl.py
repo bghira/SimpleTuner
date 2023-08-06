@@ -28,6 +28,7 @@ from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
 from helpers.vae_cache import VAECache
+from helpers.custom_schedule import enforce_zero_terminal_snr
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger("filelock")
@@ -81,7 +82,7 @@ logger.info("Import diffusers")
 import diffusers
 
 logger.info("Import pooplines.")
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, DDIMScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
     StableDiffusionXLPipeline,
@@ -894,11 +895,18 @@ def main():
     )
 
     # Load scheduler and models
+    betas_scheduler = DDIMScheduler.from_pretrained(
+        args.pretrained_model_name_or_path,
+        subfolder="scheduler",
+        prediction_type="v_prediction",
+        rescale_betas_zero_snr=True
+    )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type="v_prediction",
     )
+    noise_scheduler.betas = betas_scheduler.betas
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
@@ -965,6 +973,7 @@ def main():
             vaecache = VAECache(vae, accelerator)
 
         pixel_values = []
+        filepaths = []  # we will store the file paths here
         for example in examples:
             image_data = example["instance_images"]
             width = image_data.width
@@ -974,9 +983,10 @@ def main():
                     memory_format=torch.contiguous_format, dtype=vae_dtype
                 )
             )
+            filepaths.append(example["instance_images_path"])  # store the file path
 
         # Compute the VAE embeddings for individual images
-        latents = [vaecache.encode_image(pv) for pv in pixel_values]
+        latents = [vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)]
         logger.debug(f"Latents {latents.shape} gathered: {latents}")
         pixel_values = torch.stack(latents)
 
