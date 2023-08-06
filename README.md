@@ -1,16 +1,16 @@
 # SimpleTuner 💹
 
-This repository contains a set of experimental scripts that will not be well-supported, should you choose to make use of them.
+This repository contains a set of experimental scripts that could damage your training data. Keep backups!
 
-The name is incorrect, because this project is anything BUT simple to use. However, the code is simple in its implementations.
+This project's code is simple in its implementations. If anything is overly complicated, it is likely a bug.
 
-This code is public merely as a learning resource and so that hopefully I can also learn from anyone else who comes along.
+This code is a shared academic exercise. Please feel free to contribute improvements, or open issue reports.
 
 ## Why? (SDXL)
 
 The popular trainers available have complicated code that seems to intentionally make things as difficult to understand.
 
-Alternatively, I'm simply just one who needs things written a bit simpler! There are others!
+Alternatively, I'm simply just one who needs things written a bit simpler (and in English)!
 
 The functionality of this script is shared between SD 2.1 and SDXL as much as possible, with room for improvement;
 
@@ -27,15 +27,11 @@ At 1024x1024 batch size 4, we can use a 48G A6000 GPU, which reduces the cost of
 
 Stable Diffusion 2.1 is notoriously difficult to fine-tune. Many of the default scripts are not making the smartest choices, and result in poor-quality outputs.
 
-Some of the problems I've encountered:
+Some of the problems I've encountered in other tools:
 
-* High learning rates damage the OpenCLIP text encoder. Stable Diffusion 1.5's CLIP encoder seems to tolerate much more abuse, possibly because of the way its layers were frozen, and what they were learning for each.
+* Training OpenCLIP concurrently to the U-net. They must be trained in sequence, with the text encoder being tuned first.
 
-SD 1.5's CLIP has 12 layers while SD 2.1's OpenCLIP has 24. We don't know the details of CLIP's training, but LAION has released details about OpenCLIP, documenting several issues they'd faced with instability while scaling up their training and how they'd resolved it. It's possible that these problems were addressed in a different manner by OpenAI during CLIP's training, or, that they followed an altogether different training schedule.
-
-* Using the same learning rate for the unet and the text encoder. They learn at different rates naturally, and this also impacts the convergence.
-
-* Not using enforced zero SNR on the terminal timestep. This results in a more noisy image. It's possible to train past this with traditional fine-tuning, but not without harming the text encoder's foundational concepts in the process.
+* Not using enforced zero SNR on the terminal timestep, using offset noise instead. This results in a more noisy image.
 
 * Training on only square, 768x768 images, that will result in the model losing the ability to (or at the very least, simply not improving) super-resolution its output into other aspect ratios.
 

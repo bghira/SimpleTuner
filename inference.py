@@ -5,7 +5,7 @@ from prompts import prompts
 from compel import Compel
 
 import torch, os, logging
-logger = logging.getLogger('root')
+logger = logging.getLogger('SimpleTuner-inference')
 logger.setLevel(logging.INFO)
 # Load the pipeline with the same arguments (model, revision) that were used for training
 model_id = "stabilityai/stable-diffusion-2"

@@ -38,7 +38,7 @@ for shortname, prompt in prompts.items():
         for RESCALE_BETAS_ZEROS_SNR in [True, False]:
             for GUIDANCE_RESCALE in [0, 0.3, 0.5, 0.7]:
                 for GUIDANCE in [5, 6, 7, 8, 9]:
-                    pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config, timestep_scaling=TIMESTEP_TYPE, rescale_betas_zero_snr=RESCALE_BETAS_ZEROS_SNR)
+                    pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config, timestep_spacing=TIMESTEP_TYPE, rescale_betas_zero_snr=RESCALE_BETAS_ZEROS_SNR)
                     generator = torch.Generator(device="cpu").manual_seed(0)
                     image = pipe(prompt=prompt, width=1152, height=768, negative_prompt=negative_prompt, generator=generator, num_images_per_prompt=1, num_inference_steps=50, guidance_scale=GUIDANCE, guidance_rescale=GUIDANCE_RESCALE).images[0]
                     image_path = f'test/{shortname}_{TIMESTEP_TYPE}_{RESCALE_BETAS_ZEROS_SNR}_{GUIDANCE}g_{GUIDANCE_RESCALE}r.png'

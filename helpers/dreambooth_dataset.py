@@ -58,8 +58,8 @@ class DreamBoothDataset(Dataset):
         self.caption_loop_count = 0
         self.use_precomputed_token_ids = use_precomputed_token_ids
         if len(self.aspect_ratio_bucket_indices) > 0:
-            logger.debug(f"Updating cache...")
-            self.update_cache()
+            logger.info(f"Updating aspect bucket cache.")
+            # self.update_cache()
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
@@ -78,7 +78,7 @@ class DreamBoothDataset(Dataset):
             ]
         )
 
-    def update_cache(self, base_dir=None, max_workers=10):
+    def update_cache(self, base_dir=None, max_workers=64):
         """Update the aspect_ratio_bucket_indices based on the current state of the file system."""
 
         if base_dir is None:
@@ -93,7 +93,7 @@ class DreamBoothDataset(Dataset):
             for path in base_dir.iterdir()
             if path not in self.instance_images_path
         ]
-
+        logger.info(f'Discovered {len(new_file_paths)} new files to inspect for cache.')
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             list(executor.map(self._add_file_to_cache, new_file_paths))
 
