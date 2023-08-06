@@ -1054,10 +1054,10 @@ def main():
         logger.info(
             f"Moving text encoders back to CPU, to save VRAM. Currently, we cannot completely unload the text encoder."
         )
-    memory_before_unload = f'{torch.cuda.memory_allocated() / 1024**3:.02f}'
+    memory_before_unload = torch.cuda.memory_allocated() / 1024**3
     text_encoder_1.to("cpu")
     text_encoder_2.to("cpu")
-    memory_after_unload = f'{torch.cuda.memory_allocated() / 1024**3:.02f}'
+    memory_after_unload = torch.cuda.memory_allocated() / 1024**3
     memory_saved = memory_after_unload - memory_before_unload
     gc.collect()
     torch.cuda.empty_cache()
