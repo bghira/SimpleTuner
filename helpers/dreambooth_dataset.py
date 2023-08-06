@@ -68,7 +68,6 @@ class DreamBoothDataset(Dataset):
         self.use_precomputed_token_ids = use_precomputed_token_ids
         self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
-            logger.info(f"Updating aspect bucket cache.")
             self.update_cache()
         if not use_original_images:
             logger.debug(f"Building transformations.")
@@ -111,7 +110,6 @@ class DreamBoothDataset(Dataset):
 
     def update_cache(self, base_dir=None, max_workers=64):
         """Update the aspect_ratio_bucket_indices based on the current state of the file system."""
-
         if base_dir is None:
             base_dir = self.instance_data_root
         else:
@@ -119,12 +117,12 @@ class DreamBoothDataset(Dataset):
             if not base_dir.exists():
                 raise ValueError(f"Directory {base_dir} does not exist.")
 
+        logger.info(f'Looking for new images, to update aspect bucket cache.')
         new_file_paths = [
             str(path)
             for path in base_dir.iterdir()
             if path not in self.instance_images_path
         ]
-
         logger.info(f"Discovered {len(new_file_paths)} new files to inspect for cache.")
 
         for new_file in tqdm(new_file_paths, desc="Adding to cache"):

@@ -35,6 +35,7 @@ class VAECache:
     def encode_image(self, pixel_values, filepath: str):
         file_hash = self.create_hash(filepath)
         filename = os.path.join(self.cache_dir, file_hash + ".pt")
+        logger.debug(f'Created file_hash {file_hash} from filepath {filepath} for resulting .pt filename.')
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
             logger.debug(
