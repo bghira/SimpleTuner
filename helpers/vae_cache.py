@@ -108,7 +108,7 @@ class VAECache:
                 continue
 
             # Process the image with the VAE
-            self.encode_image(pixel_values, filename)
+            self.encode_image(pixel_values, filepath)
 
             logger.debug(f"Processed image {filepath}")
 
