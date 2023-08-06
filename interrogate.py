@@ -3,8 +3,9 @@ from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 
 # Directory where the images are located
-output_dir = '/models/training/datasets/processed_animals'
-
+output_dir = '/notebooks/datasets/laion'
+logger = logging.getLogger('root')
+logger.setLevel('INFO')
 def content_to_filename(content):
     """
     Function to convert content to filename by stripping everything after '--', 
@@ -30,9 +31,11 @@ def content_to_filename(content):
 
     return cleaned_content + '.png'
 
-def interrogator(clip_model_name = "ViT-H-14/laion2b_s32b_b79k"):
+def interrogator(clip_model_name = "ViT-H-14/laion2b_s32b_b79k", blip_model="blip2-flan-t5-xl"):
     # Create an Interrogator instance with the latest CLIP model for Stable Diffusion 2.1
-    ci = Interrogator(Config(clip_model_name=clip_model_name))
+    conf = Config(clip_model_name=clip_model_name)
+    conf.caption_model_name = blip_model
+    ci = Interrogator(conf)
     return ci
 
 def load_terms(filename, interrogator):
@@ -57,18 +60,22 @@ def process_directory(image_dir = 'images', terms_file = None):
             process_directory(os.path.join(image_dir, filename), terms_file)
         elif filename.endswith(".jpg") or filename.endswith(".png"):
             # Open and convert the image
-            image = Image.open(os.path.join(image_dir, filename)).convert('RGB')
-            if terms_file is not None:
-                # Get the best match for the image
-                best_match = table.rank(active_interrogator.image_to_features(image), top_count=1)[0]
-            else:
-                best_match = active_interrogator.generate_caption(image)
-
-            # Print the result
-            logging.info(f'Best match for {filename}: {best_match}')
-            # Write the best match to {filename}.txt:
-            image.save(os.path.join(output_dir, content_to_filename(best_match)))
-            
+            try:
+                image = Image.open(os.path.join(image_dir, filename)).convert('RGB')
+    
+                if terms_file is not None:
+                    # Get the best match for the image
+                    best_match = table.rank(active_interrogator.image_to_features(image), top_count=1)[0]
+                else:
+                    best_match = active_interrogator.generate_caption(image)
+    
+                # Print the result
+                logging.info(f'Best match for {filename}: {best_match}')
+                # Write the best match to {filename}.txt:
+                image.save(os.path.join(output_dir, content_to_filename(best_match)))
+                os.remove(os.path.join(image_dir, filename))
+            except:
+                logging.error(f'Some error encountered. Skipping image.')
 
 if __name__ == "__main__":
-    process_directory('/models/training/datasets/animals')
+    process_directory('/notebooks/datasets/laion-high-resolution/downloaded_images')
