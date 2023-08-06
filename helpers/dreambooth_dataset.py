@@ -69,7 +69,7 @@ class DreamBoothDataset(Dataset):
         self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
             logger.info(f"Updating aspect bucket cache.")
-            # self.update_cache()
+            self.update_cache()
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
