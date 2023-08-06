@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Pull the default config.
-source env.sh.example
+source sd21-env.sh.example
 # Pull config from env.sh
-source env.sh
+source sd21-env.sh
 
 accelerate launch  \
   --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --mixed_precision="${MIXED_PRECISION}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" \
