@@ -32,7 +32,8 @@ class VAECache:
     def load_from_cache(self, filename):
         return torch.load(filename)
 
-    def encode_image(self, pixel_values, file_hash: str):
+    def encode_image(self, pixel_values, filepath: str):
+        file_hash = self.create_hash(filepath)
         filename = os.path.join(self.cache_dir, file_hash + ".pt")
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
@@ -106,7 +107,7 @@ class VAECache:
                 continue
 
             # Process the image with the VAE
-            self.encode_image(pixel_values, file_hash)
+            self.encode_image(pixel_values, filename)
 
             logger.debug(f"Processed image {filepath}")
 
