@@ -4,7 +4,7 @@ from torchvision import transforms
 from PIL.ImageOps import exif_transpose
 from .state_tracker import StateTracker
 from PIL import Image
-import json, logging, os
+import json, logging, os, multiprocessing
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count, Manager
 import numpy as np
@@ -208,7 +208,7 @@ class DreamBoothDataset(Dataset):
 
             num_cores = cpu_count()
             files_split = np.array_split(all_image_files, num_cores)
-
+            multiprocessing.set_start_method('fork')
             with manager.Pool(processes=num_cores) as pool, tqdm(
                 total=len(all_image_files)
             ) as pbar:
