@@ -43,6 +43,7 @@ class DreamBoothDataset(Dataset):
         caption_dropout_interval: int = 0,
         use_precomputed_token_ids: bool = True,
         debug_dataset_loader: bool = False,
+        caption_strategy: str = 'filename'
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -65,6 +66,7 @@ class DreamBoothDataset(Dataset):
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
+        self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
         self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
@@ -286,7 +288,16 @@ class DreamBoothDataset(Dataset):
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
         instance_image = exif_transpose(instance_image)
-        instance_prompt = self._prepare_instance_prompt(image_path)
+        if self.caption_strategy == 'filename':
+            instance_prompt = self._prepare_instance_prompt(image_path)
+        elif self.caption_strategy == 'textfile':
+            caption_file = Path(image_path).with_suffix(".txt")
+            if not caption_file.exists():
+                raise FileNotFoundError(f"Caption file {caption_file} not found.")
+            with caption_file.open("r") as f:
+                instance_prompt = f.read()
+        else:
+            raise ValueError(f"Unsupported caption strategy: {self.caption_strategy}")
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():

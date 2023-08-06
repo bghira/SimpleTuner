@@ -15,15 +15,10 @@
 # limitations under the License.
 import argparse
 import logging
-
-
-# Quiet down, you.
-logger = logging.getLogger('accelerate')
-logger.setLevel(logging.WARNING)
-os.environ.set("ACCELERATE_LOG_LEVEL", "WARNING")
-
 import math
 import os
+# Quiet down, you.
+os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
 import random
 import gc
@@ -232,6 +227,16 @@ def parse_args():
             "Very high values might be useful to do some sort of enforced style training."
             "Default value is zero, maximum value is 100."
         ),
+    )
+    parser.add_argument(
+        '--caption_strategy',
+        type=str,
+        default='filename',
+        choices=['filename', 'textfile', 'instance_prompt'],
+        help=(
+            "The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores."
+            "The 'textfile' strategy will use the contents of a text file with the same name as the image."
+        )
     )
     parser.add_argument(
         "--instance_data_dir",
@@ -1025,6 +1030,7 @@ def main():
         caption_dropout_interval=args.caption_dropout_interval,
         use_precomputed_token_ids=True,
         debug_dataset_loader=args.debug_dataset_loader,
+        caption_strategy=args.caption_strategy
     )
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
