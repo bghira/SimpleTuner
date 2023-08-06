@@ -15,6 +15,13 @@
 # limitations under the License.
 import argparse
 import logging
+
+
+# Quiet down, you.
+logger = logging.getLogger('accelerate')
+logger.setLevel(logging.WARNING)
+
+
 import math
 import os
 import shutil
