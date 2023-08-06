@@ -74,7 +74,7 @@ export TRAINING_NUM_MACHINES=1
 
 # These should remain empty if you remove their options.
 export ACCELERATE_EXTRA_ARGS="--multi_gpu"                          # --multi_gpu or other similar flags for huggingface accelerate
-export DEBUG_EXTRA_ARGS="--print_filenames --report_to='wandb'"     # Removing print_filenames can ease on spam.
+export DEBUG_EXTRA_ARGS="--print_filenames --report_to=wandb"     # Removing print_filenames can ease on spam.
 export TRAINER_EXTRA_ARGS="--allow_tf32 --use_8bit_adam --use_ema"  # anything you want to pass along extra to the actual train_sdxl.py script.
 
 # These are pretty sketchy to change. --use_original_images can be removed to enable image cropping. Not tested for SDXL.
