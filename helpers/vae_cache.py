@@ -102,7 +102,6 @@ class VAECache:
             W = resolution
             H = resolution
         msg = f"{msg} {W}x{H}."
-        if self.debug_dataset_loader:
-            logger.debug(msg)
+        logger.debug(msg)
         img = input_image.resize((W, H), resample=Image.BICUBIC)
         return img
