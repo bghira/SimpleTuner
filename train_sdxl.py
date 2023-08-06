@@ -806,6 +806,7 @@ def main():
 
     # 6. Get the column names for input/target.
     if hasattr(args, "dataset_name") and args.dataset_name is not None:
+        raise ValueError('Huggingface datasets are not currently supported.')
         # Preprocessing the datasets.
         # We need to tokenize inputs and targets.
         column_names = dataset["train"].column_names
@@ -841,8 +842,8 @@ def main():
                     f"--edited_image_column' value '{args.edited_image_column}' needs to be one of: {', '.join(column_names)}"
                 )
     else:
-        logging.error(
-            "We are probably going to hit some pain for that, but we bypassed the column config."
+        logging.info(
+            "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
         )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -850,17 +851,10 @@ def main():
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-        warnings.warn(
-            f"weight_dtype {weight_dtype} may cause nan during vae encoding",
-            UserWarning,
-        )
-
+        logger.warning(f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.')
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        warnings.warn(
-            f"weight_dtype {weight_dtype} may cause nan during vae encoding",
-            UserWarning,
-        )
+        logger.warning(f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.')
 
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
@@ -1051,30 +1045,26 @@ def main():
             validation_prompt_embeds,
             validation_pooled_embeds,
         ) = embed_cache.compute_embeddings_for_prompts([args.validation_prompt])
-        logger.debug(f"Validation prompt embeds: {validation_prompt_embeds}")
-        logger.debug(f"Validation prompt embeds: {validation_pooled_embeds}")
         (
             validation_negative_prompt_embeds,
             validation_negative_pooled_embeds,
         ) = embed_cache.compute_embeddings_for_prompts(["blurry, cropped, ugly"])
-        logger.debug(
-            f"Validation negative prompt embeds: {validation_negative_prompt_embeds}"
-        )
-        logger.debug(
-            f"Validation negative prompt embeds: {validation_negative_pooled_embeds}"
-        )
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(
-            f"Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB"
+            f"Moving text encoders back to CPU, to save VRAM. Currently, we cannot completely unload the text encoder."
         )
+    memory_before_unload = f'{torch.cuda.memory_allocated() / 1024**3:.02f}'
     text_encoder_1.to("cpu")
     text_encoder_2.to("cpu")
+    memory_after_unload = f'{torch.cuda.memory_allocated() / 1024**3:.02f}'
+    memory_saved = memory_after_unload - memory_before_unload
     gc.collect()
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
         logger.info(
-            f"After nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB"
+            f"After nuking text encoders from orbit, we freed {memory_saved} GB of VRAM."
+            "This number might be massively understated, because of how CUDA memory management works."
         )
 
     # Scheduler and math around the number of training steps.
