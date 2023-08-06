@@ -127,3 +127,12 @@ class TextEmbeddingCache:
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
         return prompt_embeds_all, add_text_embeds_all
+
+    def precompute_embeddings_for_prompts(self, prompts):
+        """This is the same function as compute_embeddings_for_prompts, but it specifically runs with the Accelerate context manager.
+
+        Args:
+            prompts (list[str]): All of the prompts.
+        """
+        with self.accelerator.main_process_first():
+            self.compute_embeddings_for_prompts(prompts, return_concat=False)
