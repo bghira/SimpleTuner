@@ -1035,7 +1035,7 @@ def main():
     )
     if accelerator.is_main_process:
         logger.info(f"Pre-computing text embeds / updating cache.")
-        embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions())
+        embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions(), return_concat=False)
 
     if args.validation_prompt is not None:
         (

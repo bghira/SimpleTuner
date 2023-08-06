@@ -81,7 +81,7 @@ class TextEmbeddingCache:
             pooled_prompt_embeds_all
         ).squeeze(dim=1)
 
-    def compute_embeddings_for_prompts(self, prompts):
+    def compute_embeddings_for_prompts(self, prompts, return_concat:bool = True):
         prompt_embeds_all = []
         add_text_embeds_all = []
 
@@ -106,6 +106,12 @@ class TextEmbeddingCache:
 
                 prompt_embeds_all.append(prompt_embeds)
                 add_text_embeds_all.append(add_text_embeds)
+
+            if not return_concat:
+                logger.info('Not returning embeds, since we just concatenated a whackload of them.')
+                del prompt_embeds_all
+                del add_text_embeds_all
+                return
 
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
