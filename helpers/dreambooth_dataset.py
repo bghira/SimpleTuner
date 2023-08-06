@@ -30,6 +30,7 @@ class DreamBoothDataset(Dataset):
     def __init__(
         self,
         instance_data_root,
+        accelerator,
         instance_prompt: str = None,
         tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
@@ -65,6 +66,7 @@ class DreamBoothDataset(Dataset):
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
         self.use_precomputed_token_ids = use_precomputed_token_ids
+        self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
             logger.info(f"Updating aspect bucket cache.")
             # self.update_cache()
@@ -184,36 +186,36 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
+        with self.accelerator.main_process_first():
+            manager = Manager()
+            aspect_ratio_bucket_indices = manager.dict()
 
-        manager = Manager()
-        aspect_ratio_bucket_indices = manager.dict()
+            def rglob_follow_symlinks(path: Path, pattern: str):
+                for p in path.glob(pattern):
+                    yield p
+                for p in path.iterdir():
+                    if p.is_dir() and not p.is_symlink():
+                        yield from rglob_follow_symlinks(p, pattern)
+                    elif p.is_symlink():
+                        real_path = Path(os.readlink(p))
+                        if real_path.is_dir():
+                            yield from rglob_follow_symlinks(real_path, pattern)
 
-        def rglob_follow_symlinks(path: Path, pattern: str):
-            for p in path.glob(pattern):
-                yield p
-            for p in path.iterdir():
-                if p.is_dir() and not p.is_symlink():
-                    yield from rglob_follow_symlinks(p, pattern)
-                elif p.is_symlink():
-                    real_path = Path(os.readlink(p))
-                    if real_path.is_dir():
-                        yield from rglob_follow_symlinks(real_path, pattern)
+            all_image_files = list(
+                rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
+            )
 
-        all_image_files = list(
-            rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
-        )
+            num_cores = cpu_count()
+            files_split = np.array_split(all_image_files, num_cores)
 
-        num_cores = cpu_count()
-        files_split = np.array_split(all_image_files, num_cores)
+            with manager.Pool(processes=num_cores) as pool, tqdm(
+                total=len(all_image_files)
+            ) as pbar:
+                args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
+                pool.starmap(self._bucket_worker, args)
 
-        with manager.Pool(processes=num_cores) as pool, tqdm(
-            total=len(all_image_files)
-        ) as pbar:
-            args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
-            pool.starmap(self._bucket_worker, args)
-
-        with cache_file.open("w") as f:
-            json.dump(dict(aspect_ratio_bucket_indices), f)
+            with cache_file.open("w") as f:
+                json.dump(dict(aspect_ratio_bucket_indices), f)
 
         return dict(aspect_ratio_bucket_indices)
 
