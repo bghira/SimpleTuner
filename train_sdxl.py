@@ -589,7 +589,6 @@ def parse_args():
 
     return args
 
-
 def main():
     args = parse_args()
     if args.non_ema_revision is not None:
@@ -613,14 +612,14 @@ def main():
     )
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
-    # if accelerator.is_local_main_process:
-    #     datasets.utils.logging.set_verbosity_warning()
-    #     transformers.utils.logging.set_verbosity_warning()
-    #     diffusers.utils.logging.set_verbosity_info()
-    # else:
-    #     datasets.utils.logging.set_verbosity_error()
-    #     transformers.utils.logging.set_verbosity_error()
-    #     diffusers.utils.logging.set_verbosity_error()
+    if accelerator.is_local_main_process:
+        datasets.utils.logging.set_verbosity_warning()
+        transformers.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -693,41 +692,14 @@ def main():
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if args.use_ema:
-                ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-
-            for i, model in enumerate(models):
-                model.save_pretrained(os.path.join(output_dir, "unet"))
-
-                # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(
-                    os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
-                )
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(
-                    input_dir, subfolder="unet"
-                )
-                model.register_to_config(**load_model.config)
-
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
+        from helpers.sdxl_save_hooks import SDXLSaveHook
+        model_hooks = SDXLSaveHook(
+            args=args,
+            ema_unet=ema_unet,
+            accelerator=accelerator,
+        )
+        accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
+        accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
