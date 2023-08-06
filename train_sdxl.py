@@ -1014,6 +1014,7 @@ def main():
     # Dataset and DataLoaders creation:
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
+        accelerator=accelerator,
         size=args.resolution,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
@@ -1023,6 +1024,7 @@ def main():
         caption_dropout_interval=args.caption_dropout_interval,
         use_precomputed_token_ids=True,
         debug_dataset_loader=args.debug_dataset_loader,
+        is_main_process=accelerator.is_main_process,
     )
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
@@ -1042,9 +1044,8 @@ def main():
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
-    if accelerator.is_main_process:
-        logger.info(f"Pre-computing text embeds / updating cache.")
-        embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions(), return_concat=False)
+    logger.info(f"Pre-computing text embeds / updating cache.")
+    embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
 
     if args.validation_prompt is not None:
         (
