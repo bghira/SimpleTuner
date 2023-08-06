@@ -8,6 +8,7 @@ import json, logging, os
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count, Manager
 import numpy as np
+from itertools import repeat
 
 logger = logging.getLogger("DatasetLoader")
 logger.setLevel(logging.INFO)
@@ -84,9 +85,6 @@ class DreamBoothDataset(Dataset):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
-    def _worker(self, files, aspect_ratio_bucket_indices):
-        for file in files:
-            aspect_ratio_bucket_indices = self._process_image(str(file), aspect_ratio_bucket_indices)
 
     def _process_image(self, image_path_str, aspect_ratio_bucket_indices):
         try:
@@ -176,6 +174,14 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices = {}
         return aspect_ratio_bucket_indices
 
+    def _bucket_worker(self, tqdm_object, files, aspect_ratio_bucket_indices):
+        for file in files:
+            # Process image as before, but update tqdm object instead of creating a new one
+            aspect_ratio_bucket_indices = self._process_image(
+                str(file), aspect_ratio_bucket_indices
+            )
+            tqdm_object.update()
+
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
 
@@ -199,11 +205,12 @@ class DreamBoothDataset(Dataset):
 
         num_cores = cpu_count()
         files_split = np.array_split(all_image_files, num_cores)
-        with Pool(processes=num_cores) as pool:
-            pool.starmap(
-                self._worker,
-                [(files, aspect_ratio_bucket_indices) for files in files_split],
-            )
+
+        with manager.Pool(processes=num_cores) as pool, tqdm(
+            total=len(all_image_files)
+        ) as pbar:
+            args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
+            pool.starmap(self._bucket_worker, args)
 
         with cache_file.open("w") as f:
             json.dump(dict(aspect_ratio_bucket_indices), f)
