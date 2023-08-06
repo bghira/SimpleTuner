@@ -6,6 +6,7 @@ from .state_tracker import StateTracker
 from PIL import Image
 import json, logging, os
 from tqdm import tqdm
+from multiprocessing import Pool, cpu_count, Manager
 
 logger = logging.getLogger("DatasetLoader")
 logger.setLevel(logging.INFO)
@@ -82,6 +83,9 @@ class DreamBoothDataset(Dataset):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
+    def _worker(self, files, aspect_ratio_bucket_indices):
+        for file in files:
+            aspect_ratio_bucket_indices = self._process_image(str(file), aspect_ratio_bucket_indices)
 
     def _process_image(self, image_path_str, aspect_ratio_bucket_indices):
         try:
@@ -173,7 +177,9 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
-        aspect_ratio_bucket_indices = {}
+
+        manager = Manager()
+        aspect_ratio_bucket_indices = manager.dict()
 
         def rglob_follow_symlinks(path: Path, pattern: str):
             for p in path.glob(pattern):
@@ -190,15 +196,18 @@ class DreamBoothDataset(Dataset):
             rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
         )
 
-        for image_path in tqdm(all_image_files, desc="Assigning to buckets"):
-            aspect_ratio_bucket_indices = self._process_image(
-                str(image_path), aspect_ratio_bucket_indices
+        num_cores = cpu_count()
+        files_split = np.array_split(all_image_files, num_cores)
+        with Pool(processes=num_cores) as pool:
+            pool.starmap(
+                self._worker,
+                [(files, aspect_ratio_bucket_indices) for files in files_split],
             )
 
         with cache_file.open("w") as f:
-            json.dump(aspect_ratio_bucket_indices, f)
+            json.dump(dict(aspect_ratio_bucket_indices), f)
 
-        return aspect_ratio_bucket_indices
+        return dict(aspect_ratio_bucket_indices)
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
