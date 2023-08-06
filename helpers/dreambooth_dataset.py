@@ -7,6 +7,7 @@ from PIL import Image
 import json, logging, os
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count, Manager
+import numpy as np
 
 logger = logging.getLogger("DatasetLoader")
 logger.setLevel(logging.INFO)
