@@ -20,6 +20,7 @@ pil_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 
+multiprocessing.set_start_method('fork')
 
 class DreamBoothDataset(Dataset):
     """
@@ -208,7 +209,6 @@ class DreamBoothDataset(Dataset):
 
             num_cores = cpu_count()
             files_split = np.array_split(all_image_files, num_cores)
-            multiprocessing.set_start_method('fork')
             with manager.Pool(processes=num_cores) as pool, tqdm(
                 total=len(all_image_files)
             ) as pbar:
