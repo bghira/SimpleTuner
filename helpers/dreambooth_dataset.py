@@ -68,7 +68,8 @@ class DreamBoothDataset(Dataset):
         self.use_precomputed_token_ids = use_precomputed_token_ids
         self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
-            self.update_cache()
+            pass
+            # self.update_cache()
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
