@@ -95,6 +95,7 @@ class TextEmbeddingCache:
 
                 if os.path.exists(filename) and not return_concat:
                     logger.debug(f'Not loading from cache, since we are only precomputing the embeds.')
+                    continue
                 if os.path.exists(filename):
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
