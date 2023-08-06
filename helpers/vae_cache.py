@@ -4,7 +4,7 @@ from PIL import Image
 import torchvision.transforms as transforms
 
 logger = logging.getLogger("VAECache")
-logger.setLevel("DEBUG")
+logger.setLevel("INFO")
 
 
 class VAECache:
