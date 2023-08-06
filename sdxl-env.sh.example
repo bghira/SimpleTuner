@@ -79,4 +79,4 @@ export TRAINER_EXTRA_ARGS="--allow_tf32 --use_8bit_adam --use_ema"  # anything y
 
 # These are pretty sketchy to change. --use_original_images can be removed to enable image cropping. Not tested for SDXL.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --enable_xformers_memory_efficient_attention --use_original_images=true"
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --gradient_checkpointing --gradient_accumulation_steps=15"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --gradient_checkpointing --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS}"
