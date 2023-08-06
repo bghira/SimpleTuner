@@ -1,6 +1,7 @@
 import os, torch, hashlib, logging
+from tqdm import tqdm
 
-logger = logging.getLogger('TextEmbeddingCache')
+logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(logging.INFO)
 
 
@@ -81,18 +82,25 @@ class TextEmbeddingCache:
             pooled_prompt_embeds_all
         ).squeeze(dim=1)
 
-    def compute_embeddings_for_prompts(self, prompts, return_concat:bool = True):
+    def compute_embeddings_for_prompts(self, prompts, return_concat: bool = True):
         prompt_embeds_all = []
         add_text_embeds_all = []
 
         with torch.no_grad():
             logger.debug(f"Beginning compute_embeddings_for_prompts: {prompts}")
 
-            for prompt in prompts:
+            for prompt in tqdm(
+                prompts, desc="Processing prompts", disable=return_concat
+            ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
 
+                if os.path.exists(filename) and not return_concat:
+                    logger.debug(
+                        f"Not loading from cache, since we are only precomputing the embeds."
+                    )
+                    continue
                 if os.path.exists(filename):
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
@@ -108,7 +116,9 @@ class TextEmbeddingCache:
                 add_text_embeds_all.append(add_text_embeds)
 
             if not return_concat:
-                logger.info('Not returning embeds, since we just concatenated a whackload of them.')
+                logger.info(
+                    "Not returning embeds, since we just concatenated a whackload of them."
+                )
                 del prompt_embeds_all
                 del add_text_embeds_all
                 return

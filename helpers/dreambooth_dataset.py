@@ -6,11 +6,19 @@ from .state_tracker import StateTracker
 from PIL import Image
 import json, logging, os
 from tqdm import tqdm
+from multiprocessing import Pool, cpu_count, Manager
+import numpy as np
+from itertools import repeat
 
-logger = logging.getLogger('DatasetLoader')
+logger = logging.getLogger("DatasetLoader")
 logger.setLevel(logging.INFO)
 from concurrent.futures import ThreadPoolExecutor
 import threading
+
+pil_logger = logging.getLogger("PIL.Image")
+pil_logger.setLevel(logging.WARNING)
+pil_logger = logging.getLogger("PIL.PngImagePlugin")
+pil_logger.setLevel(logging.WARNING)
 
 
 class DreamBoothDataset(Dataset):
@@ -78,6 +86,27 @@ class DreamBoothDataset(Dataset):
             ]
         )
 
+    def _process_image(self, image_path_str, aspect_ratio_bucket_indices):
+        try:
+            image = Image.open(image_path_str)
+            # Apply EXIF transforms
+            image = exif_transpose(image)
+            aspect_ratio = round(
+                image.width / image.height, 3
+            )  # Round to avoid excessive unique buckets
+            # Create a new bucket if it doesn't exist
+            if str(aspect_ratio) not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[str(aspect_ratio)] = []
+            aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
+        except Exception as e:
+            logging.error(f"Error processing image {image_path_str}.")
+            logging.error(e)
+            return aspect_ratio_bucket_indices
+        finally:
+            if "image" in locals():
+                image.close()
+        return aspect_ratio_bucket_indices
+
     def update_cache(self, base_dir=None, max_workers=64):
         """Update the aspect_ratio_bucket_indices based on the current state of the file system."""
 
@@ -93,9 +122,13 @@ class DreamBoothDataset(Dataset):
             for path in base_dir.iterdir()
             if path not in self.instance_images_path
         ]
-        logger.info(f'Discovered {len(new_file_paths)} new files to inspect for cache.')
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            list(executor.map(self._add_file_to_cache, new_file_paths))
+
+        logger.info(f"Discovered {len(new_file_paths)} new files to inspect for cache.")
+
+        for new_file in tqdm(new_file_paths, desc="Adding to cache"):
+            self.aspect_ratio_bucket_indices = self._process_image(
+                new_file, self.aspect_ratio_bucket_indices
+            )
 
         # Update the instance_images_path to include the new images
         self.instance_images_path += new_file_paths
@@ -141,9 +174,19 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices = {}
         return aspect_ratio_bucket_indices
 
+    def _bucket_worker(self, tqdm_object, files, aspect_ratio_bucket_indices):
+        for file in files:
+            # Process image as before, but update tqdm object instead of creating a new one
+            aspect_ratio_bucket_indices = self._process_image(
+                str(file), aspect_ratio_bucket_indices
+            )
+            tqdm_object.update()
+
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
-        aspect_ratio_bucket_indices = {}
+
+        manager = Manager()
+        aspect_ratio_bucket_indices = manager.dict()
 
         def rglob_follow_symlinks(path: Path, pattern: str):
             for p in path.glob(pattern):
@@ -160,29 +203,19 @@ class DreamBoothDataset(Dataset):
             rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
         )
 
-        for image_path in tqdm(all_image_files, desc="Assigning to buckets"):
-            try:
-                image_path_str = str(image_path)
-                image = Image.open(image_path_str)
-                # Apply EXIF transforms
-                image = exif_transpose(image)
-                aspect_ratio = round(
-                    image.width / image.height, 3
-                )  # Round to avoid excessive unique buckets
-                # Create a new bucket if it doesn't exist
-                if str(aspect_ratio) not in aspect_ratio_bucket_indices:
-                    aspect_ratio_bucket_indices[str(aspect_ratio)] = []
-                aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
-                with cache_file.open("w") as f:
-                    json.dump(aspect_ratio_bucket_indices, f)
-            except Exception as e:
-                logging.error(f"Error processing image {image_path_str}.")
-                logging.error(e)
-                continue
-            finally:
-                if "image" in locals():
-                    image.close()
-        return aspect_ratio_bucket_indices
+        num_cores = cpu_count()
+        files_split = np.array_split(all_image_files, num_cores)
+
+        with manager.Pool(processes=num_cores) as pool, tqdm(
+            total=len(all_image_files)
+        ) as pbar:
+            args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
+            pool.starmap(self._bucket_worker, args)
+
+        with cache_file.open("w") as f:
+            json.dump(dict(aspect_ratio_bucket_indices), f)
+
+        return dict(aspect_ratio_bucket_indices)
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"

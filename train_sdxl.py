@@ -987,7 +987,6 @@ def main():
 
         # Compute the VAE embeddings for individual images
         latents = [vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)]
-        logger.debug(f"Latents {latents.shape} gathered: {latents}")
         pixel_values = torch.stack(latents)
 
         # Extract the captions from the examples.
@@ -1086,7 +1085,7 @@ def main():
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
-
+    logger.info(f'Loading noise scheduler...')
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
@@ -1095,18 +1094,20 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
+    logger.info(f'Loading our accelerator...')
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler
     )
 
     if args.use_ema:
+        logger.info('Moving EMA model weights to accelerator...')
         ema_unet.to(accelerator.device)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
     vae_dtype = torch.float32
     if hasattr(args, "vae_dtype"):
-        logging.info(
+        logger.info(
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
@@ -1124,7 +1125,7 @@ def main():
     else:
         logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
-    logger.debug(f"Loaded VAE into VRAM.")
+    logger.info(f"Loaded VAE into VRAM.")
     if accelerator.is_main_process:
         logger.info(f"Pre-computing VAE latent space.")
         vaecache = VAECache(vae, accelerator)
