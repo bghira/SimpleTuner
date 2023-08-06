@@ -63,12 +63,12 @@ class DreamBoothDataset(Dataset):
         self._length = self.num_instance_images
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images
+        self.accelerator = accelerator
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
-        self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
             pass
             # self.update_cache()
