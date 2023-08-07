@@ -180,6 +180,7 @@ class DreamBoothDataset(Dataset):
                         f"Could not load aspect ratio bucket indices from {cache_file}. Creating a new one!"
                     )
                     aspect_ratio_bucket_indices = {}
+            logging.info("Loading of aspect bucket indexes completed.")
         return aspect_ratio_bucket_indices
 
     def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue):
