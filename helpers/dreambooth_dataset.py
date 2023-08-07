@@ -107,8 +107,8 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
             aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
         except Exception as e:
-            logging.error(f"Error processing image {image_path_str}.")
-            logging.error(e)
+            logger.error(f"Error processing image {image_path_str}.")
+            logger.error(e)
             return aspect_ratio_bucket_indices
         finally:
             if "image" in locals():
@@ -166,21 +166,21 @@ class DreamBoothDataset(Dataset):
                         file_path
                     )
         except Exception as e:
-            logging.error(f"Error processing image {file_path}.")
-            logging.error(e)
+            logger.error(f"Error processing image {file_path}.")
+            logger.error(e)
 
     def load_aspect_ratio_bucket_indices(self, cache_file):
         with self.accelerator.main_process_first():
-            logging.info("Loading aspect ratio bucket indices from cache file.")
+            logger.info("Loading aspect ratio bucket indices from cache file.")
             with cache_file.open("r") as f:
                 try:
                     aspect_ratio_bucket_indices = json.load(f)
                 except:
-                    logging.warn(
+                    logger.warn(
                         f"Could not load aspect ratio bucket indices from {cache_file}. Creating a new one!"
                     )
                     aspect_ratio_bucket_indices = {}
-            logging.info("Loading of aspect bucket indexes completed.")
+            logger.info("Loading of aspect bucket indexes completed.")
         return aspect_ratio_bucket_indices
 
     def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue):
@@ -196,19 +196,19 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logger.warning("Computing aspect ratio bucket indices.")
-        def rglob_follow_symlinks(path: Path, pattern: str):
-            for p in path.glob(pattern):
-                yield p
-            for p in path.iterdir():
-                if p.is_dir() and not p.is_symlink():
-                    yield from rglob_follow_symlinks(p, pattern)
-                elif p.is_symlink():
-                    real_path = Path(os.readlink(p))
-                    if real_path.is_dir():
-                        yield from rglob_follow_symlinks(real_path, pattern)
-
-
         with self.accelerator.main_process_first():
+            def rglob_follow_symlinks(path: Path, pattern: str):
+                for p in path.glob(pattern):
+                    yield p
+                for p in path.iterdir():
+                    if p.is_dir() and not p.is_symlink():
+                        yield from rglob_follow_symlinks(p, pattern)
+                    elif p.is_symlink():
+                        real_path = Path(os.readlink(p))
+                        if real_path.is_dir():
+                            yield from rglob_follow_symlinks(real_path, pattern)
+
+
             logger.info('Built queue object.')
             tqdm_queue = Queue()  # Queue for updating progress bar
             aspect_ratio_bucket_indices_queue = (
@@ -271,6 +271,7 @@ class DreamBoothDataset(Dataset):
         if cache_file.exists():
             output = self.load_aspect_ratio_bucket_indices(cache_file)
         if output is not None and len(output) > 0:
+            logging.info(f'We found {len(output)} buckets')
             return output
         logger.info('Bucket assignment completed.')
         return self.compute_aspect_ratio_bucket_indices(cache_file)
