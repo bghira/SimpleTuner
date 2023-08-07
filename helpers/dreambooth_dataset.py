@@ -184,7 +184,7 @@ class DreamBoothDataset(Dataset):
         for file in files:
             # Process image as before, but now send results to queue instead of updating a manager.dict
             aspect_ratio_bucket_indices = self._process_image(
-                str(file)
+                str(file), self.aspect_ratio_bucket_indices
             )  # assuming _process_image now returns a value
             tqdm_queue.put(1)  # Update progress bar
             aspect_ratio_bucket_indices_queue.put(
