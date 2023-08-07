@@ -6,7 +6,7 @@ from .state_tracker import StateTracker
 from PIL import Image
 import json, logging, os, multiprocessing
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count, Manager, Value
+from multiprocessing import Pool, cpu_count, Manager, Value, Lock
 import numpy as np
 from itertools import repeat
 from ctypes import c_int
