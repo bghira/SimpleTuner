@@ -207,7 +207,7 @@ class DreamBoothDataset(Dataset):
                 rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
             )
 
-            files_split = np.array_split(all_image_files, num_cores)
+            files_split = np.array_split(all_image_files, 8)
             with manager.Pool(processes=8) as pool, tqdm(
                 total=len(all_image_files)
             ) as pbar:
