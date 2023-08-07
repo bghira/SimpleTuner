@@ -1074,7 +1074,7 @@ def main():
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
-
+    accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
     logger.info(f'Loading our accelerator...')
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
