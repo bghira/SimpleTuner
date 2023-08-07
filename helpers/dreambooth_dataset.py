@@ -207,9 +207,8 @@ class DreamBoothDataset(Dataset):
                 rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
             )
 
-            num_cores = cpu_count()
             files_split = np.array_split(all_image_files, num_cores)
-            with manager.Pool(processes=num_cores) as pool, tqdm(
+            with manager.Pool(processes=8) as pool, tqdm(
                 total=len(all_image_files)
             ) as pbar:
                 args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
