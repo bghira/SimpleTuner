@@ -268,6 +268,7 @@ class DreamBoothDataset(Dataset):
             output = self.load_aspect_ratio_bucket_indices(cache_file)
         if output is not None and len(output) > 0:
             return output
+        logger.info('Bucket assignment completed.')
         return self.compute_aspect_ratio_bucket_indices(cache_file)
 
     def __len__(self):
