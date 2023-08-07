@@ -524,6 +524,15 @@ def parse_args():
         ),
     )
     parser.add_argument(
+        '--prediction_type',
+        type=str,
+        default='epsilon',
+        choices=['epsilon', 'v_prediction', 'sample'],
+        help=(
+            "The type of prediction to use for the VAE. Choose between ['epsilon', 'v_prediction', 'sample']."
+        )
+    )
+    parser.add_argument(
         "--report_to",
         type=str,
         default="tensorboard",
@@ -876,13 +885,13 @@ def main():
     betas_scheduler = DDIMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
-        prediction_type="v_prediction",
+        prediction_type=args.prediction_type,
         rescale_betas_zero_snr=True
     )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
-        prediction_type="v_prediction",
+        prediction_type=args.prediction_type,
         trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
