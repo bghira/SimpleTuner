@@ -883,8 +883,8 @@ def main():
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type="v_prediction",
+        trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
-    noise_scheduler.betas = betas_scheduler.betas
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
@@ -1455,7 +1455,7 @@ def main():
             unet=unet,
             revision=args.revision,
         )
-        pipeline.save_pretrained(args.output_dir)
+        pipeline.save_pretrained('/notebooks/datasets/models/ptx0-xltest')
 
         if args.push_to_hub:
             upload_folder(
