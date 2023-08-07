@@ -1049,15 +1049,11 @@ def main():
     text_encoder_2.to("cpu")
     memory_after_unload = torch.cuda.memory_allocated() / 1024**3
     memory_saved = memory_after_unload - memory_before_unload
-    gc.collect()
-    logger.info('Clearing CUDA cache.')
-    torch.cuda.empty_cache()
-    if accelerator.is_main_process:
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            "This number might be massively understated, because of how CUDA memory management works."
-            "The real memories were the friends we trained a model on along the way."
-        )
+    logger.info(
+        f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+        "This number might be massively understated, because of how CUDA memory management works."
+        "The real memories were the friends we trained a model on along the way."
+    )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False

@@ -195,72 +195,71 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logger.warning("Computing aspect ratio bucket indices.")
-        with self.accelerator.main_process_first():
-            def rglob_follow_symlinks(path: Path, pattern: str):
-                for p in path.glob(pattern):
-                    yield p
-                for p in path.iterdir():
-                    if p.is_dir() and not p.is_symlink():
-                        yield from rglob_follow_symlinks(p, pattern)
-                    elif p.is_symlink():
-                        real_path = Path(os.readlink(p))
-                        if real_path.is_dir():
-                            yield from rglob_follow_symlinks(real_path, pattern)
+        def rglob_follow_symlinks(path: Path, pattern: str):
+            for p in path.glob(pattern):
+                yield p
+            for p in path.iterdir():
+                if p.is_dir() and not p.is_symlink():
+                    yield from rglob_follow_symlinks(p, pattern)
+                elif p.is_symlink():
+                    real_path = Path(os.readlink(p))
+                    if real_path.is_dir():
+                        yield from rglob_follow_symlinks(real_path, pattern)
 
 
-            logger.info('Built queue object.')
-            tqdm_queue = Queue()  # Queue for updating progress bar
-            aspect_ratio_bucket_indices_queue = (
-                Queue()
-            )  # Queue for gathering data from processes
-            logger.info('Build file list..')
-            all_image_files = list(
-                rglob_follow_symlinks(
-                    Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
-                )
+        logger.info('Built queue object.')
+        tqdm_queue = Queue()  # Queue for updating progress bar
+        aspect_ratio_bucket_indices_queue = (
+            Queue()
+        )  # Queue for gathering data from processes
+        logger.info('Build file list..')
+        all_image_files = list(
+            rglob_follow_symlinks(
+                Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
             )
-            logger.info('Split file list into shards.')
-            files_split = np.array_split(all_image_files, 8)
-            workers = []
-            logger.info('Process lists...')
-            for files in files_split:
-                p = Process(
-                    target=self._bucket_worker,
-                    args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue),
-                )
-                p.start()
-                workers.append(p)
+        )
+        logger.info('Split file list into shards.')
+        files_split = np.array_split(all_image_files, 8)
+        workers = []
+        logger.info('Process lists...')
+        for files in files_split:
+            p = Process(
+                target=self._bucket_worker,
+                args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue),
+            )
+            p.start()
+            workers.append(p)
 
-            # Update progress bar and gather results in main process
-            aspect_ratio_bucket_indices = {}
-            logger.info('Update progress bar and gather results in main process.')
-            with tqdm(total=len(all_image_files)) as pbar:
-                while any(
-                    p.is_alive() for p in workers
-                ):  # Continue until all processes are done
-                    while (
-                        not tqdm_queue.empty()
-                    ):  # Update progress bar with each completed file
-                        pbar.update(tqdm_queue.get())
-                    while (
-                        not aspect_ratio_bucket_indices_queue.empty()
-                    ):  # Gather results
-                        aspect_ratio_bucket_indices.update(
-                            aspect_ratio_bucket_indices_queue.get()
-                        )
+        # Update progress bar and gather results in main process
+        aspect_ratio_bucket_indices = {}
+        logger.info('Update progress bar and gather results in main process.')
+        with tqdm(total=len(all_image_files)) as pbar:
+            while any(
+                p.is_alive() for p in workers
+            ):  # Continue until all processes are done
+                while (
+                    not tqdm_queue.empty()
+                ):  # Update progress bar with each completed file
+                    pbar.update(tqdm_queue.get())
+                while (
+                    not aspect_ratio_bucket_indices_queue.empty()
+                ):  # Gather results
+                    aspect_ratio_bucket_indices.update(
+                        aspect_ratio_bucket_indices_queue.get()
+                    )
 
-            # Gather any remaining results
-            while not aspect_ratio_bucket_indices_queue.empty():  # Gather results
-                aspect_ratio_bucket_indices.update(
-                    aspect_ratio_bucket_indices_queue.get()
-                )
-            logger.info('Join processes and finish up.')
-            for p in workers:
-                p.join()  # Wait for processes to finish
+        # Gather any remaining results
+        while not aspect_ratio_bucket_indices_queue.empty():  # Gather results
+            aspect_ratio_bucket_indices.update(
+                aspect_ratio_bucket_indices_queue.get()
+            )
+        logger.info('Join processes and finish up.')
+        for p in workers:
+            p.join()  # Wait for processes to finish
 
-            with cache_file.open("w") as f:
-                logger.info('Writing updated cache file to disk')
-                json.dump(aspect_ratio_bucket_indices, f)
+        with cache_file.open("w") as f:
+            logger.info('Writing updated cache file to disk')
+            json.dump(aspect_ratio_bucket_indices, f)
         logger.info('Completed aspect bucket update.')
         return aspect_ratio_bucket_indices
 
