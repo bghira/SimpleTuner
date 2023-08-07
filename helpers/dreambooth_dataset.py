@@ -170,17 +170,16 @@ class DreamBoothDataset(Dataset):
             logger.error(e)
 
     def load_aspect_ratio_bucket_indices(self, cache_file):
-        with self.accelerator.main_process_first():
-            logger.info("Loading aspect ratio bucket indices from cache file.")
-            with cache_file.open("r") as f:
-                try:
-                    aspect_ratio_bucket_indices = json.load(f)
-                except:
-                    logger.warn(
-                        f"Could not load aspect ratio bucket indices from {cache_file}. Creating a new one!"
-                    )
-                    aspect_ratio_bucket_indices = {}
-            logger.info("Loading of aspect bucket indexes completed.")
+        logger.info("Loading aspect ratio bucket indices from cache file.")
+        with cache_file.open("r") as f:
+            try:
+                aspect_ratio_bucket_indices = json.load(f)
+            except:
+                logger.warn(
+                    f"Could not load aspect ratio bucket indices from {cache_file}. Creating a new one!"
+                )
+                aspect_ratio_bucket_indices = {}
+        logger.info("Loading of aspect bucket indexes completed.")
         return aspect_ratio_bucket_indices
 
     def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue):
