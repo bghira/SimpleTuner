@@ -107,8 +107,8 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
             aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
         except Exception as e:
-            logging.error(f"Error processing image {image_path_str}.")
-            logging.error(e)
+            logger.error(f"Error processing image {image_path_str}.")
+            logger.error(e)
             return aspect_ratio_bucket_indices
         finally:
             if "image" in locals():
@@ -166,19 +166,20 @@ class DreamBoothDataset(Dataset):
                         file_path
                     )
         except Exception as e:
-            logging.error(f"Error processing image {file_path}.")
-            logging.error(e)
+            logger.error(f"Error processing image {file_path}.")
+            logger.error(e)
 
     def load_aspect_ratio_bucket_indices(self, cache_file):
-        logging.info("Loading aspect ratio bucket indices from cache file.")
+        logger.info("Loading aspect ratio bucket indices from cache file.")
         with cache_file.open("r") as f:
             try:
                 aspect_ratio_bucket_indices = json.load(f)
             except:
-                logging.warn(
+                logger.warn(
                     f"Could not load aspect ratio bucket indices from {cache_file}. Creating a new one!"
                 )
                 aspect_ratio_bucket_indices = {}
+        logger.info("Loading of aspect bucket indexes completed.")
         return aspect_ratio_bucket_indices
 
     def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue):
@@ -193,7 +194,7 @@ class DreamBoothDataset(Dataset):
             )  # Send processed data
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
-        logging.warning("Computing aspect ratio bucket indices.")
+        logger.warning("Computing aspect ratio bucket indices.")
         def rglob_follow_symlinks(path: Path, pattern: str):
             for p in path.glob(pattern):
                 yield p
@@ -206,57 +207,60 @@ class DreamBoothDataset(Dataset):
                         yield from rglob_follow_symlinks(real_path, pattern)
 
 
-        with self.accelerator.main_process_first():
-            tqdm_queue = Queue()  # Queue for updating progress bar
-            aspect_ratio_bucket_indices_queue = (
-                Queue()
-            )  # Queue for gathering data from processes
-
-            all_image_files = list(
-                rglob_follow_symlinks(
-                    Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
-                )
+        logger.info('Built queue object.')
+        tqdm_queue = Queue()  # Queue for updating progress bar
+        aspect_ratio_bucket_indices_queue = (
+            Queue()
+        )  # Queue for gathering data from processes
+        logger.info('Build file list..')
+        all_image_files = list(
+            rglob_follow_symlinks(
+                Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
             )
+        )
+        logger.info('Split file list into shards.')
+        files_split = np.array_split(all_image_files, 8)
+        workers = []
+        logger.info('Process lists...')
+        for files in files_split:
+            p = Process(
+                target=self._bucket_worker,
+                args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue),
+            )
+            p.start()
+            workers.append(p)
 
-            files_split = np.array_split(all_image_files, 8)
-            workers = []
-            for files in files_split:
-                p = Process(
-                    target=self._bucket_worker,
-                    args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue),
-                )
-                p.start()
-                workers.append(p)
+        # Update progress bar and gather results in main process
+        aspect_ratio_bucket_indices = {}
+        logger.info('Update progress bar and gather results in main process.')
+        with tqdm(total=len(all_image_files)) as pbar:
+            while any(
+                p.is_alive() for p in workers
+            ):  # Continue until all processes are done
+                while (
+                    not tqdm_queue.empty()
+                ):  # Update progress bar with each completed file
+                    pbar.update(tqdm_queue.get())
+                while (
+                    not aspect_ratio_bucket_indices_queue.empty()
+                ):  # Gather results
+                    aspect_ratio_bucket_indices.update(
+                        aspect_ratio_bucket_indices_queue.get()
+                    )
 
-            # Update progress bar and gather results in main process
-            aspect_ratio_bucket_indices = {}
-            with tqdm(total=len(all_image_files)) as pbar:
-                while any(
-                    p.is_alive() for p in workers
-                ):  # Continue until all processes are done
-                    while (
-                        not tqdm_queue.empty()
-                    ):  # Update progress bar with each completed file
-                        pbar.update(tqdm_queue.get())
-                    while (
-                        not aspect_ratio_bucket_indices_queue.empty()
-                    ):  # Gather results
-                        aspect_ratio_bucket_indices.update(
-                            aspect_ratio_bucket_indices_queue.get()
-                        )
+        # Gather any remaining results
+        while not aspect_ratio_bucket_indices_queue.empty():  # Gather results
+            aspect_ratio_bucket_indices.update(
+                aspect_ratio_bucket_indices_queue.get()
+            )
+        logger.info('Join processes and finish up.')
+        for p in workers:
+            p.join()  # Wait for processes to finish
 
-            # Gather any remaining results
-            while not aspect_ratio_bucket_indices_queue.empty():  # Gather results
-                aspect_ratio_bucket_indices.update(
-                    aspect_ratio_bucket_indices_queue.get()
-                )
-
-            for p in workers:
-                p.join()  # Wait for processes to finish
-
-            with cache_file.open("w") as f:
-                json.dump(aspect_ratio_bucket_indices, f)
-
+        with cache_file.open("w") as f:
+            logger.info('Writing updated cache file to disk')
+            json.dump(aspect_ratio_bucket_indices, f)
+        logger.info('Completed aspect bucket update.')
         return aspect_ratio_bucket_indices
 
     def assign_to_buckets(self):
@@ -265,7 +269,9 @@ class DreamBoothDataset(Dataset):
         if cache_file.exists():
             output = self.load_aspect_ratio_bucket_indices(cache_file)
         if output is not None and len(output) > 0:
+            logging.info(f'We found {len(output)} buckets')
             return output
+        logger.info('Bucket assignment completed.')
         return self.compute_aspect_ratio_bucket_indices(cache_file)
 
     def __len__(self):

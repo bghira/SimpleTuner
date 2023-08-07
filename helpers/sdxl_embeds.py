@@ -134,5 +134,4 @@ class TextEmbeddingCache:
         Args:
             prompts (list[str]): All of the prompts.
         """
-        with self.accelerator.main_process_first():
-            self.compute_embeddings_for_prompts(prompts, return_concat=False)
+        self.compute_embeddings_for_prompts(prompts, return_concat=False)

@@ -990,6 +990,7 @@ def main():
 
     # DataLoaders creation:
     # Dataset and DataLoaders creation:
+    logger.info('Creating dataset iterator object')
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
@@ -1004,6 +1005,7 @@ def main():
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy
     )
+    logger.info('Creating aspect bucket sampler')
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
         batch_size=args.train_batch_size,
@@ -1011,6 +1013,7 @@ def main():
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
     )
+    logger.info('Plugging sampler into dataloader')
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
@@ -1019,11 +1022,13 @@ def main():
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
+    logger.info('Initialise text embedding cache')
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
-    logger.info(f"Pre-computing text embeds / updating cache.")
-    embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
+    with accelerator.main_process_first():
+        logger.info(f"Pre-computing text embeds / updating cache.")
+        embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
 
     if args.validation_prompt is not None:
         (
@@ -1044,14 +1049,11 @@ def main():
     text_encoder_2.to("cpu")
     memory_after_unload = torch.cuda.memory_allocated() / 1024**3
     memory_saved = memory_after_unload - memory_before_unload
-    gc.collect()
-    torch.cuda.empty_cache()
-    if accelerator.is_main_process:
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            "This number might be massively understated, because of how CUDA memory management works."
-            "The real memories were the friends we trained a model on along the way."
-        )
+    logger.info(
+        f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+        "This number might be massively understated, because of how CUDA memory management works."
+        "The real memories were the friends we trained a model on along the way."
+    )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -1068,7 +1070,7 @@ def main():
         num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
-
+    accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
     logger.info(f'Loading our accelerator...')
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(

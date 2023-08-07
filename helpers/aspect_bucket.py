@@ -21,7 +21,6 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(
         self,
         aspect_ratio_bucket_indices,
-        accelerator,
         batch_size: int = 15,
         seen_images_path: str = "/notebooks/SimpleTuner/seen_images.json",
         state_path: str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
@@ -37,7 +36,6 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.current_bucket = 0
         self.seen_images_path = seen_images_path
         self.state_path = state_path
-        self.accelerator = accelerator
         self.seen_images = self.load_seen_images()
         self.drop_caption_every_n_percent = drop_caption_every_n_percent
         self.debug_aspect_buckets = debug_aspect_buckets
