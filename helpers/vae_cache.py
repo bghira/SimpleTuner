@@ -4,7 +4,7 @@ from PIL import Image
 import torchvision.transforms as transforms
 
 logger = logging.getLogger("VAECache")
-logger.setLevel("DEBUG")
+logger.setLevel("INFO")
 
 
 class VAECache:
@@ -35,6 +35,7 @@ class VAECache:
     def encode_image(self, pixel_values, filepath: str):
         file_hash = self.create_hash(filepath)
         filename = os.path.join(self.cache_dir, file_hash + ".pt")
+        logger.debug(f'Created file_hash {file_hash} from filepath {filepath} for resulting .pt filename.')
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
             logger.debug(
@@ -107,7 +108,7 @@ class VAECache:
                 continue
 
             # Process the image with the VAE
-            self.encode_image(pixel_values, filename)
+            self.encode_image(pixel_values, filepath)
 
             logger.debug(f"Processed image {filepath}")
 

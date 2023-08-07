@@ -287,6 +287,7 @@ def main(args):
     # Dataset and DataLoaders creation:
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
+        accelerator=accelerator,
         instance_prompt=args.instance_prompt,
         tokenizer=tokenizer,
         size=args.resolution,

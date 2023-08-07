@@ -17,6 +17,8 @@ import argparse
 import logging
 import math
 import os
+# Quiet down, you.
+os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
 import random
 import gc
@@ -225,6 +227,16 @@ def parse_args():
             "Very high values might be useful to do some sort of enforced style training."
             "Default value is zero, maximum value is 100."
         ),
+    )
+    parser.add_argument(
+        '--caption_strategy',
+        type=str,
+        default='filename',
+        choices=['filename', 'textfile', 'instance_prompt'],
+        help=(
+            "The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores."
+            "The 'textfile' strategy will use the contents of a text file with the same name as the image."
+        )
     )
     parser.add_argument(
         "--instance_data_dir",
@@ -577,7 +589,6 @@ def parse_args():
 
     return args
 
-
 def main():
     args = parse_args()
     if args.non_ema_revision is not None:
@@ -601,14 +612,14 @@ def main():
     )
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
-    # if accelerator.is_local_main_process:
-    #     datasets.utils.logging.set_verbosity_warning()
-    #     transformers.utils.logging.set_verbosity_warning()
-    #     diffusers.utils.logging.set_verbosity_info()
-    # else:
-    #     datasets.utils.logging.set_verbosity_error()
-    #     transformers.utils.logging.set_verbosity_error()
-    #     diffusers.utils.logging.set_verbosity_error()
+    if accelerator.is_local_main_process:
+        datasets.utils.logging.set_verbosity_warning()
+        transformers.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -681,41 +692,14 @@ def main():
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if args.use_ema:
-                ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-
-            for i, model in enumerate(models):
-                model.save_pretrained(os.path.join(output_dir, "unet"))
-
-                # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(
-                    os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
-                )
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(
-                    input_dir, subfolder="unet"
-                )
-                model.register_to_config(**load_model.config)
-
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
+        from helpers.sdxl_save_hooks import SDXLSaveHook
+        model_hooks = SDXLSaveHook(
+            args=args,
+            ema_unet=ema_unet,
+            accelerator=accelerator,
+        )
+        accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
+        accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
@@ -806,6 +790,7 @@ def main():
 
     # 6. Get the column names for input/target.
     if hasattr(args, "dataset_name") and args.dataset_name is not None:
+        raise ValueError('Huggingface datasets are not currently supported.')
         # Preprocessing the datasets.
         # We need to tokenize inputs and targets.
         column_names = dataset["train"].column_names
@@ -841,8 +826,8 @@ def main():
                     f"--edited_image_column' value '{args.edited_image_column}' needs to be one of: {', '.join(column_names)}"
                 )
     else:
-        logging.error(
-            "We are probably going to hit some pain for that, but we bypassed the column config."
+        logging.info(
+            "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
         )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -850,17 +835,10 @@ def main():
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-        warnings.warn(
-            f"weight_dtype {weight_dtype} may cause nan during vae encoding",
-            UserWarning,
-        )
-
+        logger.warning(f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.')
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        warnings.warn(
-            f"weight_dtype {weight_dtype} may cause nan during vae encoding",
-            UserWarning,
-        )
+        logger.warning(f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.')
 
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
@@ -905,8 +883,8 @@ def main():
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type="v_prediction",
+        trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
-    noise_scheduler.betas = betas_scheduler.betas
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="text_encoder",
@@ -1014,6 +992,7 @@ def main():
     # Dataset and DataLoaders creation:
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
+        accelerator=accelerator,
         size=args.resolution,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
@@ -1023,6 +1002,7 @@ def main():
         caption_dropout_interval=args.caption_dropout_interval,
         use_precomputed_token_ids=True,
         debug_dataset_loader=args.debug_dataset_loader,
+        caption_strategy=args.caption_strategy
     )
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
@@ -1042,39 +1022,35 @@ def main():
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
-    if accelerator.is_main_process:
-        logger.info(f"Pre-computing text embeds / updating cache.")
-        embed_cache.compute_embeddings_for_prompts(train_dataset.get_all_captions(), return_concat=False)
+    logger.info(f"Pre-computing text embeds / updating cache.")
+    embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
 
     if args.validation_prompt is not None:
         (
             validation_prompt_embeds,
             validation_pooled_embeds,
         ) = embed_cache.compute_embeddings_for_prompts([args.validation_prompt])
-        logger.debug(f"Validation prompt embeds: {validation_prompt_embeds}")
-        logger.debug(f"Validation prompt embeds: {validation_pooled_embeds}")
         (
             validation_negative_prompt_embeds,
             validation_negative_pooled_embeds,
         ) = embed_cache.compute_embeddings_for_prompts(["blurry, cropped, ugly"])
-        logger.debug(
-            f"Validation negative prompt embeds: {validation_negative_prompt_embeds}"
-        )
-        logger.debug(
-            f"Validation negative prompt embeds: {validation_negative_pooled_embeds}"
-        )
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(
-            f"Before nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB"
+            f"Moving text encoders back to CPU, to save VRAM. Currently, we cannot completely unload the text encoder."
         )
+    memory_before_unload = torch.cuda.memory_allocated() / 1024**3
     text_encoder_1.to("cpu")
     text_encoder_2.to("cpu")
+    memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+    memory_saved = memory_after_unload - memory_before_unload
     gc.collect()
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
         logger.info(
-            f"After nuking text encoders from orbit, our GPU memory used: {torch.cuda.memory_allocated() / 1024**3:.02f} GB"
+            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+            "This number might be massively understated, because of how CUDA memory management works."
+            "The real memories were the friends we trained a model on along the way."
         )
 
     # Scheduler and math around the number of training steps.
@@ -1479,7 +1455,7 @@ def main():
             unet=unet,
             revision=args.revision,
         )
-        pipeline.save_pretrained(args.output_dir)
+        pipeline.save_pretrained('/notebooks/datasets/models/ptx0-xltest')
 
         if args.push_to_hub:
             upload_folder(

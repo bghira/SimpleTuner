@@ -4,11 +4,12 @@ from torchvision import transforms
 from PIL.ImageOps import exif_transpose
 from .state_tracker import StateTracker
 from PIL import Image
-import json, logging, os
+import json, logging, os, multiprocessing
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count, Manager
+from multiprocessing import Pool, cpu_count, Manager, Value, Lock, Process, Queue
 import numpy as np
 from itertools import repeat
+from ctypes import c_int
 
 logger = logging.getLogger("DatasetLoader")
 logger.setLevel(logging.INFO)
@@ -19,6 +20,8 @@ pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
+
+multiprocessing.set_start_method("fork")
 
 
 class DreamBoothDataset(Dataset):
@@ -43,6 +46,7 @@ class DreamBoothDataset(Dataset):
         caption_dropout_interval: int = 0,
         use_precomputed_token_ids: bool = True,
         debug_dataset_loader: bool = False,
+        caption_strategy: str = "filename",
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -62,14 +66,16 @@ class DreamBoothDataset(Dataset):
         self._length = self.num_instance_images
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images
+        self.accelerator = accelerator
+        self.aspect_ratio_bucket_indices = {}
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
+        self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
-        self.accelerator = accelerator
         if len(self.aspect_ratio_bucket_indices) > 0:
-            logger.info(f"Updating aspect bucket cache.")
-            self.update_cache()
+            pass
+            # self.update_cache()
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
@@ -111,7 +117,6 @@ class DreamBoothDataset(Dataset):
 
     def update_cache(self, base_dir=None, max_workers=64):
         """Update the aspect_ratio_bucket_indices based on the current state of the file system."""
-
         if base_dir is None:
             base_dir = self.instance_data_root
         else:
@@ -119,12 +124,12 @@ class DreamBoothDataset(Dataset):
             if not base_dir.exists():
                 raise ValueError(f"Directory {base_dir} does not exist.")
 
+        logger.info(f"Looking for new images, to update aspect bucket cache.")
         new_file_paths = [
             str(path)
             for path in base_dir.iterdir()
             if path not in self.instance_images_path
         ]
-
         logger.info(f"Discovered {len(new_file_paths)} new files to inspect for cache.")
 
         for new_file in tqdm(new_file_paths, desc="Adding to cache"):
@@ -176,48 +181,83 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices = {}
         return aspect_ratio_bucket_indices
 
-    def _bucket_worker(self, tqdm_object, files, aspect_ratio_bucket_indices):
+    def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue):
         for file in files:
-            # Process image as before, but update tqdm object instead of creating a new one
+            # Process image as before, but now send results to queue instead of updating a manager.dict
             aspect_ratio_bucket_indices = self._process_image(
-                str(file), aspect_ratio_bucket_indices
-            )
-            tqdm_object.update()
+                str(file), self.aspect_ratio_bucket_indices
+            )  # assuming _process_image now returns a value
+            tqdm_queue.put(1)  # Update progress bar
+            aspect_ratio_bucket_indices_queue.put(
+                aspect_ratio_bucket_indices
+            )  # Send processed data
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
-        with self.accelerator.main_process_first():
-            manager = Manager()
-            aspect_ratio_bucket_indices = manager.dict()
+        def rglob_follow_symlinks(path: Path, pattern: str):
+            for p in path.glob(pattern):
+                yield p
+            for p in path.iterdir():
+                if p.is_dir() and not p.is_symlink():
+                    yield from rglob_follow_symlinks(p, pattern)
+                elif p.is_symlink():
+                    real_path = Path(os.readlink(p))
+                    if real_path.is_dir():
+                        yield from rglob_follow_symlinks(real_path, pattern)
 
-            def rglob_follow_symlinks(path: Path, pattern: str):
-                for p in path.glob(pattern):
-                    yield p
-                for p in path.iterdir():
-                    if p.is_dir() and not p.is_symlink():
-                        yield from rglob_follow_symlinks(p, pattern)
-                    elif p.is_symlink():
-                        real_path = Path(os.readlink(p))
-                        if real_path.is_dir():
-                            yield from rglob_follow_symlinks(real_path, pattern)
+
+        with self.accelerator.main_process_first():
+            tqdm_queue = Queue()  # Queue for updating progress bar
+            aspect_ratio_bucket_indices_queue = (
+                Queue()
+            )  # Queue for gathering data from processes
 
             all_image_files = list(
-                rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
+                rglob_follow_symlinks(
+                    Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
+                )
             )
 
-            num_cores = cpu_count()
-            files_split = np.array_split(all_image_files, num_cores)
+            files_split = np.array_split(all_image_files, 8)
+            workers = []
+            for files in files_split:
+                p = Process(
+                    target=self._bucket_worker,
+                    args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue),
+                )
+                p.start()
+                workers.append(p)
 
-            with manager.Pool(processes=num_cores) as pool, tqdm(
-                total=len(all_image_files)
-            ) as pbar:
-                args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
-                pool.starmap(self._bucket_worker, args)
+            # Update progress bar and gather results in main process
+            aspect_ratio_bucket_indices = {}
+            with tqdm(total=len(all_image_files)) as pbar:
+                while any(
+                    p.is_alive() for p in workers
+                ):  # Continue until all processes are done
+                    while (
+                        not tqdm_queue.empty()
+                    ):  # Update progress bar with each completed file
+                        pbar.update(tqdm_queue.get())
+                    while (
+                        not aspect_ratio_bucket_indices_queue.empty()
+                    ):  # Gather results
+                        aspect_ratio_bucket_indices.update(
+                            aspect_ratio_bucket_indices_queue.get()
+                        )
+
+            # Gather any remaining results
+            while not aspect_ratio_bucket_indices_queue.empty():  # Gather results
+                aspect_ratio_bucket_indices.update(
+                    aspect_ratio_bucket_indices_queue.get()
+                )
+
+            for p in workers:
+                p.join()  # Wait for processes to finish
 
             with cache_file.open("w") as f:
-                json.dump(dict(aspect_ratio_bucket_indices), f)
+                json.dump(aspect_ratio_bucket_indices, f)
 
-        return dict(aspect_ratio_bucket_indices)
+        return aspect_ratio_bucket_indices
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
@@ -287,7 +327,16 @@ class DreamBoothDataset(Dataset):
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
         instance_image = exif_transpose(instance_image)
-        instance_prompt = self._prepare_instance_prompt(image_path)
+        if self.caption_strategy == "filename":
+            instance_prompt = self._prepare_instance_prompt(image_path)
+        elif self.caption_strategy == "textfile":
+            caption_file = Path(image_path).with_suffix(".txt")
+            if not caption_file.exists():
+                raise FileNotFoundError(f"Caption file {caption_file} not found.")
+            with caption_file.open("r") as f:
+                instance_prompt = f.read()
+        else:
+            raise ValueError(f"Unsupported caption strategy: {self.caption_strategy}")
         if not instance_image.mode == "RGB" and StateTracker.status_training():
             instance_image = instance_image.convert("RGB")
         if StateTracker.status_training():

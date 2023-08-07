@@ -72,6 +72,31 @@ pip3 install -U poetry pip
 poetry install
 ```
 
+You will need to install some Linux-specific dependencies (Ubuntu is used here):
+
+```bash
+apt -y install nvidia-cuda-dev nvidia-cuda-toolkit
+```
+
+If you get an error about missing cudNN library, you will want to install torch manually (replace 118 with your CUDA version if not using 11.8):
+
+```bash
+pip3 install xformers torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118 --force
+```
+
+Alternatively, Pytorch Nightly may be used (Torch 2.1) with Xformers 0.0.21dev (note that this includes torchtriton now):
+
+```bash
+pip3 install --pre torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
+pip3 install --pre https://github.com/facebookresearch/xformers.git@main\#egg=xformers
+```
+
+If the egg install for Xformers does not work, try including `xformers` on the first line, and run only that:
+
+```bash
+pip3 install --pre xformers torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
+```
+
 2. For SD2.1, copy `sd21-env.sh.example` to `env.sh` - be sure to fill out the details. Try to change as little as possible.
 
 For SDXL, copy `sdxl-env.sh.example` to `sdxl-env.sh` and then fill in the details.
