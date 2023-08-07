@@ -195,7 +195,7 @@ class DreamBoothDataset(Dataset):
             )  # Send processed data
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
-        logging.warning("Computing aspect ratio bucket indices.")
+        logger.warning("Computing aspect ratio bucket indices.")
         def rglob_follow_symlinks(path: Path, pattern: str):
             for p in path.glob(pattern):
                 yield p
@@ -209,19 +209,21 @@ class DreamBoothDataset(Dataset):
 
 
         with self.accelerator.main_process_first():
+            logger.info('Built queue object.')
             tqdm_queue = Queue()  # Queue for updating progress bar
             aspect_ratio_bucket_indices_queue = (
                 Queue()
             )  # Queue for gathering data from processes
-
+            logger.info('Build file list..')
             all_image_files = list(
                 rglob_follow_symlinks(
                     Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
                 )
             )
-
+            logger.info('Split file list into shards.')
             files_split = np.array_split(all_image_files, 8)
             workers = []
+            logger.info('Process lists...')
             for files in files_split:
                 p = Process(
                     target=self._bucket_worker,
@@ -232,6 +234,7 @@ class DreamBoothDataset(Dataset):
 
             # Update progress bar and gather results in main process
             aspect_ratio_bucket_indices = {}
+            logger.info('Update progress bar and gather results in main process.')
             with tqdm(total=len(all_image_files)) as pbar:
                 while any(
                     p.is_alive() for p in workers
@@ -252,13 +255,14 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices.update(
                     aspect_ratio_bucket_indices_queue.get()
                 )
-
+            logger.info('Join processes and finish up.')
             for p in workers:
                 p.join()  # Wait for processes to finish
 
             with cache_file.open("w") as f:
+                logger.info('Writing updated cache file to disk')
                 json.dump(aspect_ratio_bucket_indices, f)
-
+        logger.info('Completed aspect bucket update.')
         return aspect_ratio_bucket_indices
 
     def assign_to_buckets(self):
