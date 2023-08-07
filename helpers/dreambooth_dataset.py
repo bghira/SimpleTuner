@@ -67,6 +67,7 @@ class DreamBoothDataset(Dataset):
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images
         self.accelerator = accelerator
+        self.aspect_ratio_bucket_indices = {}
         self.aspect_ratio_bucket_indices = self.assign_to_buckets()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
