@@ -193,6 +193,18 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
+        def rglob_follow_symlinks(path: Path, pattern: str):
+            for p in path.glob(pattern):
+                yield p
+            for p in path.iterdir():
+                if p.is_dir() and not p.is_symlink():
+                    yield from rglob_follow_symlinks(p, pattern)
+                elif p.is_symlink():
+                    real_path = Path(os.readlink(p))
+                    if real_path.is_dir():
+                        yield from rglob_follow_symlinks(real_path, pattern)
+
+
         with self.accelerator.main_process_first():
             tqdm_queue = Queue()  # Queue for updating progress bar
             aspect_ratio_bucket_indices_queue = (
