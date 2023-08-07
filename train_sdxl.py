@@ -1026,8 +1026,9 @@ def main():
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
-    logger.info(f"Pre-computing text embeds / updating cache.")
-    embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
+    with accelerator.main_process_first():
+        logger.info(f"Pre-computing text embeds / updating cache.")
+        embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
 
     if args.validation_prompt is not None:
         (
