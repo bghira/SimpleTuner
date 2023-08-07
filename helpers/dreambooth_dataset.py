@@ -6,9 +6,10 @@ from .state_tracker import StateTracker
 from PIL import Image
 import json, logging, os, multiprocessing
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count, Manager
+from multiprocessing import Pool, cpu_count, Manager, Value
 import numpy as np
 from itertools import repeat
+from ctypes import c_int
 
 logger = logging.getLogger("DatasetLoader")
 logger.setLevel(logging.INFO)
@@ -20,7 +21,8 @@ pil_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 
-multiprocessing.set_start_method('fork')
+multiprocessing.set_start_method("fork")
+
 
 class DreamBoothDataset(Dataset):
     """
@@ -44,7 +46,7 @@ class DreamBoothDataset(Dataset):
         caption_dropout_interval: int = 0,
         use_precomputed_token_ids: bool = True,
         debug_dataset_loader: bool = False,
-        caption_strategy: str = 'filename'
+        caption_strategy: str = "filename",
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.use_captions = use_captions
@@ -121,7 +123,7 @@ class DreamBoothDataset(Dataset):
             if not base_dir.exists():
                 raise ValueError(f"Directory {base_dir} does not exist.")
 
-        logger.info(f'Looking for new images, to update aspect bucket cache.')
+        logger.info(f"Looking for new images, to update aspect bucket cache.")
         new_file_paths = [
             str(path)
             for path in base_dir.iterdir()
@@ -178,13 +180,13 @@ class DreamBoothDataset(Dataset):
                 aspect_ratio_bucket_indices = {}
         return aspect_ratio_bucket_indices
 
-    def _bucket_worker(self, tqdm_object, files, aspect_ratio_bucket_indices):
+    def _bucket_worker(self, counter, lock, files, aspect_ratio_bucket_indices):
         for file in files:
-            # Process image as before, but update tqdm object instead of creating a new one
             aspect_ratio_bucket_indices = self._process_image(
                 str(file), aspect_ratio_bucket_indices
             )
-            tqdm_object.update()
+            with lock:
+                counter.value += 1  # increment shared counter
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logging.warning("Computing aspect ratio bucket indices.")
@@ -204,15 +206,29 @@ class DreamBoothDataset(Dataset):
                             yield from rglob_follow_symlinks(real_path, pattern)
 
             all_image_files = list(
-                rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
+                rglob_follow_symlinks(
+                    Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
+                )
             )
 
+            counter = Value(c_int, 0)  # shared counter
+            lock = Lock()  # mutex for shared counter
             files_split = np.array_split(all_image_files, 8)
-            with manager.Pool(processes=8) as pool, tqdm(
-                total=len(all_image_files)
-            ) as pbar:
-                args = zip(repeat(pbar), files_split, repeat(aspect_ratio_bucket_indices))
+            with manager.Pool(processes=8) as pool:
+                args = zip(
+                    repeat(counter),
+                    repeat(lock),
+                    files_split,
+                    repeat(aspect_ratio_bucket_indices),
+                )
                 pool.starmap(self._bucket_worker, args)
+
+            with tqdm(total=len(all_image_files)) as pbar:
+                while True:
+                    pbar.update(counter.value - pbar.n)  # update progress bar
+                    if counter.value >= len(all_image_files):
+                        break
+                    time.sleep(0.1)  # avoid busy-waiting
 
             with cache_file.open("w") as f:
                 json.dump(dict(aspect_ratio_bucket_indices), f)
@@ -287,9 +303,9 @@ class DreamBoothDataset(Dataset):
         instance_image = Image.open(image_path)
         # Apply EXIF transformations.
         instance_image = exif_transpose(instance_image)
-        if self.caption_strategy == 'filename':
+        if self.caption_strategy == "filename":
             instance_prompt = self._prepare_instance_prompt(image_path)
-        elif self.caption_strategy == 'textfile':
+        elif self.caption_strategy == "textfile":
             caption_file = Path(image_path).with_suffix(".txt")
             if not caption_file.exists():
                 raise FileNotFoundError(f"Caption file {caption_file} not found.")
