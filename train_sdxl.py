@@ -990,6 +990,7 @@ def main():
 
     # DataLoaders creation:
     # Dataset and DataLoaders creation:
+    logger.info('Creating dataset iterator object')
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
@@ -1004,6 +1005,7 @@ def main():
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy
     )
+    logger.info('Creating aspect bucket sampler')
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
         batch_size=args.train_batch_size,
@@ -1011,6 +1013,7 @@ def main():
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
     )
+    logger.info('Plugging sampler into dataloader')
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
@@ -1019,6 +1022,7 @@ def main():
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
+    logger.info('Initialise text embedding cache')
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
@@ -1045,6 +1049,7 @@ def main():
     memory_after_unload = torch.cuda.memory_allocated() / 1024**3
     memory_saved = memory_after_unload - memory_before_unload
     gc.collect()
+    logger.info('Clearing CUDA cache.')
     torch.cuda.empty_cache()
     if accelerator.is_main_process:
         logger.info(
