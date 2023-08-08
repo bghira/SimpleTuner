@@ -130,7 +130,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
             bucket = self.buckets[self.current_bucket]
 
-            if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            if len(self.buckets) > 1 and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
                 if bucket not in self.exhausted_buckets:
                     self.move_to_exhausted()
                 self.change_bucket()
@@ -150,13 +150,23 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 if image not in self.seen_images
             ]
             # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
-            if len(available_images) < self.batch_size:
+            if len(self.buckets) > 1 and len(available_images) < self.batch_size:
                 logger.warning(
                     f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}"
                 )
                 self.move_to_exhausted()
                 self.change_bucket()
                 continue
+            if (len(available_images) < self.batch_size) and (len(self.buckets) == 1):
+                # We have to check if we have enough 'seen' images, and bring them back.
+                total = len(self.seen_images) + len(available_images)
+                if total < self.batch_size:
+                    logger.warning(
+                        f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}! Overly-repeating training images."
+                    )
+                    self.seen_images = {}
+                else:
+                    raise Exception("Cannot continue. There are not enough images to form a single batch.")
 
             samples = random.choices(available_images, k=self.batch_size)
             to_yield = []
