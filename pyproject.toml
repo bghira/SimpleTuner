@@ -7,7 +7,7 @@ license = "SUL"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.9,<3.13"
 torch = "^2.0.1"
 torchvision = "^0.15.2"
 diffusers = {git = "https://github.com/huggingface/diffusers", rev = "improve_backprop"}
@@ -28,6 +28,7 @@ clip-interrogator = "^0.6.0"
 open-clip-torch = "^2.20.0"
 iterutils = "^0.1.6"
 scipy = "^1.11.1"
+triton = "^2.0.0.post1"
 
 
 [build-system]

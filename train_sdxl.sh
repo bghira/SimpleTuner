@@ -14,6 +14,6 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
 	--validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 \
 	--resolution="${RESOLUTION}" --validation_resolution="${RESOLUTION}" \
 	--checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
-	--validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}"
+	--validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --num_train_epochs="${NUM_EPOCHS}"
 
 exit 0
