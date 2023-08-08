@@ -2,7 +2,7 @@ import argparse, os, warnings
 
 
 def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser = argparse.ArgumentParser(description="The following SimpleTuner command-line options are available:")
     parser.add_argument(
         "--snr_gamma",
         type=float,
@@ -11,23 +11,38 @@ def parse_args(input_args=None):
         "More details here: https://arxiv.org/abs/2303.09556.",
     )
     parser.add_argument(
-        "--seen_state_path",
-        type=str,
-        default=None,
-        help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times."
-    )
-    parser.add_argument(
-        "--state_path",
-        type=str,
-        default=None,
-        help="A JSON document containing the current state of training, will be placed here."
-    )
-    parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_vae_model_name_or_path",
+        type=str,
+        default="madebyollin/sdxl-vae-fp16-fix",
+        help="Path to an improved VAE to stabilize training. For more details check out: https://github.com/huggingface/diffusers/pull/4038.",
+    )
+    parser.add_argument(
+        "--prediction_type",
+        type=str,
+        default="epsilon",
+        choices=["epsilon", "v_prediction", "sample"],
+        help=(
+            "The type of prediction to use for the VAE. Choose between ['epsilon', 'v_prediction', 'sample']."
+            " For SD 2.1-v, this is v_prediction. For 2.1-base, it is epsilon. SDXL is generally epsilon."
+            " SD 1.5 is epsilon."
+        ),
+    )
+    parser.add_argument(
+        "--vae_dtype",
+        type=str,
+        default="bf16",
+        required=False,
+        help=(
+            "The dtype of the VAE model. Choose between ['default', 'fp16', 'fp32', 'bf16']."
+            "The default VAE dtype is float32, due to NaN issues in SDXL 1.0."
+        ),
     )
     parser.add_argument(
         "--revision",
@@ -50,7 +65,71 @@ def parse_args(input_args=None):
         type=str,
         default=None,
         required=True,
-        help="A folder containing the training data of instance images.",
+        help=(
+            "A folder containing the training data. Folder contents must either follow the structure described in"
+            " the SimpleTuner documentation (https://github.com/bghira/SimpleTuner), or the structure described in"
+            " https://huggingface.co/docs/datasets/image_dataset#imagefolder. For 🤗 Datasets in particular,"
+            " a `metadata.jsonl` file must exist to provide the captions for the images. For SimpleTuner layout,"
+            " the images can be in subfolders. No particular config is required. Ignored if `dataset_name` is specified."
+        ),
+    )
+    parser.add_argument(
+        "--cache_dir",
+        type=str,
+        default=None,
+        help="The directory where the downloaded models and datasets will be stored.",
+    )
+
+    parser.add_argument(
+        "--dataset_name",
+        type=str,
+        default=None,
+        help=(
+            "The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private,"
+            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
+            " or to a folder containing files that 🤗 Datasets can understand."
+        ),
+    )
+    parser.add_argument(
+        "--dataset_config_name",
+        type=str,
+        default=None,
+        help="The config of the Dataset, leave as None if there's only one config.",
+    )
+    # TODO: Fix Huggingface dataset handling.
+    parser.add_argument(
+        "--image_column",
+        type=str,
+        default="input_image",
+        help="The column of the dataset containing the original image on which edits where made.",
+    )
+    parser.add_argument(
+        "--image_prompt_column",
+        type=str,
+        default="image_prompt",
+        help="The column of the dataset containing the caption.",
+    )
+    parser.add_argument(
+        "--seen_state_path",
+        type=str,
+        default=None,
+        help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times."
+    )
+    parser.add_argument(
+        "--state_path",
+        type=str,
+        default=None,
+        help="A JSON document containing the current state of training, will be placed here."
+    )
+    parser.add_argument(
+        "--caption_strategy",
+        type=str,
+        default="filename",
+        choices=["filename", "textfile", "instance_prompt"],
+        help=(
+            "The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores."
+            "The 'textfile' strategy will use the contents of a text file with the same name as the image."
+        ),
     )
     parser.add_argument(
         "--instance_prompt",
@@ -62,7 +141,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="text-inversion-model",
+        default="simpletuner-results",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -71,10 +150,26 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--resolution",
         type=int,
-        default=768,
+        default=1024,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
+        ),
+    )
+    parser.add_argument(
+        "--crops_coords_top_left_h",
+        type=int,
+        default=0,
+        help=(
+            "Coordinate for (the height) to be included in the crop coordinate embeddings needed by SDXL UNet."
+        ),
+    )
+    parser.add_argument(
+        "--crops_coords_top_left_w",
+        type=int,
+        default=0,
+        help=(
+            "Coordinate for (the height) to be included in the crop coordinate embeddings needed by SDXL UNet."
         ),
     )
     parser.add_argument(
@@ -85,6 +180,11 @@ def parse_args(input_args=None):
             "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
             " cropped. The images will be resized to the resolution first before cropping."
         ),
+    )
+    parser.add_argument(
+        "--random_flip",
+        action="store_true",
+        help="whether to randomly flip images horizontally",
     )
     parser.add_argument(
         "--train_text_encoder",
@@ -104,6 +204,15 @@ def parse_args(input_args=None):
         help="Batch size (per device) for sampling images.",
     )
     parser.add_argument("--num_train_epochs", type=int, default=1)
+    parser.add_argument(
+        "--max_train_samples",
+        type=int,
+        default=None,
+        help=(
+            "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set. Currently untested."
+        ),
+    )
     parser.add_argument(
         "--max_train_steps",
         type=int,
@@ -142,7 +251,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=1,
+        default=4,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument(
@@ -153,7 +262,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=1e-8,
+        default=4e-7,
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
@@ -190,9 +299,33 @@ def parse_args(input_args=None):
         help="Power factor of the polynomial scheduler.",
     )
     parser.add_argument(
+        "--use_ema", action="store_true", help="Whether to use EMA (exponential moving average) model."
+    )
+    parser.add_argument(
+        "--non_ema_revision",
+        type=str,
+        default=None,
+        required=False,
+        help=(
+            "Revision of pretrained non-ema model identifier. Must be a branch, tag or git identifier of the local or"
+            " remote repository specified with --pretrained_model_name_or_path."
+        ),
+    )
+    parser.add_argument(
         "--use_8bit_adam",
         action="store_true",
         help="Whether or not to use 8-bit Adam from bitsandbytes.",
+    )
+    parser.add_argument(
+        "--use_dadapt_optimizer",
+        action="store_true",
+        help="Whether or not to use the discriminator adaptation optimizer.",
+    )
+    parser.add_argument(
+        "--dadaptation_learning_rate",
+        type=float,
+        default=1.0,
+        help="Learning rate for the discriminator adaptation. Default: 1.0",
     )
     parser.add_argument(
         "--dataloader_num_workers",
@@ -263,11 +396,17 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--report_to",
         type=str,
-        default="tensorboard",
+        default="wandb",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
         ),
+    )
+    parser.add_argument(
+        "--tracker_run_name",
+        type=str,
+        default="simpletuner",
+        help="The name of the run to track with the tracker.",
     )
     parser.add_argument(
         "--validation_prompt",
@@ -290,6 +429,12 @@ def parse_args(input_args=None):
             " `args.validation_prompt` multiple times: `args.num_validation_images`"
             " and logging the images."
         ),
+    )
+    parser.add_argument(
+        "--validation_resolution",
+        type=int,
+        default=256,
+        help="Square resolution images will be output at this resolution (256x256).",
     )
     parser.add_argument(
         "--mixed_precision",
@@ -361,9 +506,9 @@ def parse_args(input_args=None):
         default="after",
         help=(
             "When freezing the text_encoder, we can use the 'before', 'between', or 'after' strategy."
-            "The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen."
-            "The default strategy is to freeze all layers from 17 up."
-            "This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style."
+            " The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen."
+            " The default strategy is to freeze all layers from 17 up."
+            " This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style."
         ),
     )
     parser.add_argument(
@@ -372,6 +517,16 @@ def parse_args(input_args=None):
         help=(
             "If any image files are stopping the process eg. due to corruption or truncation, this will help identify which is at fault."
         ),
+    )
+    parser.add_argument(
+        "--debug_aspect_buckets",
+        action="store_true",
+        help="If set, will print excessive debugging for aspect bucket operations.",
+    )
+    parser.add_argument(
+        "--debug_dataset_loader",
+        action="store_true",
+        help="If set, will print excessive debugging for data loader operations.",
     )
     parser.add_argument(
         "--freeze_encoder",
@@ -405,10 +560,17 @@ def parse_args(input_args=None):
         default=0,
         help=(
             "Every X steps, we will drop the caption from the input to assist in classifier-free guidance training."
-            "When StabilityAI trained Stable Diffusion, a value of 10 was used."
-            "Very high values might be useful to do some sort of enforced style training."
-            "Default value is zero, maximum value is 100."
+            " When StabilityAI trained Stable Diffusion, a value of 10 was used."
+            " Very high values might be useful to do some sort of enforced style training."
+            " Default value is zero, maximum value is 100."
         ),
+    )
+    parser.add_argument(
+        "--conditioning_dropout_prob",
+        type=float,
+        default=None,
+        help="Conditioning dropout probability. Drops out the conditionings (crop / target sizes) used in training."
+        " See section 3.2.1 in the paper: https://arxiv.org/abs/2211.09800.",
     )
     parser.add_argument(
         "--input_pertubation",
@@ -420,7 +582,10 @@ def parse_args(input_args=None):
         "--use_original_images",
         type=str,
         default="false",
-        help="When this option is provided, image cropping and processing will be disabled. It is a good idea to use this with caution, for training multiple aspect ratios.",
+        help=(
+            "When this option is provided, image cropping and processing will be disabled."
+            " It is a good idea to use this with caution, for training multiple aspect ratios."
+        )
     )
     parser.add_argument(
         "--offset_noise",
@@ -437,13 +602,21 @@ def parse_args(input_args=None):
         default="1e-7",
         help="A polynomial learning rate will end up at this value after the specified number of warmup steps.",
     )
+
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:
         args = parser.parse_args()
 
+    if args.dataset_name is None and args.instance_data_dir is None:
+        raise ValueError("Need either a dataset name or a training folder.")
+
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
+
+    # default to using the same revision for the non-ema model if not specified
+    if args.non_ema_revision is None:
+        args.non_ema_revision = args.revision
 
     return args
