@@ -5,13 +5,24 @@ import shutil
 import requests
 import re
 import sys
+import piexif
 
 from concurrent.futures import ThreadPoolExecutor
+def get_camera_model(img):
+    exif_data = piexif.load(img.info["exif"])
+    
+    if piexif.ImageIFD.Model in exif_data["0th"]:
+        camera_model = exif_data["0th"][piexif.ImageIFD.Model]
+        print(f"Camera Model: {camera_model}")
+        return camera_model
+    else:
+        print("No Camera Model Found in EXIF data")
+        return None
 
 # Constants
-FILE = "laion.csv"  # The CSV file to read data from
-OUTPUT_DIR = "/datasets/laion"  # Directory to save images
-NUM_WORKERS = 64  # Number of worker threads for parallel downloading
+FILE = "coco.csv"  # The CSV file to read data from
+OUTPUT_DIR = "/notebooks/datasets/coco"  # Directory to save images
+NUM_WORKERS = 8  # Number of worker threads for parallel downloading
 logger = logging.getLogger('root')
 logger.setLevel(logging.INFO)
 # Check if output directory exists, create if it does not
@@ -114,9 +125,17 @@ def fetch_image(info):
                 r.raw.decode_content = True
                 shutil.copyfileobj(r.raw, f)
             image = Image.open(current_file_path)
+            if get_camera_model(image) is None:
+                logging.info('Skipping non-EXIF-containing image.')
+                image.close
+                os.remove(current_file_path)
+                return
             image = _resize_for_condition_image(image, 1024)
             image.save(current_file_path, format='PNG')
             image.close()
+            # Save a .txt file with the same filename, containing 'all_captions' value:
+            with open(os.path.join(OUTPUT_DIR, filename + '.txt'), 'w') as f:
+                f.write(info['all_captions'])
         else:
             logging.warn(f'Could not fetch {filename} from {url} (status code {r.status_code})')
     except Exception as e:
@@ -129,8 +148,6 @@ def fetch_data(data):
     """
     to_fetch = {}
     for row in data:
-        if row['NSFW'] != 'NSFW':
-            continue
         try:
             if float(row['WIDTH']) < 960 or float(row['HEIGHT']) < 960:
                 continue
@@ -139,7 +156,7 @@ def fetch_data(data):
             continue
         new_filename = content_to_filename(row['TEXT'])
         if new_filename not in to_fetch:
-            to_fetch[new_filename] = {'url': row['URL'], 'filename': new_filename}
+            to_fetch[new_filename] = {'url': row['URL'], 'filename': new_filename, 'all_captions': row['all_captions']}
     logging.info(f'Fetching {len(to_fetch)} images...')
     with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
         executor.map(fetch_image, to_fetch.values())
