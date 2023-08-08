@@ -3,9 +3,9 @@ import torch, logging, random, time
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-pil_logger = logging.getLogger('PIL.Image')
+pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
-pil_logger = logging.getLogger('PIL.PngImagePlugin')
+pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 
 from PIL import Image
@@ -140,7 +140,9 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 self.buckets = self.load_buckets()
                 self.seen_images = {}
                 self.current_bucket = random.randint(0, len(self.buckets) - 1)
-                logger.info("Reset buckets and seen images because the number of seen images reached the reset threshold.")
+                logger.info(
+                    "Reset buckets and seen images because the number of seen images reached the reset threshold."
+                )
 
             available_images = [
                 image
@@ -149,7 +151,9 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             ]
             # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
             if len(available_images) < self.batch_size:
-                logger.warning(f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}")
+                logger.warning(
+                    f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}"
+                )
                 self.move_to_exhausted()
                 self.change_bucket()
                 continue
@@ -212,7 +216,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         """
         # Do we just have a single bucket?
         if len(self.buckets) == 1:
-            logger.debug(f'Changing bucket to the only one present.')
+            logger.debug(f"Changing bucket to the only one present.")
             return
         if self.buckets:
             old_bucket = self.current_bucket
@@ -221,7 +225,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
                 return
             if len(self.buckets) == 1:
-                logger.debug(f'Changing bucket to the only one present.')
+                logger.debug(f"Changing bucket to the only one present.")
                 return
             logger.warning(
                 f"Only one bucket left, and it doesn't have enough samples. Resetting..."
