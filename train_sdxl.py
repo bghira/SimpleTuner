@@ -17,6 +17,7 @@ import argparse
 import logging
 import math
 import os
+
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
@@ -229,14 +230,14 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        '--caption_strategy',
+        "--caption_strategy",
         type=str,
-        default='filename',
-        choices=['filename', 'textfile', 'instance_prompt'],
+        default="filename",
+        choices=["filename", "textfile", "instance_prompt"],
         help=(
             "The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores."
             "The 'textfile' strategy will use the contents of a text file with the same name as the image."
-        )
+        ),
     )
     parser.add_argument(
         "--instance_data_dir",
@@ -524,13 +525,13 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        '--prediction_type',
+        "--prediction_type",
         type=str,
-        default='epsilon',
-        choices=['epsilon', 'v_prediction', 'sample'],
+        default="epsilon",
+        choices=["epsilon", "v_prediction", "sample"],
         help=(
             "The type of prediction to use for the VAE. Choose between ['epsilon', 'v_prediction', 'sample']."
-        )
+        ),
     )
     parser.add_argument(
         "--report_to",
@@ -597,6 +598,7 @@ def parse_args():
         args.non_ema_revision = args.revision
 
     return args
+
 
 def main():
     args = parse_args()
@@ -702,6 +704,7 @@ def main():
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
         from helpers.sdxl_save_hooks import SDXLSaveHook
+
         model_hooks = SDXLSaveHook(
             args=args,
             ema_unet=ema_unet,
@@ -799,7 +802,7 @@ def main():
 
     # 6. Get the column names for input/target.
     if hasattr(args, "dataset_name") and args.dataset_name is not None:
-        raise ValueError('Huggingface datasets are not currently supported.')
+        raise ValueError("Huggingface datasets are not currently supported.")
         # Preprocessing the datasets.
         # We need to tokenize inputs and targets.
         column_names = dataset["train"].column_names
@@ -844,10 +847,14 @@ def main():
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-        logger.warning(f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.')
+        logger.warning(
+            f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
+        )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        logger.warning(f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.')
+        logger.warning(
+            f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
+        )
 
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
@@ -886,7 +893,7 @@ def main():
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type=args.prediction_type,
-        rescale_betas_zero_snr=True
+        rescale_betas_zero_snr=True,
     )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -973,7 +980,9 @@ def main():
             filepaths.append(example["instance_images_path"])  # store the file path
 
         # Compute the VAE embeddings for individual images
-        latents = [vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)]
+        latents = [
+            vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
+        ]
         pixel_values = torch.stack(latents)
 
         # Extract the captions from the examples.
@@ -999,7 +1008,7 @@ def main():
 
     # DataLoaders creation:
     # Dataset and DataLoaders creation:
-    logger.info('Creating dataset iterator object')
+    logger.info("Creating dataset iterator object")
     train_dataset = DreamBoothDataset(
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
@@ -1012,9 +1021,9 @@ def main():
         caption_dropout_interval=args.caption_dropout_interval,
         use_precomputed_token_ids=True,
         debug_dataset_loader=args.debug_dataset_loader,
-        caption_strategy=args.caption_strategy
+        caption_strategy=args.caption_strategy,
     )
-    logger.info('Creating aspect bucket sampler')
+    logger.info("Creating aspect bucket sampler")
     custom_balanced_sampler = BalancedBucketSampler(
         train_dataset.aspect_ratio_bucket_indices,
         batch_size=args.train_batch_size,
@@ -1022,7 +1031,7 @@ def main():
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
     )
-    logger.info('Plugging sampler into dataloader')
+    logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,
@@ -1031,7 +1040,7 @@ def main():
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
-    logger.info('Initialise text embedding cache')
+    logger.info("Initialise text embedding cache")
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
@@ -1072,7 +1081,7 @@ def main():
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
-    logger.info(f'Loading noise scheduler...')
+    logger.info(f"Loading noise scheduler...")
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
@@ -1081,13 +1090,13 @@ def main():
     )
     accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
-    logger.info(f'Loading our accelerator...')
+    logger.info(f"Loading our accelerator...")
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler
     )
 
     if args.use_ema:
-        logger.info('Moving EMA model weights to accelerator...')
+        logger.info("Moving EMA model weights to accelerator...")
         ema_unet.to(accelerator.device)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
@@ -1466,7 +1475,7 @@ def main():
             unet=unet,
             revision=args.revision,
         )
-        pipeline.save_pretrained('/notebooks/datasets/models/ptx0-xltest')
+        pipeline.save_pretrained("/notebooks/datasets/models/ptx0-xltest")
 
         if args.push_to_hub:
             upload_folder(
