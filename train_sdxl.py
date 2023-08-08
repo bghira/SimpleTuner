@@ -1387,7 +1387,7 @@ def main():
                         revision=args.revision,
                         torch_dtype=weight_dtype,
                     )
-                    pipeline.scheduler = noise_scheduler
+                    pipeline.scheduler = betas_scheduler
                     pipeline = pipeline.to(accelerator.device)
                     pipeline.set_progress_bar_config(disable=True)
 
