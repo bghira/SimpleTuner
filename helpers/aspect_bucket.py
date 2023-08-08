@@ -3,9 +3,9 @@ import torch, logging, random, time
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-pil_logger = logging.getLogger('PIL.Image')
+pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
-pil_logger = logging.getLogger('PIL.PngImagePlugin')
+pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 
 from PIL import Image
@@ -24,24 +24,30 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         batch_size: int = 15,
         seen_images_path: str = "/notebooks/SimpleTuner/seen_images.json",
         state_path: str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
-        drop_caption_every_n_percent: int = 5,
+        reset_threshold: int = 5000,  # Add a reset_threshold
         debug_aspect_buckets: bool = False,
     ):
-        self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices  # A dictionary of string float buckets and their image paths.
+        """
+        Initialize the BalancedBucketSampler instance.
+
+        Args:
+            aspect_ratio_bucket_indices (dict): A dictionary mapping aspect ratios to image paths.
+            batch_size (int): The number of images per sample during training.
+            seen_images_path (str): The path to save/load the seen images.
+            state_path (str): The path to save/load the state of the sampler.
+            reset_threshold (int): The number of seen images to trigger a reset.
+            debug_aspect_buckets (bool): If True, enable debug logging.
+        """
+        self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices
         self.buckets = self.load_buckets()
-        self.exhausted_buckets = (
-            []
-        )  # Buckets that have been exhausted, eg. all samples have been used.
-        self.batch_size = batch_size  # How many images per sample during training. They MUST all be the same aspect.
+        self.exhausted_buckets = []
+        self.batch_size = batch_size
         self.current_bucket = 0
         self.seen_images_path = seen_images_path
         self.state_path = state_path
-        self.seen_images = self.load_seen_images()
-        self.drop_caption_every_n_percent = drop_caption_every_n_percent
+        self.reset_threshold = reset_threshold
         self.debug_aspect_buckets = debug_aspect_buckets
-        self.caption_loop_count = (
-            0  # Store a value and increment on each sample until we hit 100.
-        )
+        self.seen_images = self.load_seen_images()
 
     def save_state(self):
         state = {
@@ -102,6 +108,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
 
     def __iter__(self):
+        """
+        Iterate over the sampler to yield image paths. If the system is in training mode, yield batches of unseen images.
+        If not in training mode, yield random images. If the number of unseen images in a bucket is less than the batch size,
+        yield all unseen images. If the number of seen images reaches the reset threshold, reset all buckets and seen images.
+        """
         while True:
             if self.debug_aspect_buckets:
                 logger.debug(f"Running __iter__ for AspectBuckets.")
@@ -125,14 +136,24 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 self.change_bucket()
                 continue
 
+            if len(self.seen_images) >= self.reset_threshold:
+                self.buckets = self.load_buckets()
+                self.seen_images = {}
+                self.current_bucket = random.randint(0, len(self.buckets) - 1)
+                logger.info(
+                    "Reset buckets and seen images because the number of seen images reached the reset threshold."
+                )
+
             available_images = [
                 image
                 for image in self.aspect_ratio_bucket_indices[bucket]
                 if image not in self.seen_images
             ]
             # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
-            if len(available_images) < (self.batch_size * 2):
-                logger.warning(f"Not enough unseen images in the bucket: {bucket}")
+            if len(available_images) < self.batch_size:
+                logger.warning(
+                    f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}"
+                )
                 self.move_to_exhausted()
                 self.change_bucket()
                 continue
@@ -189,14 +210,22 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         )
 
     def change_bucket(self):
+        """
+        Change the current bucket. If the current bucket doesn't have enough samples, move it to the exhausted list
+        and select a new bucket randomly. If there's only one bucket left, reset the exhausted list and seen images.
+        """
+        # Do we just have a single bucket?
+        if len(self.buckets) == 1:
+            logger.debug(f"Changing bucket to the only one present.")
+            return
         if self.buckets:
             old_bucket = self.current_bucket
-            self.current_bucket %= len(self.buckets)
+            self.current_bucket = random.randint(0, len(self.buckets) - 1)
             if old_bucket != self.current_bucket:
                 logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
                 return
             if len(self.buckets) == 1:
-                logger.debug(f'Changing bucket to the only one present.')
+                logger.debug(f"Changing bucket to the only one present.")
                 return
             logger.warning(
                 f"Only one bucket left, and it doesn't have enough samples. Resetting..."
@@ -206,7 +235,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             )
             self.exhausted_buckets = []
             self.seen_images = {}
-            self.current_bucket %= len(self.buckets)
+            self.current_bucket = random.randint(0, len(self.buckets) - 1)
             logger.info(
                 f"After resetting, changed bucket to {self.buckets[self.current_bucket]}."
             )
