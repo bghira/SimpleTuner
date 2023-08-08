@@ -217,6 +217,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         # Do we just have a single bucket?
         if len(self.buckets) == 1:
             logger.debug(f"Changing bucket to the only one present.")
+            self.current_bucket = 0
             return
         if self.buckets:
             old_bucket = self.current_bucket

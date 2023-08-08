@@ -39,7 +39,11 @@ connection_logger = logging.getLogger("urllib3.connectionpool")
 training_logger = logging.getLogger("training-loop")
 
 # More important logs.
-logger.setLevel("DEBUG")
+target_level = 'INFO'
+# Is env var set?
+if os.environ.get('SIMPLETUNER_LOG_LEVEL'):
+    target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL')
+logger.setLevel(target_level)
 training_logger.setLevel("DEBUG")
 
 # Less important logs.
