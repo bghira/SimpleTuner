@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "Running dependency installation for Ubuntu."
-apt -y install nvidia-cuda-dev nvidia-cuda-toolkit
+apt -y install nvidia-cuda-dev nvidia-cuda-toolkit cuda-cupti-11-7 libnccl-dev
 echo "Creating python venv"
 python -m venv .venv
 echo "Activating venv"
