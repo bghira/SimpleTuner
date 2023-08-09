@@ -360,16 +360,6 @@ def main():
                 raise ValueError(
                     f"--image_prompt_column' value '{args.image_prompt_column}' needs to be one of: {', '.join(column_names)}"
                 )
-        if args.edited_image_column is None:
-            edited_image_column = (
-                dataset_columns[2] if dataset_columns is not None else column_names[2]
-            )
-        else:
-            edited_image_column = args.edited_image_column
-            if edited_image_column not in column_names:
-                raise ValueError(
-                    f"--edited_image_column' value '{args.edited_image_column}' needs to be one of: {', '.join(column_names)}"
-                )
     else:
         logging.info(
             "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
@@ -949,7 +939,7 @@ def main():
                         validation_generator = torch.Generator(
                             device=accelerator.device
                         ).manual_seed(args.seed or 0)
-                        edited_images = pipeline(
+                        validation_images = pipeline(
                             prompt_embeds=validation_prompt_embeds,
                             pooled_prompt_embeds=validation_pooled_embeds,
                             negative_prompt_embeds=validation_negative_prompt_embeds,
@@ -962,7 +952,7 @@ def main():
                             width=args.validation_resolution,
                         ).images
                         val_img_idx = 0
-                        for a_val_img in edited_images:
+                        for a_val_img in validation_images:
                             a_val_img.save(
                                 os.path.join(
                                     val_save_dir,
@@ -973,11 +963,10 @@ def main():
 
                     for tracker in accelerator.trackers:
                         if tracker.name == "wandb":
-                            wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
                             idx = 0
-                            for edited_image in edited_images:
+                            for validation_image in validation_images:
                                 tracker.log(
-                                    {f"image-{idx}": wandb.Image(edited_images[idx])}
+                                    {f"image-{idx}": wandb.Image(validation_images[idx])}
                                 )
                                 idx += 1
                     if args.use_ema:
@@ -1019,32 +1008,34 @@ def main():
             )
 
         if args.validation_prompt is not None:
-            edited_images = []
+            validation_images = []
             pipeline = pipeline.to(accelerator.device)
             with torch.autocast(str(accelerator.device).replace(":0", "")):
-                for _ in range(args.num_validation_images):
-                    edited_images.append(
-                        pipeline(
-                            args.validation_prompt,
-                            image=original_image,
-                            num_inference_steps=20,
-                            image_guidance_scale=1.5,
-                            guidance_scale=7,
-                            generator=generator,
-                        ).images[0]
-                    )
+                validation_generator = torch.Generator(
+                    device=accelerator.device
+                ).manual_seed(args.seed or 0)
+                validation_images = pipeline(
+                    prompt_embeds=validation_prompt_embeds,
+                    pooled_prompt_embeds=validation_pooled_embeds,
+                    negative_prompt_embeds=validation_negative_prompt_embeds,
+                    negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                    num_images_per_prompt=args.num_validation_images,
+                    num_inference_steps=20,
+                    guidance_scale=7,
+                    generator=validation_generator,
+                    height=args.validation_resolution,
+                    width=args.validation_resolution,
+                ).images
 
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
                     wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
-                    for edited_image in edited_images:
-                        wandb_table.add_data(
-                            wandb.Image(original_image),
-                            wandb.Image(edited_image),
-                            args.validation_prompt,
+                    idx = 0
+                    for validation_image in validation_images:
+                        tracker.log(
+                            {f"image-{idx}": wandb.Image(validation_images[idx])}
                         )
-                    tracker.log({"test": wandb_table})
-
+                        idx += 1
     accelerator.end_training()
 
 
