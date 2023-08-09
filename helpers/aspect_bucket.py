@@ -159,14 +159,26 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 continue
             if (len(available_images) < self.batch_size) and (len(self.buckets) == 1):
                 # We have to check if we have enough 'seen' images, and bring them back.
-                total = len(self.seen_images) + len(available_images)
+                all_bucket_images = self.aspect_ratio_bucket_indices[bucket]
+                total = len(self.seen_images) + len(available_images) + len(all_bucket_images)
                 if total < self.batch_size:
                     logger.warning(
                         f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}! Overly-repeating training images."
                     )
                     self.seen_images = {}
                 else:
-                    raise Exception("Cannot continue. There are not enough images to form a single batch.")
+                    self.log_state()
+                    logger.warning(
+                        "Cannot continue. There are not enough images to form a single batch:\n"
+                        f"    -> Seen images: {len(self.seen_images)}\n"
+                        f"    -> Unseen images: {len(available_images)}\n"
+                        f"    -> Buckets: {self.buckets}\n"
+                        f"    -> Batch size: {self.batch_size}\n"
+                        f"    -> Image list: {available_images}\n"
+                    )
+                    self.buckets = self.load_buckets()
+                    self.seen_images = {}
+                    continue
 
             samples = random.choices(available_images, k=self.batch_size)
             to_yield = []
@@ -264,9 +276,9 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         logger.debug(
             f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.buckets)}'
         )
-        # logger.debug(
-        #     f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
-        # )
+        logger.debug(
+            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+        )
 
     @staticmethod
     def convert_to_human_readable(aspect_ratio_float: float, bucket):
