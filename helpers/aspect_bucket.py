@@ -86,12 +86,12 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def handle_small_image(self, image_path, bucket):
         logger.warning(f"Image too small: DELETING image and continuing search.")
-        try:
-            os.remove(image_path)
-        except Exception as e:
-            logger.warning(
-                f"The image was already deleted. Another GPU must have gotten to it."
-            )
+        # try:
+        #     os.remove(image_path)
+        # except Exception as e:
+        #     logger.warning(
+        #         f"The image was already deleted. Another GPU must have gotten to it."
+        #     )
         self.remove_image(image_path, bucket)
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
