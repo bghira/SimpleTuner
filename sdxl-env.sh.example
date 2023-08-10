@@ -51,6 +51,14 @@ export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))
 # Adjust this for your GPU memory size.
 export TRAIN_BATCH_SIZE=10
 
+# Currently not implemented.
+NOISE_OFFSET=0.0
+
+# Validation image settings.
+VALIDATION_GUIDANCE=7.5
+VALIDATION_GUIDANCE_RESCALE=0.0
+
+
 # Leave these alone unless you know what you are doing.
 export RESOLUTION=1024
 export GRADIENT_ACCUMULATION_STEPS=4          # Yes, it slows training down. No, you don't want to change this.
