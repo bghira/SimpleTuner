@@ -480,6 +480,18 @@ def parse_args(input_args=None):
         help="Run validation every X epochs.",
     )
     parser.add_argument(
+        '--validation_guidance',
+        type=float,
+        default=7.5,
+        help="CFG value for validation images. Default: 7.5",
+    )
+    parser.add_argument(
+        '--validation_guidance_rescale',
+        type=float,
+        default=0.0,
+        help="CFG rescale value for validation images. Default: 0.0, max 1.0",
+    )
+    parser.add_argument(
         "--freeze_encoder_before",
         type=int,
         default=12,
