@@ -836,7 +836,7 @@ def main():
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
-                accelerator.log({"train_loss": train_loss}, step=global_step)
+                accelerator.log({"train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
                 train_loss = 0.0
 
                 if global_step % args.checkpointing_steps == 0:
@@ -945,8 +945,9 @@ def main():
                             negative_prompt_embeds=validation_negative_prompt_embeds,
                             negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
                             num_images_per_prompt=args.num_validation_images,
-                            num_inference_steps=20,
-                            guidance_scale=7,
+                            num_inference_steps=30,
+                            guidance_scale=args.validation_guidance,
+                            guidance_rescale=args.validation_guidance_rescale,
                             generator=validation_generator,
                             height=args.validation_resolution,
                             width=args.validation_resolution,
@@ -1020,8 +1021,9 @@ def main():
                     negative_prompt_embeds=validation_negative_prompt_embeds,
                     negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
                     num_images_per_prompt=args.num_validation_images,
-                    num_inference_steps=20,
-                    guidance_scale=7,
+                    num_inference_steps=30,
+                    guidance_scale=args.validation_guidance,
+                    guidance_rescale=args.validation_guidance_rescale,
                     generator=validation_generator,
                     height=args.validation_resolution,
                     width=args.validation_resolution,
