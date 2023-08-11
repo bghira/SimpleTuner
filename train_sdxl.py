@@ -976,7 +976,7 @@ def main():
                                     generator=validation_generator,
                                     height=args.validation_resolution,
                                     width=args.validation_resolution,
-                                ).images.items())
+                                ).images)
 
                         for tracker in accelerator.trackers:
                             if tracker.name == "wandb":
@@ -1067,7 +1067,7 @@ def main():
                         generator=validation_generator,
                         height=args.validation_resolution,
                         width=args.validation_resolution,
-                    ).images.items())
+                    ).images)
 
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
