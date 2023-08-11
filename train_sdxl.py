@@ -985,8 +985,6 @@ def main():
                                 for idx, validation_image in enumerate(validation_images):
                                     # Create a WandB entry containing each image.
                                     validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
-                                validation_document["all_images"] = list(validation_document.items())
-
                                 tracker.log(validation_document, step=global_step)
                         val_img_idx = 0
                         for a_val_img in validation_images:
@@ -1063,14 +1061,13 @@ def main():
                         width=args.validation_resolution,
                     ).images)
 
-            for tracker in accelerator.trackers:
-                if tracker.name == "wandb":
-                    validation_document = {}
-                    for idx, validation_image in enumerate(validation_images):
-                        # Create a WandB entry containing each image.
-                        validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
-
-                    tracker.log(validation_document, step=global_step)
+                for tracker in accelerator.trackers:
+                    if tracker.name == "wandb":
+                        validation_document = {}
+                        for idx, validation_image in enumerate(validation_images):
+                            # Create a WandB entry containing each image.
+                            validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                        tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
 
