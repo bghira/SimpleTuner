@@ -1025,7 +1025,7 @@ def main():
             revision=args.revision,
         )
         pipeline.scheduler.config = noise_scheduler.config
-        pipeline.save_pretrained("/notebooks/datasets/models/ptx0-xltest")
+        pipeline.save_pretrained("/notebooks/datasets/models/ptx0-xltest", safe_serialization=True)
 
         if args.push_to_hub:
             upload_folder(
