@@ -2,7 +2,7 @@ import torch
 from PIL import Image
 from diffusers import StableDiffusionPipeline, DiffusionPipeline, AutoencoderKL, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
 from transformers import CLIPTextModel
-from prompts import prompts
+from helpers.prompts import prompts
 model_id = '/notebooks/datasets/models/pseudo-realism'
 #model_id = 'stabilityai/stable-diffusion-2-1'
 pipe = StableDiffusionPipeline.from_pretrained(model_id)
