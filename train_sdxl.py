@@ -964,6 +964,7 @@ def main():
                                 current_validation_prompt_embeds, current_validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts(
                                     [validation_prompt]
                                 )
+                                logger.info(f'Generating validation image: {validation_prompt}')
                                 validation_images.extend(pipeline(
                                     prompt_embeds=current_validation_prompt_embeds,
                                     pooled_prompt_embeds=current_validation_pooled_embeds,
@@ -996,14 +997,6 @@ def main():
                             )
                             val_img_idx += 1
 
-                    for tracker in accelerator.trackers:
-                        if tracker.name == "wandb":
-                            idx = 0
-                            for validation_image in validation_images:
-                                tracker.log(
-                                    {f"image-{idx}": wandb.Image(validation_images[idx])}
-                                )
-                                idx += 1
                     if args.use_ema:
                         # Switch back to the original UNet parameters.
                         ema_unet.restore(unet.parameters())
