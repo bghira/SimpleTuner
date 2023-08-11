@@ -985,9 +985,7 @@ def main():
                                 for idx, validation_image in enumerate(validation_images):
                                     # Create a WandB entry containing each image.
                                     validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
-                                validation_document = {
-                                    "all_images": validation_document.items()
-                                }
+                                validation_document["all_images"] = validation_document.items()
 
                                 tracker.log(validation_document, step=global_step)
                         val_img_idx = 0
