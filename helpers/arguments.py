@@ -415,6 +415,11 @@ def parse_args(input_args=None):
         help="A prompt that is used during validation to verify that the model is learning.",
     )
     parser.add_argument(
+        "--validation_prompt_library",
+        action="store_true",
+        help="If this is provided, the SimpleTuner prompt library will be used to generate multiple images.",
+    )
+    parser.add_argument(
         "--num_validation_images",
         type=int,
         default=4,

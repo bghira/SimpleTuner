@@ -571,11 +571,28 @@ def main():
         logger.info(f"Pre-computing text embeds / updating cache.")
         embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
 
-    if args.validation_prompt is not None:
+    validation_prompts = []
+    validation_shortnames = []
+    if args.validation_prompt_library:
+        # Use the SimpleTuner prompts library for validation prompts.
+        from helpers.prompts import prompts as prompt_library
+        # Prompt format: { 'shortname': 'this is the prompt', ... }
+        for shortname, prompt in prompt_library.items():
+            logger.info(f'Precomputing validation prompt embeds: {shortname}')
+            embed_cache.compute_embeddings_for_prompts([prompt])
+            validation_prompts.append(prompt)
+            validation_shortnames.append(shortname)
+    elif args.validation_prompt is not None:
+        # Use a single prompt for validation.
+        validation_prompts = [args.validation_prompt]
+        validation_shortnames = ['validation']
         (
             validation_prompt_embeds,
             validation_pooled_embeds,
         ) = embed_cache.compute_embeddings_for_prompts([args.validation_prompt])
+    
+    # Compute negative embed for validation prompts, if any are set.
+    if validation_prompts:
         (
             validation_negative_prompt_embeds,
             validation_negative_pooled_embeds,
@@ -885,8 +902,7 @@ def main():
 
             ### BEGIN: Perform validation every `validation_epochs` steps
             if accelerator.is_main_process:
-                if global_step % args.validation_steps == 0 and global_step > 1:
-                    pass
+                if validation_prompts and global_step % args.validation_steps == 0 and global_step > 1:
                     if (
                         args.validation_prompt is None
                         or args.num_validation_images is None
@@ -919,7 +935,7 @@ def main():
                         revision=args.revision,
                         torch_dtype=weight_dtype,
                     )
-                    pipeline.scheduler.config.prediction_type = "v_prediction"
+                    pipeline.scheduler.config.prediction_type = args.prediction_type or noise_scheduler.config.prediction_type
                     pipeline = pipeline.to(accelerator.device)
                     pipeline.set_progress_bar_config(disable=True)
 
@@ -936,22 +952,39 @@ def main():
                             or accelerator.mixed_precision == "bf16"
                         ),
                     ):
-                        validation_generator = torch.Generator(
-                            device=accelerator.device
-                        ).manual_seed(args.seed or 0)
-                        validation_images = pipeline(
-                            prompt_embeds=validation_prompt_embeds,
-                            pooled_prompt_embeds=validation_pooled_embeds,
-                            negative_prompt_embeds=validation_negative_prompt_embeds,
-                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                            num_images_per_prompt=args.num_validation_images,
-                            num_inference_steps=30,
-                            guidance_scale=args.validation_guidance,
-                            guidance_rescale=args.validation_guidance_rescale,
-                            generator=validation_generator,
-                            height=args.validation_resolution,
-                            width=args.validation_resolution,
-                        ).images
+                        validation_images = []
+                        pipeline = pipeline.to(accelerator.device)
+                        with torch.autocast(str(accelerator.device).replace(":0", "")):
+                            validation_generator = torch.Generator(
+                                device=accelerator.device
+                            ).manual_seed(args.seed or 0)
+                            for validation_prompt in validation_prompts:
+                                # Each validation prompt needs its own embed.
+                                current_validation_prompt_embeds, current_validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts(
+                                    [validation_prompt]
+                                )
+                                validation_images.extend(pipeline(
+                                    prompt_embeds=current_validation_prompt_embeds,
+                                    pooled_prompt_embeds=current_validation_pooled_embeds,
+                                    negative_prompt_embeds=validation_negative_prompt_embeds,
+                                    negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                                    num_images_per_prompt=args.num_validation_images,
+                                    num_inference_steps=30,
+                                    guidance_scale=args.validation_guidance,
+                                    guidance_rescale=args.validation_guidance_rescale,
+                                    generator=validation_generator,
+                                    height=args.validation_resolution,
+                                    width=args.validation_resolution,
+                                ).images.items())
+
+                        for tracker in accelerator.trackers:
+                            if tracker.name == "wandb":
+                                validation_document = {}
+                                for idx, validation_image in enumerate(validation_images):
+                                    # Create a WandB entry containing each image.
+                                    validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+
+                                tracker.log(validation_document, step=global_step)
                         val_img_idx = 0
                         for a_val_img in validation_images:
                             a_val_img.save(
@@ -998,6 +1031,7 @@ def main():
             unet=unet,
             revision=args.revision,
         )
+        pipeline.scheduler.config = noise_scheduler.config
         pipeline.save_pretrained("/notebooks/datasets/models/ptx0-xltest")
 
         if args.push_to_hub:
@@ -1008,36 +1042,41 @@ def main():
                 ignore_patterns=["step_*", "epoch_*"],
             )
 
-        if args.validation_prompt is not None:
+        if validation_prompts:
             validation_images = []
             pipeline = pipeline.to(accelerator.device)
             with torch.autocast(str(accelerator.device).replace(":0", "")):
                 validation_generator = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.seed or 0)
-                validation_images = pipeline(
-                    prompt_embeds=validation_prompt_embeds,
-                    pooled_prompt_embeds=validation_pooled_embeds,
-                    negative_prompt_embeds=validation_negative_prompt_embeds,
-                    negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                    num_images_per_prompt=args.num_validation_images,
-                    num_inference_steps=30,
-                    guidance_scale=args.validation_guidance,
-                    guidance_rescale=args.validation_guidance_rescale,
-                    generator=validation_generator,
-                    height=args.validation_resolution,
-                    width=args.validation_resolution,
-                ).images
+                for validation_prompt in validation_prompts:
+                    # Each validation prompt needs its own embed.
+                    current_validation_prompt_embeds, current_validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts(
+                        [validation_prompt]
+                    )
+                    validation_images.extend(pipeline(
+                        prompt_embeds=current_validation_prompt_embeds,
+                        pooled_prompt_embeds=current_validation_pooled_embeds,
+                        negative_prompt_embeds=validation_negative_prompt_embeds,
+                        negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                        num_images_per_prompt=args.num_validation_images,
+                        num_inference_steps=30,
+                        guidance_scale=args.validation_guidance,
+                        guidance_rescale=args.validation_guidance_rescale,
+                        generator=validation_generator,
+                        height=args.validation_resolution,
+                        width=args.validation_resolution,
+                    ).images.items())
 
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
-                    wandb_table = wandb.Table(columns=WANDB_TABLE_COL_NAMES)
-                    idx = 0
-                    for validation_image in validation_images:
-                        tracker.log(
-                            {f"image-{idx}": wandb.Image(validation_images[idx])}
-                        )
-                        idx += 1
+                    validation_document = {}
+                    for idx, validation_image in enumerate(validation_images):
+                        # Create a WandB entry containing each image.
+                        validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+
+                    tracker.log(validation_document, step=global_step)
+
     accelerator.end_training()
 
 
