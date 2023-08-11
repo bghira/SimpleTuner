@@ -210,6 +210,7 @@ def main():
     )
 
     # Create EMA for the unet.
+    ema_unet = None
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
         ema_unet = EMAModel(
