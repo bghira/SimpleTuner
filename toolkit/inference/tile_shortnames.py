@@ -1,6 +1,6 @@
 import os
 from PIL import Image, ImageDraw, ImageFont
-from prompts import prompts
+from helpers.prompts import prompts
 grid_dir = '/notebooks/SimpleTuner/grid'
 output_dir = '/notebooks/datasets/test_results'
 

@@ -1,7 +1,7 @@
 from accelerate import Accelerator
 from diffusers import DiffusionPipeline, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
 from transformers import CLIPTextModel
-from prompts import prompts
+from helpers.prompts import prompts
 from compel import Compel
 
 import torch, os, logging
