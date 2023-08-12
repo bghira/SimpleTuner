@@ -188,44 +188,59 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         Iterator function to provide samples from the dataset.
         """
         while True:
-            # We might not actually be training yet. This happens when we are working through steps
-            #  and we have not yet hit resume_step from a previous checkpoint.
-            # We want to keep sampling from the same bucket until we hit resume_step, as it's just
-            #  the fastest way to resume training.
-            # The VAECache is not impacted by skipping the aspect bucket iteration, as it has its own.
+            # Check for non-training status and yield a random image
             if not StateTracker.status_training():
                 bucket = random.choice(self.buckets)
                 yield random.choice(self.aspect_ratio_bucket_indices[bucket])
                 continue
 
-            # When all image buckets are exhausted, we technically start a new epoch.
-            # We reset the buckets and seen images, and pick a random bucket to start with.
+            # Reset buckets if all are exhausted
             if not self.buckets:
                 logger.warning(f"All buckets are exhausted. Resetting...")
                 self.buckets = list(self.aspect_ratio_bucket_indices.keys())
 
-            # Ensure current_bucket is in bounds
+            # Ensure the current bucket is in bounds
             self.current_bucket %= len(self.buckets)
-
             bucket = self.buckets[self.current_bucket]
+
+            # Handle cases where the number of images in the bucket is less than the batch size
+            if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+                if bucket not in self.exhausted_buckets:
+                    self.move_to_exhausted()
+                self.change_bucket()
+                continue
+
             available_images = [
                 img
                 for img in self.aspect_ratio_bucket_indices[bucket]
                 if img not in self.seen_images
             ]
 
-            # If available images are less than batch size, we CANNOT sample from it.
-            # We could theoretically find a similar aspect ratio, and crop it to the right size.
-            # However, with latent caching, it's really not worth the effort. We might not have a VAE,
-            #  or enough VRAM on hand to compute the latents during the training loop.
-            # It is easier to add a bunch of regularization images to your data pool instead.
+            # Handle cases with insufficient unseen images for a full batch
             if len(available_images) < self.batch_size:
-                logger.warning(
-                    f"Bucket {bucket} is exhausted and sleepy.. It has {len(available_images)} images left,"
-                    f" but our batch size is {self.batch_size}. We are going to remove the remaining images."
-                )
-                self._manage_low_images(bucket, available_images)
-                continue
+                if len(self.buckets) > 1:
+                    logger.warning(
+                        f"Bucket {bucket} is exhausted. Not enough unseen images ({len(available_images)}). Switching buckets."
+                    )
+                    self.move_to_exhausted()
+                    self.change_bucket()
+                    continue
+                else:
+                    total_images = len(self.seen_images) + len(available_images) + len(self.aspect_ratio_bucket_indices[bucket])
+                    if total_images < self.batch_size:
+                        self.seen_images = {}
+                    else:
+                        logger.warning(
+                            "Cannot continue. There are not enough images to form a single batch:\n"
+                            f"    -> Seen images: {len(self.seen_images)}\n"
+                            f"    -> Unseen images: {len(available_images)}\n"
+                            f"    -> Buckets: {self.buckets}\n"
+                            f"    -> Batch size: {self.batch_size}\n"
+                            f"    -> Image list: {available_images}\n"
+                        )
+                        self.buckets = list(self.aspect_ratio_bucket_indices.keys())
+                        self.seen_images = {}
+                        continue
 
             # Reset if seen images exceed threshold
             if len(self.seen_images) >= self.reset_threshold:
@@ -235,11 +250,40 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 self.log_state()
                 continue
 
-            for img_path in self._iterate_training_mode(bucket, available_images):
-                yield img_path
+            to_yield = []
+            samples = random.choices(available_images, k=self.batch_size)
+            for img_path in samples:
+                if not os.path.exists(img_path):
+                    logger.warning(f"Image path does not exist: {img_path}")
+                    self.remove_image(img_path, bucket)
+                    continue
+                try:
+                    image = Image.open(img_path)
+                except Exception as e:
+                    logger.warning(f"Image was bad ({e}): {img_path}")
+                    continue
+                if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
+                    image.close()
+                    self.handle_small_image(img_path, bucket)
+                    continue
+                image = exif_transpose(image)
+                aspect_ratio = round(image.width / image.height, 3)
+                actual_bucket = str(aspect_ratio)
+                if actual_bucket != bucket:
+                    self._handle_incorrect_bucket(img_path, bucket, actual_bucket)
+                else:
+                    to_yield.append(img_path)
+                    if StateTracker.status_training():
+                        self.seen_images[img_path] = actual_bucket
 
-            # Move to the next bucket
-            self.current_bucket = (self.current_bucket + 1) % len(self.buckets)
+            if len(to_yield) == self.batch_size:
+                # Select a random bucket for the next iteration:
+                self.current_bucket = random.randint(0, len(self.buckets) - 1)
+                for image_to_yield in to_yield:
+                    yield image_to_yield
+            else:
+                # If for any reason we do not have a full batch, continue to next iteration to form a complete batch
+                continue
 
     def _manage_low_images(self, bucket: str, available_images: list[str]):
         """
