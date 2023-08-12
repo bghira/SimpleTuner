@@ -33,6 +33,7 @@ from helpers.sdxl_embeds import TextEmbeddingCache
 from helpers.image_tools import calculate_luminance
 from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
+from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger("filelock")
@@ -485,11 +486,10 @@ def main():
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
 
     def collate_fn(examples):
-        logger.debug(f"Running collate_fn")
         if not StateTracker.status_training():
             logger.debug(f"Not training, returning nothing from collate_fn")
             return
-        logger.debug(f"Examples: {examples}")
+        training_logger.debug(f"Examples: {examples}")
 
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
@@ -631,12 +631,24 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
     logger.info(f"Loading noise scheduler...")
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
+    if args.lr_scheduler != "polynomial":
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power,
+        )
+    else:
+        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            lr_end=args.learning_rate_end,
+            power=args.lr_power,
+            last_epoch=-1,
+        )
     accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
