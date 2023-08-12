@@ -2,7 +2,9 @@ import argparse, os, warnings
 
 
 def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="The following SimpleTuner command-line options are available:")
+    parser = argparse.ArgumentParser(
+        description="The following SimpleTuner command-line options are available:"
+    )
     parser.add_argument(
         "--snr_gamma",
         type=float,
@@ -113,13 +115,13 @@ def parse_args(input_args=None):
         "--seen_state_path",
         type=str,
         default=None,
-        help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times."
+        help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times.",
     )
     parser.add_argument(
         "--state_path",
         type=str,
         default=None,
-        help="A JSON document containing the current state of training, will be placed here."
+        help="A JSON document containing the current state of training, will be placed here.",
     )
     parser.add_argument(
         "--caption_strategy",
@@ -235,9 +237,7 @@ def parse_args(input_args=None):
         "--checkpoints_total_limit",
         type=int,
         default=None,
-        help=(
-            "Max number of checkpoints to store."
-        ),
+        help=("Max number of checkpoints to store."),
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -299,7 +299,9 @@ def parse_args(input_args=None):
         help="Power factor of the polynomial scheduler.",
     )
     parser.add_argument(
-        "--use_ema", action="store_true", help="Whether to use EMA (exponential moving average) model."
+        "--use_ema",
+        action="store_true",
+        help="Whether to use EMA (exponential moving average) model.",
     )
     parser.add_argument(
         "--non_ema_revision",
@@ -485,13 +487,13 @@ def parse_args(input_args=None):
         help="Run validation every X epochs.",
     )
     parser.add_argument(
-        '--validation_guidance',
+        "--validation_guidance",
         type=float,
         default=7.5,
         help="CFG value for validation images. Default: 7.5",
     )
     parser.add_argument(
-        '--validation_guidance_rescale',
+        "--validation_guidance_rescale",
         type=float,
         default=0.0,
         help="CFG rescale value for validation images. Default: 0.0, max 1.0",
@@ -593,7 +595,15 @@ def parse_args(input_args=None):
         help=(
             "When this option is provided, image cropping and processing will be disabled."
             " It is a good idea to use this with caution, for training multiple aspect ratios."
-        )
+        ),
+    )
+    parser.add_argument(
+        "--delete_unwanted_images",
+        action="store_true",
+        help=(
+            "If set, will delete images that are not of a minimum size to save on disk space for large training runs."
+            " Default behaviour: Unset, remove images from bucket only."
+        ),
     )
     parser.add_argument(
         "--offset_noise",

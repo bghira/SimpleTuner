@@ -554,6 +554,7 @@ def main():
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
+        delete_unwanted_images=args.delete_unwanted_images
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(

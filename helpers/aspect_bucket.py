@@ -26,6 +26,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         state_path: str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
         reset_threshold: int = 5000,  # Add a reset_threshold
         debug_aspect_buckets: bool = False,
+        delete_unwanted_images: bool = False
     ):
         """
         Initialize the BalancedBucketSampler instance.
@@ -47,6 +48,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.state_path = state_path
         self.reset_threshold = reset_threshold
         self.debug_aspect_buckets = debug_aspect_buckets
+        self.delete_unwanted_images = delete_unwanted_images
         self.seen_images = self.load_seen_images()
 
     def save_state(self):
@@ -85,14 +87,17 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
     def handle_small_image(self, image_path, bucket):
-        logger.warning(f"Image too small: DELETING image and continuing search.")
-        # try:
-        #     os.remove(image_path)
-        # except Exception as e:
-        #     logger.warning(
-        #         f"The image was already deleted. Another GPU must have gotten to it."
-        #     )
         self.remove_image(image_path, bucket)
+        if not self.delete_unwanted_images:
+            logger.warning(f"Image too small: Removing image from bucket and continuing search.")
+            return
+        try:
+            logger.warning(f"Image too small: !!DELETING!! image: {image_path} due to provided option: --delete_unwanted_images")
+            os.remove(image_path)
+        except Exception as e:
+            logger.warning(
+                f"The image was already deleted. Another GPU must have gotten to it."
+            )
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
         logger.warning(
