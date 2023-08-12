@@ -417,13 +417,14 @@ def main():
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type=args.prediction_type,
-        rescale_betas_zero_snr=True,
+        timestep_spacing=args.training_scheduler_timestep_spacing,
+        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
     )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
-        timestep_spacing=args.training_scheduler_timestep_spacing,
         prediction_type=args.prediction_type,
+        timestep_spacing=args.training_scheduler_timestep_spacing,
         trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
