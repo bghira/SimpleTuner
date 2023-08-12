@@ -201,6 +201,9 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 logger.warning(f"All buckets are exhausted. Resetting...")
                 self.buckets = list(self.aspect_ratio_bucket_indices.keys())
 
+            # Ensure current_bucket is in bounds
+            self.current_bucket %= len(self.buckets)
+
             bucket = self.buckets[self.current_bucket]
             available_images = [
                 img
