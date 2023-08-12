@@ -28,6 +28,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         reset_threshold: int = 5000,
         debug_aspect_buckets: bool = False,
         delete_unwanted_images: bool = False,
+        minimum_image_size: int = None,
     ):
         """
         Initializes the sampler with provided settings.
@@ -52,6 +53,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.delete_unwanted_images = delete_unwanted_images
         self.seen_images = self._load_json(self.seen_images_path, default={})
         self.current_bucket = 0
+        self.minimum_image_size = minimum_image_size
 
     def __len__(self):
         return sum(
@@ -170,13 +172,14 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         try:
             image = exif_transpose(Image.open(image_path))
             if (
-                image.width < self.minimum_image_size
+                self.minimum_image_size
+                and image.width < self.minimum_image_size
                 or image.height < self.minimum_image_size
             ):
                 self._handle_small_image(image_path, bucket)
                 return None
             return image
-        except Exception:
+        except Exception as e:
             logger.warning(f"Image was bad or in-progress: {image_path}")
             return None
 

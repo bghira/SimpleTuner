@@ -37,6 +37,34 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        '--training_scheduler_timestep_spacing',
+        type=str,
+        default="leading",
+        choices=["leading", "linspace", "trailing"],
+        help=(
+            "Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights."
+            " For all training, including terminal SNR, it would seem that 'leading' is the right choice."
+            " However, for inference in terminal SNR models, 'trailing' is the correct choice."
+        )
+    )
+    parser.add_argument(
+        '--inference_scheduler_timestep_spacing',
+        type=str,
+        default="trailing",
+        choices=["leading", "linspace", "trailing"],
+        help=(
+            "The Bytedance paper on zero terminal SNR recommends inference using 'trailing'."
+        )
+    )
+    parser.add_argument(
+        '--rescale_betas_zero_snr',
+        action="store_true",
+        help=(
+            "If set, will rescale the betas to zero terminal SNR. This is recommended for training with v_prediction."
+            " For epsilon, this might help with fine details, but will not result in contrast improvements."
+        )
+    )
+    parser.add_argument(
         "--vae_dtype",
         type=str,
         default="bf16",
@@ -156,6 +184,15 @@ def parse_args(input_args=None):
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
+        ),
+    )
+    parser.add_argument(
+        "--minimum_image_size",
+        type=int,
+        default=768,
+        help=(
+            "The minimum resolution for both sides of input images."
+            " If --delete_unwanted_images is set, images smaller than this will be DELETED."
         ),
     )
     parser.add_argument(
