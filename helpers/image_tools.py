@@ -1,7 +1,6 @@
 from PIL import Image
 
-def calculate_luminance(image_path):
-    img = Image.open(image_path)
+def calculate_luminance(img: Image):
     pixels = list(img.getdata())
     
     luminance_values = []
