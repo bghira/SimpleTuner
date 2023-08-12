@@ -30,6 +30,7 @@ from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
+from helpers.image_tools import calculate_luminance
 from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
 
@@ -997,9 +998,17 @@ def main():
                         for tracker in accelerator.trackers:
                             if tracker.name == "wandb":
                                 validation_document = {}
+                                validation_luminance = []
                                 for idx, validation_image in enumerate(validation_images):
                                     # Create a WandB entry containing each image.
                                     validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                                    validation_luminance.append(
+                                        calculate_luminance(validation_image)
+                                    )
+                                # Compute the mean luminance across all samples:
+                                validation_luminance = torch.tensor(validation_luminance)
+                                validation_document["validation_luminance"] = validation_luminance.mean()
+                                del validation_luminance
                                 tracker.log(validation_document, step=global_step)
                         val_img_idx = 0
                         for a_val_img in validation_images:
@@ -1079,9 +1088,17 @@ def main():
                 for tracker in accelerator.trackers:
                     if tracker.name == "wandb":
                         validation_document = {}
+                        validation_luminance = []
                         for idx, validation_image in enumerate(validation_images):
                             # Create a WandB entry containing each image.
                             validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                            validation_luminance.append(
+                                calculate_luminance(validation_image)
+                            )
+                        # Compute the mean luminance across all samples:
+                        validation_luminance = torch.tensor(validation_luminance)
+                        validation_document["validation_luminance"] = validation_luminance.mean()
+                        del validation_luminance
                         tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
