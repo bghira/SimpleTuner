@@ -53,6 +53,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.seen_images = self._load_json(self.seen_images_path, default={})
         self.current_bucket = 0
 
+    def __len__(self):
+        return sum(
+            len(indices) for indices in self.aspect_ratio_bucket_indices.values()
+        )
+
     def save_state(self):
         """
         Saves the current state of the sampler to the specified state path.
