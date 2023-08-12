@@ -20,33 +20,38 @@ import threading
 class BalancedBucketSampler(torch.utils.data.Sampler):
     def __init__(
         self,
-        aspect_ratio_bucket_indices,
+        aspect_ratio_bucket_indices: dict,
         batch_size: int = 15,
         seen_images_path: str = "/notebooks/SimpleTuner/seen_images.json",
         state_path: str = "/notebooks/SimpleTuner/bucket_sampler_state.json",
-        reset_threshold: int = 5000,  # Add a reset_threshold
+        reset_threshold: int = 5000,
         debug_aspect_buckets: bool = False,
+        delete_unwanted_images: bool = False,
+        minimum_image_size: int = None,
     ):
         """
-        Initialize the BalancedBucketSampler instance.
+        Initializes the sampler with provided settings.
 
-        Args:
-            aspect_ratio_bucket_indices (dict): A dictionary mapping aspect ratios to image paths.
-            batch_size (int): The number of images per sample during training.
-            seen_images_path (str): The path to save/load the seen images.
-            state_path (str): The path to save/load the state of the sampler.
-            reset_threshold (int): The number of seen images to trigger a reset.
-            debug_aspect_buckets (bool): If True, enable debug logging.
+        Parameters:
+        - aspect_ratio_bucket_indices: Dictionary containing aspect ratios as keys and list of image paths as values.
+        - batch_size: Number of samples to draw per batch.
+        - seen_images_path: Path to store the seen images.
+        - state_path: Path to store the current state of the sampler.
+        - reset_threshold: The threshold after which the seen images list should be reset.
+        - debug_aspect_buckets: Flag to log state for debugging purposes.
+        - delete_unwanted_images: Flag to decide whether to delete unwanted (small) images or just remove from the bucket.
         """
         self.aspect_ratio_bucket_indices = aspect_ratio_bucket_indices
-        self.buckets = self.load_buckets()
+        self.buckets = list(self.aspect_ratio_bucket_indices.keys())
         self.exhausted_buckets = []
         self.batch_size = batch_size
-        self.current_bucket = 0
         self.seen_images_path = seen_images_path
         self.state_path = state_path
         self.reset_threshold = reset_threshold
         self.debug_aspect_buckets = debug_aspect_buckets
+        self.delete_unwanted_images = delete_unwanted_images
+        self.current_bucket = 0
+        self.minimum_image_size = minimum_image_size
         self.seen_images = self.load_seen_images()
 
     def save_state(self):
@@ -85,13 +90,16 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
     def handle_small_image(self, image_path, bucket):
-        logger.warning(f"Image too small: DELETING image and continuing search.")
-        # try:
-        #     os.remove(image_path)
-        # except Exception as e:
-        #     logger.warning(
-        #         f"The image was already deleted. Another GPU must have gotten to it."
-        #     )
+        if self.delete_unwanted_images:
+            try:
+                logger.warning(f"Image too small: DELETING image and continuing search.")
+                os.remove(image_path)
+            except Exception as e:
+                logger.warning(
+                    f"The image was already deleted. Another GPU must have gotten to it."
+                )
+        else:
+            logger.warning(f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket.")
         self.remove_image(image_path, bucket)
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
@@ -194,7 +202,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 except:
                     logger.warning(f"Image was bad or in-progress: {image_path}")
                     continue
-                if image.width < 880 or image.height < 880:
+                if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
                     image.close()
                     self.handle_small_image(image_path, bucket)
                     continue

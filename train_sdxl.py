@@ -417,12 +417,14 @@ def main():
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type=args.prediction_type,
-        rescale_betas_zero_snr=True,
+        timestep_spacing=args.training_scheduler_timestep_spacing,
+        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
     )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type=args.prediction_type,
+        timestep_spacing=args.training_scheduler_timestep_spacing,
         trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
     text_encoder_1 = text_encoder_cls_1.from_pretrained(
@@ -554,6 +556,8 @@ def main():
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
+        delete_unwanted_images=args.delete_unwanted_images,
+        minimum_image_size=args.minimum_image_size
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -938,7 +942,13 @@ def main():
                         revision=args.revision,
                         torch_dtype=weight_dtype,
                     )
-                    pipeline.scheduler.config.prediction_type = args.prediction_type or noise_scheduler.config.prediction_type
+                    pipeline.scheduler = DDIMScheduler.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        subfolder="scheduler",
+                        prediction_type=args.prediction_type,
+                        timestep_spacing=args.inference_scheduler_timestep_spacing,
+                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                    )
                     pipeline = pipeline.to(accelerator.device)
                     pipeline.set_progress_bar_config(disable=True)
 
