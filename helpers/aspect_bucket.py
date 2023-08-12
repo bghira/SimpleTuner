@@ -99,7 +99,10 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         """
         Removes the specified image from the given bucket.
         """
-        self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+        if image_path in self.aspect_ratio_bucket_indices[bucket]:
+            self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+        if image_path in self.seen_images:
+            del self.seen_images[image_path]
 
     def _handle_small_image(self, image_path: str, bucket: str):
         """
