@@ -91,5 +91,5 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --gradient_checkpointing --grad
 
 ## For terminal SNR training:
 
-export TRAINER_EXTRA_ARGS="{TRAINER_EXTRA_ARGS} --prediction_type=v_prediction --rescale_betas_zero_snr"
-export TRAINER_EXTRA_ARGS="{TRAINER_EXTRA_ARGS} --training_scheduler_timestep_spacing=leading --inference_scheduler_timestep_spacing=trailing"
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --prediction_type=v_prediction --rescale_betas_zero_snr"
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --training_scheduler_timestep_spacing=leading --inference_scheduler_timestep_spacing=trailing"
