@@ -493,14 +493,16 @@ def main(args):
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
+                noise = None
                 if args.offset_noise:
                     noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
                         latents.shape[0], latents.shape[1], 1, 1, device=latents.device
                     )
+                else:
+                    noise = torch.randn_like(latents)
                 if args.input_pertubation:
                     new_noise = noise + args.input_pertubation * torch.randn_like(noise)
-
-                else:
+                elif noise is None:
                     noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
