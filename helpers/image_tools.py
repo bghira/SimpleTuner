@@ -12,3 +12,9 @@ def calculate_luminance(img: Image):
     # Return average luminance for the entire image
     avg_luminance = sum(luminance_values) / len(luminance_values)
     return avg_luminance
+
+def calculate_batch_luminance(imgs: list):
+    luminance_values = []
+    for img in imgs:
+        luminance_values.append(calculate_luminance(img))
+    return sum(luminance_values) / len(luminance_values)

@@ -30,7 +30,7 @@ from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
-from helpers.image_tools import calculate_luminance
+from helpers.image_tools import calculate_luminance, calculate_batch_luminance
 from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
 from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
@@ -474,7 +474,10 @@ def main():
             logger.debug(f"Not training, returning nothing from collate_fn")
             return
         training_logger.debug(f"Examples: {examples}")
-
+        training_logger.debug(f"Computing luminance for input batch")
+        batch_luminance = calculate_batch_luminance(
+            [example["instance_images"] for example in examples]
+        )
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
         if "vaecache" not in globals():
@@ -518,6 +521,7 @@ def main():
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
             "add_time_ids": compute_time_ids(width, height),
+            "luminance": batch_luminance,
         }
 
     # DataLoaders creation:
@@ -752,6 +756,7 @@ def main():
         logger.debug(f"Starting into epoch: {epoch}")
         unet.train()
         train_loss = 0.0
+        training_luminance_values = []
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if (
@@ -774,6 +779,10 @@ def main():
             if batch is None:
                 logging.warning(f"Burning a None size batch.")
                 continue
+            
+            # Add the current batch of training data's avg luminance to a list.
+            training_luminance_values.append(batch["luminance"])
+
             with accelerator.accumulate(unet):
                 training_logger.debug(f"Beginning another step.")
                 pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
@@ -781,7 +790,19 @@ def main():
                 latents = pixel_values
                 # Sample noise that we'll add to the latents
                 training_logger.debug(f"Sampling random noise")
-                noise = torch.randn_like(latents)
+                # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
+                noise = None
+                if args.offset_noise:
+                    noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
+                        latents.shape[0], latents.shape[1], 1, 1, device=latents.device
+                    )
+                else:
+                    noise = torch.randn_like(latents)
+                if args.input_pertubation:
+                    new_noise = noise + args.input_pertubation * torch.randn_like(noise)
+                elif noise is None:
+                    noise = torch.randn_like(latents)
+
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
                 # Sample a random timestep for each image
@@ -796,11 +817,15 @@ def main():
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                if args.input_pertubation:
+                    noisy_latents = noise_scheduler.add_noise(
+                        latents, new_noise, timesteps
+                    )
+                else:
+                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
                 training_logger.debug(
                     f"Generated noisy latent frame from latents and noise."
                 )
-
                 # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
                 if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
@@ -808,7 +833,7 @@ def main():
                     # The chance of this happening is dictated by the caption_dropout_probability.
                     if random.random() < args.caption_dropout_probability:
                         training_logger.debug(f'Caption dropout triggered.')
-                        encoder_hidden_states = embed_cache.get_embeddings_for_prompts([""])
+                        encoder_hidden_states = embed_cache.compute_embeddings_for_prompts([""])
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
@@ -870,7 +895,11 @@ def main():
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
-                accelerator.log({"train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
+                # Average out the luminance values of each batch, so that we can store that in this step.
+                avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
+                accelerator.log({"train_luminance": avg_training_data_luminance, "train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
+                # Reset some values for the next go.
+                training_luminance_values = []
                 train_loss = 0.0
 
                 if global_step % args.checkpointing_steps == 0:
@@ -909,6 +938,7 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
+                        custom_balanced_sampler.save_state()
                         logger.info(f"Saved state to {save_path}")
 
             logs = {
