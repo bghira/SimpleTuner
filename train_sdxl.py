@@ -832,7 +832,7 @@ def main():
                     # The chance of this happening is dictated by the caption_dropout_probability.
                     if random.random() < args.caption_dropout_probability:
                         training_logger.debug(f'Caption dropout triggered.')
-                        encoder_hidden_states = embed_cache.get_embeddings_for_prompts([""])
+                        encoder_hidden_states = embed_cache.compute_embeddings_for_prompts([""])
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
