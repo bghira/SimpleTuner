@@ -89,12 +89,15 @@ export TRAINER_EXTRA_ARGS="--allow_tf32 --use_8bit_adam --use_ema"  # anything y
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --enable_xformers_memory_efficient_attention --use_original_images=true"
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --gradient_checkpointing --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS}"
 
-## For offset noise training.
+## For offset noise training:
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --offset_noise --noise_offset=0.02"
 
-## For noise input pertubation - adds extra noise, randomly. This is separate from offset noise.
+## For noise input pertubation - adds extra noise, randomly. This is separate from offset noise:
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --input_pertubation=0.01"
 
 ## For terminal SNR training:
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --prediction_type=v_prediction --rescale_betas_zero_snr"
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --training_scheduler_timestep_spacing=leading --inference_scheduler_timestep_spacing=trailing"
+
+## For experimental min-SNR weighted loss training (5 is suggested value by the original researchers):
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --snr_gamma=5.0"

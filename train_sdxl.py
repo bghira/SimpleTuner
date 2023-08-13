@@ -34,6 +34,7 @@ from helpers.image_tools import calculate_luminance, calculate_batch_luminance
 from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
 from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
+from helpers.min_snr_gamma import compute_snr
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger("filelock")
@@ -874,9 +875,49 @@ def main():
                     added_cond_kwargs=added_cond_kwargs,
                 ).sample
 
-                training_logger.debug(f"Calculating loss")
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                if args.snr_gamma is None:
+                    training_logger.debug(f"Calculating loss")
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="mean"
+                    )
+                else:
+                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                    # This is discussed in Section 4.2 of the same paper.
+                    training_logger.debug(f"Using min-SNR loss")
+                    snr = compute_snr(timesteps, noise_scheduler)
 
+                    if torch.any(torch.isnan(snr)):
+                        training_logger.error("snr contains NaN values")
+                    if torch.any(snr == 0):
+                        training_logger.error("snr contains zero values")
+                    training_logger.debug(f'Calculating MSE loss weights using SNR as divisor')
+                    mse_loss_weights = (
+                        torch.stack(
+                            [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
+                        ).min(dim=1)[0]
+                        / snr
+                    )
+                    # An experimental strategy for fixing min-SNR with zero terminal SNR is to set loss weighting to 1 when
+                    #  any positional tensors have an SNR of zero. This is to preserve their loss values and also to hopefully
+                    #  prevent the explosion of gradients or NaNs due to the presence of very small numbers.
+                    mse_loss_weights[snr == 0] = 1.0
+                    if torch.any(torch.isnan(mse_loss_weights)):
+                        training_logger.error("mse_loss_weights contains NaN values")
+                    # We first calculate the original loss. Then we mean over the non-batch dimensions and
+                    # rebalance the sample-wise losses with their respective loss weights.
+                    # Finally, we take the mean of the rebalanced loss.
+                    training_logger.debug(f'Calculating original MSE loss without reduction')
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                    training_logger.debug(f'Calculating SNR-weighted MSE loss')
+                    loss = (
+                        loss.mean(dim=list(range(1, len(loss.shape))))
+                        * mse_loss_weights
+                    )
+                    training_logger.debug(f'Reducing loss via mean')
+                    loss = loss.mean()
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps

@@ -567,7 +567,10 @@ def main(args):
                         ).min(dim=1)[0]
                         / snr
                     )
-
+                    # An experimental strategy for fixing min-SNR with zero terminal SNR is to set loss weighting to 1 when
+                    #  any positional tensors have an SNR of zero. This is to preserve their loss values and also to hopefully
+                    #  prevent the explosion of gradients or NaNs due to the presence of very small numbers.
+                    mse_loss_weights[snr == 0] = 1.0
                     if torch.any(torch.isnan(mse_loss_weights)):
                         print("mse_loss_weights contains NaN values")
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
