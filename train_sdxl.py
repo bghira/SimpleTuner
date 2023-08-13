@@ -30,7 +30,7 @@ from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
-from helpers.image_tools import calculate_luminance
+from helpers.image_tools import calculate_luminance, calculate_batch_luminance
 from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
 from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
@@ -474,7 +474,10 @@ def main():
             logger.debug(f"Not training, returning nothing from collate_fn")
             return
         training_logger.debug(f"Examples: {examples}")
-
+        training_logger.debug(f"Computing luminance for input batch")
+        batch_luminance = calculate_batch_luminance(
+            [example["instance_images"] for example in examples]
+        )
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
         if "vaecache" not in globals():
@@ -518,6 +521,7 @@ def main():
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
             "add_time_ids": compute_time_ids(width, height),
+            "luminance": batch_luminance,
         }
 
     # DataLoaders creation:
@@ -752,6 +756,7 @@ def main():
         logger.debug(f"Starting into epoch: {epoch}")
         unet.train()
         train_loss = 0.0
+        training_luminance_values = []
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if (
@@ -774,6 +779,10 @@ def main():
             if batch is None:
                 logging.warning(f"Burning a None size batch.")
                 continue
+            
+            # Add the current batch of training data's avg luminance to a list.
+            training_luminance_values.append(batch["luminance"])
+
             with accelerator.accumulate(unet):
                 training_logger.debug(f"Beginning another step.")
                 pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
@@ -885,7 +894,11 @@ def main():
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
-                accelerator.log({"train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
+                # Average out the luminance values of each batch, so that we can store that in this step.
+                avg_training_data_luminance = torch.mean(torch.stack(training_luminance_values))
+                accelerator.log({"train_luminance": avg_training_data_luminance, "train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
+                # Reset some values for the next go.
+                training_luminance_values = []
                 train_loss = 0.0
 
                 if global_step % args.checkpointing_steps == 0:
