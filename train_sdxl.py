@@ -781,7 +781,18 @@ def main():
                 latents = pixel_values
                 # Sample noise that we'll add to the latents
                 training_logger.debug(f"Sampling random noise")
-                noise = torch.randn_like(latents)
+                # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
+                if args.offset_noise:
+                    # If --offset_noise is provided, use the --noise_offset value.
+                    noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
+                        latents.shape[0], latents.shape[1], 1, 1, device=latents.device
+                    )
+                if args.input_pertubation:
+                    new_noise = noise + args.input_pertubation * torch.randn_like(noise)
+
+                else:
+                    noise = torch.randn_like(latents)
+
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
                 # Sample a random timestep for each image
@@ -796,11 +807,15 @@ def main():
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                if args.input_pertubation:
+                    noisy_latents = noise_scheduler.add_noise(
+                        latents, new_noise, timesteps
+                    )
+                else:
+                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
                 training_logger.debug(
                     f"Generated noisy latent frame from latents and noise."
                 )
-
                 # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
                 if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
