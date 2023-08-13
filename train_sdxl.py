@@ -30,8 +30,10 @@ from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.dreambooth_dataset import DreamBoothDataset
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
+from helpers.image_tools import calculate_luminance
 from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
+from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger("filelock")
@@ -44,7 +46,10 @@ target_level = 'INFO'
 if os.environ.get('SIMPLETUNER_LOG_LEVEL'):
     target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL')
 logger.setLevel(target_level)
-training_logger.setLevel("DEBUG")
+training_logger_level = 'WARNING'
+if os.environ.get('SIMPLETUNER_LOG_LEVEL'):
+    training_logger_level = os.environ.get('SIMPLETUNER_LOG_LEVEL')
+training_logger.setLevel(training_logger_level)
 
 # Less important logs.
 filelock_logger.setLevel("WARNING")
@@ -481,11 +486,10 @@ def main():
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
 
     def collate_fn(examples):
-        logger.debug(f"Running collate_fn")
         if not StateTracker.status_training():
             logger.debug(f"Not training, returning nothing from collate_fn")
             return
-        logger.debug(f"Examples: {examples}")
+        training_logger.debug(f"Examples: {examples}")
 
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
@@ -627,12 +631,24 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
     logger.info(f"Loading noise scheduler...")
-    lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
+    if args.lr_scheduler != "polynomial":
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power,
+        )
+    else:
+        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            lr_end=args.learning_rate_end,
+            power=args.lr_power,
+            last_epoch=-1,
+        )
     accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
@@ -849,7 +865,7 @@ def main():
                 training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
                 lr_scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -994,9 +1010,17 @@ def main():
                         for tracker in accelerator.trackers:
                             if tracker.name == "wandb":
                                 validation_document = {}
+                                validation_luminance = []
                                 for idx, validation_image in enumerate(validation_images):
                                     # Create a WandB entry containing each image.
                                     validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                                    validation_luminance.append(
+                                        calculate_luminance(validation_image)
+                                    )
+                                # Compute the mean luminance across all samples:
+                                validation_luminance = torch.tensor(validation_luminance)
+                                validation_document["validation_luminance"] = validation_luminance.mean()
+                                del validation_luminance
                                 tracker.log(validation_document, step=global_step)
                         val_img_idx = 0
                         for a_val_img in validation_images:
@@ -1076,9 +1100,17 @@ def main():
                 for tracker in accelerator.trackers:
                     if tracker.name == "wandb":
                         validation_document = {}
+                        validation_luminance = []
                         for idx, validation_image in enumerate(validation_images):
                             # Create a WandB entry containing each image.
                             validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                            validation_luminance.append(
+                                calculate_luminance(validation_image)
+                            )
+                        # Compute the mean luminance across all samples:
+                        validation_luminance = torch.tensor(validation_luminance)
+                        validation_document["validation_luminance"] = validation_luminance.mean()
+                        del validation_luminance
                         tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
