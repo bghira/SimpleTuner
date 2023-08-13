@@ -937,6 +937,7 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
+                        custom_balanced_sampler.save_state()
                         logger.info(f"Saved state to {save_path}")
 
             logs = {
