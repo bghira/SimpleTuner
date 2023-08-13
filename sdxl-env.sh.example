@@ -69,6 +69,9 @@ export GRADIENT_ACCUMULATION_STEPS=4          # Yes, it slows training down. No,
 #export TEXT_ENCODER_FREEZE_BEFORE=22         # Ignored when using 'after' strategy.
 #export TEXT_ENCODER_FREEZE_AFTER=24          # Ignored when using 'before' strategy.
 
+# Caption dropout probability. Set to 0.1 for 10% of captions dropped out. Set to 0 to disable.
+export CAPTION_DROPOUT_PROBABILITY=0.1
+
 # Mixed precision is the best. You honestly might need to YOLO it in fp16 mode for Google Colab type setups.
 export MIXED_PRECISION="bf16"                # Might not be supported on all GPUs. fp32 will be needed for others.
 
