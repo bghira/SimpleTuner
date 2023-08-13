@@ -613,11 +613,10 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--conditioning_dropout_prob",
+        "--caption_dropout_probability",
         type=float,
         default=None,
-        help="Conditioning dropout probability. Drops out the conditionings (crop / target sizes) used in training."
-        " See section 3.2.1 in the paper: https://arxiv.org/abs/2211.09800.",
+        help="Caption dropout probability. Same as caption_dropout_interval, but this is for SDXL.",
     )
     parser.add_argument(
         "--input_pertubation",

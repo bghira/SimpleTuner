@@ -455,22 +455,6 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
-    # Get null conditioning
-    def compute_null_conditioning():
-        null_conditioning_list = []
-        for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
-            null_conditioning_list.append(
-                a_text_encoder(
-                    tokenize_captions([""], tokenizer=a_tokenizer).to(
-                        accelerator.device
-                    ),
-                    output_hidden_states=True,
-                ).hidden_states[-2]
-            )
-        return torch.concat(null_conditioning_list, dim=-1)
-
-    null_conditioning = compute_null_conditioning()
-
     def compute_time_ids(width=None, height=None):
         if width is None:
             width = args.resolution
@@ -576,6 +560,12 @@ def main():
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
+    if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
+        logger.info("Pre-computing null embedding for caption dropout")
+        embed_cache.precompute_embeddings_for_prompts([""])
+    else:
+        logger.warning(f'Not using caption dropout will potentially lead to overfitting on captions.')
+
     with accelerator.main_process_first():
         logger.info(f"Pre-computing text embeds / updating cache.")
         embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
@@ -811,8 +801,14 @@ def main():
                     f"Generated noisy latent frame from latents and noise."
                 )
 
-                # SDXL additional inputs
+                # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
+                if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
+                    # When using caption dropout, we will use the null embed instead of prompt embeds.
+                    # The chance of this happening is dictated by the caption_dropout_probability.
+                    if random.random() < args.caption_dropout_probability:
+                        training_logger.debug(f'Caption dropout triggered.')
+                        encoder_hidden_states = embed_cache.get_embeddings_for_prompts([""])
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
