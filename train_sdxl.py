@@ -515,7 +515,6 @@ def main():
             [add_text_embeds_all for _ in range(1)], dim=0
         )
 
-        logger.debug(f"Returning collate_fn results.")
         return {
             "pixel_values": pixel_values,
             "prompt_embeds": prompt_embeds_all,
