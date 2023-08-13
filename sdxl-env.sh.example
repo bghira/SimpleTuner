@@ -51,9 +51,6 @@ export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))
 # Adjust this for your GPU memory size.
 export TRAIN_BATCH_SIZE=10
 
-# Currently not implemented.
-NOISE_OFFSET=0.0
-
 # Validation image settings.
 VALIDATION_GUIDANCE=7.5
 VALIDATION_GUIDANCE_RESCALE=0.0
