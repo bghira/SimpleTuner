@@ -895,7 +895,7 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 # Average out the luminance values of each batch, so that we can store that in this step.
-                avg_training_data_luminance = torch.mean(torch.stack(training_luminance_values))
+                avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
                 accelerator.log({"train_luminance": avg_training_data_luminance, "train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
                 # Reset some values for the next go.
                 training_luminance_values = []
