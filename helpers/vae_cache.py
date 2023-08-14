@@ -68,7 +68,7 @@ class VAECache:
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
         logger.debug(f"Beginning processing of VAECache directory {directory}")
-        for subdir, _, files in os.walk(directory):
+        for subdir, _, files in os.walk(directory, followlinks=True):
             for file in files:
                 if file.endswith((".png", ".jpg", ".jpeg")):
                     logger.debug(f"Discovered image: {os.path.join(subdir, file)}")

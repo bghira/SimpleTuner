@@ -74,8 +74,9 @@ class DreamBoothDataset(Dataset):
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
         if len(self.aspect_ratio_bucket_indices) > 0:
-            pass
-            # self.update_cache()
+            self.update_cache()
+        else:
+            logger.warning(f'Can not update aspect bucket cache! We have no existing buckets.')
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
