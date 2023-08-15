@@ -146,16 +146,17 @@ class DreamBoothDataset(Dataset):
         logger.info("Loading of aspect bucket indexes completed.")
         return aspect_ratio_bucket_indices
 
-    def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue):
+    def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set):
         for file in files:
-            # Process image as before, but now send results to queue instead of updating a manager.dict
+            if str(file) in existing_files_set:
+                tqdm_queue.put(1)  # Update progress bar but skip further processing
+                continue
+            # Process image and send results to queue as before
             aspect_ratio_bucket_indices = self._process_image(
                 str(file), self.aspect_ratio_bucket_indices
-            )  # assuming _process_image now returns a value
+            )
             tqdm_queue.put(1)  # Update progress bar
-            aspect_ratio_bucket_indices_queue.put(
-                aspect_ratio_bucket_indices
-            )  # Send processed data
+            aspect_ratio_bucket_indices_queue.put(aspect_ratio_bucket_indices)
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logger.warning("Computing aspect ratio bucket indices.")
@@ -189,12 +190,13 @@ class DreamBoothDataset(Dataset):
         self._length = len(all_image_files)
         logger.info('Split file list into shards.')
         files_split = np.array_split(all_image_files, 8)
+        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
         workers = []
         logger.info('Process lists...')
         for files in files_split:
             p = Process(
                 target=self._bucket_worker,
-                args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue),
+                args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set),
             )
             p.start()
             workers.append(p)
