@@ -95,7 +95,10 @@ class VAECache:
                 image = self._resize_for_condition_image(image, self.resolution)
             except Exception as e:
                 logger.error(f"Encountered error opening image: {e}")
-                os.remove(filepath)
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
                 continue
 
             # Convert the image to a tensor
