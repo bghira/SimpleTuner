@@ -63,7 +63,6 @@ class DreamBoothDataset(Dataset):
         self.instance_images_path = list(Path(instance_data_root).iterdir())
         self.num_instance_images = len(self.instance_images_path)
         self.instance_prompt = instance_prompt
-        self._length = self.num_instance_images
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images
         self.accelerator = accelerator
@@ -73,6 +72,7 @@ class DreamBoothDataset(Dataset):
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
+        self._length = self.num_instance_images
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
@@ -186,6 +186,7 @@ class DreamBoothDataset(Dataset):
                 Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
             )
         )
+        self._length = len(all_image_files)
         logger.info('Split file list into shards.')
         files_split = np.array_split(all_image_files, 8)
         workers = []
@@ -238,7 +239,7 @@ class DreamBoothDataset(Dataset):
         if cache_file.exists():
             output = self.load_aspect_ratio_bucket_indices(cache_file)
             logging.info(f'We found {len(output)} buckets')
-            # return output
+            return output
         logger.info('Bucket assignment completed.')
         return self.compute_aspect_ratio_bucket_indices(cache_file)
 
