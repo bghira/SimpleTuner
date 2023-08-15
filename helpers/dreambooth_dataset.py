@@ -235,12 +235,6 @@ class DreamBoothDataset(Dataset):
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
-        output = None
-        if cache_file.exists():
-            output = self.load_aspect_ratio_bucket_indices(cache_file)
-            logging.info(f'We found {len(output)} buckets')
-            return output
-        logger.info('Bucket assignment completed.')
         return self.compute_aspect_ratio_bucket_indices(cache_file)
 
     def __len__(self):
