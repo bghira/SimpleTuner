@@ -126,13 +126,17 @@ class DreamBoothDataset(Dataset):
                 raise ValueError(f"Directory {base_dir} does not exist.")
 
         logger.info(f"Looking for new images, to update aspect bucket cache.")
-        new_file_paths = [
-            str(path)
-            for path in base_dir.iterdir()
-            if path not in self.instance_images_path
-        ]
-        logger.info(f"Discovered {len(new_file_paths)} new files to inspect for cache.")
+        
+        new_file_paths = []
+        for dirpath, dirnames, filenames in os.walk(str(base_dir), followlinks=True):
+            for file in filenames:
+                if file.endswith('.png'):
+                    full_path = Path(dirpath) / file
+                    if str(full_path) not in self.instance_images_path:
+                        new_file_paths.append(str(full_path))
 
+        logger.info(f"Discovered {len(new_file_paths)} new files to inspect for cache.")
+        
         for new_file in tqdm(new_file_paths, desc="Adding to cache"):
             self.aspect_ratio_bucket_indices = self._process_image(
                 new_file, self.aspect_ratio_bucket_indices
@@ -148,6 +152,7 @@ class DreamBoothDataset(Dataset):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
         with cache_file.open("w") as f:
             json.dump(self.aspect_ratio_bucket_indices, f)
+
 
     def _add_file_to_cache(self, file_path):
         """Add a single file to the cache (thread-safe)."""
