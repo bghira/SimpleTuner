@@ -73,10 +73,6 @@ class DreamBoothDataset(Dataset):
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
-        if len(self.aspect_ratio_bucket_indices) > 0:
-            self.update_cache()
-        else:
-            logger.warning(f'Can not update aspect bucket cache! We have no existing buckets.')
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = self._get_image_transforms()
@@ -115,44 +111,6 @@ class DreamBoothDataset(Dataset):
             if "image" in locals():
                 image.close()
         return aspect_ratio_bucket_indices
-
-    def update_cache(self, base_dir=None, max_workers=64):
-        """Update the aspect_ratio_bucket_indices based on the current state of the file system."""
-        if base_dir is None:
-            base_dir = self.instance_data_root
-        else:
-            base_dir = Path(base_dir)
-            if not base_dir.exists():
-                raise ValueError(f"Directory {base_dir} does not exist.")
-
-        logger.info(f"Looking for new images, to update aspect bucket cache.")
-        
-        new_file_paths = []
-        for dirpath, dirnames, filenames in os.walk(str(base_dir), followlinks=True):
-            for file in filenames:
-                if file.endswith('.png'):
-                    full_path = Path(dirpath) / file
-                    if str(full_path) not in self.instance_images_path:
-                        new_file_paths.append(str(full_path))
-
-        logger.info(f"Discovered {len(new_file_paths)} new files to inspect for cache.")
-        
-        for new_file in tqdm(new_file_paths, desc="Adding to cache"):
-            self.aspect_ratio_bucket_indices = self._process_image(
-                new_file, self.aspect_ratio_bucket_indices
-            )
-
-        # Update the instance_images_path to include the new images
-        self.instance_images_path += new_file_paths
-
-        # Update the total number of instance images
-        self.num_instance_images = len(self.instance_images_path)
-
-        # Save updated aspect_ratio_bucket_indices to the cache file
-        cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
-        with cache_file.open("w") as f:
-            json.dump(self.aspect_ratio_bucket_indices, f)
-
 
     def _add_file_to_cache(self, file_path):
         """Add a single file to the cache (thread-safe)."""
@@ -201,6 +159,13 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logger.warning("Computing aspect ratio bucket indices.")
+        
+        # Step 1: Initialization Check
+        if hasattr(self, 'aspect_ratio_bucket_indices') and self.aspect_ratio_bucket_indices:
+            aspect_ratio_bucket_indices = self.aspect_ratio_bucket_indices
+        else:
+            aspect_ratio_bucket_indices = {}
+            
         def rglob_follow_symlinks(path: Path, pattern: str):
             for p in path.glob(pattern):
                 yield p
@@ -212,12 +177,9 @@ class DreamBoothDataset(Dataset):
                     if real_path.is_dir():
                         yield from rglob_follow_symlinks(real_path, pattern)
 
-
         logger.info('Built queue object.')
-        tqdm_queue = Queue()  # Queue for updating progress bar
-        aspect_ratio_bucket_indices_queue = (
-            Queue()
-        )  # Queue for gathering data from processes
+        tqdm_queue = Queue()
+        aspect_ratio_bucket_indices_queue = Queue()
         logger.info('Build file list..')
         all_image_files = list(
             rglob_follow_symlinks(
@@ -237,46 +199,46 @@ class DreamBoothDataset(Dataset):
             workers.append(p)
 
         # Update progress bar and gather results in main process
-        aspect_ratio_bucket_indices = {}
-        logger.info('Update progress bar and gather results in main process.')
         with tqdm(total=len(all_image_files)) as pbar:
-            while any(
-                p.is_alive() for p in workers
-            ):  # Continue until all processes are done
-                while (
-                    not tqdm_queue.empty()
-                ):  # Update progress bar with each completed file
+            while any(p.is_alive() for p in workers):
+                while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
-                while (
-                    not aspect_ratio_bucket_indices_queue.empty()
-                ):  # Gather results
-                    aspect_ratio_bucket_indices.update(
-                        aspect_ratio_bucket_indices_queue.get()
-                    )
+                while not aspect_ratio_bucket_indices_queue.empty():
+                    aspect_ratio_bucket_indices.update(aspect_ratio_bucket_indices_queue.get())
 
         # Gather any remaining results
-        while not aspect_ratio_bucket_indices_queue.empty():  # Gather results
-            aspect_ratio_bucket_indices.update(
-                aspect_ratio_bucket_indices_queue.get()
-            )
+        while not aspect_ratio_bucket_indices_queue.empty():
+            aspect_ratio_bucket_indices.update(aspect_ratio_bucket_indices_queue.get())
         logger.info('Join processes and finish up.')
         for p in workers:
-            p.join()  # Wait for processes to finish
+            p.join()
 
+        # Step 3: Updating the Cache
+        new_file_paths = [str(file) for file in all_image_files if str(file) not in self.instance_images_path]
+        
+        # Update the instance_images_path to include the new images
+        self.instance_images_path += new_file_paths
+
+        # Update the total number of instance images
+        self.num_instance_images = len(self.instance_images_path)
+        
+        # Save updated aspect_ratio_bucket_indices to the cache file
         with cache_file.open("w") as f:
             logger.info('Writing updated cache file to disk')
             json.dump(aspect_ratio_bucket_indices, f)
+        
         logger.info('Completed aspect bucket update.')
+        
         return aspect_ratio_bucket_indices
+
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"
         output = None
         if cache_file.exists():
             output = self.load_aspect_ratio_bucket_indices(cache_file)
-        if output is not None and len(output) > 0:
             logging.info(f'We found {len(output)} buckets')
-            return output
+            # return output
         logger.info('Bucket assignment completed.')
         return self.compute_aspect_ratio_bucket_indices(cache_file)
 
