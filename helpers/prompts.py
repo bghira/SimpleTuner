@@ -156,7 +156,7 @@ class PromptHandler:
         return instance_prompt
 
     @staticmethod
-    def get_all_captions(instance_data_root: str) -> list:
+    def get_all_captions(instance_data_root: str, use_captions: bool, prepend_instance_prompt: bool) -> list:
         import os
         captions = []
 
@@ -176,7 +176,11 @@ class PromptHandler:
         )
 
         for image_path in all_image_files:
-            caption = PromptHandler.prepare_instance_prompt(str(image_path))
+            caption = PromptHandler.prepare_instance_prompt(
+                image_path=str(image_path),
+                use_captions=use_captions,
+                prepend_instance_prompt=prepend_instance_prompt,
+            )
             captions.append(caption)
 
         return captions
