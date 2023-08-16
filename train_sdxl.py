@@ -530,7 +530,7 @@ def main():
         instance_data_root=args.instance_data_dir,
         cache_file=os.path.join(args.instance_data_dir, "aspect_ratio_bucket_indices.json")
     )
-    bucket_manager.initialize_buckets()
+    bucket_manager.compute_aspect_ratio_bucket_indices()
 
     # Data loader
     logger.info("Creating dataset iterator object")
