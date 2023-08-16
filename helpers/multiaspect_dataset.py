@@ -69,8 +69,6 @@ class MultiAspectDataset(Dataset):
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images
         self.accelerator = accelerator
-        self.aspect_ratio_bucket_indices = {}
-        self.aspect_ratio_bucket_indices = self.compute_aspect_ratio_bucket_indices()
         self.caption_dropout_interval = caption_dropout_interval
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
