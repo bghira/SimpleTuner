@@ -36,6 +36,7 @@ from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
 from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
 from helpers.min_snr_gamma import compute_snr
+from helpers.prompts import PromptHandler
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger("filelock")
@@ -579,7 +580,7 @@ def main():
 
     with accelerator.main_process_first():
         logger.info(f"Pre-computing text embeds / updating cache.")
-        embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
+        embed_cache.precompute_embeddings_for_prompts(PromptHandler.get_all_captions())
 
     validation_prompts = []
     validation_shortnames = []
