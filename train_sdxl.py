@@ -580,7 +580,13 @@ def main():
 
     with accelerator.main_process_first():
         logger.info(f"Pre-computing text embeds / updating cache.")
-        embed_cache.precompute_embeddings_for_prompts(PromptHandler.get_all_captions(args.instance_data_dir))
+        embed_cache.precompute_embeddings_for_prompts(
+            PromptHandler.get_all_captions(
+                instance_data_root=args.instance_data_dir,
+                prepend_instance_prompt=args.prepend_instance_prompt or False,
+                use_captions=args.only_instance_prompt or False
+            )
+        )
 
     validation_prompts = []
     validation_shortnames = []
