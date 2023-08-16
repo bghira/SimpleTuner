@@ -528,7 +528,7 @@ def main():
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
-        cache_file=args.instance_data_root / "aspect_ratio_bucket_indices.json",
+        cache_file=args.instance_data_dir / "aspect_ratio_bucket_indices.json",
     )
     bucket_manager.initialize_buckets()
 
