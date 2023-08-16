@@ -27,7 +27,8 @@ import warnings
 from pathlib import Path
 from urllib.parse import urlparse
 from helpers.aspect_bucket import BalancedBucketSampler
-from helpers.dreambooth_dataset import DreamBoothDataset
+from helpers.multiaspect_dataset import MultiAspectDataset
+from helpers.multiaspect.bucket import BucketManager
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
 from helpers.image_tools import calculate_luminance, calculate_batch_luminance
@@ -524,10 +525,16 @@ def main():
             "luminance": batch_luminance,
         }
 
-    # DataLoaders creation:
-    # Dataset and DataLoaders creation:
+    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    bucket_manager = BucketManager(
+        instance_data_root=args.instance_data_dir,
+        cache_file=args.instance_data_root / "aspect_ratio_bucket_indices.json",
+    )
+    bucket_manager.initialize_buckets()
+
+    # Data loader
     logger.info("Creating dataset iterator object")
-    train_dataset = DreamBoothDataset(
+    train_dataset = MultiAspectDataset(
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
         size=args.resolution,

@@ -85,3 +85,98 @@ prompts = {
     "alien_marketplace": "A bustling marketplace in an alien world.",
     "alien_invasion": "The first moments of an alien invasion from a civilian's perspective.",
 }
+
+import logging
+from pathlib import Path
+
+logger = logging.getLogger("PromptHandler")
+
+
+class PromptHandler:
+    @staticmethod
+    def prepare_instance_prompt(
+        image_path: str, use_captions: bool, prepend_instance_prompt: bool
+    ) -> str:
+        instance_prompt = Path(image_path).stem
+        if use_captions:
+            # Underscores to spaces.
+            instance_prompt = instance_prompt.replace("_", " ")
+            # Remove some midjourney messes.
+            instance_prompt = instance_prompt.split("upscaled by")[0]
+            instance_prompt = instance_prompt.split("upscaled beta")[0]
+            if prepend_instance_prompt:
+                instance_prompt = instance_prompt + " " + instance_prompt
+        return instance_prompt
+
+    @staticmethod
+    def prepare_instance_prompt_from_textfile(image_path) -> str:
+        caption_file = Path(image_path).with_suffix(".txt")
+        if not caption_file.exists():
+            raise FileNotFoundError(f"Caption file {caption_file} not found.")
+        try:
+            with caption_file.open("r") as f:
+                instance_prompt = f.read()
+            return instance_prompt
+        except Exception as e:
+            logger.error(f"Could not read caption file {caption_file}: {e}")
+
+    @staticmethod
+    def magic_prompt(
+        image_path: str,
+        caption_strategy: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+    ) -> str:
+        """Pull a prompt for an image file like magic, using one of the available caption strategies.
+
+        Args:
+            image_path (str): The image path.
+            caption_strategy (str): Currently, 'filename' or 'textfile'.
+            use_captions (bool): If false, the folder containing the image is used as an instance prompt.
+            prepend_instance_prompt (bool): If true, the folder name of the image is prepended to the caption.
+
+        Raises:
+            ValueError: _description_
+
+        Returns:
+            _type_: _description_
+        """
+        if caption_strategy == "filename":
+            instance_prompt = PromptHandler.prepare_instance_prompt(
+                image_path=image_path,
+                use_captions=use_captions,
+                prepend_instance_prompt=prepend_instance_prompt,
+            )
+        elif caption_strategy == "textfile":
+            instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
+                image_path
+            )
+        else:
+            raise ValueError(f"Unsupported caption strategy: {caption_strategy}")
+        return instance_prompt
+
+    @staticmethod
+    def get_all_captions(instance_data_root: str) -> list:
+        import os
+        captions = []
+
+        def rglob_follow_symlinks(path: Path, pattern: str):
+            for p in path.glob(pattern):
+                yield p
+            for p in path.iterdir():
+                if p.is_dir() and not p.is_symlink():
+                    yield from rglob_follow_symlinks(p, pattern)
+                elif p.is_symlink():
+                    real_path = Path(os.readlink(p))
+                    if real_path.is_dir():
+                        yield from rglob_follow_symlinks(real_path, pattern)
+
+        all_image_files = list(
+            rglob_follow_symlinks(Path(instance_data_root), "*.[jJpP][pPnN][gG]")
+        )
+
+        for image_path in all_image_files:
+            caption = PromptHandler.prepare_instance_prompt(str(image_path))
+            captions.append(caption)
+
+        return captions
