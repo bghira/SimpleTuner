@@ -74,116 +74,57 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.seen_images = {}
         self.current_bucket = random.randint(0, len(self.buckets) - 1)
 
-    def _get_unseen_images(self, bucket):
-        return [
-            image
-            for image in self.bucket_manager.aspect_ratio_bucket_indices[bucket]
-            if image not in self.seen_images
-        ]
-
-    def __iter__(self):
+    def _get_unseen_images(self, bucket=None):
         """
-        Iterate over the sampler to yield image paths. If the system is in training mode, yield batches of unseen images.
-        If not in training mode, yield random images. If the number of unseen images in a bucket is less than the batch size,
-        yield all unseen images. If the number of seen images reaches the reset threshold, reset all buckets and seen images.
+        Get unseen images from the specified bucket. 
+        If bucket is None, get unseen images from all buckets.
         """
-        while True:
-            logger.debug(f"Running __iter__ for AspectBuckets.")
-            if not StateTracker.status_training():
-                # Yield random image:
-                yield self._yield_random_image()
-                continue
-            if not self.buckets:
-                logger.warning(f"All buckets are exhausted. Resetting...")
-                self._reset_buckets()
+        if bucket:
+            return [
+                image
+                for image in self.bucket_manager.aspect_ratio_bucket_indices[bucket]
+                if image not in self.seen_images
+            ]
+        else:
+            unseen_images = []
+            for b, images in self.bucket_manager.aspect_ratio_bucket_indices.items():
+                unseen_images.extend([image for image in images if image not in self.seen_images])
+            return unseen_images
 
-            bucket = self.buckets[self.current_bucket]
+    def _yield_random_image_if_not_training(self):
+        """
+        If not in training mode, yield a random image and return True. Otherwise, return False.
+        """
+        if not StateTracker.status_training():
+            yield self._yield_random_image()
+            return True
+        return False
 
-            if len(self.buckets) > 1 and len(self.bucket_manager.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
-                if bucket not in self.exhausted_buckets:
-                    self.move_to_exhausted()
-                self.change_bucket()
-                continue
-
-            available_images = self._get_unseen_images(bucket)
-
-            # Pad the safety number so that we can ensure we have a large enough bucket to yield samples from.
-            if len(self.buckets) > 1 and len(available_images) < self.batch_size:
-                logger.warning(
-                    f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}"
-                )
+    def _handle_bucket_with_insufficient_images(self, bucket):
+        """
+        Handle buckets with insufficient images. Return True if we changed or reset the bucket.
+        """
+        if len(self.bucket_manager.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            if bucket not in self.exhausted_buckets:
                 self.move_to_exhausted()
-                self.change_bucket()
-                continue
-            if (len(available_images) < self.batch_size) and (len(self.buckets) == 1):
-                # We have to check if we have enough 'seen' images, and bring them back.
-                all_bucket_images = self.bucket_manager.aspect_ratio_bucket_indices[bucket]
-                total = len(self.seen_images) + len(available_images) + len(all_bucket_images)
-                if total < self.batch_size:
-                    logger.warning(
-                        f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}! Overly-repeating training images."
-                    )
-                    self.seen_images = {}
-                else:
-                    self.log_state()
-                    logger.warning(
-                        "Cannot continue. There are not enough images to form a single batch:\n"
-                        f"    -> Seen images: {len(self.seen_images)}\n"
-                        f"    -> Unseen images: {len(available_images)}\n"
-                        f"    -> Buckets: {self.buckets}\n"
-                        f"    -> Batch size: {self.batch_size}\n"
-                        f"    -> Image list: {available_images}\n"
-                    )
-                    self.buckets = self.load_buckets()
-                    self.seen_images = {}
-                    continue
+            self.change_bucket()
+            return True
+        return False
 
-            samples = random.choices(available_images, k=self.batch_size)
-            to_yield = []
-            for image_path in samples:
-                if not os.path.exists(image_path):
-                    logger.warning(f"Image path does not exist: {image_path}")
-                    self.remove_image(image_path, bucket)
-                    continue
-                try:
-                    logger.debug(f"AspectBucket is loading image: {image_path}")
-                    image = Image.open(image_path)
-                except:
-                    logger.warning(f"Image was bad or in-progress: {image_path}")
-                    continue
-                if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
-                    image.close()
-                    self.handle_small_image(image_path, bucket)
-                    continue
-                image = exif_transpose(image)
-                aspect_ratio = round(image.width / image.height, 3)
-                actual_bucket = str(aspect_ratio)
-                if actual_bucket != bucket:
-                    self.handle_incorrect_bucket(image_path, bucket, actual_bucket)
-                else:
-                    logger.debug(
-                        f"Yielding {image.width}x{image.height} sample from bucket: {bucket} with aspect {actual_bucket}"
-                    )
-                    to_yield.append(image_path)
-                    if StateTracker.status_training():
-                        self.seen_images[image_path] = actual_bucket
-                logger.debug(
-                    f"Completed internal for loop inside __iter__ for AspectBuckets."
-                )
+    def _handle_bucket_with_not_enough_unseen_images(self, available_images, bucket):
+        """
+        Handle buckets with not enough unseen images. Return True if we reset the seen images or the buckets.
+        """
+        all_bucket_images = self.bucket_manager.aspect_ratio_bucket_indices[bucket]
+        total = len(self.seen_images) + len(available_images) + len(all_bucket_images)
+        if total < self.batch_size:
+            self.seen_images = {}
+            return True
 
-            if len(to_yield) == self.batch_size:
-                # Select a random bucket:
-                self.current_bucket = random.randint(
-                    0, len(self.buckets) - 1
-                )  # This is a random integer.
-                for image_to_yield in to_yield:
-                    logger.debug(f"Yielding from __iter__ for AspectBuckets.")
-                    yield image_to_yield
-
-    def __len__(self):
-        return sum(
-            len(indices) for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
-        )
+        self.log_state()
+        self.buckets = self.load_buckets()
+        self.seen_images = {}
+        return True
 
     def change_bucket(self):
         """
@@ -232,6 +173,98 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         logger.debug(
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+        )
+        logger.debug(
+            "Extended Statistics:\n"
+            f"    -> Seen images: {len(self.seen_images)}\n"
+            f"    -> Unseen images: {len(self._get_unseen_images())}\n"
+            f"    -> Current Bucket: {self.current_bucket}\n"
+            f"    -> Buckets: {self.buckets}\n"
+            f"    -> Batch size: {self.batch_size}\n"
+        )
+
+    def _process_single_image(self, image_path, bucket):
+        """
+        Validate and process a single image. 
+        Return the image path if valid, otherwise return None.
+        """
+        if not os.path.exists(image_path):
+            logger.warning(f"Image path does not exist: {image_path}")
+            self.bucket_manager.remove_image(image_path, bucket)
+            return None
+
+        try:
+            logger.debug(f"AspectBucket is loading image: {image_path}")
+            image = Image.open(image_path)
+        except:
+            logger.warning(f"Image was bad or in-progress: {image_path}")
+            return None
+
+        if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
+            image.close()
+            self.bucket_manager.handle_small_image(image_path, bucket)
+            return None
+
+        image = exif_transpose(image)
+        aspect_ratio = round(image.width / image.height, 3)
+        actual_bucket = str(aspect_ratio)
+        if actual_bucket != bucket:
+            self.bucket_manager.handle_incorrect_bucket(image_path, bucket, actual_bucket)
+            return None
+
+        return image_path
+
+    def _validate_and_yield_images_from_samples(self, samples, bucket):
+        """
+        Validate and yield images from given samples. Return a list of valid image paths.
+        """
+        to_yield = []
+        for image_path in samples:
+            processed_image_path = self._process_single_image(image_path, bucket)
+            if processed_image_path:
+                to_yield.append(processed_image_path)
+                if StateTracker.status_training():
+                    self.seen_images[processed_image_path] = bucket
+        return to_yield
+
+    def __iter__(self):
+        """
+        Iterate over the sampler to yield image paths. If the system is in training mode, yield batches of unseen images.
+        If not in training mode, yield random images. If the number of unseen images in a bucket is less than the batch size,
+        yield all unseen images. If the number of seen images reaches the reset threshold, reset all buckets and seen images.
+        """
+        while True:
+            logger.debug(f"Running __iter__ for AspectBuckets.")
+            if self._yield_random_image_if_not_training():
+                continue
+            if not self.buckets:
+                logger.warning(f"All buckets are exhausted. Resetting...")
+                self._reset_buckets()
+
+            bucket = self.buckets[self.current_bucket]
+
+            if self._handle_bucket_with_insufficient_images(bucket):
+                continue
+
+            available_images = self._get_unseen_images(bucket)
+
+            if len(available_images) < self.batch_size:
+                if self._handle_bucket_with_not_enough_unseen_images(available_images, bucket):
+                    continue
+
+            samples = random.choices(available_images, k=self.batch_size)
+            to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
+
+            if len(to_yield) == self.batch_size:
+                # Select a random bucket:
+                self.current_bucket = random.randint(0, len(self.buckets) - 1)
+                for image_to_yield in to_yield:
+                    logger.debug(f"Yielding from __iter__ for AspectBuckets.")
+                    yield image_to_yield
+
+    def __len__(self):
+        return sum(
+            len(indices) for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
         )
 
     @staticmethod
