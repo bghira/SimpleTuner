@@ -87,3 +87,32 @@ class BucketManager:
         self._save_cache()
 
         logger.info('Completed aspect bucket update.')
+
+    def remove_image(self, image_path, bucket):
+        if image_path in self.aspect_ratio_bucket_indices[bucket]:
+            self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+
+    def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
+        logger.warning(
+            f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}"
+        )
+        self.remove_image(image_path, bucket)
+        if actual_bucket in self.aspect_ratio_bucket_indices:
+            logger.warning(f"Moved image to bucket, it already existed.")
+            self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
+        else:
+            logger.warning(f"Created new bucket for that pesky image.")
+            self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
+
+    def handle_small_image(self, image_path, bucket, delete_unwanted_images):
+        if delete_unwanted_images:
+            try:
+                logger.warning(f"Image too small: DELETING image and continuing search.")
+                os.remove(image_path)
+            except Exception as e:
+                logger.warning(
+                    f"The image was already deleted. Another GPU must have gotten to it."
+                )
+        else:
+            logger.warning(f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket.")
+        self.remove_image(image_path, bucket)
