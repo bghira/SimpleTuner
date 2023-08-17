@@ -46,6 +46,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.minimum_image_size = minimum_image_size
         self.state_manager = BucketStateManager(state_path, seen_images_path)
         self.seen_images = self.state_manager.load_seen_images()
+        self.buckets = self.load_buckets()
 
     def save_state(self):
         state = {
