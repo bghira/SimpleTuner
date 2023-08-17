@@ -6,7 +6,7 @@ from helpers.multiaspect.state import BucketStateManager
 from helpers.state_tracker import StateTracker
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -40,7 +40,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.batch_size = batch_size
         self.seen_images_path = seen_images_path
         self.state_path = state_path
-        logger.setLevel(logging.WARNING)
         if debug_aspect_buckets:
             logger.setLevel(logging.DEBUG)
         self.delete_unwanted_images = delete_unwanted_images
