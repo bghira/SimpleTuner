@@ -20,9 +20,9 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 
 pil_logger = logging.getLogger("PIL.Image")
-pil_logger.setLevel(logging.WARNING)
+pil_logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
-pil_logger.setLevel(logging.WARNING)
+pil_logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
 
 multiprocessing.set_start_method("fork")
 
