@@ -1,7 +1,7 @@
 import os, torch, logging
 from tqdm import tqdm
 from PIL import Image
-import torchvision.transforms as transforms
+from helpers.multiaspect.image import MultiaspectImage
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL') or "INFO")
@@ -77,7 +77,7 @@ class VAECache:
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
-        transform = transforms.ToTensor()
+        transform = MultiaspectImage.get_image_transforms()
 
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
