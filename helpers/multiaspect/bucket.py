@@ -45,7 +45,7 @@ class BucketManager:
     def _discover_new_files(self):
         """
         Discover new files that have not been processed yet.
-        
+
         Returns:
             list: A list of new files.
         """
@@ -61,7 +61,7 @@ class BucketManager:
     def _load_cache(self):
         """
         Load cache data from file.
-        
+
         Returns:
             dict: The cache data.
         """
@@ -81,7 +81,9 @@ class BucketManager:
         """
         cache_data = {
             "aspect_ratio_bucket_indices": self.aspect_ratio_bucket_indices,
-            "instance_images_path": list(self.instance_images_path),
+            "instance_images_path": [
+                str(path) for path in self.instance_images_path
+            ],  # Convert to string here
         }
         with self.cache_file.open("w") as f:
             json.dump(cache_data, f)
@@ -91,13 +93,13 @@ class BucketManager:
     ):
         """
         A worker function to bucket a list of files.
-        
+
         Args:
             tqdm_queue (Queue): A queue to report progress to.
             files (list): A list of files to bucket.
             aspect_ratio_bucket_indices_queue (Queue): A queue to report the bucket indices to.
             existing_files_set (set): A set of existing files.
-            
+
         Returns:
             dict: The bucket indices.
         """
@@ -113,7 +115,7 @@ class BucketManager:
     def compute_aspect_ratio_bucket_indices(self):
         """
         Compute the aspect ratio bucket indices. The workhorse of this class.
-        
+
         Returns:
             dict: The aspect ratio bucket indices.
         """
@@ -171,11 +173,11 @@ class BucketManager:
     def remove_image(self, image_path, bucket):
         """
         Used by other classes to reliably remove images from a bucket.
-        
+
         Args:
             image_path (str): The path to the image to remove.
             bucket (str): The bucket to remove the image from.
-            
+
         Returns:
             dict: The aspect ratio bucket indices.
         """
@@ -185,7 +187,7 @@ class BucketManager:
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
         """
         Used by other classes to move images between buckets, when mis-detected.
-        
+
         Args:
             image_path (str): The path to the image to move.
             bucket (str): The bucket to move the image from.
@@ -202,10 +204,12 @@ class BucketManager:
             logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
 
-    def handle_small_image(self, image_path: str, bucket: str, delete_unwanted_images: bool):
+    def handle_small_image(
+        self, image_path: str, bucket: str, delete_unwanted_images: bool
+    ):
         """
         Used by other classes to remove an image, or DELETE it from disk, depending on parameters.
-        
+
         Args:
             image_path (str): The path to the image to remove.
             bucket (str): The bucket to remove the image from.
