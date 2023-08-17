@@ -131,7 +131,7 @@ class VAECache:
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
         W, H = input_image.size
-        aspect_ratio = round(W / H, 3)
+        aspect_ratio = round(W / H, 2)
         msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
         if W < H:
             W = resolution

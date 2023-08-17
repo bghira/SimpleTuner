@@ -207,7 +207,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     self.handle_small_image(image_path, bucket)
                     continue
                 image = exif_transpose(image)
-                aspect_ratio = round(image.width / image.height, 3)
+                aspect_ratio = round(image.width / image.height, 2)
                 actual_bucket = str(aspect_ratio)
                 if actual_bucket != bucket:
                     self.handle_incorrect_bucket(image_path, bucket, actual_bucket)

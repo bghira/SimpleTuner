@@ -205,7 +205,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     return None
 
                 image = exif_transpose(image)
-                aspect_ratio = round(image.width / image.height, 3)
+                aspect_ratio = round(image.width / image.height, 2)
             actual_bucket = str(aspect_ratio)
             if actual_bucket != bucket:
                 self.bucket_manager.handle_incorrect_bucket(image_path, bucket, actual_bucket)
