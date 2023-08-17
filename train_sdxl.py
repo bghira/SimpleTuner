@@ -553,7 +553,7 @@ def main():
     )
     logger.info("Creating aspect bucket sampler")
     custom_balanced_sampler = MultiAspectSampler(
-        bucket_manager.aspect_ratio_bucket_indices,
+        bucket_manager=bucket_manager,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
