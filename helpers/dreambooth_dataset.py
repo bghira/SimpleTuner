@@ -12,7 +12,8 @@ from itertools import repeat
 from ctypes import c_int
 
 logger = logging.getLogger("DatasetLoader")
-logger.setLevel(logging.INFO)
+target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING')
+logger.setLevel(target_level)
 from concurrent.futures import ThreadPoolExecutor
 import threading
 

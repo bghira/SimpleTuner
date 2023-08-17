@@ -6,7 +6,8 @@ from multiprocessing import Process, Queue
 import numpy as np
 
 logger = logging.getLogger("BucketManager")
-
+target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING')
+logger.setLevel(target_level)
 
 class BucketManager:
     def __init__(self, instance_data_root, cache_file):
