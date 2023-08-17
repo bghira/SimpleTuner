@@ -217,6 +217,10 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                             f"Yielding {image.width}x{image.height} sample from bucket: {bucket} with aspect {actual_bucket}"
                         )
                     to_yield.append(image_path)
+                    try:
+                        image.close()
+                    except:
+                        pass
                     if StateTracker.status_training():
                         self.seen_images[image_path] = actual_bucket
                 if self.debug_aspect_buckets:

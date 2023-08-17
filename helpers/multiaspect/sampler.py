@@ -195,24 +195,23 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         try:
             logger.debug(f"AspectBucket is loading image: {image_path}")
-            image = Image.open(image_path)
+            with Image.open(image_path) as image:
+                if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
+                    image.close()
+                    self.bucket_manager.handle_small_image(image_path, bucket)
+                    return None
+
+                image = exif_transpose(image)
+                aspect_ratio = round(image.width / image.height, 3)
+            actual_bucket = str(aspect_ratio)
+            if actual_bucket != bucket:
+                self.bucket_manager.handle_incorrect_bucket(image_path, bucket, actual_bucket)
+                return None
+
+            return image_path
         except:
             logger.warning(f"Image was bad or in-progress: {image_path}")
             return None
-
-        if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
-            image.close()
-            self.bucket_manager.handle_small_image(image_path, bucket)
-            return None
-
-        image = exif_transpose(image)
-        aspect_ratio = round(image.width / image.height, 3)
-        actual_bucket = str(aspect_ratio)
-        if actual_bucket != bucket:
-            self.bucket_manager.handle_incorrect_bucket(image_path, bucket, actual_bucket)
-            return None
-
-        return image_path
 
     def _validate_and_yield_images_from_samples(self, samples, bucket):
         """
