@@ -1,10 +1,10 @@
-import hashlib, os, torch, logging
+import os, torch, logging
 from tqdm import tqdm
 from PIL import Image
 import torchvision.transforms as transforms
 
 logger = logging.getLogger("VAECache")
-logger.setLevel("INFO")
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL') or "INFO")
 
 
 class VAECache:
@@ -16,15 +16,12 @@ class VAECache:
         self.resolution = resolution
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def create_hash(self, filename):
-        # Create a sha256 hash
-        sha256_hash = hashlib.sha256()
-
-        # Feed the hash function with the filename
-        sha256_hash.update(filename.encode())
-
-        # Get the hexadecimal representation of the hash
-        return sha256_hash.hexdigest()
+    def get_cache_filename(self, filepath):
+        """Get the cache filename for a given image filepath."""
+        # Extract the base name from the filepath and replace the image extension with .pt
+        return os.path.join(
+            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0] + ".pt"
+        )
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)
@@ -32,10 +29,28 @@ class VAECache:
     def load_from_cache(self, filename):
         return torch.load(filename)
 
+    def discover_unprocessed_files(self, directory):
+        """Identify files that haven't been processed yet."""
+        all_files = {
+            os.path.join(subdir, file)
+            for subdir, _, files in os.walk(directory, followlinks=True)
+            for file in files
+            if file.endswith((".png", ".jpg", ".jpeg"))
+        }
+        processed_files = {self.get_cache_filename(file) for file in all_files}
+        unprocessed_files = {
+            file
+            for file in all_files
+            if self.get_cache_filename(file) not in processed_files
+        }
+        return list(unprocessed_files)
+
     def encode_image(self, pixel_values, filepath: str):
         file_hash = self.create_hash(filepath)
         filename = os.path.join(self.cache_dir, file_hash + ".pt")
-        logger.debug(f'Created file_hash {file_hash} from filepath {filepath} for resulting .pt filename.')
+        logger.debug(
+            f"Created file_hash {file_hash} from filepath {filepath} for resulting .pt filename."
+        )
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
             logger.debug(
