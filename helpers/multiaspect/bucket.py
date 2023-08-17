@@ -70,7 +70,7 @@ class BucketManager:
             logger.info("No new files discovered. Exiting.")
             return
 
-        num_cpus = multiprocessing.cpu_count()
+        num_cpus = max(multiprocessing.cpu_count(), 8)
         files_split = np.array_split(new_files, num_cpus)
 
         tqdm_queue = Queue()
