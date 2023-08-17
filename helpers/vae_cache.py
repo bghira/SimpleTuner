@@ -91,8 +91,7 @@ class VAECache:
         # Iterate through the files, displaying a progress bar
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
-            file_hash = self.create_hash(filepath)
-            filename = os.path.join(self.cache_dir, file_hash + ".pt")
+            filename = os.path.join(self.cache_dir, filepath + ".pt")
 
             # If processed file already exists, skip processing for this image
             if os.path.exists(filename):
