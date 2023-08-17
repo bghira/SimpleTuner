@@ -5,7 +5,8 @@ from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
 
-logger = logging.getLogger('BucketManager')
+logger = logging.getLogger("BucketManager")
+
 
 class BucketManager:
     def __init__(self, instance_data_root, cache_file):
@@ -19,11 +20,17 @@ class BucketManager:
         """
         Return the total number of items in self.aspect_ratio_bucket_indicies
         """
-        return sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
+        return sum(
+            [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
+        )
 
     def _discover_new_files(self):
         """Identify files that haven't been processed yet."""
-        all_files = {str(f) for f in self.instance_data_root.rglob("*.[jJpP][pPnN][gG]")}
+        all_files = set()
+        for root, dirs, files in os.walk(self.instance_data_root, followlinks=True):
+            for file in files:
+                if file.lower().endswith((".jpg", ".jpeg", ".png")):
+                    all_files.add(str(Path(root) / file))
         return list(all_files - self.instance_images_path)
 
     def _load_cache(self):
@@ -31,14 +38,18 @@ class BucketManager:
         if self.cache_file.exists():
             with self.cache_file.open("r") as f:
                 cache_data = json.load(f)
-                self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
-                self.instance_images_path = set(cache_data.get("instance_images_path", []))
+                self.aspect_ratio_bucket_indices = cache_data.get(
+                    "aspect_ratio_bucket_indices", {}
+                )
+                self.instance_images_path = set(
+                    cache_data.get("instance_images_path", [])
+                )
 
     def _save_cache(self):
         """Save cache data to file."""
         cache_data = {
             "aspect_ratio_bucket_indices": self.aspect_ratio_bucket_indices,
-            "instance_images_path": list(self.instance_images_path)
+            "instance_images_path": list(self.instance_images_path),
         }
         with self.cache_file.open("w") as f:
             json.dump(cache_data, f)
@@ -69,7 +80,7 @@ class BucketManager:
         workers = [
             Process(
                 target=self._bucket_worker,
-                args=(tqdm_queue, file_shard, aspect_ratio_bucket_indices_queue)
+                args=(tqdm_queue, file_shard, aspect_ratio_bucket_indices_queue),
             )
             for file_shard in files_split
         ]
@@ -82,9 +93,13 @@ class BucketManager:
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
                 while not aspect_ratio_bucket_indices_queue.empty():
-                    aspect_ratio_bucket_indices_update = aspect_ratio_bucket_indices_queue.get()
+                    aspect_ratio_bucket_indices_update = (
+                        aspect_ratio_bucket_indices_queue.get()
+                    )
                     for key, value in aspect_ratio_bucket_indices_update.items():
-                        self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
+                        self.aspect_ratio_bucket_indices.setdefault(key, []).extend(
+                            value
+                        )
 
         for worker in workers:
             worker.join()
@@ -92,7 +107,7 @@ class BucketManager:
         self.instance_images_path.update(new_files)
         self._save_cache()
 
-        logger.info('Completed aspect bucket update.')
+        logger.info("Completed aspect bucket update.")
 
     def remove_image(self, image_path, bucket):
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
@@ -113,12 +128,16 @@ class BucketManager:
     def handle_small_image(self, image_path, bucket, delete_unwanted_images):
         if delete_unwanted_images:
             try:
-                logger.warning(f"Image too small: DELETING image and continuing search.")
+                logger.warning(
+                    f"Image too small: DELETING image and continuing search."
+                )
                 os.remove(image_path)
             except Exception as e:
                 logger.warning(
                     f"The image was already deleted. Another GPU must have gotten to it."
                 )
         else:
-            logger.warning(f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket.")
+            logger.warning(
+                f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
+            )
         self.remove_image(image_path, bucket)
