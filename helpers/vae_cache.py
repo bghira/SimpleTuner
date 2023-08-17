@@ -16,7 +16,7 @@ class VAECache:
         self.resolution = resolution
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def get_cache_filename(self, filepath):
+    def _generate_filename(self, filepath: str):
         """Get the cache filename for a given image filepath."""
         # Extract the base name from the filepath and replace the image extension with .pt
         return os.path.join(
@@ -37,16 +37,16 @@ class VAECache:
             for file in files
             if file.endswith((".png", ".jpg", ".jpeg"))
         }
-        processed_files = {self.get_cache_filename(file) for file in all_files}
+        processed_files = {self._generate_filename(file) for file in all_files}
         unprocessed_files = {
             file
             for file in all_files
-            if self.get_cache_filename(file) not in processed_files
+            if self._generate_filename(file) not in processed_files
         }
         return list(unprocessed_files)
 
     def encode_image(self, pixel_values, filepath: str):
-        filename = os.path.join(self.cache_dir, filepath + ".pt")
+        filename = self._generate_filename(filepath)
         logger.debug(
             f"Created filename {filename} from filepath {filepath} for resulting .pt filename."
         )
@@ -91,7 +91,7 @@ class VAECache:
         # Iterate through the files, displaying a progress bar
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
-            filename = os.path.join(self.cache_dir, filepath + ".pt")
+            filename = self._generate_filename(filepath)
 
             # If processed file already exists, skip processing for this image
             if os.path.exists(filename):
