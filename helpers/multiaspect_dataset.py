@@ -92,7 +92,7 @@ class MultiAspectDataset(Dataset):
             instance_image = Image.open(image_path)
         except Exception as e:
             logger.error(f"Encountered error opening image: {e}")
-            return None
+            raise e
 
         # Apply EXIF and colour channel modifications.
         instance_image = MultiaspectImage.prepare_image(instance_image)
