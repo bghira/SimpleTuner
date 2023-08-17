@@ -484,6 +484,10 @@ def main():
     def collate_fn(examples):
         if not StateTracker.status_training():
             logger.debug(f"Not training, returning nothing from collate_fn")
+            if len(examples) > 0:
+                for example in examples:
+                    if 'instance_image' in example:
+                        example['instance_image'].close()
             return
         training_logger.debug(f"Examples: {examples}")
         training_logger.debug(f"Computing luminance for input batch")
