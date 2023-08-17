@@ -15,6 +15,12 @@ class BucketManager:
         self.instance_images_path = set()
         self._load_cache()
 
+    def __len__(self):
+        """
+        Return the total number of items in self.aspect_ratio_bucket_indicies
+        """
+        return sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
+
     def _discover_new_files(self):
         """Identify files that haven't been processed yet."""
         all_files = {str(f) for f in self.instance_data_root.rglob("*.[jJpP][pPnN][gG]")}

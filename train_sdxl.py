@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 from helpers.aspect_bucket import BalancedBucketSampler
 from helpers.multiaspect_dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
+from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
 from helpers.image_tools import calculate_luminance, calculate_batch_luminance
@@ -536,6 +537,7 @@ def main():
     # Data loader
     logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
+        bucket_manager=bucket_manager,
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
         size=args.resolution,
@@ -550,7 +552,7 @@ def main():
         caption_strategy=args.caption_strategy,
     )
     logger.info("Creating aspect bucket sampler")
-    custom_balanced_sampler = BalancedBucketSampler(
+    custom_balanced_sampler = MultiAspectSampler(
         bucket_manager.aspect_ratio_bucket_indices,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,

@@ -11,6 +11,7 @@ from itertools import repeat
 from ctypes import c_int
 
 from helpers.multiaspect.image import MultiaspectImage
+from helpers.multiaspect.bucket import BucketManager
 from helpers.prompts import PromptHandler
 
 logger = logging.getLogger("MultiAspectDataset")
@@ -37,6 +38,7 @@ class MultiAspectDataset(Dataset):
         self,
         instance_data_root,
         accelerator,
+        bucket_manager: BucketManager,
         instance_prompt: str = None,
         tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
@@ -52,6 +54,7 @@ class MultiAspectDataset(Dataset):
         caption_strategy: str = "filename",
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
+        self.bucket_manager = bucket_manager
         self.use_captions = use_captions
         self.size = size
         self.center_crop = center_crop
@@ -63,8 +66,6 @@ class MultiAspectDataset(Dataset):
             raise ValueError(
                 f"Instance {self.instance_data_root} images root doesn't exists."
             )
-        self.instance_images_path = list(Path(instance_data_root).iterdir())
-        self.num_instance_images = len(self.instance_images_path)
         self.instance_prompt = instance_prompt
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images
@@ -73,13 +74,12 @@ class MultiAspectDataset(Dataset):
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
-        self._length = self.num_instance_images
         if not use_original_images:
             logger.debug(f"Building transformations.")
             self.image_transforms = MultiaspectImage.get_image_transforms()
 
     def __len__(self):
-        return self._length
+        return len(self.bucket_manager)
 
     def __getitem__(self, image_path):
         logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
