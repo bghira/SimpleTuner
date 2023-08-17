@@ -486,7 +486,7 @@ def main():
             logger.debug(f"Not training, returning nothing from collate_fn")
             if len(examples) > 0:
                 for example in examples:
-                    if 'instance_image' in example:
+                    if example is not None and 'instance_image' in example:
                         example['instance_image'].close()
             return
         training_logger.debug(f"Examples: {examples}")
