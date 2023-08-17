@@ -79,11 +79,14 @@ class BucketManager:
         """
         Save cache data to file.
         """
+        aspect_ratio_bucket_indices_str = {
+            key: [str(path) for path in value]
+            for key, value in self.aspect_ratio_bucket_indices.items()
+        }
+        
         cache_data = {
-            "aspect_ratio_bucket_indices": self.aspect_ratio_bucket_indices,
-            "instance_images_path": [
-                str(path) for path in self.instance_images_path
-            ],  # Convert to string here
+            "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
+            "instance_images_path": [str(path) for path in self.instance_images_path],
         }
         with self.cache_file.open("w") as f:
             json.dump(cache_data, f)
