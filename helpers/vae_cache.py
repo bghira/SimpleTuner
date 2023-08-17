@@ -1,10 +1,10 @@
-import hashlib, os, torch, logging
+import os, torch, logging
 from tqdm import tqdm
 from PIL import Image
-import torchvision.transforms as transforms
+from helpers.multiaspect.image import MultiaspectImage
 
 logger = logging.getLogger("VAECache")
-logger.setLevel("INFO")
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL') or "INFO")
 
 
 class VAECache:
@@ -16,15 +16,12 @@ class VAECache:
         self.resolution = resolution
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def create_hash(self, filename):
-        # Create a sha256 hash
-        sha256_hash = hashlib.sha256()
-
-        # Feed the hash function with the filename
-        sha256_hash.update(filename.encode())
-
-        # Get the hexadecimal representation of the hash
-        return sha256_hash.hexdigest()
+    def _generate_filename(self, filepath: str):
+        """Get the cache filename for a given image filepath."""
+        # Extract the base name from the filepath and replace the image extension with .pt
+        return os.path.join(
+            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0] + ".pt"
+        )
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)
@@ -32,10 +29,27 @@ class VAECache:
     def load_from_cache(self, filename):
         return torch.load(filename)
 
+    def discover_unprocessed_files(self, directory):
+        """Identify files that haven't been processed yet."""
+        all_files = {
+            os.path.join(subdir, file)
+            for subdir, _, files in os.walk(directory, followlinks=True)
+            for file in files
+            if file.endswith((".png", ".jpg", ".jpeg"))
+        }
+        processed_files = {self._generate_filename(file) for file in all_files}
+        unprocessed_files = {
+            file
+            for file in all_files
+            if self._generate_filename(file) not in processed_files
+        }
+        return list(unprocessed_files)
+
     def encode_image(self, pixel_values, filepath: str):
-        file_hash = self.create_hash(filepath)
-        filename = os.path.join(self.cache_dir, file_hash + ".pt")
-        logger.debug(f'Created file_hash {file_hash} from filepath {filepath} for resulting .pt filename.')
+        filename = self._generate_filename(filepath)
+        logger.debug(
+            f"Created filename {filename} from filepath {filepath} for resulting .pt filename."
+        )
         if os.path.exists(filename):
             latents = self.load_from_cache(filename)
             logger.debug(
@@ -63,7 +77,7 @@ class VAECache:
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
-        transform = transforms.ToTensor()
+        transform = MultiaspectImage.get_image_transforms()
 
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
@@ -77,8 +91,7 @@ class VAECache:
         # Iterate through the files, displaying a progress bar
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
-            file_hash = self.create_hash(filepath)
-            filename = os.path.join(self.cache_dir, file_hash + ".pt")
+            filename = self._generate_filename(filepath)
 
             # If processed file already exists, skip processing for this image
             if os.path.exists(filename):
@@ -118,7 +131,7 @@ class VAECache:
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
         W, H = input_image.size
-        aspect_ratio = round(W / H, 3)
+        aspect_ratio = round(W / H, 2)
         msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
         if W < H:
             W = resolution

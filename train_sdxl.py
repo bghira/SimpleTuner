@@ -27,7 +27,9 @@ import warnings
 from pathlib import Path
 from urllib.parse import urlparse
 from helpers.aspect_bucket import BalancedBucketSampler
-from helpers.dreambooth_dataset import DreamBoothDataset
+from helpers.multiaspect_dataset import MultiAspectDataset
+from helpers.multiaspect.bucket import BucketManager
+from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.state_tracker import StateTracker
 from helpers.sdxl_embeds import TextEmbeddingCache
 from helpers.image_tools import calculate_luminance, calculate_batch_luminance
@@ -35,6 +37,7 @@ from helpers.vae_cache import VAECache
 from helpers.arguments import parse_args
 from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
 from helpers.min_snr_gamma import compute_snr
+from helpers.prompts import PromptHandler
 
 logger = logging.getLogger()
 filelock_logger = logging.getLogger("filelock")
@@ -327,6 +330,14 @@ def main():
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
+    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    bucket_manager = BucketManager(
+        instance_data_root=args.instance_data_dir,
+        cache_file=os.path.join(args.instance_data_dir, "aspect_ratio_bucket_indices.json")
+    )
+    bucket_manager.compute_aspect_ratio_bucket_indices()
+    if len(bucket_manager) == 0:
+        raise Exception("No images were discovered by the bucket manager in the dataset.")
 
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
@@ -473,6 +484,10 @@ def main():
     def collate_fn(examples):
         if not StateTracker.status_training():
             logger.debug(f"Not training, returning nothing from collate_fn")
+            if len(examples) > 0:
+                for example in examples:
+                    if example is not None and 'instance_image' in example:
+                        example['instance_image'].close()
             return
         training_logger.debug(f"Examples: {examples}")
         training_logger.debug(f"Computing luminance for input batch")
@@ -524,10 +539,10 @@ def main():
             "luminance": batch_luminance,
         }
 
-    # DataLoaders creation:
-    # Dataset and DataLoaders creation:
+    # Data loader
     logger.info("Creating dataset iterator object")
-    train_dataset = DreamBoothDataset(
+    train_dataset = MultiAspectDataset(
+        bucket_manager=bucket_manager,
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
         size=args.resolution,
@@ -542,8 +557,8 @@ def main():
         caption_strategy=args.caption_strategy,
     )
     logger.info("Creating aspect bucket sampler")
-    custom_balanced_sampler = BalancedBucketSampler(
-        train_dataset.aspect_ratio_bucket_indices,
+    custom_balanced_sampler = MultiAspectSampler(
+        bucket_manager=bucket_manager,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
@@ -572,7 +587,13 @@ def main():
 
     with accelerator.main_process_first():
         logger.info(f"Pre-computing text embeds / updating cache.")
-        embed_cache.precompute_embeddings_for_prompts(train_dataset.get_all_captions())
+        embed_cache.precompute_embeddings_for_prompts(
+            PromptHandler.get_all_captions(
+                instance_data_root=args.instance_data_dir,
+                prepend_instance_prompt=args.prepend_instance_prompt or False,
+                use_captions=args.only_instance_prompt or False
+            )
+        )
 
     validation_prompts = []
     validation_shortnames = []

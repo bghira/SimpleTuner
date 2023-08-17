@@ -12,7 +12,8 @@ from itertools import repeat
 from ctypes import c_int
 
 logger = logging.getLogger("DatasetLoader")
-logger.setLevel(logging.INFO)
+target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING')
+logger.setLevel(target_level)
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
@@ -97,7 +98,7 @@ class DreamBoothDataset(Dataset):
             # Apply EXIF transforms
             image = exif_transpose(image)
             aspect_ratio = round(
-                image.width / image.height, 3
+                image.width / image.height, 2
             )  # Round to avoid excessive unique buckets
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
@@ -119,7 +120,7 @@ class DreamBoothDataset(Dataset):
                 # Apply EXIF transforms
                 image = exif_transpose(image)
                 aspect_ratio = round(
-                    image.width / image.height, 3
+                    image.width / image.height, 2
                 )  # Round to avoid excessive unique buckets
 
                 with threading.Lock():
@@ -347,7 +348,7 @@ class DreamBoothDataset(Dataset):
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
         W, H = input_image.size
-        aspect_ratio = round(W / H, 3)
+        aspect_ratio = round(W / H, 2)
         msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
         if W < H:
             W = resolution
