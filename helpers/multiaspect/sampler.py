@@ -233,7 +233,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         while True:
             logger.debug(f"Running __iter__ for AspectBuckets.")
-            if self._yield_random_image_if_not_training():
+            early_yield = self._yield_random_image_if_not_training()
+            if early_yield:
+                yield early_yield
                 continue
             if not self.buckets:
                 logger.warning(f"All buckets are exhausted. Resetting...")
