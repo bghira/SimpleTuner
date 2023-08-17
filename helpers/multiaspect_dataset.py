@@ -84,6 +84,9 @@ class MultiAspectDataset(Dataset):
     def __getitem__(self, image_path):
         logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
         example = {"instance_images_path": image_path}
+        if not StateTracker.status_training():
+            # Return None when not training yet.
+            return None
         if self.print_names:
             logger.info(f"Open image: {image_path}")
         
