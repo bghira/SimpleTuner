@@ -95,8 +95,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         If not in training mode, yield a random image and return True. Otherwise, return False.
         """
         if not StateTracker.status_training():
-            yield self._yield_random_image()
-            return True
+            return self._yield_random_image()
         return False
 
     def _handle_bucket_with_insufficient_images(self, bucket):
