@@ -49,6 +49,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.buckets = self.load_buckets()
         self.current_bucket = random.randint(0, len(self.buckets) - 1)
         previous_state = self.state_manager.load_state()
+        self.exhausted_buckets = []
         if 'exhausted_buckets' in previous_state:
             self.exhausted_buckets = previous_state['exhausted_buckets']
 
