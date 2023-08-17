@@ -330,6 +330,14 @@ def main():
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
+    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    bucket_manager = BucketManager(
+        instance_data_root=args.instance_data_dir,
+        cache_file=os.path.join(args.instance_data_dir, "aspect_ratio_bucket_indices.json")
+    )
+    bucket_manager.compute_aspect_ratio_bucket_indices()
+    if len(bucket_manager) == 0:
+        raise Exception("No images were discovered by the bucket manager in the dataset.")
 
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
@@ -526,13 +534,6 @@ def main():
             "add_time_ids": compute_time_ids(width, height),
             "luminance": batch_luminance,
         }
-
-    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    bucket_manager = BucketManager(
-        instance_data_root=args.instance_data_dir,
-        cache_file=os.path.join(args.instance_data_dir, "aspect_ratio_bucket_indices.json")
-    )
-    bucket_manager.compute_aspect_ratio_bucket_indices()
 
     # Data loader
     logger.info("Creating dataset iterator object")
