@@ -15,14 +15,14 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.prompts import PromptHandler
 
 logger = logging.getLogger("MultiAspectDataset")
-logger.setLevel(logging.INFO)
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
 pil_logger = logging.getLogger("PIL.Image")
-pil_logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
+pil_logger.setLevel('WARNING')
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
-pil_logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
+pil_logger.setLevel('WARNING')
 
 multiprocessing.set_start_method("fork")
 
