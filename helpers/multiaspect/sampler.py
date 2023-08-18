@@ -153,7 +153,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"Only one bucket left, and it doesn't have enough samples. Resetting..."
             )
             logger.warning(
-                f'Exhausted buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+                f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A")) for b in self.exhausted_buckets)}'
             )
             self.exhausted_buckets = []
             self.seen_images = {}
@@ -176,7 +176,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices[b]) for b in self.buckets)}'
         )
         logger.debug(
-            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A")) for b in self.exhausted_buckets)}'
         )
         logger.debug(
             "Extended Statistics:\n"
