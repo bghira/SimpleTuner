@@ -62,7 +62,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "current_bucket": self.current_bucket,
             "seen_images": self.seen_images,
         }
-        self.state_manager.log_state(state)
+        self.state_manager.save_state(state)
 
     def load_buckets(self):
         return list(
