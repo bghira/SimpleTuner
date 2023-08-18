@@ -202,7 +202,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             with Image.open(image_path) as image:
                 if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
                     image.close()
-                    self.bucket_manager.handle_small_image(image_path, bucket)
+                    self.bucket_manager.handle_small_image(
+                        image_path=image_path,
+                        bucket=bucket,
+                        delete_unwanted_images=self.delete_unwanted_images,
+                    )
                     return None
 
                 image = exif_transpose(image)
