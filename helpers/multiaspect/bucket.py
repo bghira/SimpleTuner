@@ -222,15 +222,15 @@ class BucketManager:
         if delete_unwanted_images:
             try:
                 logger.warning(
-                    f"Image too small: DELETING image and continuing search."
+                    f"Image {image_path} too small: DELETING image and continuing search."
                 )
                 os.remove(image_path)
             except Exception as e:
-                logger.warning(
-                    f"The image was already deleted. Another GPU must have gotten to it."
+                logger.debug(
+                    f"Image {image_path} was already deleted. Another GPU must have gotten to it."
                 )
         else:
             logger.warning(
-                f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
+                f"Image {image_path} too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
             )
         self.remove_image(image_path, bucket)
