@@ -13,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import argparse
 import logging
 import math
 import os
@@ -22,12 +21,8 @@ import os
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
 import random
-import gc
-import warnings
 from pathlib import Path
-from urllib.parse import urlparse
-from helpers.aspect_bucket import BalancedBucketSampler
-from helpers.multiaspect_dataset import MultiAspectDataset
+from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.state_tracker import StateTracker
@@ -335,7 +330,9 @@ def main():
         instance_data_root=args.instance_data_dir,
         cache_file=os.path.join(args.instance_data_dir, "aspect_ratio_bucket_indices.json")
     )
-    bucket_manager.compute_aspect_ratio_bucket_indices()
+    with accelerator.main_process_first():
+        bucket_manager.compute_aspect_ratio_bucket_indices()
+
     if len(bucket_manager) == 0:
         raise Exception("No images were discovered by the bucket manager in the dataset.")
 
@@ -581,12 +578,13 @@ def main():
     )
     if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
         logger.info("Pre-computing null embedding for caption dropout")
-        embed_cache.precompute_embeddings_for_prompts([""])
+        with accelerator.main_process_first():
+            embed_cache.precompute_embeddings_for_prompts([""])
     else:
         logger.warning(f'Not using caption dropout will potentially lead to overfitting on captions.')
 
+    logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
-        logger.info(f"Pre-computing text embeds / updating cache.")
         embed_cache.precompute_embeddings_for_prompts(
             PromptHandler.get_all_captions(
                 instance_data_root=args.instance_data_dir,
