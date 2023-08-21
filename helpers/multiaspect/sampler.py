@@ -236,9 +236,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def __iter__(self):
         """
-        Iterate over the sampler to yield image paths. If the system is in training mode, yield batches of unseen images.
-        If not in training mode, yield random images. If the number of unseen images in a bucket is less than the batch size,
-        yield all unseen images. If the number of seen images reaches the reset threshold, reset all buckets and seen images.
+        Iterate over the sampler to yield image paths.
+        - If the system is in training mode, yield batches of unseen images.
+        - If not in training mode, yield random images.
+        - If the number of unseen images in a bucket is less than the batch size, yield all unseen images.
+        - If the number of seen images reaches the reset threshold, reset all buckets and seen images.
         """
         while True:
             logger.debug(f"Running __iter__ for AspectBuckets.")
@@ -261,7 +263,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 if self._handle_bucket_with_not_enough_unseen_images(available_images, bucket):
                     continue
 
-            samples = random.choices(available_images, k=self.batch_size)
+            samples = random.sample(available_images, k=self.batch_size)
             to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
 
             if len(to_yield) == self.batch_size:
