@@ -158,7 +158,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # For multiple buckets:
         old_bucket = self.current_bucket
         while True:  # Keep looking until we find a bucket with unseen images
-            self.current_bucket = random.choice(self.buckets)
+            self.current_bucket = random.randint(0, len(self.buckets) - 1)
             if self.current_bucket != old_bucket and self._get_unseen_images(
                 self.buckets[self.current_bucket]
             ):
@@ -169,7 +169,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             logger.warning("All buckets seem to be exhausted. Resetting...")
             self.exhausted_buckets = []
             self.seen_images = {}
-            self.current_bucket = random.choice(self.buckets)
+            self.current_bucket = random.randint(0, len(self.buckets) - 1)
         else:
             logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
 
