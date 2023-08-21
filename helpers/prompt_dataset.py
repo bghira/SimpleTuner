@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 
+
 class PromptDataset(Dataset):
     "A simple dataset to prepare the prompts to generate class images on multiple GPUs."
 

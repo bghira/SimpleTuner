@@ -6,7 +6,7 @@ from helpers.multiaspect.state import BucketStateManager
 from helpers.state_tracker import StateTracker
 
 logger = logging.getLogger()
-logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -50,8 +50,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_bucket = random.randint(0, len(self.buckets) - 1)
         previous_state = self.state_manager.load_state()
         self.exhausted_buckets = []
-        if 'exhausted_buckets' in previous_state:
-            self.exhausted_buckets = previous_state['exhausted_buckets']
+        if "exhausted_buckets" in previous_state:
+            self.exhausted_buckets = previous_state["exhausted_buckets"]
 
     def save_state(self):
         state = {
@@ -71,7 +71,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
-        image_path = random.choice(self.bucket_manager.aspect_ratio_bucket_indices[bucket])
+        image_path = random.choice(
+            self.bucket_manager.aspect_ratio_bucket_indices[bucket]
+        )
         return image_path
 
     def _reset_buckets(self):
@@ -81,7 +83,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _get_unseen_images(self, bucket=None):
         """
-        Get unseen images from the specified bucket. 
+        Get unseen images from the specified bucket.
         If bucket is None, get unseen images from all buckets.
         """
         if bucket:
@@ -93,7 +95,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         else:
             unseen_images = []
             for b, images in self.bucket_manager.aspect_ratio_bucket_indices.items():
-                unseen_images.extend([image for image in images if image not in self.seen_images])
+                unseen_images.extend(
+                    [image for image in images if image not in self.seen_images]
+                )
             return unseen_images
 
     def _yield_random_image_if_not_training(self):
@@ -108,7 +112,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
-        if len(self.bucket_manager.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+        if (
+            len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])
+            < self.batch_size
+        ):
             if bucket not in self.exhausted_buckets:
                 self.move_to_exhausted()
             self.change_bucket()
@@ -132,35 +139,39 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def change_bucket(self):
         """
-        Change the current bucket. If the current bucket doesn't have enough samples, move it to the exhausted list
-        and select a new bucket randomly. If there's only one bucket left, reset the exhausted list and seen images.
+        Change the current bucket. If the current bucket doesn't have enough samples,
+        move it to the exhausted list and select a new bucket randomly.
+        If all buckets are exhausted, reset the exhausted list and seen images.
         """
-        # Do we just have a single bucket?
+        # If we just have a single bucket:
         if len(self.buckets) == 1:
-            logger.debug(f"Changing bucket to the only one present.")
             self.current_bucket = 0
+            # If this single bucket is exhausted, reset seen_images and exhausted_buckets
+            if not self._get_unseen_images(self.buckets[self.current_bucket]):
+                logger.warning(
+                    "The only bucket available is exhausted. Resetting seen images."
+                )
+                self.seen_images = {}
+                self.exhausted_buckets = []
             return
-        if self.buckets:
-            old_bucket = self.current_bucket
+
+        # For multiple buckets:
+        old_bucket = self.current_bucket
+        while True:  # Keep looking until we find a bucket with unseen images
             self.current_bucket = random.randint(0, len(self.buckets) - 1)
-            if old_bucket != self.current_bucket:
-                logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
-                return
-            if len(self.buckets) == 1:
-                logger.debug(f"Changing bucket to the only one present.")
-                return
-            logger.warning(
-                f"Only one bucket left, and it doesn't have enough samples. Resetting..."
-            )
-            logger.warning(
-                f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A")) for b in self.exhausted_buckets)}'
-            )
+            if self.current_bucket != old_bucket and self._get_unseen_images(
+                self.buckets[self.current_bucket]
+            ):
+                break
+
+        # If all buckets are exhausted
+        if not self._get_unseen_images(self.buckets[self.current_bucket]):
+            logger.warning("All buckets seem to be exhausted. Resetting...")
             self.exhausted_buckets = []
             self.seen_images = {}
             self.current_bucket = random.randint(0, len(self.buckets) - 1)
-            logger.info(
-                f"After resetting, changed bucket to {self.buckets[self.current_bucket]}."
-            )
+        else:
+            logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -189,7 +200,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _process_single_image(self, image_path, bucket):
         """
-        Validate and process a single image. 
+        Validate and process a single image.
         Return the image path if valid, otherwise return None.
         """
         if not os.path.exists(image_path):
@@ -200,7 +211,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         try:
             logger.debug(f"AspectBucket is loading image: {image_path}")
             with Image.open(image_path) as image:
-                if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
+                if (
+                    image.width < self.minimum_image_size
+                    or image.height < self.minimum_image_size
+                ):
                     image.close()
                     self.bucket_manager.handle_small_image(
                         image_path=image_path,
@@ -213,7 +227,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 aspect_ratio = round(image.width / image.height, 2)
             actual_bucket = str(aspect_ratio)
             if actual_bucket != bucket:
-                self.bucket_manager.handle_incorrect_bucket(image_path, bucket, actual_bucket)
+                self.bucket_manager.handle_incorrect_bucket(
+                    image_path, bucket, actual_bucket
+                )
                 return None
 
             return image_path
@@ -260,7 +276,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             available_images = self._get_unseen_images(bucket)
 
             if len(available_images) < self.batch_size:
-                if self._handle_bucket_with_not_enough_unseen_images(available_images, bucket):
+                if self._handle_bucket_with_not_enough_unseen_images(
+                    available_images, bucket
+                ):
                     continue
 
             samples = random.sample(available_images, k=self.batch_size)
@@ -275,7 +293,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def __len__(self):
         return sum(
-            len(indices) for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
+            len(indices)
+            for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
         )
 
     @staticmethod

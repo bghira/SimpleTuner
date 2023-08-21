@@ -12,7 +12,7 @@ from itertools import repeat
 from ctypes import c_int
 
 logger = logging.getLogger("DatasetLoader")
-target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING')
+target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
 logger.setLevel(target_level)
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -147,7 +147,9 @@ class DreamBoothDataset(Dataset):
         logger.info("Loading of aspect bucket indexes completed.")
         return aspect_ratio_bucket_indices
 
-    def _bucket_worker(self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set):
+    def _bucket_worker(
+        self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set
+    ):
         for file in files:
             if str(file) in existing_files_set:
                 tqdm_queue.put(1)  # Update progress bar but skip further processing
@@ -161,13 +163,16 @@ class DreamBoothDataset(Dataset):
 
     def compute_aspect_ratio_bucket_indices(self, cache_file):
         logger.warning("Computing aspect ratio bucket indices.")
-        
+
         # Step 1: Initialization Check
-        if hasattr(self, 'aspect_ratio_bucket_indices') and self.aspect_ratio_bucket_indices:
+        if (
+            hasattr(self, "aspect_ratio_bucket_indices")
+            and self.aspect_ratio_bucket_indices
+        ):
             aspect_ratio_bucket_indices = self.aspect_ratio_bucket_indices
         else:
             aspect_ratio_bucket_indices = {}
-            
+
         def rglob_follow_symlinks(path: Path, pattern: str):
             for p in path.glob(pattern):
                 yield p
@@ -179,25 +184,28 @@ class DreamBoothDataset(Dataset):
                     if real_path.is_dir():
                         yield from rglob_follow_symlinks(real_path, pattern)
 
-        logger.info('Built queue object.')
+        logger.info("Built queue object.")
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
-        logger.info('Build file list..')
+        logger.info("Build file list..")
         all_image_files = list(
-            rglob_follow_symlinks(
-                Path(self.instance_data_root), "*.[jJpP][pPnN][gG]"
-            )
+            rglob_follow_symlinks(Path(self.instance_data_root), "*.[jJpP][pPnN][gG]")
         )
         self._length = len(all_image_files)
-        logger.info('Split file list into shards.')
+        logger.info("Split file list into shards.")
         files_split = np.array_split(all_image_files, 8)
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
         workers = []
-        logger.info('Process lists...')
+        logger.info("Process lists...")
         for files in files_split:
             p = Process(
                 target=self._bucket_worker,
-                args=(tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set),
+                args=(
+                    tqdm_queue,
+                    files,
+                    aspect_ratio_bucket_indices_queue,
+                    existing_files_set,
+                ),
             )
             p.start()
             workers.append(p)
@@ -208,33 +216,38 @@ class DreamBoothDataset(Dataset):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
                 while not aspect_ratio_bucket_indices_queue.empty():
-                    aspect_ratio_bucket_indices.update(aspect_ratio_bucket_indices_queue.get())
+                    aspect_ratio_bucket_indices.update(
+                        aspect_ratio_bucket_indices_queue.get()
+                    )
 
         # Gather any remaining results
         while not aspect_ratio_bucket_indices_queue.empty():
             aspect_ratio_bucket_indices.update(aspect_ratio_bucket_indices_queue.get())
-        logger.info('Join processes and finish up.')
+        logger.info("Join processes and finish up.")
         for p in workers:
             p.join()
 
         # Step 3: Updating the Cache
-        new_file_paths = [str(file) for file in all_image_files if str(file) not in self.instance_images_path]
-        
+        new_file_paths = [
+            str(file)
+            for file in all_image_files
+            if str(file) not in self.instance_images_path
+        ]
+
         # Update the instance_images_path to include the new images
         self.instance_images_path += new_file_paths
 
         # Update the total number of instance images
         self.num_instance_images = len(self.instance_images_path)
-        
+
         # Save updated aspect_ratio_bucket_indices to the cache file
         with cache_file.open("w") as f:
-            logger.info('Writing updated cache file to disk')
+            logger.info("Writing updated cache file to disk")
             json.dump(aspect_ratio_bucket_indices, f)
-        
-        logger.info('Completed aspect bucket update.')
-        
-        return aspect_ratio_bucket_indices
 
+        logger.info("Completed aspect bucket update.")
+
+        return aspect_ratio_bucket_indices
 
     def assign_to_buckets(self):
         cache_file = self.instance_data_root / "aspect_ratio_bucket_indices.json"

@@ -4,7 +4,7 @@ from PIL import Image
 from helpers.multiaspect.image import MultiaspectImage
 
 logger = logging.getLogger("VAECache")
-logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL') or "INFO")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class VAECache:

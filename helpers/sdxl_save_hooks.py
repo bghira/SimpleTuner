@@ -2,6 +2,7 @@ from diffusers.training_utils import EMAModel
 from diffusers import UNet2DConditionModel
 import os
 
+
 class SDXLSaveHook:
     def __init__(self, args, ema_unet, accelerator):
         self.args = args

@@ -64,6 +64,7 @@ from diffusers import (
 
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+
 torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
@@ -171,14 +172,14 @@ def main(args):
         scheduler_model,
         subfolder="scheduler",
         timestep_spacing="trailing",
-        prediction_type="v_prediction"
+        prediction_type="v_prediction",
     )
     trained_betas = enforce_zero_terminal_snr(temp_scheduler.betas).numpy().tolist()
     noise_scheduler = DDPMScheduler.from_pretrained(
         scheduler_model,
         subfolder="scheduler",
         trained_betas=trained_betas,
-        prediction_type="v_prediction"
+        prediction_type="v_prediction",
     )
     text_encoder = freeze_text_encoder(
         args,
@@ -529,10 +530,10 @@ def main(args):
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
-                    logging.debug(f'Using Epsilon target.')
+                    logging.debug(f"Using Epsilon target.")
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    logging.debug(f'Using v-prediction target.')
+                    logging.debug(f"Using v-prediction target.")
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"

@@ -11,16 +11,16 @@ directory = os.getcwd()
 files = [f for f in os.listdir(directory) if f.endswith(".png")]
 
 # Extract subjects from files
-subjects = list(set([f.split('-')[0] for f in files]))
+subjects = list(set([f.split("-")[0] for f in files]))
 
 # For each subject, sort the files and combine them
 for subject in subjects:
     # Get all images of the current subject
     subject_files = [f for f in files if f.startswith(subject)]
-    subject_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
+    subject_files.sort(key=lambda x: int(x.split("-")[1].split(".")[0]))
 
     # Create a new blank image to paste the others onto
-    new_image = Image.new('RGB', (len(subject_files) * img_size[0], img_size[1]))
+    new_image = Image.new("RGB", (len(subject_files) * img_size[0], img_size[1]))
 
     # For each image file
     for i, file in enumerate(subject_files):
@@ -31,4 +31,4 @@ for subject in subjects:
         new_image.paste(img, (i * img_size[0], 0))
 
     # Save the new image
-    new_image.save(f'{subject}-combined.png')
+    new_image.save(f"{subject}-combined.png")

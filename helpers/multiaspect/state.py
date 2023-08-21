@@ -1,5 +1,6 @@
 import json, os
 
+
 class BucketStateManager:
     def __init__(self, state_path, seen_images_path):
         self.state_path = state_path

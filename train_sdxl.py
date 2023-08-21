@@ -40,14 +40,14 @@ connection_logger = logging.getLogger("urllib3.connectionpool")
 training_logger = logging.getLogger("training-loop")
 
 # More important logs.
-target_level = 'INFO'
+target_level = "INFO"
 # Is env var set?
-if os.environ.get('SIMPLETUNER_LOG_LEVEL'):
-    target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL')
+if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
+    target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
 logger.setLevel(target_level)
-training_logger_level = 'WARNING'
-if os.environ.get('SIMPLETUNER_LOG_LEVEL'):
-    training_logger_level = os.environ.get('SIMPLETUNER_LOG_LEVEL')
+training_logger_level = "WARNING"
+if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
+    training_logger_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
 training_logger.setLevel(training_logger_level)
 
 # Less important logs.
@@ -135,6 +135,7 @@ def import_model_class_from_model_name_or_path(
         return CLIPTextModelWithProjection
     else:
         raise ValueError(f"{model_class} is not supported.")
+
 
 def main():
     args = parse_args()
@@ -328,19 +329,24 @@ def main():
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
-        cache_file=os.path.join(args.instance_data_dir, "aspect_ratio_bucket_indices.json")
+        cache_file=os.path.join(
+            args.instance_data_dir, "aspect_ratio_bucket_indices.json"
+        ),
     )
     with accelerator.main_process_first():
         bucket_manager.compute_aspect_ratio_bucket_indices()
 
     if len(bucket_manager) == 0:
-        raise Exception("No images were discovered by the bucket manager in the dataset.")
+        raise Exception(
+            "No images were discovered by the bucket manager in the dataset."
+        )
 
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
     if args.dataset_name is not None:
         logger.info(f"Loading Huggingface Hub dataset: {args.dataset_name}")
-        from datasets import load_dataset        
+        from datasets import load_dataset
+
         # Downloading and loading a dataset from the hub.
         dataset = load_dataset(
             args.dataset_name,
@@ -483,8 +489,8 @@ def main():
             logger.debug(f"Not training, returning nothing from collate_fn")
             if len(examples) > 0:
                 for example in examples:
-                    if example is not None and 'instance_image' in example:
-                        example['instance_image'].close()
+                    if example is not None and "instance_image" in example:
+                        example["instance_image"].close()
             return
         training_logger.debug(f"Examples: {examples}")
         training_logger.debug(f"Computing luminance for input batch")
@@ -561,7 +567,7 @@ def main():
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
-        minimum_image_size=args.minimum_image_size
+        minimum_image_size=args.minimum_image_size,
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -576,12 +582,17 @@ def main():
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders, tokenizers=tokenizers, accelerator=accelerator
     )
-    if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
+    if (
+        args.caption_dropout_probability is not None
+        and args.caption_dropout_probability > 0
+    ):
         logger.info("Pre-computing null embedding for caption dropout")
         with accelerator.main_process_first():
             embed_cache.precompute_embeddings_for_prompts([""])
     else:
-        logger.warning(f'Not using caption dropout will potentially lead to overfitting on captions.')
+        logger.warning(
+            f"Not using caption dropout will potentially lead to overfitting on captions."
+        )
 
     logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
@@ -589,7 +600,7 @@ def main():
             PromptHandler.get_all_captions(
                 instance_data_root=args.instance_data_dir,
                 prepend_instance_prompt=args.prepend_instance_prompt or False,
-                use_captions=args.only_instance_prompt or False
+                use_captions=args.only_instance_prompt or False,
             )
         )
 
@@ -598,21 +609,22 @@ def main():
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
         from helpers.prompts import prompts as prompt_library
+
         # Prompt format: { 'shortname': 'this is the prompt', ... }
         for shortname, prompt in prompt_library.items():
-            logger.info(f'Precomputing validation prompt embeds: {shortname}')
+            logger.info(f"Precomputing validation prompt embeds: {shortname}")
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     elif args.validation_prompt is not None:
         # Use a single prompt for validation.
         validation_prompts = [args.validation_prompt]
-        validation_shortnames = ['validation']
+        validation_shortnames = ["validation"]
         (
             validation_prompt_embeds,
             validation_pooled_embeds,
         ) = embed_cache.compute_embeddings_for_prompts([args.validation_prompt])
-    
+
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
         (
@@ -798,7 +810,7 @@ def main():
             if batch is None:
                 logging.warning(f"Burning a None size batch.")
                 continue
-            
+
             # Add the current batch of training data's avg luminance to a list.
             training_luminance_values.append(batch["luminance"])
 
@@ -847,11 +859,14 @@ def main():
                 )
                 # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
-                if args.caption_dropout_probability is not None and args.caption_dropout_probability > 0:
+                if (
+                    args.caption_dropout_probability is not None
+                    and args.caption_dropout_probability > 0
+                ):
                     # When using caption dropout, we will use the null embed instead of prompt embeds.
                     # The chance of this happening is dictated by the caption_dropout_probability.
                     if random.random() < args.caption_dropout_probability:
-                        training_logger.debug(f'Caption dropout triggered.')
+                        training_logger.debug(f"Caption dropout triggered.")
                         (
                             batch["prompt_embeds_all"],
                             batch["add_text_embeds_all"],
@@ -910,7 +925,9 @@ def main():
                         training_logger.error("snr contains NaN values")
                     if torch.any(snr == 0):
                         training_logger.error("snr contains zero values")
-                    training_logger.debug(f'Calculating MSE loss weights using SNR as divisor')
+                    training_logger.debug(
+                        f"Calculating MSE loss weights using SNR as divisor"
+                    )
                     mse_loss_weights = (
                         torch.stack(
                             [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
@@ -926,16 +943,18 @@ def main():
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
-                    training_logger.debug(f'Calculating original MSE loss without reduction')
+                    training_logger.debug(
+                        f"Calculating original MSE loss without reduction"
+                    )
                     loss = F.mse_loss(
                         model_pred.float(), target.float(), reduction="none"
                     )
-                    training_logger.debug(f'Calculating SNR-weighted MSE loss')
+                    training_logger.debug(f"Calculating SNR-weighted MSE loss")
                     loss = (
                         loss.mean(dim=list(range(1, len(loss.shape))))
                         * mse_loss_weights
                     )
-                    training_logger.debug(f'Reducing loss via mean')
+                    training_logger.debug(f"Reducing loss via mean")
                     loss = loss.mean()
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -960,8 +979,17 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 # Average out the luminance values of each batch, so that we can store that in this step.
-                avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
-                accelerator.log({"train_luminance": avg_training_data_luminance, "train_loss": train_loss, "learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
+                avg_training_data_luminance = sum(training_luminance_values) / len(
+                    training_luminance_values
+                )
+                accelerator.log(
+                    {
+                        "train_luminance": avg_training_data_luminance,
+                        "train_loss": train_loss,
+                        "learning_rate": lr_scheduler.get_last_lr()[0],
+                    },
+                    step=global_step,
+                )
                 # Reset some values for the next go.
                 training_luminance_values = []
                 train_loss = 0.0
@@ -1013,7 +1041,11 @@ def main():
 
             ### BEGIN: Perform validation every `validation_epochs` steps
             if accelerator.is_main_process:
-                if validation_prompts and global_step % args.validation_steps == 0 and global_step > 1:
+                if (
+                    validation_prompts
+                    and global_step % args.validation_steps == 0
+                    and global_step > 1
+                ):
                     if (
                         args.validation_prompt is None
                         or args.num_validation_images is None
@@ -1023,7 +1055,10 @@ def main():
                             f"Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!"
                         )
                         continue
-                    if args.gradient_accumulation_steps > 0 and step % args.gradient_accumulation_steps != 0:
+                    if (
+                        args.gradient_accumulation_steps > 0
+                        and step % args.gradient_accumulation_steps != 0
+                    ):
                         # We do not want to perform validation on a partial batch.
                         continue
                     logger.info(
@@ -1079,37 +1114,52 @@ def main():
                             ).manual_seed(args.seed or 0)
                             for validation_prompt in validation_prompts:
                                 # Each validation prompt needs its own embed.
-                                current_validation_prompt_embeds, current_validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts(
+                                (
+                                    current_validation_prompt_embeds,
+                                    current_validation_pooled_embeds,
+                                ) = embed_cache.compute_embeddings_for_prompts(
                                     [validation_prompt]
                                 )
-                                logger.info(f'Generating validation image: {validation_prompt}')
-                                validation_images.extend(pipeline(
-                                    prompt_embeds=current_validation_prompt_embeds,
-                                    pooled_prompt_embeds=current_validation_pooled_embeds,
-                                    negative_prompt_embeds=validation_negative_prompt_embeds,
-                                    negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                                    num_images_per_prompt=args.num_validation_images,
-                                    num_inference_steps=30,
-                                    guidance_scale=args.validation_guidance,
-                                    guidance_rescale=args.validation_guidance_rescale,
-                                    generator=validation_generator,
-                                    height=args.validation_resolution,
-                                    width=args.validation_resolution,
-                                ).images)
+                                logger.info(
+                                    f"Generating validation image: {validation_prompt}"
+                                )
+                                validation_images.extend(
+                                    pipeline(
+                                        prompt_embeds=current_validation_prompt_embeds,
+                                        pooled_prompt_embeds=current_validation_pooled_embeds,
+                                        negative_prompt_embeds=validation_negative_prompt_embeds,
+                                        negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                                        num_images_per_prompt=args.num_validation_images,
+                                        num_inference_steps=30,
+                                        guidance_scale=args.validation_guidance,
+                                        guidance_rescale=args.validation_guidance_rescale,
+                                        generator=validation_generator,
+                                        height=args.validation_resolution,
+                                        width=args.validation_resolution,
+                                    ).images
+                                )
 
                         for tracker in accelerator.trackers:
                             if tracker.name == "wandb":
                                 validation_document = {}
                                 validation_luminance = []
-                                for idx, validation_image in enumerate(validation_images):
+                                for idx, validation_image in enumerate(
+                                    validation_images
+                                ):
                                     # Create a WandB entry containing each image.
-                                    validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                                    validation_document[
+                                        validation_shortnames[idx]
+                                    ] = wandb.Image(validation_image)
                                     validation_luminance.append(
                                         calculate_luminance(validation_image)
                                     )
                                 # Compute the mean luminance across all samples:
-                                validation_luminance = torch.tensor(validation_luminance)
-                                validation_document["validation_luminance"] = validation_luminance.mean()
+                                validation_luminance = torch.tensor(
+                                    validation_luminance
+                                )
+                                validation_document[
+                                    "validation_luminance"
+                                ] = validation_luminance.mean()
                                 del validation_luminance
                                 tracker.log(validation_document, step=global_step)
                         val_img_idx = 0
@@ -1150,8 +1200,16 @@ def main():
             unet=unet,
             revision=args.revision,
         )
-        pipeline.scheduler.config = noise_scheduler.config
-        pipeline.save_pretrained("/notebooks/datasets/models/ptx0-xltest", safe_serialization=True)
+        pipeline.scheduler = DDIMScheduler.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="scheduler",
+            prediction_type=args.prediction_type,
+            timestep_spacing=args.training_scheduler_timestep_spacing,
+            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+        )
+        pipeline.save_pretrained(
+            "/notebooks/datasets/models/ptx0-xltest", safe_serialization=True
+        )
 
         if args.push_to_hub:
             upload_folder(
@@ -1170,22 +1228,25 @@ def main():
                 ).manual_seed(args.seed or 0)
                 for validation_prompt in validation_prompts:
                     # Each validation prompt needs its own embed.
-                    current_validation_prompt_embeds, current_validation_pooled_embeds = embed_cache.compute_embeddings_for_prompts(
-                        [validation_prompt]
+                    (
+                        current_validation_prompt_embeds,
+                        current_validation_pooled_embeds,
+                    ) = embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                    validation_images.extend(
+                        pipeline(
+                            prompt_embeds=current_validation_prompt_embeds,
+                            pooled_prompt_embeds=current_validation_pooled_embeds,
+                            negative_prompt_embeds=validation_negative_prompt_embeds,
+                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                            num_images_per_prompt=args.num_validation_images,
+                            num_inference_steps=30,
+                            guidance_scale=args.validation_guidance,
+                            guidance_rescale=args.validation_guidance_rescale,
+                            generator=validation_generator,
+                            height=args.validation_resolution,
+                            width=args.validation_resolution,
+                        ).images
                     )
-                    validation_images.extend(pipeline(
-                        prompt_embeds=current_validation_prompt_embeds,
-                        pooled_prompt_embeds=current_validation_pooled_embeds,
-                        negative_prompt_embeds=validation_negative_prompt_embeds,
-                        negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                        num_images_per_prompt=args.num_validation_images,
-                        num_inference_steps=30,
-                        guidance_scale=args.validation_guidance,
-                        guidance_rescale=args.validation_guidance_rescale,
-                        generator=validation_generator,
-                        height=args.validation_resolution,
-                        width=args.validation_resolution,
-                    ).images)
 
                 for tracker in accelerator.trackers:
                     if tracker.name == "wandb":
@@ -1193,13 +1254,17 @@ def main():
                         validation_luminance = []
                         for idx, validation_image in enumerate(validation_images):
                             # Create a WandB entry containing each image.
-                            validation_document[validation_shortnames[idx]] = wandb.Image(validation_image)
+                            validation_document[
+                                validation_shortnames[idx]
+                            ] = wandb.Image(validation_image)
                             validation_luminance.append(
                                 calculate_luminance(validation_image)
                             )
                         # Compute the mean luminance across all samples:
                         validation_luminance = torch.tensor(validation_luminance)
-                        validation_document["validation_luminance"] = validation_luminance.mean()
+                        validation_document[
+                            "validation_luminance"
+                        ] = validation_luminance.mean()
                         del validation_luminance
                         tracker.log(validation_document, step=global_step)
 

@@ -1,6 +1,12 @@
 # Use Pytorch 2!
 import torch
-from diffusers import StableDiffusionPipeline, DiffusionPipeline, AutoencoderKL, UNet2DConditionModel, DDPMScheduler
+from diffusers import (
+    StableDiffusionPipeline,
+    DiffusionPipeline,
+    AutoencoderKL,
+    UNet2DConditionModel,
+    DDPMScheduler,
+)
 from transformers import CLIPTextModel
 
 # Any model currently on Huggingface Hub.
@@ -8,20 +14,17 @@ from transformers import CLIPTextModel
 # model_id = 'ptx0/realism-engine'
 # model_id = 'ptx0/artius_v21'
 # model_id = 'ptx0/pseudo-journey'
-model_id = 'ptx0/pseudo-journey-v2'
+model_id = "ptx0/pseudo-journey-v2"
 pipeline = DiffusionPipeline.from_pretrained(model_id)
 
 # Optimize!
 pipeline.unet = torch.compile(pipeline.unet)
-scheduler = DDPMScheduler.from_pretrained(
-    model_id,
-    subfolder="scheduler"
-)
+scheduler = DDPMScheduler.from_pretrained(model_id, subfolder="scheduler")
 
 # Remove this if you get an error.
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
 
-pipeline.to('cuda')
+pipeline.to("cuda")
 prompts = {
     "woman": "a woman, hanging out on the beach",
     "man": "a man playing guitar in a park",
@@ -38,12 +41,17 @@ prompts = {
     "wizarddd": "digital art, fantasy, portrait of an old wizard, detailed",
     "macro": "a dramatic city-scape at sunset or sunrise",
     "micro": "RNA and other molecular machinery of life",
-    "gecko": "a leopard gecko stalking a cricket"
+    "gecko": "a leopard gecko stalking a cricket",
 }
 for shortname, prompt in prompts.items():
     # old prompt: ''
-    image = pipeline(prompt=prompt,
-        negative_prompt='malformed, disgusting, overexposed, washed-out',
-        num_inference_steps=32, generator=torch.Generator(device='cuda').manual_seed(1641421826), 
-        width=1152, height=768, guidance_scale=7.5).images[0]
-    image.save(f'test/{shortname}_nobetas.png', format="PNG")
+    image = pipeline(
+        prompt=prompt,
+        negative_prompt="malformed, disgusting, overexposed, washed-out",
+        num_inference_steps=32,
+        generator=torch.Generator(device="cuda").manual_seed(1641421826),
+        width=1152,
+        height=768,
+        guidance_scale=7.5,
+    ).images[0]
+    image.save(f"test/{shortname}_nobetas.png", format="PNG")

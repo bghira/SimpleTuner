@@ -1,5 +1,6 @@
 import os
 
+
 def save_model_card(
     repo_id: str,
     images=None,
@@ -38,4 +39,3 @@ DreamBooth for the text encoder was enabled: {train_text_encoder}.
 """
     with open(os.path.join(repo_folder, "README.md"), "w") as f:
         f.write(yaml + model_card)
-

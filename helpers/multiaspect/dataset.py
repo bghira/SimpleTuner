@@ -15,14 +15,14 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.prompts import PromptHandler
 
 logger = logging.getLogger("MultiAspectDataset")
-logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
 pil_logger = logging.getLogger("PIL.Image")
-pil_logger.setLevel('WARNING')
+pil_logger.setLevel("WARNING")
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
-pil_logger.setLevel('WARNING')
+pil_logger.setLevel("WARNING")
 
 multiprocessing.set_start_method("fork")
 
@@ -89,7 +89,7 @@ class MultiAspectDataset(Dataset):
             return None
         if self.print_names:
             logger.info(f"Open image: {image_path}")
-        
+
         # Images might fail to load. If so, it is better to just be the bearer of bad news.
         try:
             instance_image = Image.open(image_path)
@@ -109,7 +109,7 @@ class MultiAspectDataset(Dataset):
             image_path=image_path,
             caption_strategy=self.caption_strategy,
             use_captions=self.use_captions,
-            prepend_instance_prompt=self.prepend_instance_prompt
+            prepend_instance_prompt=self.prepend_instance_prompt,
         )
 
         return example

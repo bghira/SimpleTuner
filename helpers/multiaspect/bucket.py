@@ -6,8 +6,9 @@ from multiprocessing import Process, Queue
 import numpy as np
 
 logger = logging.getLogger("BucketManager")
-target_level = os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING')
+target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
 logger.setLevel(target_level)
+
 
 class BucketManager:
     def __init__(self, instance_data_root, cache_file):
@@ -84,7 +85,7 @@ class BucketManager:
             key: [str(path) for path in value]
             for key, value in self.aspect_ratio_bucket_indices.items()
         }
-        
+
         cache_data = {
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
             "instance_images_path": [str(path) for path in self.instance_images_path],
