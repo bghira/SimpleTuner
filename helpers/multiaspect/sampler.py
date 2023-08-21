@@ -132,35 +132,36 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def change_bucket(self):
         """
-        Change the current bucket. If the current bucket doesn't have enough samples, move it to the exhausted list
-        and select a new bucket randomly. If there's only one bucket left, reset the exhausted list and seen images.
+        Change the current bucket. If the current bucket doesn't have enough samples, 
+        move it to the exhausted list and select a new bucket randomly. 
+        If all buckets are exhausted, reset the exhausted list and seen images.
         """
-        # Do we just have a single bucket?
+        # If we just have a single bucket:
         if len(self.buckets) == 1:
-            logger.debug(f"Changing bucket to the only one present.")
             self.current_bucket = 0
+            # If this single bucket is exhausted, reset seen_images and exhausted_buckets
+            if not self._get_unseen_images(self.buckets[self.current_bucket]):
+                logger.warning("The only bucket available is exhausted. Resetting seen images.")
+                self.seen_images = {}
+                self.exhausted_buckets = []
             return
-        if self.buckets:
-            old_bucket = self.current_bucket
-            self.current_bucket = random.randint(0, len(self.buckets) - 1)
-            if old_bucket != self.current_bucket:
-                logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
-                return
-            if len(self.buckets) == 1:
-                logger.debug(f"Changing bucket to the only one present.")
-                return
-            logger.warning(
-                f"Only one bucket left, and it doesn't have enough samples. Resetting..."
-            )
-            logger.warning(
-                f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A")) for b in self.exhausted_buckets)}'
-            )
+
+        # For multiple buckets:
+        old_bucket = self.current_bucket
+        while True: # Keep looking until we find a bucket with unseen images
+            self.current_bucket = random.choice(self.buckets)
+            if self.current_bucket != old_bucket and self._get_unseen_images(self.buckets[self.current_bucket]):
+                break
+
+        # If all buckets are exhausted
+        if not self._get_unseen_images(self.buckets[self.current_bucket]):
+            logger.warning("All buckets seem to be exhausted. Resetting...")
             self.exhausted_buckets = []
             self.seen_images = {}
-            self.current_bucket = random.randint(0, len(self.buckets) - 1)
-            logger.info(
-                f"After resetting, changed bucket to {self.buckets[self.current_bucket]}."
-            )
+            self.current_bucket = random.choice(self.buckets)
+        else:
+            logger.info(f"Changing bucket to {self.buckets[self.current_bucket]}.")
+
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
