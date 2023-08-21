@@ -2,6 +2,7 @@ from transformers import PretrainedConfig
 from diffusers import UNet2DConditionModel
 import os, logging, shutil
 
+
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str
 ):
@@ -25,7 +26,8 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
-def register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls):    
+
+def register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls):
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
         for model in models:
@@ -43,10 +45,14 @@ def register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls)
                     logging.info(
                         f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
                     )
-                    logging.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+                    logging.info(
+                        f"removing checkpoints: {', '.join(removing_checkpoints)}"
+                    )
 
                     for removing_checkpoint in removing_checkpoints:
-                        removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
+                        removing_checkpoint = os.path.join(
+                            args.output_dir, removing_checkpoint
+                        )
                         shutil.rmtree(removing_checkpoint)
             sub_dir = (
                 "unet"

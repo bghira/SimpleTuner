@@ -7,6 +7,7 @@ import json
 import concurrent.futures
 from PIL import Image
 
+
 def get_aspect_ratio(image_path):
     try:
         with Image.open(image_path) as img:
@@ -16,16 +17,22 @@ def get_aspect_ratio(image_path):
         os.remove(image_path)
         return None
 
+
 def analyze_images(directory_path):
     aspect_ratios = {}
     good_count = 0
     bad_count = 0
-    image_files = [os.path.join(directory_path, filename) 
-                   for filename in os.listdir(directory_path) 
-                   if filename.endswith(".jpg") or filename.endswith(".png")]
-    
+    image_files = [
+        os.path.join(directory_path, filename)
+        for filename in os.listdir(directory_path)
+        if filename.endswith(".jpg") or filename.endswith(".png")
+    ]
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=64) as executor:
-        futures = {executor.submit(get_aspect_ratio, image_path): image_path for image_path in image_files}
+        futures = {
+            executor.submit(get_aspect_ratio, image_path): image_path
+            for image_path in image_files
+        }
         for future in concurrent.futures.as_completed(futures):
             image_path = futures[future]
             try:
@@ -41,12 +48,14 @@ def analyze_images(directory_path):
                     bad_count += 1
             except Exception as e:
                 pass
-    print(f'Good images: {good_count}, Bad images: {bad_count}')
+    print(f"Good images: {good_count}, Bad images: {bad_count}")
     return aspect_ratios
 
+
 def write_to_json(data, filename):
-    with open(filename, 'w') as outfile:
+    with open(filename, "w") as outfile:
         json.dump(data, outfile)
+
 
 if __name__ == "__main__":
     image_directory = "/notebooks/datasets/laion-high-resolution/downloaded_images"

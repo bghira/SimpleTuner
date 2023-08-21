@@ -92,14 +92,18 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
     def handle_small_image(self, image_path, bucket):
         if self.delete_unwanted_images:
             try:
-                logger.warning(f"Image too small: DELETING image and continuing search.")
+                logger.warning(
+                    f"Image too small: DELETING image and continuing search."
+                )
                 os.remove(image_path)
             except Exception as e:
                 logger.warning(
                     f"The image was already deleted. Another GPU must have gotten to it."
                 )
         else:
-            logger.warning(f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket.")
+            logger.warning(
+                f"Image too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
+            )
         self.remove_image(image_path, bucket)
 
     def handle_incorrect_bucket(self, image_path, bucket, actual_bucket):
@@ -138,7 +142,10 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
             bucket = self.buckets[self.current_bucket]
 
-            if len(self.buckets) > 1 and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            if (
+                len(self.buckets) > 1
+                and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
+            ):
                 if bucket not in self.exhausted_buckets:
                     self.move_to_exhausted()
                 self.change_bucket()
@@ -168,7 +175,11 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             if (len(available_images) < self.batch_size) and (len(self.buckets) == 1):
                 # We have to check if we have enough 'seen' images, and bring them back.
                 all_bucket_images = self.aspect_ratio_bucket_indices[bucket]
-                total = len(self.seen_images) + len(available_images) + len(all_bucket_images)
+                total = (
+                    len(self.seen_images)
+                    + len(available_images)
+                    + len(all_bucket_images)
+                )
                 if total < self.batch_size:
                     logger.warning(
                         f"Not enough unseen images ({len(available_images)}) in the bucket: {bucket}! Overly-repeating training images."
@@ -202,7 +213,10 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                 except:
                     logger.warning(f"Image was bad or in-progress: {image_path}")
                     continue
-                if image.width < self.minimum_image_size or image.height < self.minimum_image_size:
+                if (
+                    image.width < self.minimum_image_size
+                    or image.height < self.minimum_image_size
+                ):
                     image.close()
                     self.handle_small_image(image_path, bucket)
                     continue

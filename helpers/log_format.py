@@ -1,6 +1,7 @@
 import logging
 from colorama import Fore, Back, Style, init
 
+
 class ColorizedFormatter(logging.Formatter):
     level_colors = {
         logging.DEBUG: Fore.CYAN,
@@ -22,7 +23,7 @@ init(autoreset=True)
 
 # Set up logging with the custom formatter
 logger = logging.getLogger()
-logger.setLevel('DEBUG')
+logger.setLevel("DEBUG")
 new_handler = logging.StreamHandler()
 new_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 # Remove existing handlers
@@ -31,5 +32,5 @@ for handler in logger.handlers[:]:
 if not logger.handlers:
     logger.addHandler(new_handler)
 
-pil_logger = logging.getLogger('PIL')
+pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)

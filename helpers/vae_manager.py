@@ -5,6 +5,7 @@ from helpers.vae_cache import VAECache
 logger = logging.getLogger("VAEManager")
 logger.setLevel("DEBUG")
 
+
 class VAEManager:
     def __init__(self, vae_path, subfolder, revision, force_upcast, device):
         self.vae_path = vae_path
@@ -16,7 +17,9 @@ class VAEManager:
     def initialise_vae(self, args):
         vae = AutoencoderKL.from_pretrained(
             self.vae_path,
-            subfolder=self.subfolder if args.pretrained_vae_model_name_or_path is None else None,
+            subfolder=self.subfolder
+            if args.pretrained_vae_model_name_or_path is None
+            else None,
             revision=self.revision,
             force_upcast=self.force_upcast,
         )
@@ -26,7 +29,7 @@ class VAEManager:
     def set_vae_dtype(self, args, vae):
         vae_dtype = torch.float32
         if hasattr(args, "vae_dtype"):
-            logger.info(f'Configured VAE type to {args.vae_dtype}')
+            logger.info(f"Configured VAE type to {args.vae_dtype}")
             if args.vae_dtype == "bf16":
                 vae_dtype = torch.bfloat16
             elif args.vae_dtype == "fp16":
@@ -37,7 +40,7 @@ class VAEManager:
                 vae_dtype = torch.float32
             else:
                 raise ValueError(f"Unknown dtype: `--vae_dtype {args.vae_dtype}`")
-        logger.info(f'Moving VAE to GPU {self.gpu} with dtype {vae_dtype}')
+        logger.info(f"Moving VAE to GPU {self.gpu} with dtype {vae_dtype}")
         if args.pretrained_vae_model_name_or_path is not None:
             vae.to(self.device, dtype=vae_dtype)
         else:

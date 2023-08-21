@@ -3,7 +3,8 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 import logging
 
-logger = logging.getLogger('MultiaspectImage')
+logger = logging.getLogger("MultiaspectImage")
+
 
 class MultiaspectImage:
     @staticmethod
@@ -16,15 +17,15 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def process_for_bucket(image_path_str, aspect_ratio_bucket_indices, aspect_ratio_rounding: int = 2):
+    def process_for_bucket(
+        image_path_str, aspect_ratio_bucket_indices, aspect_ratio_rounding: int = 2
+    ):
         try:
             with Image.open(image_path_str) as image:
                 # Apply EXIF transforms
                 image = exif_transpose(image)
                 # Round to avoid excessive unique buckets
-                aspect_ratio = round(
-                    image.width / image.height, aspect_ratio_rounding
-                )
+                aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []

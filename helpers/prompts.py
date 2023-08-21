@@ -156,8 +156,11 @@ class PromptHandler:
         return instance_prompt
 
     @staticmethod
-    def get_all_captions(instance_data_root: str, use_captions: bool, prepend_instance_prompt: bool) -> list:
+    def get_all_captions(
+        instance_data_root: str, use_captions: bool, prepend_instance_prompt: bool
+    ) -> list:
         import os
+
         captions = []
 
         def rglob_follow_symlinks(path: Path, pattern: str):
