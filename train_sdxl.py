@@ -1150,7 +1150,13 @@ def main():
             unet=unet,
             revision=args.revision,
         )
-        pipeline.scheduler.config = noise_scheduler.config
+        pipeline.scheduler = DDIMScheduler.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="scheduler",
+            prediction_type=args.prediction_type,
+            timestep_spacing=args.training_scheduler_timestep_spacing,
+            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+        )
         pipeline.save_pretrained("/notebooks/datasets/models/ptx0-xltest", safe_serialization=True)
 
         if args.push_to_hub:
