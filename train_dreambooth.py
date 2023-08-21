@@ -326,16 +326,16 @@ def main(args):
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
             num_cycles=args.lr_num_cycles,
             power=args.lr_power,
         )
     else:
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.learning_rate_end,
             power=args.lr_power,
             last_epoch=-1,
