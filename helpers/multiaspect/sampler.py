@@ -85,11 +85,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
-        logger.debug(f'Switching to bucket "{bucket_name}" from {self.buckets}')
         return self.buckets.index(str(bucket_name))
 
 
     def _reset_buckets(self):
+        logger.info(f"Resetting seen image list and refreshing buckets.")
         self.buckets = self.load_buckets()
         self.seen_images = {}
         self.change_bucket()
@@ -160,7 +160,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         ]
         if not available_buckets:
             logger.warning(
-                "All buckets are exhausted. Resetting seen images and exhausted buckets."
+                "All buckets are exhausted. Resetting seen images and exhausted buckets. State before reset:"
             )
             self.log_state()
             self.seen_images = {}
@@ -177,13 +177,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
-        logger.info(f"Changing bucket to {self.current_bucket}.")
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
         self.exhausted_buckets.append(bucket)
         self.buckets.remove(bucket)
-        logger.info(
+        logger.warning(
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
         )
         self.log_state()
@@ -195,8 +194,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         logger.debug(
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A")) for b in self.exhausted_buckets)}'
         )
-        logger.debug(
-            "Extended Statistics:\n"
+        logger.info(
+            "Training Statistics:\n"
             f"    -> Seen images: {len(self.seen_images)}\n"
             f"    -> Unseen images: {len(self._get_unseen_images())}\n"
             f"    -> Current Bucket: {self.current_bucket}\n"
@@ -265,13 +264,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - If the number of seen images reaches the reset threshold, reset all buckets and seen images.
         """
         while True:
-            logger.debug(f"Running __iter__ for AspectBuckets.")
             early_yield = self._yield_random_image_if_not_training()
             if early_yield:
                 yield early_yield
                 continue
             if not self.buckets:
-                logger.warning(f"All buckets are exhausted. Resetting...")
                 self._reset_buckets()
 
             bucket = self.buckets[self.current_bucket]
@@ -293,7 +290,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 # Select a random bucket for the next iteration:
                 self.change_bucket()
                 for image_to_yield in to_yield:
-                    logger.debug(f"Yielding from __iter__ for AspectBuckets.")
                     yield image_to_yield
 
     def __len__(self):
