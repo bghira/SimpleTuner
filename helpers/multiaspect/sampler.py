@@ -275,8 +275,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             available_images = self._get_unseen_images(bucket)
 
             if len(available_images) < self.batch_size:
-                if self._reset_if_not_enough_unseen_images():
-                    continue
+                self._reset_if_not_enough_unseen_images()
+                continue
 
             samples = random.sample(available_images, k=self.batch_size)
             to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
