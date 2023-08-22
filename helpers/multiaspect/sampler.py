@@ -47,7 +47,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.state_manager = BucketStateManager(state_path, seen_images_path)
         self.seen_images = self.state_manager.load_seen_images()
         self.buckets = self.load_buckets()
-        self.current_bucket = random.randint(0, len(self.buckets) - 1)
+        self.change_bucket()
         previous_state = self.state_manager.load_state()
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
@@ -79,7 +79,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _reset_buckets(self):
         self.buckets = self.load_buckets()
         self.seen_images = {}
-        self.current_bucket = random.randint(0, len(self.buckets) - 1)
+        self.change_bucket()
 
     def _get_unseen_images(self, bucket=None):
         """
@@ -126,6 +126,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Reset the seen images if there aren't enough unseen images across all buckets to form a batch.
         Return True if we reset the seen images, otherwise return False.
+        This is distinctly separate behaviour from change_bucket, which resets based on exhausted buckets.
         """
         total_unseen_images = sum(
             len(self._get_unseen_images(bucket)) for bucket in self.buckets
@@ -148,6 +149,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             logger.warning(
                 "All buckets are exhausted. Resetting seen images and exhausted buckets."
             )
+            self.log_state()
             self.seen_images = {}
             self.exhausted_buckets = []
             available_buckets = self.buckets
@@ -271,15 +273,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             if len(available_images) < self.batch_size:
                 self._reset_if_not_enough_unseen_images()
-                self.current_bucket = random.randint(0, len(self.buckets) - 1)
+                self.change_bucket()
                 continue
 
             samples = random.sample(available_images, k=self.batch_size)
             to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
 
             if len(to_yield) == self.batch_size:
-                # Select a random bucket:
-                self.current_bucket = random.randint(0, len(self.buckets) - 1)
+                # Select a random bucket for the next iteration:
+                self.change_bucket()
                 for image_to_yield in to_yield:
                     logger.debug(f"Yielding from __iter__ for AspectBuckets.")
                     yield image_to_yield
