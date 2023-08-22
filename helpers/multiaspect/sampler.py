@@ -47,11 +47,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.state_manager = BucketStateManager(state_path, seen_images_path)
         self.seen_images = self.state_manager.load_seen_images()
         self.buckets = self.load_buckets()
-        self.change_bucket()
         previous_state = self.state_manager.load_state()
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.exhausted_buckets = previous_state["exhausted_buckets"]
+        self.change_bucket()
 
     def save_state(self):
         state = {
