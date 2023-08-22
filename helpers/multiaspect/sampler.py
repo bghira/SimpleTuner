@@ -122,20 +122,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return True
         return False
 
-    def _handle_bucket_with_not_enough_unseen_images(self, available_images, bucket):
+    def _reset_if_not_enough_unseen_images(self):
         """
-        Handle buckets with not enough unseen images. Return True if we reset the seen images or the buckets.
+        Reset the seen images if there aren't enough unseen images across all buckets to form a batch.
+        Return True if we reset the seen images, otherwise return False.
         """
-        all_bucket_images = self.bucket_manager.aspect_ratio_bucket_indices[bucket]
-        total = len(self.seen_images) + len(available_images) + len(all_bucket_images)
-        if total < self.batch_size:
+        total_unseen_images = sum(
+            len(self._get_unseen_images(bucket)) for bucket in self.buckets
+        )
+
+        if total_unseen_images < self.batch_size:
             self.seen_images = {}
             return True
-
-        self.log_state()
-        self.buckets = self.load_buckets()
-        self.seen_images = {}
-        return True
+        return False
 
     def change_bucket(self):
         """
@@ -276,9 +275,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             available_images = self._get_unseen_images(bucket)
 
             if len(available_images) < self.batch_size:
-                if self._handle_bucket_with_not_enough_unseen_images(
-                    available_images, bucket
-                ):
+                if self._reset_if_not_enough_unseen_images():
                     continue
 
             samples = random.sample(available_images, k=self.batch_size)
