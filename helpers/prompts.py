@@ -52,6 +52,7 @@ prompts = {
     "kodachrome": "a 1960s scene in kodachrome where hippies hang out in san francisco's haight area",
     "knight": "a handsome knight protecting a castle, brilliant masterpiece, oil painting",
     "knight_dragon_battle": "A medieval knight and a dragon, engaged in an epic battle.",
+    "kanagawa": "The Great Wave off Kanagawa",
     "haunted_mansion": "A haunted mansion at the end of a winding path.",
     "greek_mythology": "A scene from Greek mythology, with gods and mythical creatures.",
     "giant_robot": "A giant robot protecting a city from a natural disaster.",
