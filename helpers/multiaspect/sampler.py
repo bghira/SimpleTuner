@@ -155,6 +155,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             available_buckets = self.buckets
 
         next_bucket = random.choice(available_buckets)
+        self.current_bucket = next_bucket
         return next_bucket
 
     def change_bucket(self):
