@@ -276,6 +276,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             if len(available_images) < self.batch_size:
                 self._reset_if_not_enough_unseen_images()
+                self.current_bucket = random.randint(0, len(self.buckets) - 1)
                 continue
 
             samples = random.sample(available_images, k=self.batch_size)
