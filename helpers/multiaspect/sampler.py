@@ -164,9 +164,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen images.
         """
         next_bucket = self._get_next_bucket()
-        while next_bucket == self.current_bucket:
-            next_bucket = self._get_next_bucket()
-
         self.current_bucket = next_bucket
         logger.info(f"Changing bucket to {self.current_bucket}.")
 
