@@ -76,6 +76,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         return image_path
 
+    def _bucket_name_to_id(self, bucket_name: str) -> int:
+        """
+        Return a bucket array index, by its name.
+
+        Args:
+            bucket_name (str): Bucket name, eg. "1.78"
+        Returns:
+            int: Bucket array index, eg. 0
+        """
+        return self.buckets.index(float(bucket_name))
+
+
     def _reset_buckets(self):
         self.buckets = self.load_buckets()
         self.seen_images = {}
@@ -155,7 +167,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             available_buckets = self.buckets
 
         next_bucket = random.choice(available_buckets)
-        self.current_bucket = next_bucket
         return next_bucket
 
     def change_bucket(self):
@@ -164,7 +175,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen images.
         """
         next_bucket = self._get_next_bucket()
-        self.current_bucket = next_bucket
+        self.current_bucket = self._bucket_name_to_id(next_bucket)
         logger.info(f"Changing bucket to {self.current_bucket}.")
 
     def move_to_exhausted(self):
