@@ -85,7 +85,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
-        return self.buckets.index(float(bucket_name))
+        logger.debug(f'Switching to bucket "{bucket_name}" from {self.buckets}')
+        return self.buckets.index(str(bucket_name))
 
 
     def _reset_buckets(self):
