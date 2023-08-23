@@ -5,7 +5,7 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.state_tracker import StateTracker
 
-logger = logging.getLogger()
+logger = logging.getLogger('MultiAspectSampler')
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 pil_logger = logging.getLogger("PIL.Image")
@@ -44,16 +44,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             logger.setLevel(logging.DEBUG)
         self.delete_unwanted_images = delete_unwanted_images
         self.minimum_image_size = minimum_image_size
-        self.state_manager = BucketStateManager(state_path, seen_images_path)
-        self.seen_images = self.state_manager.load_seen_images()
-        self.buckets = self.load_buckets()
-        previous_state = self.state_manager.load_state()
-        self.exhausted_buckets = []
-        if "exhausted_buckets" in previous_state:
-            self.exhausted_buckets = previous_state["exhausted_buckets"]
+        self.load_states(
+            state_path=state_path,
+            seen_images_path=seen_images_path
+        )
         self.change_bucket()
 
-    def save_state(self):
+    def save_state(self, state_path: str = None):
+        """
+        This method should be called when the accelerator save hook is called,
+         so that the state is correctly restored with a given checkpoint.
+        """
         state = {
             "aspect_ratio_bucket_indices": self.bucket_manager.aspect_ratio_bucket_indices,
             "buckets": self.buckets,
@@ -61,8 +62,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "batch_size": self.batch_size,
             "current_bucket": self.current_bucket,
             "seen_images": self.seen_images,
+            "current_epoch": self.current_epoch
         }
-        self.state_manager.save_state(state)
+        self.state_manager.save_state(state, state_path)
+
+    def load_states(self, state_path: str, seen_images_path: str):
+        self.state_manager = BucketStateManager(state_path, seen_images_path)
+        self.seen_images = self.state_manager.load_seen_images()
+        self.buckets = self.load_buckets()
+        previous_state = self.state_manager.load_state()
+        self.exhausted_buckets = []
+        if "exhausted_buckets" in previous_state:
+            self.exhausted_buckets = previous_state["exhausted_buckets"]
+        self.current_epoch = 1
+        if "current_epoch" in previous_state:
+            self.current_epoch = previous_state["current_epoch"]
 
     def load_buckets(self):
         return list(
@@ -89,7 +103,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
 
     def _reset_buckets(self):
-        logger.info(f"Resetting seen image list and refreshing buckets.")
+        logger.info(f"Resetting seen image list and refreshing buckets. State before reset:")
+        self.log_state()
+        if len(self.exhausted_buckets) > 0 and len(self.buckets) == 0:
+            # All buckets are exhausted, so we will move onto the next epoch.
+            self.current_epoch += 1
+        self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.seen_images = {}
         self.change_bucket()
@@ -146,7 +165,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
 
         if total_unseen_images < self.batch_size:
-            self.seen_images = {}
+            self._reset_buckets()
             return True
         return False
 
@@ -159,12 +178,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
         ]
         if not available_buckets:
-            logger.warning(
-                "All buckets are exhausted. Resetting seen images and exhausted buckets. State before reset:"
-            )
-            self.log_state()
-            self.seen_images = {}
-            self.exhausted_buckets = []
+            self._reset_buckets()
             available_buckets = self.buckets
 
         next_bucket = random.choice(available_buckets)

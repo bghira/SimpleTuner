@@ -83,7 +83,7 @@ prompts = {
     "ancient_temple": "An ancient temple, overgrown with vines, deep in the jungle.",
     "ancient_ruins": "Ancient ruins swallowed by a dense jungle",
     "ancient_egypt": "A view of ancient Egypt, with pyramids and the Sphinx.",
-    "alien": "an ancient alien exploring the Martian surface, photorealisti",
+    "alien": "an ancient alien exploring the Martian surface, photorealistic",
     "alien_marketplace": "A bustling marketplace in an alien world.",
     "alien_invasion": "The first moments of an alien invasion from a civilian's perspective.",
 }

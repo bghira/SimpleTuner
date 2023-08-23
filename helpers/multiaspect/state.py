@@ -17,8 +17,10 @@ class BucketStateManager:
         with open(self.seen_images_path, "w") as f:
             json.dump(seen_images, f)
 
-    def save_state(self, state):
-        with open(self.state_path, "w") as f:
+    def save_state(self, state: dict, state_path: str = None):
+        if state_path is None:
+            state_path = self.state_path
+        with open(state_path, "w") as f:
             json.dump(state, f)
 
     def load_state(self):

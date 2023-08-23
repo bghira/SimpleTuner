@@ -309,6 +309,9 @@ def main():
             )
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
+    elif hasattr(args, 'use_adafactor_optimizer') and args.use_adafactor_optimizer:
+        from transformers import Adafactor
+        optimizer_cls = Adafactor
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_cls = torch.optim.AdamW
@@ -724,7 +727,13 @@ def main():
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers(args.tracker_run_name, config=vars(args))
+        accelerator.init_trackers(
+            project_name=args.tracker_run_name,
+            name=args.tracker_project_name,
+            id=args.tracker_project_name,
+            config=vars(args),
+            resume="allow"
+        )
 
     # Train!
     total_batch_size = (
@@ -766,6 +775,10 @@ def main():
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            custom_balanced_sampler.load_states(
+                state_path=os.path.join(args.output_dir, path, 'training_state.json'),
+                seen_images_path=os.path.join(args.output_dir, path, 'seen_images.json'),
+            )
             global_step = int(path.split("-")[1])
 
             resume_global_step = global_step * args.gradient_accumulation_steps
@@ -1030,7 +1043,14 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state()
+                        custom_balanced_sampler.save_state(
+                            state_path=os.path.join(
+                                save_path, "training_state.json"
+                            ),
+                            seen_images_path=os.path.join(
+                                save_path, "seen_images.json"
+                            ),
+                        )
                         logger.info(f"Saved state to {save_path}")
 
             logs = {
