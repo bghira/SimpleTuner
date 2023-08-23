@@ -729,10 +729,12 @@ def main():
     if accelerator.is_main_process:
         accelerator.init_trackers(
             project_name=args.tracker_run_name,
-            name=args.tracker_project_name,
-            id=args.tracker_project_name,
             config=vars(args),
-            resume="allow"
+            init_kwargs={
+                "name": args.tracker_project_name,
+                "id": args.tracker_project_name,
+                "resume": "allow"
+            }
         )
 
     # Train!
