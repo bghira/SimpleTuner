@@ -1227,13 +1227,13 @@ def main():
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         )
         pipeline.save_pretrained(
-            "/notebooks/datasets/models/ptx0-xltest", safe_serialization=True
+            os.path.join(args.output_dir, 'pipeline'), safe_serialization=True
         )
 
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
-                folder_path=args.output_dir,
+                folder_path=os.path.join(args.output_dir, 'pipeline'),
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
