@@ -2,6 +2,7 @@
 env.sh
 *.pem
 */config/config.json
+user_prompt_library.json
 __pycache__/
 .venv/
 cache/
