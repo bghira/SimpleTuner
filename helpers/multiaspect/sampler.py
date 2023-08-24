@@ -37,6 +37,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
         self.bucket_manager = bucket_manager
+        self.current_bucket = None
         self.batch_size = batch_size
         self.seen_images_path = seen_images_path
         self.state_path = state_path
