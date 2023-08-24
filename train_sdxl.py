@@ -1049,9 +1049,6 @@ def main():
                             state_path=os.path.join(
                                 save_path, "training_state.json"
                             ),
-                            seen_images_path=os.path.join(
-                                save_path, "seen_images.json"
-                            ),
                         )
                         logger.info(f"Saved state to {save_path}")
 
