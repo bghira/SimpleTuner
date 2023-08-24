@@ -779,7 +779,6 @@ def main():
             accelerator.load_state(os.path.join(args.output_dir, path))
             custom_balanced_sampler.load_states(
                 state_path=os.path.join(args.output_dir, path, 'training_state.json'),
-                seen_images_path=os.path.join(args.output_dir, path, 'seen_images.json'),
             )
             global_step = int(path.split("-")[1])
 

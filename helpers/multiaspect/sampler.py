@@ -66,8 +66,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         }
         self.state_manager.save_state(state, state_path)
 
-    def load_states(self, state_path: str, seen_images_path: str):
-        self.state_manager = BucketStateManager(state_path, seen_images_path)
+    def load_states(self, state_path: str):
+        self.state_manager = BucketStateManager(state_path, self.seen_images_path)
         self.seen_images = self.state_manager.load_seen_images()
         self.buckets = self.load_buckets()
         previous_state = self.state_manager.load_state()
@@ -77,6 +77,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_epoch = 1
         if "current_epoch" in previous_state:
             self.current_epoch = previous_state["current_epoch"]
+        if "seen_images" in previous_state:
+            self.seen_images = previous_state["seen_images"]
 
     def load_buckets(self):
         return list(
