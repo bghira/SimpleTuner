@@ -79,6 +79,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.current_epoch = previous_state["current_epoch"]
         if "seen_images" in previous_state:
             self.seen_images = previous_state["seen_images"]
+        self.log_state()
 
     def load_buckets(self):
         return list(
