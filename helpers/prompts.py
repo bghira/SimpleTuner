@@ -1,3 +1,6 @@
+import json, io
+from pathlib import Path
+
 prompts = {
     "zen_garden_snowfall": "A serene Zen garden during a gentle snowfall.",
     "jester": "stunning photographs of jesters at the twisted carnival",
@@ -88,18 +91,43 @@ prompts = {
     "alien_invasion": "The first moments of an alien invasion from a civilian's perspective.",
 }
 
+def prompt_library_injection(new_prompts: dict) -> dict:
+    """
+    Add more prompts to the built-in SimpleTuner Prompt library.
+
+    Args:
+        new_prompts (dict): A dict of shortnames matching the existing prompt library format:
+        {
+            "nickname_here": "prompt goes here",
+            ...
+        }
+
+    Returns:
+        dict: Completed prompt library.
+    """
+    
+    # Unpack the new prompts into the library.
+    global prompts
+    return {
+        **prompts,
+        **new_prompts
+    }
+
 import logging
 from pathlib import Path
+import os
 
 logger = logging.getLogger("PromptHandler")
-
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
 
 class PromptHandler:
     @staticmethod
     def prepare_instance_prompt(
-        image_path: str, use_captions: bool, prepend_instance_prompt: bool
+        image_path: str, use_captions: bool, prepend_instance_prompt: bool, instance_prompt: str = None
     ) -> str:
-        instance_prompt = Path(image_path).stem
+        if not instance_prompt and prepend_instance_prompt:
+            # If we did not get a specific instance prompt, use the folder name.
+            instance_prompt = Path(image_path).stem
         if use_captions:
             # Underscores to spaces.
             instance_prompt = instance_prompt.replace("_", " ")
@@ -189,3 +217,20 @@ class PromptHandler:
             captions.append(caption)
 
         return captions
+
+    @staticmethod
+    def load_user_prompts(user_prompt_path: str = None):
+        if not user_prompt_path:
+            return {}
+        # Does the file exist?
+        user_prompt_path = Path(user_prompt_path)
+        if not user_prompt_path.exists():
+            raise FileNotFoundError(f"User prompt file {user_prompt_path} not found.")
+        # Load the file.
+        try:
+            with user_prompt_path.open("r") as f:
+                user_prompts = json.load(f)
+            return user_prompts
+        except Exception as e:
+            logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")
+            return {}

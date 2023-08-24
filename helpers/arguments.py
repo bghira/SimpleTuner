@@ -466,6 +466,12 @@ def parse_args(input_args=None):
         help="If this is provided, the SimpleTuner prompt library will be used to generate multiple images.",
     )
     parser.add_argument(
+        "--user_prompt_library",
+        type=str,
+        default=None,
+        help="This should be a path to the JSON file containing your prompt library. See user_prompt_library.json.example.",
+    )
+    parser.add_argument(
         "--num_validation_images",
         type=int,
         default=4,

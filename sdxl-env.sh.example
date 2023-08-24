@@ -19,6 +19,7 @@ export MODEL_NAME="stabilityai/stable-diffusion-xl-base-1.0"
 # Using a local path to a huggingface hub model or saved checkpoint:
 #export MODEL_NAME="/datasets/models/pipeline"
 
+export TRACKER_PROJECT_NAME="sdxl-training"
 export TRACKER_RUN_NAME="simpletuner-sdxl"
 
 # Use this to append an instance prompt to each caption, used for adding trigger words.

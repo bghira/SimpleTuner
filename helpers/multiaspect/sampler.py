@@ -328,5 +328,5 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             ratio_height = 1024
 
         # Return the aspect ratio as a string in the format "width:height"
-        return f"{aspect_ratio_float} (remaining: {len(bucket)})"
+        return f"{aspect_ratio_float} ({len(bucket)} samples)"
         return f"{ratio_width}:{ratio_height}"
