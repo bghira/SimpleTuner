@@ -199,7 +199,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         bucket = self.buckets[self.current_bucket]
         self.exhausted_buckets.append(bucket)
         self.buckets.remove(bucket)
-        logger.warning(
+        logger.debug(
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
         )
         self.log_state()
