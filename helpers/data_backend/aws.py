@@ -1,5 +1,6 @@
 import boto3
 import fnmatch, logging
+from pathlib import Path
 from helpers.data_backend.base import BaseDataBackend
 
 boto_logger = logging.getLogger('botocore.hooks')
@@ -91,4 +92,6 @@ class S3DataBackend(BaseDataBackend):
         Returns:
             str: extracted basename, or input filename if already stripped.
         """
+        if type(path) == Path:
+            return str(path.basename())
         return path.split("/")[-1]
