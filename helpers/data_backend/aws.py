@@ -33,6 +33,10 @@ class S3DataBackend(BaseDataBackend):
         """Retrieve and return the content of the file from S3."""
         response = self.client.get_object(Bucket=self.bucket_name, Key=s3_key)
         return response["Body"].read()
+    
+    def open_file(self, s3_key, mode):
+        """Open the file in the specified mode."""
+        return self.read(s3_key)
 
     def write(self, s3_key, data):
         """Upload data to the specified S3 key."""
