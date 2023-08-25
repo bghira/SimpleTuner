@@ -134,4 +134,5 @@ class TextEmbeddingCache:
         Args:
             prompts (list[str]): All of the prompts.
         """
+        logger.debug(f'Precomputing embeddings for prompts: {prompts}')
         self.compute_embeddings_for_prompts(prompts, return_concat=False)
