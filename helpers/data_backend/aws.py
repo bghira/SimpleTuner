@@ -90,26 +90,38 @@ class S3DataBackend(BaseDataBackend):
         return [item["Key"] for item in response.get("Contents", [])]
 
     def list_files(self, str_pattern: str, instance_data_root: str = None):
-        # Initial list to hold the results
+        # Initialize the results list
         results = []
 
         # Using paginator to handle potential large number of objects
         paginator = self.client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(
-            Bucket=self.bucket_name, Prefix=str_pattern, Delimiter="/"
-        ):
-            # Current "subdirectories"
-            common_prefixes = [cp["Prefix"] for cp in page.get("CommonPrefixes", [])]
 
-            # Actual files within the current "directory"
-            files = [
-                os.path.basename(obj["Key"])
-                for obj in page.get("Contents", [])
-                if not obj["Key"].endswith("/")
-            ]
+        # We'll use fnmatch to filter based on the provided pattern.
+        pattern = os.path.join(instance_data_root or "", str_pattern)
 
-            # Append the current directory, its subdirectories, and its files to the results
-            results.append((str_pattern, common_prefixes, files))
+        # Using a dictionary to hold files based on their prefixes (subdirectories)
+        prefix_dict = {}
+
+        # Paginating over the entire bucket objects
+        for page in paginator.paginate(Bucket=self.bucket_name):
+            for obj in page.get("Contents", []):
+                # Filter based on the provided pattern
+                if fnmatch.fnmatch(obj["Key"], pattern):
+                    # Split the S3 key to determine the directory and file structure
+                    parts = obj["Key"].split("/")
+                    subdir = "/".join(
+                        parts[:-1]
+                    )  # Get the directory excluding the file
+                    filename = parts[-1]  # Get the file name
+
+                    # Storing filenames under their respective subdirectories
+                    if subdir not in prefix_dict:
+                        prefix_dict[subdir] = []
+                    prefix_dict[subdir].append(filename)
+
+        # Transforming the prefix_dict into the desired results format
+        for subdir, files in prefix_dict.items():
+            results.append((subdir, [], files))
 
         return results
 
