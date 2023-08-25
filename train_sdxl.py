@@ -28,7 +28,10 @@ from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.state_tracker import StateTracker
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
-from helpers.image_manipulation.brightness import calculate_luminance, calculate_batch_luminance
+from helpers.image_manipulation.brightness import (
+    calculate_luminance,
+    calculate_batch_luminance,
+)
 from helpers.arguments import parse_args
 from helpers.training.custom_schedule import get_polynomial_decay_schedule_with_warmup
 from helpers.training.min_snr_gamma import compute_snr
@@ -309,8 +312,9 @@ def main():
             )
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
-    elif hasattr(args, 'use_adafactor_optimizer') and args.use_adafactor_optimizer:
+    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         from transformers import Adafactor
+
         optimizer_cls = Adafactor
     else:
         logger.info("Using AdamW optimizer.")
@@ -328,11 +332,13 @@ def main():
     )
 
     # Create a DataBackend, so that we can access our dataset.
-    if args.data_backend == 'local':
+    if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
+
         data_backend = LocalDataBackend()
-    elif args.data_backend == 'aws':
+    elif args.data_backend == "aws":
         from helpers.data_backend.aws import S3DataBackend
+
         data_backend = S3DataBackend(
             bucket_name=args.aws_bucket_name,
             region_name=args.aws_region_name,
@@ -341,8 +347,8 @@ def main():
             aws_secret_access_key=args.aws_secret_access_key,
         )
     else:
-        raise ValueError(f'Unsupported data backend: {args.data_backend}')
-    logger.info(f'Created {args.data_backend} data backend.')
+        raise ValueError(f"Unsupported data backend: {args.data_backend}")
+    logger.info(f"Created {args.data_backend} data backend.")
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
@@ -522,9 +528,7 @@ def main():
         global vaecache
         if "vaecache" not in globals():
             vaecache = VAECache(
-                vae=vae,
-                accelerator=accelerator,
-                data_backend=data_backend
+                vae=vae, accelerator=accelerator, data_backend=data_backend
             )
 
         pixel_values = []
@@ -624,10 +628,10 @@ def main():
     logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
         all_captions = PromptHandler.get_all_captions(
-                data_backend=data_backend,
-                instance_data_root=args.instance_data_dir,
-                prepend_instance_prompt=args.prepend_instance_prompt or False,
-                use_captions=not args.only_instance_prompt,
+            data_backend=data_backend,
+            instance_data_root=args.instance_data_dir,
+            prepend_instance_prompt=args.prepend_instance_prompt or False,
+            use_captions=not args.only_instance_prompt,
         )
         embed_cache.precompute_embeddings_for_prompts(all_captions)
 
@@ -637,16 +641,20 @@ def main():
         # Use the SimpleTuner prompts library for validation prompts.
         from helpers.prompts import prompts as prompt_library
 
-        # Prompt format: { 'shortname': 'this is the prompt', ... }
-        for shortname, prompt in prompt_library.items():
-            logger.info(f"Precomputing validation prompt library embeds: {shortname}")
+        # Iterate through the prompts with a progress bar
+        for shortname, prompt in tqdm(
+            prompt_library.items(), desc="Precomputing embeddings"
+        ):
+            logger.info(f"Processing: {shortname}")
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in user_prompt_library.items():
-            logger.info(f"Precomputing validation user prompt library embeds: {shortname}")
+            logger.info(
+                f"Precomputing validation user prompt library embeds: {shortname}"
+            )
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
@@ -741,11 +749,7 @@ def main():
     logger.info(f"Loaded VAE into VRAM.")
     if accelerator.is_main_process:
         logger.info(f"Pre-computing VAE latent space.")
-        vaecache = VAECache(
-            vae=vae,
-            accelerator=accelerator,
-            data_backend=data_backend
-        )
+        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend)
         vaecache.process_directory(args.instance_data_dir)
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -761,6 +765,7 @@ def main():
     if accelerator.is_main_process:
         # Copy args into public_args:
         import copy
+
         public_args = copy.deepcopy(args)
         # Remove the args that we don't want to track:
         del public_args.aws_access_key_id
@@ -774,8 +779,8 @@ def main():
             init_kwargs={
                 "name": args.tracker_project_name,
                 "id": args.tracker_project_name,
-                "resume": "allow"
-            }
+                "resume": "allow",
+            },
         )
 
     # Train!
@@ -819,7 +824,7 @@ def main():
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             custom_balanced_sampler.load_states(
-                state_path=os.path.join(args.output_dir, path, 'training_state.json'),
+                state_path=os.path.join(args.output_dir, path, "training_state.json"),
             )
             global_step = int(path.split("-")[1])
 
@@ -1086,9 +1091,7 @@ def main():
                         )
                         accelerator.save_state(save_path)
                         custom_balanced_sampler.save_state(
-                            state_path=os.path.join(
-                                save_path, "training_state.json"
-                            ),
+                            state_path=os.path.join(save_path, "training_state.json"),
                         )
                         logger.info(f"Saved state to {save_path}")
 
@@ -1266,13 +1269,13 @@ def main():
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         )
         pipeline.save_pretrained(
-            os.path.join(args.output_dir, 'pipeline'), safe_serialization=True
+            os.path.join(args.output_dir, "pipeline"), safe_serialization=True
         )
 
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
-                folder_path=os.path.join(args.output_dir, 'pipeline'),
+                folder_path=os.path.join(args.output_dir, "pipeline"),
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
