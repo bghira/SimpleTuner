@@ -12,6 +12,14 @@ boto_logger = logging.getLogger('botocore.parsers')
 boto_logger.setLevel('WARNING')
 boto_logger = logging.getLogger('botocore.retryhandler')
 boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.loaders')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.regions')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.utils')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.client')
+boto_logger.setLevel('WARNING')
 
 class S3DataBackend(BaseDataBackend):
     def __init__(
