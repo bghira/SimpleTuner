@@ -92,6 +92,9 @@ class S3DataBackend(BaseDataBackend):
     def list_files(self, str_pattern: str, instance_data_root: str = None):
         # Initialize the results list
         results = []
+        
+        # Temporarily, we do not use prefixes in S3.
+        instance_data_root = None
 
         # Using paginator to handle potential large number of objects
         paginator = self.client.get_paginator("list_objects_v2")
