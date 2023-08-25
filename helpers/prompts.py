@@ -135,7 +135,9 @@ class PromptHandler:
             # If we did not get a specific instance prompt, use the folder name.
             instance_prompt = Path(image_path).stem
             if type(data_backend) == S3DataBackend:
-                raise ValueError('S3 data backend is not yet compatible with --prepend_instance_prompt')
+                raise ValueError(
+                    "S3 data backend is not yet compatible with --prepend_instance_prompt"
+                )
         if use_captions:
             # Underscores to spaces.
             instance_prompt = image_path.lower().replace("_", " ")
@@ -164,7 +166,7 @@ class PromptHandler:
         caption_strategy: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
-        data_backend: BaseDataBackend
+        data_backend: BaseDataBackend,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -185,7 +187,7 @@ class PromptHandler:
                 image_path=image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
-                data_backend=data_backend
+                data_backend=data_backend,
             )
         elif caption_strategy == "textfile":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
@@ -197,7 +199,10 @@ class PromptHandler:
 
     @staticmethod
     def get_all_captions(
-        instance_data_root: str, use_captions: bool, prepend_instance_prompt: bool
+        instance_data_root: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
     ) -> list:
         import os
 
@@ -223,6 +228,7 @@ class PromptHandler:
                 image_path=str(image_path),
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
+                data_backend=data_backend,
             )
             captions.append(caption)
 
