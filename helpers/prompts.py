@@ -134,13 +134,15 @@ class PromptHandler:
         if not instance_prompt and prepend_instance_prompt:
             # If we did not get a specific instance prompt, use the folder name.
             instance_prompt = Path(image_path).stem
+            logger.debug(f'Prepending instance prompt: {instance_prompt}')
             if type(data_backend) == S3DataBackend:
                 raise ValueError(
                     "S3 data backend is not yet compatible with --prepend_instance_prompt"
                 )
         if use_captions:
+            logger.debug(f'Using captions on image path: {image_path}')
             # Underscores to spaces.
-            instance_prompt = image_path.lower().replace("_", " ")
+            instance_prompt = image_path.replace("_", " ")
             # Remove some midjourney messes.
             instance_prompt = instance_prompt.split("upscaled by")[0]
             instance_prompt = instance_prompt.split("upscaled beta")[0]
