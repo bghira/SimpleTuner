@@ -211,6 +211,7 @@ class PromptHandler:
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         for image_path in all_image_files:
+            logger.debug(f'Getting caption for image "{image_path}".')
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
                 use_captions=use_captions,
