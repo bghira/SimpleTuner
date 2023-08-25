@@ -1,7 +1,17 @@
 import boto3
-import fnmatch
+import fnmatch, logging
 from helpers.data_backend.base import BaseDataBackend
 
+boto_logger = logging.getLogger('botocore.hooks')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.auth')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.httpsession')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.parsers')
+boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger('botocore.retryhandler')
+boto_logger.setLevel('WARNING')
 
 class S3DataBackend(BaseDataBackend):
     def __init__(
