@@ -571,6 +571,7 @@ def main():
     logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
+        data_backend=data_backend,
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
         size=args.resolution,
