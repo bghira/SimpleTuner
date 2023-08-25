@@ -148,6 +148,8 @@ class PromptHandler:
             instance_prompt = instance_prompt.split("upscaled beta")[0]
             if prepend_instance_prompt:
                 instance_prompt = instance_prompt + " " + instance_prompt
+        else:
+            logger.warning(f'Not using captions.')
         return instance_prompt
 
     @staticmethod
