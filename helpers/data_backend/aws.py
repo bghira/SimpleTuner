@@ -1,26 +1,27 @@
-import boto3
+import boto3, os
 import fnmatch, logging
 from pathlib import PosixPath
 from helpers.data_backend.base import BaseDataBackend
 
-boto_logger = logging.getLogger('botocore.hooks')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.auth')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.httpsession')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.parsers')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.retryhandler')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.loaders')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.regions')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.utils')
-boto_logger.setLevel('WARNING')
-boto_logger = logging.getLogger('botocore.client')
-boto_logger.setLevel('WARNING')
+boto_logger = logging.getLogger("botocore.hooks")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.auth")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.httpsession")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.parsers")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.retryhandler")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.loaders")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.regions")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.utils")
+boto_logger.setLevel("WARNING")
+boto_logger = logging.getLogger("botocore.client")
+boto_logger.setLevel("WARNING")
+
 
 class S3DataBackend(BaseDataBackend):
     def __init__(
@@ -51,36 +52,70 @@ class S3DataBackend(BaseDataBackend):
     def exists(self, s3_key) -> bool:
         """Determine whether a file exists in S3."""
         try:
-            self.client.head_object(Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key)))
+            self.client.head_object(
+                Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+            )
             return True
         except:
             return False
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
-        response = self.client.get_object(Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key)))
+        response = self.client.get_object(
+            Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+        )
         return response["Body"].read()
-    
+
     def open_file(self, s3_key, mode):
         """Open the file in the specified mode."""
         return self.read(s3_key)
 
     def write(self, s3_key, data):
         """Upload data to the specified S3 key."""
-        self.client.put_object(Body=data, Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key)))
+        self.client.put_object(
+            Body=data,
+            Bucket=self.bucket_name,
+            Key=self._convert_path_to_key(str(s3_key)),
+        )
 
     def delete(self, s3_key):
         """Delete the specified file from S3."""
-        self.client.delete_object(Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key)))
+        self.client.delete_object(
+            Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+        )
 
     def list_by_prefix(self, prefix=""):
         """List all files under a specific path (prefix) in the S3 bucket."""
         response = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
         return [item["Key"] for item in response.get("Contents", [])]
 
-    def list_files(self, str_pattern: str, instance_data_root=None):
-        files = self.list_by_prefix()  # List all files
-        return [file for file in files if fnmatch.fnmatch(file, str_pattern)]
+    def list_files(self, str_pattern: str, instance_data_root: str = None):
+        # Initial list to hold the results
+        results = []
+
+        # Using paginator to handle potential large number of objects
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(
+            Bucket=self.bucket, Prefix=str_pattern, Delimiter="/"
+        ):
+            # Current "subdirectories"
+            common_prefixes = [cp["Prefix"] for cp in page.get("CommonPrefixes", [])]
+
+            # Actual files within the current "directory"
+            files = [
+                os.path.basename(obj["Key"])
+                for obj in page.get("Contents", [])
+                if not obj["Key"].endswith("/")
+            ]
+
+            # Append the current directory, its subdirectories, and its files to the results
+            results.append((str_pattern, common_prefixes, files))
+
+            # Recursively list the "subdirectories"
+            for prefix in common_prefixes:
+                results.extend(self.list_files(prefix))
+
+        return results
 
     def _convert_path_to_key(self, path: str) -> str:
         """
@@ -97,6 +132,7 @@ class S3DataBackend(BaseDataBackend):
     def read_image(self, s3_key):
         from PIL import Image
         from io import BytesIO
+
         return Image.open(BytesIO(self.read(s3_key)))
 
     def create_directory(self, directory_path):
@@ -106,11 +142,13 @@ class S3DataBackend(BaseDataBackend):
     def torch_load(self, s3_key):
         import torch
         from io import BytesIO
+
         return torch.load(BytesIO(self.read(s3_key)))
 
     def torch_save(self, data, s3_key):
         import torch
         from io import BytesIO
+
         buffer = BytesIO()
         torch.save(data, buffer)
         self.write(s3_key, buffer.getvalue())
