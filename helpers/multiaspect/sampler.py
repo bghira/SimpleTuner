@@ -231,7 +231,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Validate and process a single image.
         Return the image path if valid, otherwise return None.
         """
-        if not os.path.exists(image_path):
+        if not self.data_backend.exists(image_path):
             logger.warning(f"Image path does not exist: {image_path}")
             self.bucket_manager.remove_image(image_path, bucket)
             return None
