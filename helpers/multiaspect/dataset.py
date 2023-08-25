@@ -111,6 +111,7 @@ class MultiAspectDataset(Dataset):
 
         # Use the magic prompt handler to retrieve the captions.
         example["instance_prompt_text"] = PromptHandler.magic_prompt(
+            data_backend=self.data_backend,
             image_path=image_path,
             caption_strategy=self.caption_strategy,
             use_captions=self.use_captions,
