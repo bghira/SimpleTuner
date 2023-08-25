@@ -7,12 +7,14 @@ from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 
-logger = logging.getLogger('MultiAspectSampler')
+logger = logging.getLogger("MultiAspectSampler")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
+pil_logger.setLevel(logging.WARNING)
+pil_logger = logging.getLogger("PIL.TiffImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 
 
@@ -66,7 +68,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "batch_size": self.batch_size,
             "current_bucket": self.current_bucket,
             "seen_images": self.seen_images,
-            "current_epoch": self.current_epoch
+            "current_epoch": self.current_epoch,
         }
         self.state_manager.save_state(state, state_path)
 
@@ -108,11 +110,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         return self.buckets.index(str(bucket_name))
 
-
     def _reset_buckets(self):
         if len(self.seen_images) == 0 and len(self._get_unseen_images()) == 0:
-            raise Exception('No images found in the dataset.')
-        logger.info(f"Resetting seen image list and refreshing buckets. State before reset:")
+            raise Exception("No images found in the dataset.")
+        logger.info(
+            f"Resetting seen image list and refreshing buckets. State before reset:"
+        )
         self.log_state()
         if len(self.exhausted_buckets) > 0 and len(self.buckets) == 0:
             # All buckets are exhausted, so we will move onto the next epoch.
