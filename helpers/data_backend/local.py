@@ -11,6 +11,9 @@ class LocalDataBackend(BaseDataBackend):
 
     def write(self, filepath, data):
         """Write data to the specified file."""
+        # Convert data to Bytes:    
+        if isinstance(data, str):
+            data = data.encode("utf-8")
         with open(filepath, "wb") as file:
             file.write(data)
 
