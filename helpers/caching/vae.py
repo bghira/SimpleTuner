@@ -42,7 +42,7 @@ class VAECache:
         """Identify files that haven't been processed yet."""
         all_files = {
             os.path.join(subdir, file)
-            for subdir, _, files in os.walk(directory, followlinks=True)
+            for subdir, _, files in self.data_backend.list_files(directory)
             for file in files
             if file.endswith((".png", ".jpg", ".jpeg"))
         }
@@ -91,7 +91,9 @@ class VAECache:
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
         logger.debug(f"Beginning processing of VAECache directory {directory}")
-        for subdir, _, files in os.walk(directory, followlinks=True):
+        for subdir, _, files in self.data_backend.list_files(
+            instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
+        ):
             for file in files:
                 if file.endswith((".png", ".jpg", ".jpeg")):
                     logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
@@ -119,8 +121,8 @@ class VAECache:
                 logger.error(f"Encountered error opening image: {e}")
                 try:
                     self.data_backend.delete(filepath)
-                except Exception as e:
-                    logger.error(f'Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}')
+                except:
+                    pass
                 continue
 
             # Convert the image to a tensor
