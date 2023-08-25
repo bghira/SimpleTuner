@@ -85,7 +85,7 @@ class BucketManager:
         self.data_backend.write(self.cache_file, cache_data_str)
 
     def _bucket_worker(
-        self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set
+        self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set, data_backend
     ):
         """
         A worker function to bucket a list of files.
@@ -103,7 +103,7 @@ class BucketManager:
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    file, local_aspect_ratio_bucket_indices
+                    data_backend, file, local_aspect_ratio_bucket_indices
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
@@ -138,6 +138,7 @@ class BucketManager:
                     file_shard,
                     aspect_ratio_bucket_indices_queue,
                     existing_files_set,
+                    self.data_backend
                 ),
             )
             for file_shard in files_split

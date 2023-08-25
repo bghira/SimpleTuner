@@ -1,4 +1,5 @@
 from torchvision import transforms
+from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 import logging
@@ -18,10 +19,11 @@ class MultiaspectImage:
 
     @staticmethod
     def process_for_bucket(
-        image_path_str, aspect_ratio_bucket_indices, aspect_ratio_rounding: int = 2
+        data_backend, image_path_str, aspect_ratio_bucket_indices, aspect_ratio_rounding: int = 2
     ):
         try:
-            with Image.open(image_path_str) as image:
+            image_data = data_backend.open_file(image_path_str)
+            with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
                 image = exif_transpose(image)
                 # Round to avoid excessive unique buckets
