@@ -620,6 +620,7 @@ def main():
     with accelerator.main_process_first():
         embed_cache.precompute_embeddings_for_prompts(
             PromptHandler.get_all_captions(
+                data_backend=data_backend,
                 instance_data_root=args.instance_data_dir,
                 prepend_instance_prompt=args.prepend_instance_prompt or False,
                 use_captions=args.only_instance_prompt or False,
