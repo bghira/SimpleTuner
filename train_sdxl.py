@@ -643,18 +643,16 @@ def main():
 
         # Iterate through the prompts with a progress bar
         for shortname, prompt in tqdm(
-            prompt_library.items(), desc="Precomputing embeddings"
+            prompt_library.items(), desc="Precomputing validation prompt embeddings"
         ):
-            logger.info(f"Processing: {shortname}")
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
-        for shortname, prompt in user_prompt_library.items():
-            logger.info(
-                f"Precomputing validation user prompt library embeds: {shortname}"
-            )
+        for shortname, prompt in tqdm(
+            user_prompt_library.items(), desc="Precomputing user prompt library embeddings"
+        ):
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
