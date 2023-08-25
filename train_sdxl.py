@@ -765,6 +765,9 @@ def main():
         # Remove the args that we don't want to track:
         del public_args.aws_access_key
         del public_args.aws_secret_access_key_id
+        del public_args.aws_bucket_name
+        del public_args.aws_region_name
+        del public_args.aws_endpoint_url
         accelerator.init_trackers(
             project_name=args.tracker_run_name,
             config=vars(public_args),
