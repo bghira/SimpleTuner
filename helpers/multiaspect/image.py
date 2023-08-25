@@ -22,7 +22,7 @@ class MultiaspectImage:
         data_backend, image_path_str, aspect_ratio_bucket_indices, aspect_ratio_rounding: int = 2
     ):
         try:
-            image_data = data_backend.open_file(image_path_str)
+            image_data = data_backend.read(image_path_str)
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
                 image = exif_transpose(image)
