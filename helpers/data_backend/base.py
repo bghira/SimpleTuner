@@ -43,3 +43,31 @@ class BaseDataBackend(ABC):
         List all files matching the pattern.
         """
         pass
+
+    @abstractmethod
+    def read_image(self, filepath):
+        """
+        Read an image from the backend and return a PIL Image.
+        """
+        pass
+
+    @abstractmethod
+    def create_directory(self, directory_path):
+        """
+        Creates a directory in the backend.
+        """
+        pass
+
+    @abstractmethod
+    def torch_load(self, filename):
+        """
+        Reads content from the backend and loads it with torch.
+        """
+        pass
+
+    @abstractmethod
+    def torch_save(self, data, filename):
+        """
+        Saves the data using torch to the backend.
+        """
+        pass

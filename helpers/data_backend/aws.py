@@ -93,3 +93,24 @@ class S3DataBackend(BaseDataBackend):
             str: extracted basename, or input filename if already stripped.
         """
         return path.split("/")[-1]
+
+    def read_image(self, s3_key):
+        from PIL import Image
+        from io import BytesIO
+        return Image.open(BytesIO(self.read(s3_key)))
+
+    def create_directory(self, directory_path):
+        # Since S3 doesn't have a traditional directory structure, this is just a pass-through
+        pass
+
+    def torch_load(self, s3_key):
+        import torch
+        from io import BytesIO
+        return torch.load(BytesIO(self.read(s3_key)))
+
+    def torch_save(self, data, s3_key):
+        import torch
+        from io import BytesIO
+        buffer = BytesIO()
+        torch.save(data, buffer)
+        self.write(s3_key, buffer.getvalue())

@@ -2,19 +2,28 @@ import os, torch, logging
 from tqdm import tqdm
 from PIL import Image
 from helpers.multiaspect.image import MultiaspectImage
+from helpers.data_backend.base import BaseDataBackend
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class VAECache:
-    def __init__(self, vae, accelerator, cache_dir="vae_cache", resolution: int = 1024):
+    def __init__(
+        self,
+        vae,
+        accelerator,
+        data_backend: BaseDataBackend,
+        cache_dir="vae_cache",
+        resolution: int = 1024,
+    ):
+        self.data_backend = data_backend
         self.vae = vae
         self.vae.enable_slicing()
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         self.resolution = resolution
-        os.makedirs(self.cache_dir, exist_ok=True)
+        self.data_backend.create_directory(self.cache_dir)
 
     def _generate_filename(self, filepath: str):
         """Get the cache filename for a given image filepath."""
@@ -24,10 +33,10 @@ class VAECache:
         )
 
     def save_to_cache(self, filename, embeddings):
-        torch.save(embeddings, filename)
+        self.data_backend.torch_save(embeddings, filename)
 
     def load_from_cache(self, filename):
-        return torch.load(filename)
+        return self.data_backend.torch_load(filename)
 
     def discover_unprocessed_files(self, directory):
         """Identify files that haven't been processed yet."""
@@ -50,7 +59,7 @@ class VAECache:
         logger.debug(
             f"Created filename {filename} from filepath {filepath} for resulting .pt filename."
         )
-        if os.path.exists(filename):
+        if self.data_backend.exists(filename):
             latents = self.load_from_cache(filename)
             logger.debug(
                 f"Loading latents of shape {latents.shape} from existing cache file: {filename}"
@@ -94,7 +103,7 @@ class VAECache:
             filename = self._generate_filename(filepath)
 
             # If processed file already exists, skip processing for this image
-            if os.path.exists(filename):
+            if self.data_backend.exists(filename):
                 logger.debug(
                     f"Skipping processing for {filepath} as cached file {filename} already exists."
                 )
@@ -103,15 +112,15 @@ class VAECache:
             # Open the image using PIL
             try:
                 logger.debug(f"Loading image: {filepath}")
-                image = Image.open(filepath)
+                image = self.data_backend.read_image(filepath)
                 image = image.convert("RGB")
                 image = self._resize_for_condition_image(image, self.resolution)
             except Exception as e:
                 logger.error(f"Encountered error opening image: {e}")
                 try:
-                    os.remove(filepath)
-                except:
-                    pass
+                    self.data_backend.delete(filepath)
+                except Exception as e:
+                    logger.error(f'Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}')
                 continue
 
             # Convert the image to a tensor

@@ -54,3 +54,18 @@ class LocalDataBackend(BaseDataBackend):
                         yield from _rglob_follow_symlinks(real_path, pattern)
 
         return list(_rglob_follow_symlinks(Path(instance_data_root), str_pattern))
+
+    def read_image(self, filepath):
+        from PIL import Image
+        return Image.open(self.read(filepath))
+
+    def create_directory(self, directory_path):
+        os.makedirs(directory_path, exist_ok=True)
+
+    def torch_load(self, filename):
+        import torch
+        return torch.load(self.read(filename))
+
+    def torch_save(self, data, filename):
+        import torch
+        torch.save(data, self.open_file(filename, 'wb'))
