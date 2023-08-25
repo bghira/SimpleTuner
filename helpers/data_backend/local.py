@@ -29,7 +29,7 @@ class LocalDataBackend(BaseDataBackend):
         """Open the file in the specified mode."""
         return open(filepath, mode)
     
-    def list_files(self, pattern: str, instance_data_root: str):
+    def list_files(self, str_pattern: str, instance_data_root: str):
         """
         List all files matching the pattern.
         Creates Path objects of each file found.
