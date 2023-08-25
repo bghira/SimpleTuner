@@ -47,4 +47,4 @@ class LocalDataBackend(BaseDataBackend):
                     if real_path.is_dir():
                         yield from _rglob_follow_symlinks(real_path, pattern)
 
-        return list(_rglob_follow_symlinks(Path(instance_data_root), pattern))
+        return list(_rglob_follow_symlinks(Path(instance_data_root), str_pattern))
