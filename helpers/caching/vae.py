@@ -121,8 +121,8 @@ class VAECache:
                 logger.error(f"Encountered error opening image: {e}")
                 try:
                     self.data_backend.delete(filepath)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f'Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}')
                 continue
 
             # Convert the image to a tensor
