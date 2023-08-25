@@ -327,11 +327,29 @@ def main():
         **extra_optimizer_args,
     )
 
+    # Create a DataBackend, so that we can access our dataset.
+    if args.data_backend == 'local':
+        from helpers.data_backend.local import LocalDataBackend
+        data_backend = LocalDataBackend()
+    elif args.data_backend == 'aws':
+        from helpers.data_backend.aws import S3DataBackend
+        data_backend = S3DataBackend(
+            bucket_name=args.aws_bucket_name,
+            region_name=args.aws_region_name,
+            endpoint_url=args.aws_endpoint_url,
+            aws_access_key_id=args.aws_access_key_id,
+            aws_secret_access_key=args.aws_secret_access_key,
+        )
+    else:
+        raise ValueError(f'Unsupported data backend: {args.data_backend}')
+    logger.info(f'Created {args.data_backend} data backend.')
+
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
+        data_backend=data_backend,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
@@ -400,7 +418,7 @@ def main():
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
         logger.warning(
-            f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
+            f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
 
     # Preprocessing the datasets.
@@ -565,6 +583,7 @@ def main():
     logger.info("Creating aspect bucket sampler")
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
+        data_backend=data_backend,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
