@@ -96,7 +96,7 @@ class S3DataBackend(BaseDataBackend):
         # Using paginator to handle potential large number of objects
         paginator = self.client.get_paginator("list_objects_v2")
         for page in paginator.paginate(
-            Bucket=self.bucket, Prefix=str_pattern, Delimiter="/"
+            Bucket=self.bucket_name, Prefix=str_pattern, Delimiter="/"
         ):
             # Current "subdirectories"
             common_prefixes = [cp["Prefix"] for cp in page.get("CommonPrefixes", [])]
