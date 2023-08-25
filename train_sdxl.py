@@ -624,7 +624,6 @@ def main():
                 prepend_instance_prompt=args.prepend_instance_prompt or False,
                 use_captions=not args.only_instance_prompt,
         )
-        logger.debug(f'Computing all of these prompts: {all_captions}\n')
         embed_cache.precompute_embeddings_for_prompts(all_captions)
 
     validation_prompts = []
