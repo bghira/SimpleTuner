@@ -12,7 +12,12 @@ logger.setLevel(target_level)
 
 
 class BucketManager:
-    def __init__(self, instance_data_root, cache_file, data_backend: BaseDataBackend):
+    def __init__(
+        self,
+        instance_data_root: str,
+        cache_file: str,
+        data_backend: BaseDataBackend
+    ):
         self.data_backend = data_backend
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
