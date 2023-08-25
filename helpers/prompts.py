@@ -91,6 +91,7 @@ prompts = {
     "alien_invasion": "The first moments of an alien invasion from a civilian's perspective.",
 }
 
+
 def prompt_library_injection(new_prompts: dict) -> dict:
     """
     Add more prompts to the built-in SimpleTuner Prompt library.
@@ -105,32 +106,39 @@ def prompt_library_injection(new_prompts: dict) -> dict:
     Returns:
         dict: Completed prompt library.
     """
-    
+
     # Unpack the new prompts into the library.
     global prompts
-    return {
-        **prompts,
-        **new_prompts
-    }
+    return {**prompts, **new_prompts}
+
 
 import logging
+from helpers.data_backend.base import BaseDataBackend
+from helpers.data_backend.aws import S3DataBackend
 from pathlib import Path
 import os
 
 logger = logging.getLogger("PromptHandler")
-logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+
 
 class PromptHandler:
     @staticmethod
     def prepare_instance_prompt(
-        image_path: str, use_captions: bool, prepend_instance_prompt: bool, instance_prompt: str = None
+        image_path: str,
+        use_captions: bool,
+        data_backend: BaseDataBackend,
+        prepend_instance_prompt: bool,
+        instance_prompt: str = None,
     ) -> str:
         if not instance_prompt and prepend_instance_prompt:
             # If we did not get a specific instance prompt, use the folder name.
             instance_prompt = Path(image_path).stem
+            if type(data_backend) == S3DataBackend:
+                raise ValueError('S3 data backend is not yet compatible with --prepend_instance_prompt')
         if use_captions:
             # Underscores to spaces.
-            instance_prompt = instance_prompt.replace("_", " ")
+            instance_prompt = image_path.lower().replace("_", " ")
             # Remove some midjourney messes.
             instance_prompt = instance_prompt.split("upscaled by")[0]
             instance_prompt = instance_prompt.split("upscaled beta")[0]
@@ -156,6 +164,7 @@ class PromptHandler:
         caption_strategy: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -176,6 +185,7 @@ class PromptHandler:
                 image_path=image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
+                data_backend=data_backend
             )
         elif caption_strategy == "textfile":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
