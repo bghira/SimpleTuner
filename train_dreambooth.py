@@ -21,22 +21,21 @@ import time
 import os
 from pathlib import Path
 from helpers.arguments import parse_args
-from helpers.state_tracker import StateTracker
-from helpers.files import (
+from helpers.training.state_tracker import StateTracker
+from helpers.legacy.sd_files import (
     import_model_class_from_model_name_or_path,
     register_file_hooks,
 )
-from helpers.aspect_bucket import BalancedBucketSampler
-from helpers.min_snr_gamma import compute_snr
-from helpers.validation import log_validation
-from helpers.metadata import save_model_card
-from helpers.custom_schedule import (
+from helpers.legacy.aspect_bucket import BalancedBucketSampler
+from helpers.training.min_snr_gamma import compute_snr
+from helpers.legacy.validation import log_validation
+from helpers.legacy.metadata import save_model_card
+from helpers.training.custom_schedule import (
     enforce_zero_terminal_snr,
     get_polynomial_decay_schedule_with_warmup,
 )
-from helpers.model import freeze_entire_component, freeze_text_encoder
-from helpers.dreambooth_dataset import DreamBoothDataset
-from helpers.prompt_dataset import PromptDataset
+from helpers.training.model_freeze import freeze_entire_component, freeze_text_encoder
+from helpers.legacy.dreambooth_dataset import DreamBoothDataset
 import numpy as np
 import torch
 import torch.nn.functional as F

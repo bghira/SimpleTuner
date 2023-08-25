@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from torchvision import transforms
 from PIL.ImageOps import exif_transpose
-from .state_tracker import StateTracker
+from ..training.state_tracker import StateTracker
 from PIL import Image
 import json, logging, os, multiprocessing
 from tqdm import tqdm

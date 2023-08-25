@@ -9,7 +9,7 @@ pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 
 from PIL import Image
-from .state_tracker import StateTracker
+from ..training.state_tracker import StateTracker
 import os, json
 from PIL.ImageOps import exif_transpose
 

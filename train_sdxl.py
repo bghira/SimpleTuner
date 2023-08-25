@@ -25,13 +25,13 @@ from pathlib import Path
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.state_tracker import StateTracker
-from helpers.sdxl_embeds import TextEmbeddingCache
-from helpers.image_tools import calculate_luminance, calculate_batch_luminance
-from helpers.vae_cache import VAECache
+from helpers.training.state_tracker import StateTracker
+from helpers.caching.vae import VAECache
+from helpers.caching.sdxl_embeds import TextEmbeddingCache
+from helpers.image_manipulation.brightness import calculate_luminance, calculate_batch_luminance
 from helpers.arguments import parse_args
-from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
-from helpers.min_snr_gamma import compute_snr
+from helpers.training.custom_schedule import get_polynomial_decay_schedule_with_warmup
+from helpers.training.min_snr_gamma import compute_snr
 from helpers.prompts import PromptHandler
 
 logger = logging.getLogger()
@@ -241,7 +241,7 @@ def main():
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        from helpers.sdxl_save_hooks import SDXLSaveHook
+        from helpers.sdxl.save_hooks import SDXLSaveHook
 
         model_hooks = SDXLSaveHook(
             args=args,

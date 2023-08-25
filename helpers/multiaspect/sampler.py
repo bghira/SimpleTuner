@@ -5,7 +5,7 @@ from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
-from helpers.state_tracker import StateTracker
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger('MultiAspectSampler')
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
