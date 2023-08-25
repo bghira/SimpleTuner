@@ -22,6 +22,9 @@ boto_logger.setLevel("WARNING")
 boto_logger = logging.getLogger("botocore.client")
 boto_logger.setLevel("WARNING")
 
+# Arguably, the most interesting one:
+boto_logger = logging.getLogger("botocore.endpoint")
+boto_logger.setLevel('WARNING')
 
 class S3DataBackend(BaseDataBackend):
     def __init__(

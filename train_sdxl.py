@@ -759,9 +759,15 @@ def main():
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
+        # Copy args into public_args:
+        import copy
+        public_args = copy.deepcopy(args)
+        # Remove the args that we don't want to track:
+        del public_args.aws_access_key
+        del public_args.aws_secret_access_key_id
         accelerator.init_trackers(
             project_name=args.tracker_run_name,
-            config=vars(args),
+            config=vars(public_args),
             init_kwargs={
                 "name": args.tracker_project_name,
                 "id": args.tracker_project_name,
