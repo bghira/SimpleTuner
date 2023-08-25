@@ -207,22 +207,9 @@ class PromptHandler:
         import os
 
         captions = []
-
-        def rglob_follow_symlinks(path: Path, pattern: str):
-            for p in path.glob(pattern):
-                yield p
-            for p in path.iterdir():
-                if p.is_dir() and not p.is_symlink():
-                    yield from rglob_follow_symlinks(p, pattern)
-                elif p.is_symlink():
-                    real_path = Path(os.readlink(p))
-                    if real_path.is_dir():
-                        yield from rglob_follow_symlinks(real_path, pattern)
-
-        all_image_files = list(
-            rglob_follow_symlinks(Path(instance_data_root), "*.[jJpP][pPnN][gG]")
+        all_image_files = data_backend.list_files(
+            instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
-
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
