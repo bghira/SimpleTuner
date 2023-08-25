@@ -11,6 +11,7 @@ from itertools import repeat
 from ctypes import c_int
 
 from helpers.multiaspect.image import MultiaspectImage
+from helpers.data_backend.base import BaseDataBackend
 from helpers.multiaspect.bucket import BucketManager
 from helpers.prompts import PromptHandler
 
@@ -18,6 +19,7 @@ logger = logging.getLogger("MultiAspectDataset")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 from concurrent.futures import ThreadPoolExecutor
 import threading
+from io import BytesIO
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel("WARNING")
@@ -39,6 +41,7 @@ class MultiAspectDataset(Dataset):
         instance_data_root,
         accelerator,
         bucket_manager: BucketManager,
+        data_backend: BaseDataBackend,
         instance_prompt: str = None,
         tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
@@ -55,6 +58,7 @@ class MultiAspectDataset(Dataset):
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.bucket_manager = bucket_manager
+        self.data_backend = data_backend
         self.use_captions = use_captions
         self.size = size
         self.center_crop = center_crop
@@ -92,7 +96,8 @@ class MultiAspectDataset(Dataset):
 
         # Images might fail to load. If so, it is better to just be the bearer of bad news.
         try:
-            instance_image = Image.open(image_path)
+            image_data = self.data_backend.read(image_path)
+            instance_image = Image.open(BytesIO(image_data))
         except Exception as e:
             logger.error(f"Encountered error opening image: {e}")
             raise e
