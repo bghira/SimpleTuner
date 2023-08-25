@@ -521,7 +521,10 @@ def main():
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
         if "vaecache" not in globals():
-            vaecache = VAECache(vae, accelerator)
+            vaecache = VAECache(
+                vae=vae,
+                accelerator=accelerator,
+                data_backend=data_backend)
 
         pixel_values = []
         filepaths = []  # we will store the file paths here
