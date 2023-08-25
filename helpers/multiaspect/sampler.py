@@ -110,6 +110,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
 
     def _reset_buckets(self):
+        if len(self.seen_images) == 0 and len(self._get_unseen_images()) == 0:
+            raise Exception('No images found in the dataset.')
         logger.info(f"Resetting seen image list and refreshing buckets. State before reset:")
         self.log_state()
         if len(self.exhausted_buckets) > 0 and len(self.buckets) == 0:
