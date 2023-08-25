@@ -13,10 +13,7 @@ logger.setLevel(target_level)
 
 class BucketManager:
     def __init__(
-        self,
-        instance_data_root: str,
-        cache_file: str,
-        data_backend: BaseDataBackend
+        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend
     ):
         self.data_backend = data_backend
         self.instance_data_root = Path(instance_data_root)
@@ -37,12 +34,16 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files = list(
-            self.data_backend.list_files(
-                instance_data_root=self.instance_data_root,
-                str_pattern="*.[jJpP][pPnN][gG]",
-            )
+        all_image_files_data = self.data_backend.list_files(
+            instance_data_root=self.instance_data_root,
+            str_pattern="*.[jJpP][pPnN][gG]",
         )
+
+        # Extract only the files from the data
+        all_image_files = [
+            file for _, _, files in all_image_files_data for file in files
+        ]
+
         return [
             file
             for file in all_image_files
@@ -85,7 +86,12 @@ class BucketManager:
         self.data_backend.write(self.cache_file, cache_data_str)
 
     def _bucket_worker(
-        self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set, data_backend
+        self,
+        tqdm_queue,
+        files,
+        aspect_ratio_bucket_indices_queue,
+        existing_files_set,
+        data_backend,
     ):
         """
         A worker function to bucket a list of files.
@@ -138,7 +144,7 @@ class BucketManager:
                     file_shard,
                     aspect_ratio_bucket_indices_queue,
                     existing_files_set,
-                    self.data_backend
+                    self.data_backend,
                 ),
             )
             for file_shard in files_split
