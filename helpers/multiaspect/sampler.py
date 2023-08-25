@@ -1,8 +1,10 @@
 import torch, logging, json, random, os
+from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
+from helpers.data_backend.base import BaseDataBackend
 from helpers.state_tracker import StateTracker
 
 logger = logging.getLogger('MultiAspectSampler')
@@ -18,6 +20,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def __init__(
         self,
         bucket_manager: BucketManager,
+        data_backend: BaseDataBackend,
         batch_size: int,
         seen_images_path: str,
         state_path: str,
@@ -37,6 +40,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
         self.bucket_manager = bucket_manager
+        self.data_backend = data_backend
         self.current_bucket = None
         self.batch_size = batch_size
         self.seen_images_path = seen_images_path
@@ -232,7 +236,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         try:
             logger.debug(f"AspectBucket is loading image: {image_path}")
-            with Image.open(image_path) as image:
+            image_data = self.data_backend.read(image_path)
+            with Image.open(BytesIO(image_data)) as image:
                 if (
                     image.width < self.minimum_image_size
                     or image.height < self.minimum_image_size
