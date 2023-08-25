@@ -29,6 +29,8 @@ open-clip-torch = "^2.20.0"
 iterutils = "^0.1.6"
 scipy = "^1.11.1"
 triton = "^2.0.0.post1"
+boto3 = "^1.28.35"
+pandas = "^2.0.3"
 
 
 [build-system]

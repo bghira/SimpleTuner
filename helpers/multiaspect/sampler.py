@@ -117,9 +117,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"Resetting seen image list and refreshing buckets. State before reset:"
         )
         self.log_state()
-        if len(self.exhausted_buckets) > 0 and len(self.buckets) == 0:
-            # All buckets are exhausted, so we will move onto the next epoch.
-            self.current_epoch += 1
+        # All buckets are exhausted, so we will move onto the next epoch.
+        self.current_epoch += 1
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.seen_images = {}

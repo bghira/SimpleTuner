@@ -1112,8 +1112,7 @@ def main():
                         # We do not want to perform validation on a partial batch.
                         continue
                     logger.info(
-                        f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-                        f" {args.validation_prompt}."
+                        f"Running validation... \n Generating {len(validation_prompts)} images."
                     )
                     # create pipeline
                     if args.use_ema:
