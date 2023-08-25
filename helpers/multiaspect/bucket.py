@@ -33,7 +33,10 @@ class BucketManager:
             list: A list of new files.
         """
         all_image_files = list(
-            self.data_backend.list_files(instance_data_root=self.instance_data_root, str_pattern="*.[jJpP][pPnN][gG]")
+            self.data_backend.list_files(
+                instance_data_root=self.instance_data_root,
+                str_pattern="*.[jJpP][pPnN][gG]",
+            )
         )
         return [
             file
@@ -74,9 +77,7 @@ class BucketManager:
         }
         cache_data_str = json.dumps(cache_data)
         # Use our DataBackend to write the cache file.
-        self.data_backend.write(
-            self.cache_file, cache_data_str
-        )
+        self.data_backend.write(self.cache_file, cache_data_str)
 
     def _bucket_worker(
         self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set
