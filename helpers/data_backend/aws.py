@@ -111,10 +111,6 @@ class S3DataBackend(BaseDataBackend):
             # Append the current directory, its subdirectories, and its files to the results
             results.append((str_pattern, common_prefixes, files))
 
-            # Recursively list the "subdirectories"
-            for prefix in common_prefixes:
-                results.extend(self.list_files(prefix))
-
         return results
 
     def _convert_path_to_key(self, path: str) -> str:
