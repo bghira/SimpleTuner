@@ -309,6 +309,9 @@ def main():
             )
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
+    elif hasattr(args, 'use_adafactor_optimizer') and args.use_adafactor_optimizer:
+        from transformers import Adafactor
+        optimizer_cls = Adafactor
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_cls = torch.optim.AdamW
@@ -612,18 +615,22 @@ def main():
 
         # Prompt format: { 'shortname': 'this is the prompt', ... }
         for shortname, prompt in prompt_library.items():
-            logger.info(f"Precomputing validation prompt embeds: {shortname}")
+            logger.info(f"Precomputing validation prompt library embeds: {shortname}")
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
-    elif args.validation_prompt is not None:
+    if args.user_prompt_library is not None:
+        user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
+        for shortname, prompt in user_prompt_library.items():
+            logger.info(f"Precomputing validation user prompt library embeds: {shortname}")
+            embed_cache.compute_embeddings_for_prompts([prompt])
+            validation_prompts.append(prompt)
+            validation_shortnames.append(shortname)
+    if args.validation_prompt is not None:
         # Use a single prompt for validation.
-        validation_prompts = [args.validation_prompt]
-        validation_shortnames = ["validation"]
-        (
-            validation_prompt_embeds,
-            validation_pooled_embeds,
-        ) = embed_cache.compute_embeddings_for_prompts([args.validation_prompt])
+        # This will add a single prompt to the prompt library, if in use.
+        validation_prompts = validation_prompts + [args.validation_prompt]
+        validation_shortnames = validation_shortnames + ["validation"]
 
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
@@ -724,7 +731,15 @@ def main():
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers(args.tracker_run_name, config=vars(args))
+        accelerator.init_trackers(
+            project_name=args.tracker_run_name,
+            config=vars(args),
+            init_kwargs={
+                "name": args.tracker_project_name,
+                "id": args.tracker_project_name,
+                "resume": "allow"
+            }
+        )
 
     # Train!
     total_batch_size = (
@@ -766,6 +781,9 @@ def main():
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            custom_balanced_sampler.load_states(
+                state_path=os.path.join(args.output_dir, path, 'training_state.json'),
+            )
             global_step = int(path.split("-")[1])
 
             resume_global_step = global_step * args.gradient_accumulation_steps
@@ -1030,7 +1048,11 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state()
+                        custom_balanced_sampler.save_state(
+                            state_path=os.path.join(
+                                save_path, "training_state.json"
+                            ),
+                        )
                         logger.info(f"Saved state to {save_path}")
 
             logs = {
@@ -1208,13 +1230,13 @@ def main():
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         )
         pipeline.save_pretrained(
-            "/notebooks/datasets/models/ptx0-xltest", safe_serialization=True
+            os.path.join(args.output_dir, 'pipeline'), safe_serialization=True
         )
 
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
-                folder_path=args.output_dir,
+                folder_path=os.path.join(args.output_dir, 'pipeline'),
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )

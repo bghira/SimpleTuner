@@ -142,7 +142,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--seen_state_path",
         type=str,
-        default="seen_state.json",
+        default="seen_images.json",
         help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times.",
     )
     parser.add_argument(
@@ -444,9 +444,16 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--tracker_run_name",
         type=str,
-        default="simpletuner",
+        default="simpletuner-testing",
         help="The name of the run to track with the tracker.",
     )
+    parser.add_argument(
+        "--tracker_project_name",
+        type=str,
+        default="simpletuner",
+        help="The name of the project for WandB or Tensorboard.",
+    )
+
     parser.add_argument(
         "--validation_prompt",
         type=str,
@@ -457,6 +464,12 @@ def parse_args(input_args=None):
         "--validation_prompt_library",
         action="store_true",
         help="If this is provided, the SimpleTuner prompt library will be used to generate multiple images.",
+    )
+    parser.add_argument(
+        "--user_prompt_library",
+        type=str,
+        default=None,
+        help="This should be a path to the JSON file containing your prompt library. See user_prompt_library.json.example.",
     )
     parser.add_argument(
         "--num_validation_images",
@@ -653,7 +666,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--learning_rate_end",
         type=str,
-        default="1e-7",
+        default="4e-7",
         help="A polynomial learning rate will end up at this value after the specified number of warmup steps.",
     )
 
