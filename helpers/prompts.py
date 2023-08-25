@@ -204,12 +204,11 @@ class PromptHandler:
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
     ) -> list:
-        import os
-
         captions = []
         all_image_files = data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
+        logger.debug(f'All image files: {all_image_files}')
         for image_path in all_image_files:
             logger.debug(f'Getting caption for image "{image_path}".')
             caption = PromptHandler.prepare_instance_prompt(

@@ -1,7 +1,9 @@
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
-import os
+import os, logging
 
+logger = logging.getLogger('LocalDataBackend')
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
 
 class LocalDataBackend(BaseDataBackend):
     def read(self, filepath):
@@ -37,6 +39,7 @@ class LocalDataBackend(BaseDataBackend):
         List all files matching the pattern.
         Creates Path objects of each file found.
         """
+        logger.debug(f'LocalDataBackend.list_files: str_pattern={str_pattern}, instance_data_root={instance_data_root}')
         if instance_data_root is None:
             raise ValueError("instance_data_root must be specified.")
         def _rglob_follow_symlinks(path: Path, pattern: str):
