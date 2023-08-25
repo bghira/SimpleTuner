@@ -524,7 +524,8 @@ def main():
             vaecache = VAECache(
                 vae=vae,
                 accelerator=accelerator,
-                data_backend=data_backend)
+                data_backend=data_backend
+            )
 
         pixel_values = []
         filepaths = []  # we will store the file paths here
