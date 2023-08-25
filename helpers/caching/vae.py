@@ -95,9 +95,8 @@ class VAECache:
             instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
         ):
             for file in files:
-                if file.endswith((".png", ".jpg", ".jpeg")):
-                    logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
-                    files_to_process.append(os.path.join(subdir, file))
+                logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
+                files_to_process.append(os.path.join(subdir, file))
 
         # Iterate through the files, displaying a progress bar
         for filepath in tqdm(files_to_process, desc="Processing images"):
