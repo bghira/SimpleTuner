@@ -57,7 +57,7 @@ def resize_for_condition_image(self, input_image: Image, resolution: int):
 def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
-    current_file_path = os.path.join(args.output_dir, filename)
+    current_file_path = os.path.join(args.temporary_folder, filename)
     if os.path.exists(current_file_path):
         print(f"{filename} already exists, skipping download...")
         return
@@ -113,6 +113,9 @@ def parse_args():
     # Script-specific arguments
     parser.add_argument(
         "--input_folder", type=str, required=True, help="Location of the Parquet files."
+    )
+    parser.add_argument(
+        "--temporary_folder", type=str, required=True, help="Location of temporary data during upload."
     )
     parser.add_argument(
         "--pwatermark_threshold",
