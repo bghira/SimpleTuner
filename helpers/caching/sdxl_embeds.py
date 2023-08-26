@@ -13,8 +13,12 @@ class TextEmbeddingCache:
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def create_hash(self, caption):
-        return hashlib.md5(caption.encode()).hexdigest()
+    def _generate_filename(self, filepath: str):
+        """Get the cache filename for a given image filepath."""
+        # Extract the base name from the filepath and replace the image extension with .pt
+        return os.path.join(
+            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0] + ".pt"
+        )
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)
@@ -91,7 +95,7 @@ class TextEmbeddingCache:
                 prompts, desc="Processing prompts", disable=return_concat
             ):
                 filename = os.path.join(
-                    self.cache_dir, self.create_hash(prompt) + ".pt"
+                    self.cache_dir, self._generate_filename(prompt) + ".pt"
                 )
 
                 if os.path.exists(filename) and not return_concat:
