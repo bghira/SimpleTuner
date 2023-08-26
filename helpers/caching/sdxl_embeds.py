@@ -19,11 +19,11 @@ class TextEmbeddingCache:
         filtered = "".join(c for c in filepath if c.isalnum() or c in ["-", "_", "."])
 
         # Limit the length to POSIX:
-        filtered = filtered[:255]
+        filtered = filtered[:72]
 
         # Extract the base name from the filepath and replace the image extension with .pt
         filename = os.path.splitext(os.path.basename(filtered))[0]
-        cached_filepath = os.path.join(self.cache_dir, filename + ".pt")
+        cached_filepath = os.path.join(self.cache_dir, filename)
 
         return cached_filepath
 
