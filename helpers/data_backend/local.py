@@ -74,7 +74,12 @@ class LocalDataBackend(BaseDataBackend):
         from PIL import Image
         # Remove embedded null byte:
         filepath = filepath.replace("\x00", "")
-        return Image.open(self.read(filepath))
+        try:
+            image = Image.open(self.read(filepath))
+            return image
+        except Exception as e:
+            logger.error(f"Encountered error opening image: {e}")
+            raise e
 
     def create_directory(self, directory_path):
         os.makedirs(directory_path, exist_ok=True)
