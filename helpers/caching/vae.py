@@ -59,14 +59,14 @@ class VAECache:
         return list(unprocessed_files)
 
     def encode_image(self, pixel_values, filepath: str):
-        filename = self._generate_filename(filepath)
+        full_filename, base_filename = self._generate_filename(filepath)
         logger.debug(
-            f"Created filename {filename} from filepath {filepath} for resulting .pt filename."
+            f"Created filename {full_filename} from filepath {filepath} for resulting .pt filename."
         )
-        if self.data_backend.exists(filename):
-            latents = self.load_from_cache(filename)
+        if self.data_backend.exists(full_filename):
+            latents = self.load_from_cache(full_filename)
             logger.debug(
-                f"Loading latents of shape {latents.shape} from existing cache file: {filename}"
+                f"Loading latents of shape {latents.shape} from existing cache file: {full_filename}"
             )
         else:
             with torch.no_grad():
@@ -76,7 +76,7 @@ class VAECache:
                     )
                 ).latent_dist.sample()
                 logger.debug(
-                    f"Using shape {latents.shape}, creating new latent cache: {filename}"
+                    f"Using shape {latents.shape}, creating new latent cache: {full_filename}"
                 )
             latents = latents * self.vae.config.scaling_factor
             logger.debug(f"Latent shape after re-scale: {latents.shape}")
