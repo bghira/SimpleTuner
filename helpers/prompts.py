@@ -212,7 +212,8 @@ class PromptHandler:
         all_image_files = data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
-        logger.debug(f'Found {len(all_image_files)} images: {all_image_files}')
+        if type(all_image_files) == tuple:
+            all_image_files = all_image_files[2]
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
