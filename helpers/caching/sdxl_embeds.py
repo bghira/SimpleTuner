@@ -16,12 +16,17 @@ class TextEmbeddingCache:
     def _generate_filename(self, filepath: str):
         """Get the cache filename for a given image filepath."""
         # Extract the base name from the filepath and replace the image extension with .pt
-        return os.path.join(
-            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0] + ".pt"
+        filtered = os.path.join(
+            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0]
         )
+        # Remove any non-POSIX compatible file characters:
+        filtered = "".join(c for c in filtered if c.isalnum() or c in ["-", "_"])
+        # Remove any other bad filename chars:
+        filtered = filtered.replace(" ", "_")
+        return filtered
 
     def save_to_cache(self, filename, embeddings):
-        logger.debug(f'Saving to cache: {filename}')
+        logger.debug(f"Saving to cache: {filename}")
         torch.save(embeddings, filename)
 
     def load_from_cache(self, filename):
