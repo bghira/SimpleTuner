@@ -212,6 +212,7 @@ class PromptHandler:
         all_image_files = data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
+        logger.debug(f'Found {len(all_image_files)} images: {all_image_files}')
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
@@ -219,6 +220,7 @@ class PromptHandler:
                 prepend_instance_prompt=prepend_instance_prompt,
                 data_backend=data_backend,
             )
+            logger.debug(f'Processing image path: {image_path} into caption: {caption}')
             captions.append(caption)
 
         return captions
