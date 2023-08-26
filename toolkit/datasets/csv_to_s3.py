@@ -293,14 +293,18 @@ def main():
 
     # Read Parquet file as DataFrame
     parquet_files = [f for f in Path(args.input_folder).glob("*.parquet")]
+    logger.info(f'Discovered catalogues: {parquet_files}')
     for file in parquet_files:
+        logger.info(f'Loading file: {file}')
         df = pd.read_parquet(file)
 
         # Determine the URI column
         uri_column = get_uri_column(df)
         if args.caption_field is None:
             args.caption_field = get_caption_column(df)
+        logger.info(f'Caption field: {args.caption_field}')
         if not uri_column:
+            logger.warning(f'Row has no uri_column: {uri_column}')
             continue
 
         # Apply filters
