@@ -23,7 +23,7 @@ class TextEmbeddingCache:
         filtered = filtered[:255]
         # Extract the base name from the filepath and replace the image extension with .pt
         filtered = os.path.join(
-            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0]
+            self.cache_dir, os.path.splitext(os.path.basename(filtered))[0]
         )
         return filtered
 
