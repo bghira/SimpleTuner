@@ -258,10 +258,15 @@ def fetch_data(s3_client, data, args):
     """Function to fetch all images specified in data and upload them to S3."""
     to_fetch = {}
     for row in data:
+        logger.info(f"Row: {row}")
         new_filename = content_to_filename(row[args.caption_field])
         if (
-            "Variations" in row[args.caption_field]
-            or "Upscaled" not in row[args.caption_field]
+            hasattr(args, "midjourney_data_checks")
+            and args.midjourney_data_checks
+            and (
+                "Variations" in row[args.caption_field]
+                or "Upscaled" not in row[args.caption_field]
+            )
         ):
             continue
         if new_filename not in to_fetch:
@@ -293,43 +298,51 @@ def main():
 
     # Read Parquet file as DataFrame
     parquet_files = [f for f in Path(args.input_folder).glob("*.parquet")]
-    logger.info(f'Discovered catalogues: {parquet_files}')
+    logger.info(f"Discovered catalogues: {parquet_files}")
     for file in parquet_files:
-        logger.info(f'Loading file: {file}')
+        logger.info(f"Loading file: {file}")
         df = pd.read_parquet(file)
 
         # Determine the URI column
         uri_column = get_uri_column(df)
         if args.caption_field is None:
             args.caption_field = get_caption_column(df)
-        logger.info(f'Caption field: {args.caption_field}')
+        logger.info(f"Caption field: {args.caption_field}")
         if not uri_column:
-            logger.warning(f'Row has no uri_column: {uri_column}')
+            logger.warning(f"Row has no uri_column: {uri_column}")
             continue
-        logger.info(f'URI field: {uri_column}')
-        logger.info(f'Before filtering, we have {len(df)} rows.')
+        logger.info(f"URI field: {uri_column}")
+        logger.info(f"Before filtering, we have {len(df)} rows.")
         # Apply filters
         if "pwatermark" in df.columns:
-            logger.info(f'Applying pwatermark filter with threshold {args.pwatermark_threshold}')
+            logger.info(
+                f"Applying pwatermark filter with threshold {args.pwatermark_threshold}"
+            )
             df = df[df["pwatermark"] >= args.pwatermark_threshold]
-            logger.info(f'Filtered to {len(df)} rows.')
+            logger.info(f"Filtered to {len(df)} rows.")
         if "aesthetic" in df.columns:
-            logger.info(f'Applying aesthetic filter with threshold {args.aesthetic_threshold}')
+            logger.info(
+                f"Applying aesthetic filter with threshold {args.aesthetic_threshold}"
+            )
             df = df[df["aesthetic"] >= args.aesthetic_threshold]
-            logger.info(f'Filtered to {len(df)} rows.')
+            logger.info(f"Filtered to {len(df)} rows.")
         if "WIDTH" in df.columns:
-            logger.info(f'Applying minimum resolution filter with threshold {args.minimum_resolution}')
+            logger.info(
+                f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
+            )
             df = df[df["WIDTH"] >= args.minimum_resolution]
-            logger.info(f'Filtered to {len(df)} rows.')
+            logger.info(f"Filtered to {len(df)} rows.")
         if "HEIGHT" in df.columns:
-            logger.info(f'Applying minimum resolution filter with threshold {args.minimum_resolution}')
+            logger.info(
+                f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
+            )
             df = df[df["HEIGHT"] >= args.minimum_resolution]
-            logger.info(f'Filtered to {len(df)} rows.')
+            logger.info(f"Filtered to {len(df)} rows.")
         # TODO: Add more filters as needed
 
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
-        logger.info(f'Fetching {len(to_fetch)} images...')
+        logger.info(f"Fetching {len(to_fetch)} images...")
         fetch_data(s3_client, to_fetch, args)
 
 
