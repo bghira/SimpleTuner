@@ -97,6 +97,7 @@ class VAECache:
             instance_data_root=self.cache_dir, str_pattern="*.pt"
         ):
             for file in files:
+                logger.debug(f'Found existing .pt file: {file}')
                 existing_pt_files.add(os.path.join(_, file))
 
         # Get a list of all the files to process (customize as needed)
