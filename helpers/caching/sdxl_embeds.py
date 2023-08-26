@@ -2,7 +2,7 @@ import os, torch, hashlib, logging
 from tqdm import tqdm
 
 logger = logging.getLogger("TextEmbeddingCache")
-logger.setLevel(logging.INFO)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class TextEmbeddingCache:
