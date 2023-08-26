@@ -98,3 +98,8 @@ class LocalDataBackend(BaseDataBackend):
         import torch
 
         torch.save(data, self.open_file(filename, "wb"))
+
+    def write_batch(self, filepaths, data_list):
+        """Write a batch of files to the specified filepaths."""
+        for filepath, data in zip(filepaths, data_list):
+            self.write(filepath, data)

@@ -71,3 +71,10 @@ class BaseDataBackend(ABC):
         Saves the data using torch to the backend.
         """
         pass
+
+    @abstractmethod
+    def write_batch(self, identifiers, files):
+        """
+        Write a batch of files to the specified identifiers.
+        """
+        pass

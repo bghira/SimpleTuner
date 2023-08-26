@@ -3,24 +3,23 @@ import fnmatch, logging
 from pathlib import PosixPath
 from helpers.data_backend.base import BaseDataBackend
 
-boto_logger = logging.getLogger("botocore.hooks")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.auth")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.httpsession")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.parsers")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.retryhandler")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.loaders")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.regions")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.utils")
-boto_logger.setLevel("WARNING")
-boto_logger = logging.getLogger("botocore.client")
-boto_logger.setLevel("WARNING")
+loggers_to_silence = [
+    'botocore.hooks',
+    'botocore.auth',
+    'botocore.httpsession',
+    'botocore.parsers',
+    'botocore.retryhandler',
+    'botocore.loaders',
+    'botocore.regions',
+    'botocore.utils',
+    'botocore.client',
+    'botocore.handler',
+    'botocore.awsrequest'
+]
+
+for logger_name in loggers_to_silence:
+    logger = logging.getLogger(logger_name)
+    logger.setLevel('WARNING')
 
 # Arguably, the most interesting one:
 boto_logger = logging.getLogger("botocore.endpoint")
@@ -166,3 +165,11 @@ class S3DataBackend(BaseDataBackend):
         buffer = BytesIO()
         torch.save(data, buffer)
         self.write(s3_key, buffer.getvalue())
+
+    def write_batch(self, s3_keys, data_list):
+        """Write a batch of files to the specified S3 keys."""
+        for s3_key, data in zip(s3_keys, data_list):
+            # Convert data to Bytes if it's a string:
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            self.client.put_object(Bucket=self.bucket_name, Key=s3_key, Body=data)
