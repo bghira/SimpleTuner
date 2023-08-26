@@ -131,9 +131,9 @@ class PromptHandler:
         prepend_instance_prompt: bool,
         instance_prompt: str = None,
     ) -> str:
+        instance_prompt = Path(image_path).stem
         if not instance_prompt and prepend_instance_prompt:
             # If we did not get a specific instance prompt, use the folder name.
-            instance_prompt = Path(image_path).stem
             logger.debug(f'Prepending instance prompt: {instance_prompt}')
             if type(data_backend) == S3DataBackend:
                 raise ValueError(
