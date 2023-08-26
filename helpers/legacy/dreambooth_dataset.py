@@ -288,6 +288,7 @@ class DreamBoothDataset(Dataset):
             instance_prompt = instance_prompt.replace("_", " ")
             instance_prompt = instance_prompt.split("upscaled by")[0]
             instance_prompt = instance_prompt.split("upscaled beta")[0]
+            instance_prompt = instance_prompt.split("/")[-1]
             if self.prepend_instance_prompt:
                 instance_prompt = self.instance_prompt + " " + instance_prompt
         if self.print_names:
