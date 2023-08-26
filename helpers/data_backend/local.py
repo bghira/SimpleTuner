@@ -72,7 +72,8 @@ class LocalDataBackend(BaseDataBackend):
 
     def read_image(self, filepath):
         from PIL import Image
-
+        # Remove embedded null byte:
+        filepath = filepath.replace("\x00", "")
         return Image.open(self.read(filepath))
 
     def create_directory(self, directory_path):
