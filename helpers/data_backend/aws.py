@@ -180,3 +180,24 @@ class S3DataBackend(BaseDataBackend):
         # Use ThreadPoolExecutor for concurrent uploads
         with concurrent.futures.ThreadPoolExecutor() as executor:
             executor.map(upload_to_s3, s3_keys, data_list)
+    def read_batch(self, s3_keys):
+        """Read a batch of files from the specified S3 keys concurrently."""
+        
+        def read_from_s3(s3_key):
+            """Helper function to read data from S3."""
+            response = self.client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            return response['Body'].read()
+        
+        # Use ThreadPoolExecutor for concurrent reads
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            return list(executor.map(read_from_s3, s3_keys))
+
+    def bulk_exists(self, s3_keys, prefix=""):
+        """Check the existence of a list of S3 keys in bulk."""
+        
+        # List all objects with the given prefix
+        objects = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
+        existing_keys = set(obj['Key'] for obj in objects.get('Contents', []))
+        
+        # Check existence for each key
+        return [key in existing_keys for key in s3_keys]
