@@ -21,6 +21,7 @@ class TextEmbeddingCache:
         )
 
     def save_to_cache(self, filename, embeddings):
+        logger.debug(f'Saving to cache: {filename}')
         torch.save(embeddings, filename)
 
     def load_from_cache(self, filename):
