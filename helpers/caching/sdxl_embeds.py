@@ -95,9 +95,7 @@ class TextEmbeddingCache:
             for prompt in tqdm(
                 prompts, desc="Processing prompts", disable=return_concat
             ):
-                filename = os.path.join(
-                    self.cache_dir, self._generate_filename(prompt) + ".pt"
-                )
+                filename = self._generate_filename(prompt) + ".pt"
 
                 if os.path.exists(filename) and not return_concat:
                     logger.debug(
