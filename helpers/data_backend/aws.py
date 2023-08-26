@@ -1,6 +1,7 @@
 import boto3, os
 import fnmatch, logging
 from pathlib import PosixPath
+import concurrent.futures
 from helpers.data_backend.base import BaseDataBackend
 
 loggers_to_silence = [
@@ -167,9 +168,15 @@ class S3DataBackend(BaseDataBackend):
         self.write(s3_key, buffer.getvalue())
 
     def write_batch(self, s3_keys, data_list):
-        """Write a batch of files to the specified S3 keys."""
-        for s3_key, data in zip(s3_keys, data_list):
-            # Convert data to Bytes if it's a string:
+        """Write a batch of files to the specified S3 keys concurrently."""
+        
+        def upload_to_s3(s3_key, data):
+            """Helper function to upload data to S3."""
+            # Convert data to Bytes if it's a string
             if isinstance(data, str):
                 data = data.encode("utf-8")
             self.client.put_object(Bucket=self.bucket_name, Key=s3_key, Body=data)
+        
+        # Use ThreadPoolExecutor for concurrent uploads
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            executor.map(upload_to_s3, s3_keys, data_list)

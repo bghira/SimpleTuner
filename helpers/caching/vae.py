@@ -16,7 +16,8 @@ class VAECache:
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
         resolution: int = 1024,
-        delete_problematic_images: bool = False
+        delete_problematic_images: bool = False,
+        write_batch_size: int = 25,
     ):
         self.data_backend = data_backend
         self.vae = vae
@@ -26,6 +27,7 @@ class VAECache:
         self.resolution = resolution
         self.data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
+        self.write_batch_size = write_batch_size
 
     def _generate_filename(self, filepath: str):
         """Get the cache filename for a given image filepath."""
@@ -78,7 +80,6 @@ class VAECache:
                 )
             latents = latents * self.vae.config.scaling_factor
             logger.debug(f"Latent shape after re-scale: {latents.shape}")
-            self.save_to_cache(filename, latents.squeeze())
 
         output_latents = latents.squeeze().to(
             self.accelerator.device, dtype=self.vae.dtype
@@ -101,6 +102,9 @@ class VAECache:
                 files_to_process.append(os.path.join(subdir, file))
 
         # Iterate through the files, displaying a progress bar
+
+        batch_filepaths = []
+        batch_data = []
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
             filename = self._generate_filename(filepath)
@@ -124,7 +128,9 @@ class VAECache:
                     if self.delete_problematic_images:
                         self.data_backend.delete(filepath)
                 except Exception as e:
-                    logger.error(f'Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}')
+                    logger.error(
+                        f"Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}"
+                    )
                 continue
 
             # Convert the image to a tensor
@@ -136,10 +142,18 @@ class VAECache:
                 logger.error(f"Encountered error converting image to tensor: {e}")
                 continue
 
-            # Process the image with the VAE
-            self.encode_image(pixel_values, filepath)
-
+            # Process the image with the VAE.
+            latents = self.encode_image(pixel_values, filepath)
             logger.debug(f"Processed image {filepath}")
+
+            # Instead of directly saving, append to batches
+            batch_filepaths.append(filename)
+            batch_data.append(latents.squeeze())
+
+            if len(batch_filepaths) >= self.write_batch_size:
+                self.data_backend.write_batch(batch_filepaths, batch_data)
+                batch_filepaths.clear()
+                batch_data.clear()
 
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
