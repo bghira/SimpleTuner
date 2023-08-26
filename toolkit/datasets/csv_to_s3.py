@@ -328,7 +328,9 @@ def main():
         # TODO: Add more filters as needed
 
         # Fetch and process images
-        fetch_data(s3_client, df.to_dict(orient="records"), args)
+        to_fetch = df.to_dict(orient="records")
+        logger.info(f'Fetching {len(to_fetch)} images...')
+        fetch_data(s3_client, to_fetch, args)
 
 
 if __name__ == "__main__":
