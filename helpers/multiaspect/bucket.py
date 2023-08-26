@@ -59,9 +59,13 @@ class BucketManager:
         """
         # Query our DataBackend to see whether the cache file exists.
         if self.data_backend.exists(self.cache_file):
-            # Use our DataBackend to actually read the cache file.
-            cache_data_raw = self.data_backend.read(self.cache_file)
-            cache_data = json.loads(cache_data_raw)
+            try:
+                # Use our DataBackend to actually read the cache file.
+                cache_data_raw = self.data_backend.read(self.cache_file)
+                cache_data = json.loads(cache_data_raw)
+            except Exception as e:
+                logger.warning(f'Error loading aspect bucket cache, creating new one: {e}')
+                cache_data = {}
             self.aspect_ratio_bucket_indices = cache_data.get(
                 "aspect_ratio_bucket_indices", {}
             )
