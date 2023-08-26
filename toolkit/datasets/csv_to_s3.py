@@ -227,7 +227,6 @@ def upload_to_s3(filename, args, s3_client):
 
     # Check if the file exists just before uploading
     if not os.path.exists(filename):
-        logger.error(f"File {filename} does not exist. Skipping upload.")
         return
 
     try:
