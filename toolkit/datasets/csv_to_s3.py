@@ -74,6 +74,7 @@ def fetch_image(info, args):
                 )
                 os.remove(current_file_path)
                 return
+            image = resize_for_condition_image(image, args.condition_image_size)
             image.save(current_file_path, format="PNG")
             image.close()
         else:
@@ -147,6 +148,12 @@ def parse_args():
         type=int,
         default=768,
         help="Minimum resolution for images.",
+    )
+    parser.add_argument(
+        "--condition_image_size",
+        type=int,
+        default=1024,
+        help="This option will by default, resize the smaller edge of an image to 1024px."
     )
 
     return parser.parse_args()
