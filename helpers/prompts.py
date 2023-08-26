@@ -212,7 +212,7 @@ class PromptHandler:
         all_image_files = data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
-        if type(all_image_files) == tuple:
+        if type(all_image_files) == list:
             logger.debug(f'Got tuple from data_backend.list_files: {all_image_files}')
             all_image_files = all_image_files[2]
         else:
