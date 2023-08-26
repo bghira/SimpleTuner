@@ -87,8 +87,6 @@ class TextEmbeddingCache:
         add_text_embeds_all = []
 
         with torch.no_grad():
-            logger.debug(f"Beginning compute_embeddings_for_prompts: {prompts}")
-
             for prompt in tqdm(
                 prompts, desc="Processing prompts", disable=return_concat
             ):
@@ -134,5 +132,4 @@ class TextEmbeddingCache:
         Args:
             prompts (list[str]): All of the prompts.
         """
-        logger.debug(f'Precomputing embeddings for prompts: {prompts}')
         self.compute_embeddings_for_prompts(prompts, return_concat=False)
