@@ -108,7 +108,6 @@ class MultiAspectDataset(Dataset):
         # We return the actual Image object, so that the collate function can encode it, if needed.
         # It also makes it easier to discover the image width/height. And, I am lazy.
         example["instance_images"] = instance_image
-
         # Use the magic prompt handler to retrieve the captions.
         example["instance_prompt_text"] = PromptHandler.magic_prompt(
             data_backend=self.data_backend,
