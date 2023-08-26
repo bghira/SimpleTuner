@@ -65,7 +65,7 @@ class LocalDataBackend(BaseDataBackend):
             parent = str(path.parent)
             if parent not in path_dict:
                 path_dict[parent] = []
-            path_dict[parent].append(str(path.name))
+            path_dict[parent].append(str(path.absolute()))
 
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
