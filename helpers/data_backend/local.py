@@ -75,7 +75,7 @@ class LocalDataBackend(BaseDataBackend):
         # Remove embedded null byte:
         filepath = filepath.replace("\x00", "")
         try:
-            image = Image.open(self.read(filepath))
+            image = Image.open(filepath)
             return image
         except Exception as e:
             logger.error(f"Encountered error opening image: {e}")
