@@ -1,5 +1,6 @@
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
+from io import BytesIO
 import os, logging
 
 logger = logging.getLogger("LocalDataBackend")
@@ -9,8 +10,10 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 class LocalDataBackend(BaseDataBackend):
     def read(self, filepath):
         """Read and return the content of the file."""
+        # Openfilepath as BytesIO:
         with open(filepath, "rb") as file:
-            return file.read()
+            data = file.read()
+        return BytesIO(data)
 
     def write(self, filepath, data):
         """Write data to the specified file."""
