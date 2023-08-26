@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image, ExifTags
 from tqdm import tqdm
 from tqdm.contrib.concurrent import thread_map
-
+from requests.adapters import HTTPAdapter
 from concurrent.futures import ThreadPoolExecutor
 import requests
 import re
@@ -22,6 +22,10 @@ timeouts = (conn_timeout, read_timeout)
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
+http = requests.Session()
+adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
+http.mount('http://', adapter)
+http.mount('https://', adapter)
 
 def content_to_filename(content):
     """
@@ -66,7 +70,7 @@ def fetch_image(info, args):
     if os.path.exists(current_file_path):
         return
     try:
-        r = requests.get(url, timeout=timeouts, stream=True)
+        r = http.get(url, timeout=timeouts, stream=True)
         if r.status_code == 200:
             with open(current_file_path, "wb") as f:
                 r.raw.decode_content = True
