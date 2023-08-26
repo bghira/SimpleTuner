@@ -71,6 +71,7 @@ def fetch_image(info, args):
             with open(current_file_path, "wb") as f:
                 r.raw.decode_content = True
                 shutil.copyfileobj(r.raw, f)
+            r.close()
             image = Image.open(current_file_path)
             width, height = image.size
             if width < args.minimum_resolution or height < args.minimum_resolution:
