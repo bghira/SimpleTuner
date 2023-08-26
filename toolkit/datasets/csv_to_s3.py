@@ -258,7 +258,6 @@ def fetch_data(s3_client, data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
     to_fetch = {}
     for row in data:
-        logger.info(f"Row: {row}")
         new_filename = content_to_filename(row[args.caption_field])
         if (
             hasattr(args, "midjourney_data_checks")
