@@ -272,12 +272,12 @@ def fetch_data(s3_client, data, args, uri_column):
             }
     logging.info("Fetching {} images...".format(len(to_fetch)))
     with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
-        executor.map(
-            fetch_and_upload_image,
-            to_fetch.values(),
-            [args] * len(to_fetch),
-            [s3_client] * len(to_fetch),
-        )
+        list(tqdm(executor.map(
+                    fetch_and_upload_image,
+                    to_fetch.values(),
+                    [args] * len(to_fetch),
+                    [s3_client] * len(to_fetch),
+                ), total=len(to_fetch), desc="Fetching & Uploading Images"))
 
 
 def main():
@@ -294,7 +294,7 @@ def main():
     # Read Parquet file as DataFrame
     parquet_files = [f for f in Path(args.input_folder).glob("*.parquet")]
     logger.info(f"Discovered catalogues: {parquet_files}")
-    for file in parquet_files:
+    for file in tqdm(parquet_files, desc="Processing Parquet files"):
         logger.info(f"Loading file: {file}")
         df = pd.read_parquet(file)
 
