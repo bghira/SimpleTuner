@@ -253,7 +253,11 @@ def upload_to_s3(filename, args, s3_client):
 def fetch_and_upload_image(info, args, s3_client):
     """Fetch the image, process it, and upload it to S3."""
     logger.info("Fetching image {}...".format(info["filename"]))
-    fetch_image(info, args)
+    try:
+        fetch_image(info, args)
+    except Exception as e:
+        logger.error(f'Could not fetch image: {e}')
+        exit(1)
     logger.info("Uploading image {}...".format(info["filename"]))
     upload_to_s3(info["filename"], args, s3_client)
 
