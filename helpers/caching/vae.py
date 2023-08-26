@@ -98,6 +98,7 @@ class VAECache:
         ):
             for file in files:
                 logger.debug(f'Found existing .pt file: {file}')
+                logger.debug(f'Using path: {_}')
                 existing_pt_files.add(os.path.join(_, file))
 
         # Get a list of all the files to process (customize as needed)
