@@ -59,7 +59,7 @@ def fetch_image(info, args):
     url = info["url"]
     current_file_path = os.path.join(args.output_dir, filename)
     if os.path.exists(current_file_path):
-        logger.info(f"{filename} already exists, skipping download...")
+        print(f"{filename} already exists, skipping download...")
         return
     logging.info(f"Fetching image {filename} from {url}...")
     try:
@@ -72,20 +72,20 @@ def fetch_image(info, args):
             image = Image.open(current_file_path)
             width, height = image.size
             if width < args.min_resolution or height < args.min_resolution:
-                logger.info(
+                print(
                     f"Image {filename} is too small ({width}x{height}), deleting..."
                 )
                 os.remove(current_file_path)
                 return
             image.save(current_file_path, format="PNG")
             image.close()
-            logger.info(f"Saved {filename} to {current_file_path}")
+            print(f"Saved {filename} to {current_file_path}")
         else:
-            logger.info(
+            print(
                 f"Could not fetch {filename} from {url} (status code {r.status_code})"
             )
     except Exception as e:
-        logger.info(f"Could not fetch {filename} from {url}: {e}")
+        print(f"Could not fetch {filename} from {url}: {e}")
 
 
 def parse_args():
