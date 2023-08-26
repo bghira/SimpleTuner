@@ -16,6 +16,7 @@ class VAECache:
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
         resolution: int = 1024,
+        delete_problematic_images: bool = False
     ):
         self.data_backend = data_backend
         self.vae = vae
@@ -24,6 +25,7 @@ class VAECache:
         self.cache_dir = cache_dir
         self.resolution = resolution
         self.data_backend.create_directory(self.cache_dir)
+        self.delete_problematic_images = delete_problematic_images
 
     def _generate_filename(self, filepath: str):
         """Get the cache filename for a given image filepath."""
@@ -119,7 +121,8 @@ class VAECache:
             except Exception as e:
                 logger.error(f"Encountered error opening image: {e}")
                 try:
-                    self.data_backend.delete(filepath)
+                    if self.delete_problematic_images:
+                        self.data_backend.delete(filepath)
                 except Exception as e:
                     logger.error(f'Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}')
                 continue
