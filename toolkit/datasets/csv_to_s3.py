@@ -74,7 +74,6 @@ def fetch_image(info, args):
             image = Image.open(current_file_path)
             width, height = image.size
             if width < args.minimum_resolution or height < args.minimum_resolution:
-                print(f"Image {filename} is too small ({width}x{height}), deleting...")
                 os.remove(current_file_path)
                 return
             image = resize_for_condition_image(image, args.condition_image_size)
