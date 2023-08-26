@@ -23,6 +23,8 @@ class TextEmbeddingCache:
         filtered = "".join(c for c in filtered if c.isalnum() or c in ["-", "_"])
         # Remove any other bad filename chars:
         filtered = filtered.replace(" ", "_")
+        # Limit the length to POSIX:
+        filtered = filtered[:255]
         return filtered
 
     def save_to_cache(self, filename, embeddings):
