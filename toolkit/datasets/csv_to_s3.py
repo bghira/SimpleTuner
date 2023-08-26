@@ -5,6 +5,7 @@ import boto3
 import pandas as pd
 from pathlib import Path
 from PIL import Image, ExifTags
+from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 import requests
 import re
@@ -32,9 +33,11 @@ def content_to_filename(content):
     content = content.split(" - Upscaled by", 1)[0]
     # Remove URLs
     cleaned_content = re.sub(r"https*://\S*", "", content)
+    
+    return cleaned_content
 
 
-def resize_for_condition_image(self, input_image: Image, resolution: int):
+def resize_for_condition_image(input_image: Image, resolution: int):
     input_image = input_image.convert("RGB")
     W, H = input_image.size
     aspect_ratio = round(W / H, 2)
@@ -69,9 +72,7 @@ def fetch_image(info, args):
             image = Image.open(current_file_path)
             width, height = image.size
             if width < args.minimum_resolution or height < args.minimum_resolution:
-                print(
-                    f"Image {filename} is too small ({width}x{height}), deleting..."
-                )
+                print(f"Image {filename} is too small ({width}x{height}), deleting...")
                 os.remove(current_file_path)
                 return
             image = resize_for_condition_image(image, args.condition_image_size)
@@ -110,7 +111,10 @@ def parse_args():
         "--input_folder", type=str, required=True, help="Location of the Parquet files."
     )
     parser.add_argument(
-        "--temporary_folder", type=str, required=True, help="Location of temporary data during upload."
+        "--temporary_folder",
+        type=str,
+        required=True,
+        help="Location of temporary data during upload.",
     )
     parser.add_argument(
         "--pwatermark_threshold",
@@ -153,7 +157,7 @@ def parse_args():
         "--condition_image_size",
         type=int,
         default=1024,
-        help="This option will by default, resize the smaller edge of an image to 1024px."
+        help="This option will by default, resize the smaller edge of an image to 1024px.",
     )
 
     return parser.parse_args()
@@ -220,7 +224,7 @@ def upload_to_s3(filename, args, s3_client):
     """Upload the specified file to the S3 bucket."""
     filename = os.path.join(args.temporary_folder, filename)
     object_name = os.path.basename(filename)
-    
+
     # Check if the file exists just before uploading
     if not os.path.exists(filename):
         logger.error(f"File {filename} does not exist. Skipping upload.")
@@ -228,7 +232,9 @@ def upload_to_s3(filename, args, s3_client):
 
     try:
         s3_client.upload_file(filename, args.aws_bucket_name, object_name)
-        logger.info("Uploaded {} to S3 bucket {}".format(object_name, args.aws_bucket_name))
+        logger.info(
+            "Uploaded {} to S3 bucket {}".format(object_name, args.aws_bucket_name)
+        )
         # Delete the local file after successful upload
         os.remove(filename)
     except Exception as e:
