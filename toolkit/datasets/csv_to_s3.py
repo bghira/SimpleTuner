@@ -6,6 +6,8 @@ import pandas as pd
 from pathlib import Path
 from PIL import Image, ExifTags
 from tqdm import tqdm
+from tqdm.contrib.concurrent import thread_map
+
 from concurrent.futures import ThreadPoolExecutor
 import requests
 import re
@@ -267,13 +269,14 @@ def fetch_data(s3_client, data, args, uri_column):
                 "args": args,
             }
     logging.info("Fetching {} images...".format(len(to_fetch)))
-    with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
-        list(tqdm(executor.map(
-                    fetch_and_upload_image,
-                    to_fetch.values(),
-                    [args] * len(to_fetch),
-                    [s3_client] * len(to_fetch),
-                ), total=len(to_fetch), desc="Fetching & Uploading Images"))
+    thread_map(
+        fetch_and_upload_image,
+        to_fetch.values(),
+        [args] * len(to_fetch),
+        [s3_client] * len(to_fetch),
+        desc="Fetching & Uploading Images",
+        max_workers=args.num_workers
+    )
 
 
 def main():
