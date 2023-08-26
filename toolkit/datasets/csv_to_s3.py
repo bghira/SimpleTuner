@@ -306,16 +306,25 @@ def main():
         if not uri_column:
             logger.warning(f'Row has no uri_column: {uri_column}')
             continue
-
+        logger.info(f'URI field: {uri_column}')
+        logger.info(f'Before filtering, we have {len(df)} rows.')
         # Apply filters
         if "pwatermark" in df.columns:
+            logger.info(f'Applying pwatermark filter with threshold {args.pwatermark_threshold}')
             df = df[df["pwatermark"] >= args.pwatermark_threshold]
+            logger.info(f'Filtered to {len(df)} rows.')
         if "aesthetic" in df.columns:
+            logger.info(f'Applying aesthetic filter with threshold {args.aesthetic_threshold}')
             df = df[df["aesthetic"] >= args.aesthetic_threshold]
+            logger.info(f'Filtered to {len(df)} rows.')
         if "WIDTH" in df.columns:
+            logger.info(f'Applying minimum resolution filter with threshold {args.minimum_resolution}')
             df = df[df["WIDTH"] >= args.minimum_resolution]
+            logger.info(f'Filtered to {len(df)} rows.')
         if "HEIGHT" in df.columns:
+            logger.info(f'Applying minimum resolution filter with threshold {args.minimum_resolution}')
             df = df[df["HEIGHT"] >= args.minimum_resolution]
+            logger.info(f'Filtered to {len(df)} rows.')
         # TODO: Add more filters as needed
 
         # Fetch and process images
