@@ -42,5 +42,7 @@ class MultiaspectImage:
         # Strip transparency
         image = image.convert("RGB")
         # Rotate, maybe.
+        logger.debug(f'Image size before rotation: {image.size}')
         image = exif_transpose(image)
+        logger.debug(f'Image size after rotation: {image.size}')
         return image
