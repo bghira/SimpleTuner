@@ -60,9 +60,7 @@ def fetch_image(info, args):
     current_file_path = os.path.join(args.temporary_folder, filename)
     if os.path.exists(current_file_path):
         return
-    logging.info(f"Fetching image {filename} from {url}...")
     try:
-        logging.info(f'Trying url: {url}')
         r = requests.get(url, timeout=timeouts, stream=True)
         if r.status_code == 200:
             with open(current_file_path, "wb") as f:
