@@ -254,7 +254,7 @@ def fetch_and_upload_image(info, args, s3_client):
     upload_to_s3(info["filename"], args, s3_client)
 
 
-def fetch_data(s3_client, data, args):
+def fetch_data(s3_client, data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
     to_fetch = {}
     for row in data:
@@ -271,7 +271,7 @@ def fetch_data(s3_client, data, args):
             continue
         if new_filename not in to_fetch:
             to_fetch[new_filename] = {
-                "url": row["Attachments"],
+                "url": row[uri_column],
                 "filename": new_filename,
                 "args": args,
             }
@@ -343,7 +343,7 @@ def main():
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
-        fetch_data(s3_client, to_fetch, args)
+        fetch_data(s3_client, to_fetch, args, uri_column)
 
 
 if __name__ == "__main__":
