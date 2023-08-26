@@ -65,7 +65,8 @@ class LocalDataBackend(BaseDataBackend):
             parent = str(path.parent)
             if parent not in path_dict:
                 path_dict[parent] = []
-            path_dict[parent].append(str(path.absolute()))
+            sanitized_filename = path.absolute().replace("\x00", "")
+            path_dict[parent].append(str(sanitized_filename))
 
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
