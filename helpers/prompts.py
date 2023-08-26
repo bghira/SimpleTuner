@@ -212,9 +212,9 @@ class PromptHandler:
         all_image_files = data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
-        if type(all_image_files) == list:
-            logger.debug(f'Got tuple from data_backend.list_files: {all_image_files}')
-            all_image_files = all_image_files[2]
+        if type(all_image_files) == list and type(all_image_files[0]) == tuple:
+            logger.debug(f'Got nested list in tuple from data_backend.list_files: {all_image_files}')
+            all_image_files = all_image_files[0[2]
         else:
             logger.debug(f'Got {type(all_image_files)} from data_backend.list_files: {all_image_files}')
         for image_path in all_image_files:
