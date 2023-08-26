@@ -2,6 +2,7 @@ from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
 from io import BytesIO
 import os, logging, torch
+from typing import Any
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
