@@ -213,26 +213,15 @@ def upload_to_s3(filename, args, s3_client):
     """Upload the specified file to the S3 bucket."""
     filename = os.path.join(args.temporary_folder, filename)
     object_name = os.path.basename(filename)
+    
+    # Check if the file exists just before uploading
+    if not os.path.exists(filename):
+        logger.error(f"File {filename} does not exist. Skipping upload.")
+        return
+
     try:
-        # Check for zero-sized images
-        if os.path.getsize(filename) == 0:
-            os.remove(filename)
-            return
-
-        # Check for valid EXIF data
-        if not valid_exif_data(filename):
-            # logger.error(
-            #     "Image {} does not have valid EXIF data. Skipping upload.".format(
-            #         object_name
-            #     )
-            # )
-            os.remove(filename)
-            return
-
         s3_client.upload_file(filename, args.aws_bucket_name, object_name)
-        logger.info(
-            "Uploaded {} to S3 bucket {}".format(object_name, args.aws_bucket_name)
-        )
+        logger.info("Uploaded {} to S3 bucket {}".format(object_name, args.aws_bucket_name))
         # Delete the local file after successful upload
         os.remove(filename)
     except Exception as e:
