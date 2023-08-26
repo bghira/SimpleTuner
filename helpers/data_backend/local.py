@@ -1,11 +1,10 @@
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
 from io import BytesIO
-import os, logging
+import os, logging, torch
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
-
 
 class LocalDataBackend(BaseDataBackend):
     def read(self, filepath, as_byteIO: bool = False):
@@ -17,13 +16,17 @@ class LocalDataBackend(BaseDataBackend):
             return data
         return BytesIO(data)
 
-    def write(self, filepath, data):
-        """Write data to the specified file."""
-        # Convert data to Bytes:
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        with open(filepath, "wb") as file:
-            file.write(data)
+    def write(self, filepath: str, data: Any) -> None:
+        """Write the provided data to the specified filepath."""
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'wb') as file:
+            # Check if data is a Tensor, and if so, save it appropriately
+            if isinstance(data, torch.Tensor):
+                self.torch_save(data, file)
+            elif isinstance(data, str):
+                data = data.encode("utf-8")
+            else:
+                file.write(data)
 
     def delete(self, filepath):
         """Delete the specified file."""
@@ -90,16 +93,14 @@ class LocalDataBackend(BaseDataBackend):
         os.makedirs(directory_path, exist_ok=True)
 
     def torch_load(self, filename):
-        import torch
-
         return torch.load(self.read(filename, as_byteIO=True))
 
-    def torch_save(self, data, filename):
-        import torch
+    def torch_save(self, data, location):
+        if type(location) == str:
+            location = self.open_file(location, "wb")
+        torch.save(data, location)
 
-        torch.save(data, self.open_file(filename, "wb"))
-
-    def write_batch(self, filepaths, data_list):
-        """Write a batch of files to the specified filepaths."""
+    def write_batch(self, filepaths: list, data_list: list) -> None:
+        """Write a batch of data to the specified filepaths."""
         for filepath, data in zip(filepaths, data_list):
             self.write(filepath, data)
