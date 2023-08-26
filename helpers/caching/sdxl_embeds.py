@@ -2,7 +2,7 @@ import os, torch, hashlib, logging
 from tqdm import tqdm
 
 logger = logging.getLogger("TextEmbeddingCache")
-logger.setLevel(os.getenv("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(logging.INFO)
 
 
 class TextEmbeddingCache:
@@ -13,24 +13,10 @@ class TextEmbeddingCache:
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def _generate_filename(self, filepath: str) -> str:
-        """Get the cache filename for a given image filepath."""
-        # Remove any non-POSIX compatible file characters:
-        filtered = "".join(c for c in filepath if c.isalnum() or c in ["-", "_", "."])
-
-        # Limit the length to POSIX:
-        filtered = filtered[:72]
-
-        # Extract the base name from the filepath and replace the image extension with .pt
-        filename = os.path.splitext(os.path.basename(filtered))[0]
-        if filename == "":
-            filename = hashlib.md5(filtered.encode()).hexdigest()
-        cached_filepath = os.path.join(self.cache_dir, filename)
-
-        return cached_filepath
+    def create_hash(self, caption):
+        return hashlib.md5(caption.encode()).hexdigest()
 
     def save_to_cache(self, filename, embeddings):
-        logger.debug(f"Saving to cache: {filename}")
         torch.save(embeddings, filename)
 
     def load_from_cache(self, filename):
@@ -104,7 +90,9 @@ class TextEmbeddingCache:
             for prompt in tqdm(
                 prompts, desc="Processing prompts", disable=return_concat
             ):
-                filename = self._generate_filename(prompt) + ".pt"
+                filename = os.path.join(
+                    self.cache_dir, self.create_hash(prompt) + ".pt"
+                )
 
                 if os.path.exists(filename) and not return_concat:
                     logger.debug(
