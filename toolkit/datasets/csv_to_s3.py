@@ -61,7 +61,7 @@ def fetch_image(info, args):
     if os.path.exists(current_file_path):
         logger.info(f"{filename} already exists, skipping download...")
         return
-
+    logging.info(f"Fetching image {filename} from {url}...")
     try:
         logging.info(f'Trying url: {url}')
         r = requests.get(url, timeout=timeouts, stream=True)
@@ -79,6 +79,7 @@ def fetch_image(info, args):
                 return
             image.save(current_file_path, format="PNG")
             image.close()
+            logger.info(f"Saved {filename} to {current_file_path}")
         else:
             logger.info(
                 f"Could not fetch {filename} from {url} (status code {r.status_code})"
