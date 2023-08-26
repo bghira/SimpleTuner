@@ -142,7 +142,7 @@ class PromptHandler:
         if use_captions:
             logger.debug(f'Using captions on image path: {image_path}')
             # Underscores to spaces.
-            instance_prompt = image_path.replace("_", " ")
+            instance_prompt = instance_prompt.replace("_", " ")
             # Remove some midjourney messes.
             instance_prompt = instance_prompt.split("upscaled by")[0]
             instance_prompt = instance_prompt.split("upscaled beta")[0]
