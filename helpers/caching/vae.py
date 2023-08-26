@@ -130,6 +130,8 @@ class VAECache:
                 logger.debug(f"Loading image: {filepath}")
                 image = self.data_backend.read_image(filepath)
                 image = image.convert("RGB")
+                # Apply EXIF-based rotation correction
+                image = MultiaspectImage.correct_exif_rotation(image)
                 image = self._resize_for_condition_image(image, self.resolution)
             except Exception as e:
                 logger.error(f"Encountered error opening image: {e}")
