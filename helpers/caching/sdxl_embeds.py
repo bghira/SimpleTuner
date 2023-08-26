@@ -15,16 +15,16 @@ class TextEmbeddingCache:
 
     def _generate_filename(self, filepath: str):
         """Get the cache filename for a given image filepath."""
-        # Extract the base name from the filepath and replace the image extension with .pt
-        filtered = os.path.join(
-            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0]
-        )
         # Remove any non-POSIX compatible file characters:
-        filtered = "".join(c for c in filtered if c.isalnum() or c in ["-", "_"])
+        filtered = "".join(c for c in filepath if c.isalnum() or c in ["-", "_"])
         # Remove any other bad filename chars:
         filtered = filtered.replace(" ", "_")
         # Limit the length to POSIX:
         filtered = filtered[:255]
+        # Extract the base name from the filepath and replace the image extension with .pt
+        filtered = os.path.join(
+            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0]
+        )
         return filtered
 
     def save_to_cache(self, filename, embeddings):
