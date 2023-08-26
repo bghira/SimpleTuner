@@ -93,12 +93,12 @@ class VAECache:
 
         # Get a list of all existing .pt files in the directory
         existing_pt_files = set()
-        for _, _, files in self.data_backend.list_files(
+        for comp1, comp2, files in self.data_backend.list_files(
             instance_data_root=self.cache_dir, str_pattern="*.pt"
         ):
             for file in files:
                 logger.debug(f'Found existing .pt file: {file}')
-                logger.debug(f'Using path: {_}')
+                logger.debug(f'Components: {comp1}, {comp2}')
                 existing_pt_files.add(os.path.join(_, file))
 
         # Get a list of all the files to process (customize as needed)
