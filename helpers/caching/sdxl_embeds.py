@@ -13,19 +13,19 @@ class TextEmbeddingCache:
         self.cache_dir = cache_dir
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def _generate_filename(self, filepath: str):
+    def _generate_filename(self, filepath: str) -> str:
         """Get the cache filename for a given image filepath."""
         # Remove any non-POSIX compatible file characters:
-        filtered = "".join(c for c in filepath if c.isalnum() or c in ["-", "_"])
-        # Remove any other bad filename chars:
-        filtered = filtered.replace(" ", "_")
+        filtered = "".join(c for c in filepath if c.isalnum() or c in ["-", "_", "."])
+
         # Limit the length to POSIX:
         filtered = filtered[:255]
+
         # Extract the base name from the filepath and replace the image extension with .pt
-        filtered = os.path.join(
-            self.cache_dir, os.path.splitext(os.path.basename(filtered))[0]
-        )
-        return filtered
+        filename = os.path.splitext(os.path.basename(filtered))[0]
+        cached_filepath = os.path.join(self.cache_dir, filename + ".pt")
+
+        return cached_filepath
 
     def save_to_cache(self, filename, embeddings):
         logger.debug(f"Saving to cache: {filename}")
