@@ -71,7 +71,7 @@ def fetch_image(info, args):
                 shutil.copyfileobj(r.raw, f)
             image = Image.open(current_file_path)
             width, height = image.size
-            if width < args.min_resolution or height < args.min_resolution:
+            if width < args.minimum_resolution or height < args.minimum_resolution:
                 print(
                     f"Image {filename} is too small ({width}x{height}), deleting..."
                 )
