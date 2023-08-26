@@ -180,14 +180,6 @@ def get_caption_column(df):
         return "all_captions"
 
 
-# Constants
-OUTPUT_DIR = "temp_downloaded_images"
-
-# Create a directory for downloaded images if it doesn't exist
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
-
-
 def initialize_s3_client(args):
     """Initialize the boto3 S3 client using the provided AWS credentials and settings."""
     s3_client = boto3.client(
@@ -225,6 +217,7 @@ def valid_exif_data(image_path):
 
 def upload_to_s3(filename, args, s3_client):
     """Upload the specified file to the S3 bucket."""
+    filename = os.path.join(args.temporary_folder, filename)
     object_name = os.path.basename(filename)
     try:
         # Check for zero-sized images
