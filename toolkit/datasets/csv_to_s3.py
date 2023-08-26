@@ -19,7 +19,7 @@ read_timeout = 60
 timeouts = (conn_timeout, read_timeout)
 
 # Set up logging
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
