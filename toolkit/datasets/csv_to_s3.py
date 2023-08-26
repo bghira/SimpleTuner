@@ -59,7 +59,6 @@ def fetch_image(info, args):
     url = info["url"]
     current_file_path = os.path.join(args.temporary_folder, filename)
     if os.path.exists(current_file_path):
-        print(f"{filename} already exists, skipping download...")
         return
     logging.info(f"Fetching image {filename} from {url}...")
     try:
@@ -79,13 +78,10 @@ def fetch_image(info, args):
                 return
             image.save(current_file_path, format="PNG")
             image.close()
-            print(f"Saved {filename} to {current_file_path}")
         else:
-            print(
-                f"Could not fetch {filename} from {url} (status code {r.status_code})"
-            )
+            pass
     except Exception as e:
-        print(f"Could not fetch {filename} from {url}: {e}")
+        pass
 
 
 def parse_args():
@@ -222,17 +218,16 @@ def upload_to_s3(filename, args, s3_client):
     try:
         # Check for zero-sized images
         if os.path.getsize(filename) == 0:
-            logger.error("Image {} is of size 0. Skipping upload.".format(object_name))
             os.remove(filename)
             return
 
         # Check for valid EXIF data
         if not valid_exif_data(filename):
-            logger.error(
-                "Image {} does not have valid EXIF data. Skipping upload.".format(
-                    object_name
-                )
-            )
+            # logger.error(
+            #     "Image {} does not have valid EXIF data. Skipping upload.".format(
+            #         object_name
+            #     )
+            # )
             os.remove(filename)
             return
 
@@ -248,13 +243,10 @@ def upload_to_s3(filename, args, s3_client):
 
 def fetch_and_upload_image(info, args, s3_client):
     """Fetch the image, process it, and upload it to S3."""
-    logger.info("Fetching image {}...".format(info["filename"]))
     try:
         fetch_image(info, args)
     except Exception as e:
-        logger.error(f'Could not fetch image: {e}')
-        exit(1)
-    logger.info("Uploading image {}...".format(info["filename"]))
+        pass
     upload_to_s3(info["filename"], args, s3_client)
 
 
