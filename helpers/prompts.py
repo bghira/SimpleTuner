@@ -213,7 +213,10 @@ class PromptHandler:
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         if type(all_image_files) == tuple:
+            logger.debug(f'Got tuple from data_backend.list_files: {all_image_files}')
             all_image_files = all_image_files[2]
+        else:
+            logger.debug(f'Got {type(all_image_files)} from data_backend.list_files: {all_image_files}')
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
