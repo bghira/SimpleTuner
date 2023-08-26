@@ -155,7 +155,7 @@ class VAECache:
             logger.debug(f"Processed image {filepath}")
 
             # Instead of directly saving, append to batches
-            batch_filepaths.append(filename)
+            batch_filepaths.append(full_filename)
             batch_data.append(latents.squeeze())
 
             if len(batch_filepaths) >= self.write_batch_size:
