@@ -232,9 +232,6 @@ def upload_to_s3(filename, args, s3_client):
 
     try:
         s3_client.upload_file(filename, args.aws_bucket_name, object_name)
-        logger.info(
-            "Uploaded {} to S3 bucket {}".format(object_name, args.aws_bucket_name)
-        )
         # Delete the local file after successful upload
         os.remove(filename)
     except Exception as e:
