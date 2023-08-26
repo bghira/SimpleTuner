@@ -1,9 +1,3 @@
-"""
-This script loads up a folder of csv or parquet files and then downloads in parallel,
- confirming the images are valid and meet our minimum requirements, before uploading
- them to the S3 bucket.
-"""
-
 import os
 import argparse
 import logging
@@ -25,6 +19,7 @@ timeouts = (conn_timeout, read_timeout)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 def content_to_filename(content):
     """
     Function to convert content to filename by stripping everything after '--',
@@ -38,17 +33,35 @@ def content_to_filename(content):
     # Remove URLs
     cleaned_content = re.sub(r"https*://\S*", "", content)
 
-conn_timeout = 6
-read_timeout = 60
-timeouts = (conn_timeout, read_timeout)
 
-def fetch_image(info):
+def resize_for_condition_image(self, input_image: Image, resolution: int):
+    input_image = input_image.convert("RGB")
+    W, H = input_image.size
+    aspect_ratio = round(W / H, 2)
+    msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
+    if W < H:
+        W = resolution
+        H = int(resolution / aspect_ratio)  # Calculate the new height
+    elif H < W:
+        H = resolution
+        W = int(resolution * aspect_ratio)  # Calculate the new width
+    if W == H:
+        W = resolution
+        H = resolution
+    msg = f"{msg} {W}x{H}."
+    logger.debug(msg)
+    img = input_image.resize((W, H), resample=Image.BICUBIC)
+    return img
+
+
+def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
-    current_file_path = os.path.join(OUTPUT_DIR, filename)
+    current_file_path = os.path.join(args.output_dir, filename)
     if os.path.exists(current_file_path):
         logging.info(f"{filename} already exists, skipping download...")
         return
+
     try:
         r = requests.get(url, timeout=timeouts, stream=True)
         if r.status_code == 200:
@@ -57,14 +70,12 @@ def fetch_image(info):
                 shutil.copyfileobj(r.raw, f)
             image = Image.open(current_file_path)
             width, height = image.size
-            if width != height:
+            if width < args.min_resolution or height < args.min_resolution:
                 logging.info(
-                    f"Image {filename} is not square ({width}x{height}), deleting..."
+                    f"Image {filename} is too small ({width}x{height}), deleting..."
                 )
                 os.remove(current_file_path)
                 return
-            logging.info(f"Resizing image to {current_file_path}")
-            image = image.resize((768, 768), resample=Image.LANCZOS)
             image.save(current_file_path, format="PNG")
             image.close()
         else:
@@ -75,81 +86,237 @@ def fetch_image(info):
         logging.info(f"Could not fetch {filename} from {url}: {e}")
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Filter and upload images from Parquet files to S3."
+    )
 
-def fetch_data(data):
+    # AWS-related arguments
+    parser.add_argument(
+        "--data_backend",
+        choices=["local", "aws"],
+        default="local",
+        help="The data backend to use.",
+    )
+    parser.add_argument(
+        "--aws_bucket_name", type=str, help="The AWS bucket name to use."
+    )
+    parser.add_argument("--aws_endpoint_url", type=str, help="The AWS server to use.")
+    parser.add_argument("--aws_region_name", type=str, help="The AWS region to use.")
+    parser.add_argument("--aws_access_key_id", type=str, help="AWS access key ID.")
+    parser.add_argument(
+        "--aws_secret_access_key", type=str, help="AWS secret access key."
+    )
+
+    # Script-specific arguments
+    parser.add_argument(
+        "--input_folder", type=str, required=True, help="Location of the Parquet files."
+    )
+    parser.add_argument(
+        "--pwatermark_threshold",
+        type=float,
+        default=0.0,
+        help="Threshold for pwatermark value.",
+    )
+    parser.add_argument(
+        "--aesthetic_threshold",
+        type=int,
+        default=0,
+        help="Threshold for aesthetic score.",
+    )
+    parser.add_argument(
+        "--caption_field",
+        type=str,
+        default=None,
+        help="Field to use for image filename. Leave unset to auto-detect.",
+    )
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=8,
+        help="Number of worker threads for downloading images.",
+    )
+    parser.add_argument(
+        "--max_num_files",
+        type=int,
+        default=1000000,
+        help="Maximum number of files to process.",
+    )
+    # Filtering images
+    parser.add_argument(
+        "--minimum_resolution",
+        type=int,
+        default=768,
+        help="Minimum resolution for images.",
+    )
+
+    return parser.parse_args()
+
+
+# Additional functions for handling diverse input datasets
+
+
+def get_uri_column(df):
+    if "URL" in df.columns:
+        return "URL"
+    elif "Attachments" in df.columns:
+        return "Attachments"
+    else:
+        logger.error("No recognized URI column found in the dataset.")
+        return None
+
+
+def get_caption_column(df):
+    if "Content" in df.columns:
+        return "Content"
+    elif "TEXT" in df.columns:
+        return "TEXT"
+    elif "all_captions" in df.columns:
+        return "all_captions"
+
+
+# Constants
+OUTPUT_DIR = "temp_downloaded_images"
+
+# Create a directory for downloaded images if it doesn't exist
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
+
+
+def initialize_s3_client(args):
+    """Initialize the boto3 S3 client using the provided AWS credentials and settings."""
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=args.aws_endpoint_url,
+        region_name=args.aws_region_name,
+        aws_access_key_id=args.aws_access_key_id,
+        aws_secret_access_key=args.aws_secret_access_key,
+    )
+    return s3_client
+
+
+def content_to_filename(content):
+    """Convert content to a suitable filename."""
+    # Remove URLs
+    cleaned_content = re.sub(r"https?://\S*", "", content)
+    # Replace non-alphanumeric characters with underscore
+    filename = re.sub(r"[^a-zA-Z0-9]", "_", cleaned_content)
+    # Convert to lowercase and trim to 128 characters
+    filename = filename.lower()[:128] + ".png"
+    return filename
+
+
+def valid_exif_data(image_path):
+    """Check if the image contains EXIF data for camera make/model."""
+    try:
+        image = Image.open(image_path)
+        for tag, value in image._getexif().items():
+            if tag in ExifTags.TAGS and ExifTags.TAGS[tag] in ["Make", "Model"]:
+                return True
+    except:
+        pass
+    return False
+
+
+def upload_to_s3(filename, args, s3_client):
+    """Upload the specified file to the S3 bucket."""
+    object_name = os.path.basename(filename)
+    try:
+        # Check for zero-sized images
+        if os.path.getsize(filename) == 0:
+            logger.error("Image {} is of size 0. Skipping upload.".format(object_name))
+            os.remove(filename)
+            return
+
+        # Check for valid EXIF data
+        if not valid_exif_data(filename):
+            logger.error(
+                "Image {} does not have valid EXIF data. Skipping upload.".format(
+                    object_name
+                )
+            )
+            os.remove(filename)
+            return
+
+        s3_client.upload_file(filename, args.aws_bucket_name, object_name)
+        logger.info(
+            "Uploaded {} to S3 bucket {}".format(object_name, args.aws_bucket_name)
+        )
+        # Delete the local file after successful upload
+        os.remove(filename)
+    except Exception as e:
+        logger.error("Error uploading {} to S3: {}".format(object_name, e))
+
+
+def fetch_and_upload_image(info, args, s3_client):
+    """Fetch the image, process it, and upload it to S3."""
+    fetch_image(info, args)
+    upload_to_s3(info["filename"], args, s3_client)
+
+
+def fetch_data(s3_client, data, args):
+    """Function to fetch all images specified in data and upload them to S3."""
     to_fetch = {}
     for row in data:
-        new_filename = content_to_filename(row["Content"])
-        if "Variations" in row["Content"] or "Upscaled" not in row["Content"]:
+        new_filename = content_to_filename(row[args.caption_field])
+        if (
+            "Variations" in row[args.caption_field]
+            or "Upscaled" not in row[args.caption_field]
+        ):
             continue
         if new_filename not in to_fetch:
             to_fetch[new_filename] = {
                 "url": row["Attachments"],
                 "filename": new_filename,
+                "args": args,
             }
-    logging.info(f"Fetching {len(to_fetch)} images...")
-    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
-        executor.map(fetch_image, to_fetch.values())
+    logging.info("Fetching {} images...".format(len(to_fetch)))
+    with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
+        executor.map(
+            fetch_and_upload_image,
+            to_fetch.values(),
+            [args] * len(to_fetch),
+            [s3_client] * len(to_fetch),
+        )
 
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Filter and upload images from Parquet files to S3.")
-    
-    # AWS-related arguments
-    parser.add_argument("--data_backend", choices=["local", "aws"], default="local", help="The data backend to use.")
-    parser.add_argument("--aws_bucket_name", type=str, help="The AWS bucket name to use.")
-    parser.add_argument("--aws_endpoint_url", type=str, help="The AWS server to use.")
-    parser.add_argument("--aws_region_name", type=str, help="The AWS region to use.")
-    parser.add_argument("--aws_access_key_id", type=str, help="AWS access key ID.")
-    parser.add_argument("--aws_secret_access_key", type=str, help="AWS secret access key.")
-    
-    # Script-specific arguments
-    parser.add_argument("--input_folder", type=str, required=True, help="Location of the Parquet files.")
-    parser.add_argument("--pwatermark_threshold", type=float, default=0.0, help="Threshold for pwatermark value.")
-    parser.add_argument("--aesthetic_threshold", type=int, default=0, help="Threshold for aesthetic score.")
-    parser.add_argument("--caption_field", type=str, default="TEXT", help="Field to use for image filename.")
-    parser.add_argument("--num_workers", type=int, default=8, help="Number of worker threads for downloading images.")
-    
-    return parser.parse_args()
-
-# Additional functions for handling diverse input datasets
-
-def get_uri_column(df):
-    if 'URL' in df.columns:
-        return 'URL'
-    elif 'Attachments' in df.columns:
-        return 'Attachments'
-    else:
-        logger.error("No recognized URI column found in the dataset.")
-        return None
 
 def main():
     args = parse_args()
-    
+
+    # Initialize S3 client
+    s3_client = initialize_s3_client(args)
+
     # Check if input folder exists
     if not os.path.exists(args.input_folder):
         logger.error(f"Input folder '{args.input_folder}' does not exist.")
         return
-    
+
     # Read Parquet file as DataFrame
     parquet_files = [f for f in Path(args.input_folder).glob("*.parquet")]
     for file in parquet_files:
         df = pd.read_parquet(file)
-        
+
         # Determine the URI column
         uri_column = get_uri_column(df)
+        if args.caption_field is None:
+            args.caption_field = get_caption_column(df)
         if not uri_column:
             continue
-        
+
         # Apply filters
-        if 'pwatermark' in df.columns:
-            df = df[df['pwatermark'] >= args.pwatermark_threshold]
-        if 'aesthetic' in df.columns:
-            df = df[df['aesthetic'] >= args.aesthetic_threshold]
+        if "pwatermark" in df.columns:
+            df = df[df["pwatermark"] >= args.pwatermark_threshold]
+        if "aesthetic" in df.columns:
+            df = df[df["aesthetic"] >= args.aesthetic_threshold]
+        if "WIDTH" in df.columns:
+            df = df[df["WIDTH"] >= args.minimum_resolution]
+        if "HEIGHT" in df.columns:
+            df = df[df["HEIGHT"] >= args.minimum_resolution]
         # TODO: Add more filters as needed
 
         # Fetch and process images
-        fetch_data(df.to_dict(orient='records'))
+        fetch_data(s3_client, df.to_dict(orient="records"), args)
+
 
 if __name__ == "__main__":
     main()
