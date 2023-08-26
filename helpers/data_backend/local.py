@@ -8,11 +8,13 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 
 class LocalDataBackend(BaseDataBackend):
-    def read(self, filepath):
+    def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
         # Openfilepath as BytesIO:
         with open(filepath, "rb") as file:
             data = file.read()
+        if not as_byteIO:
+            return data
         return BytesIO(data)
 
     def write(self, filepath, data):
@@ -90,7 +92,7 @@ class LocalDataBackend(BaseDataBackend):
     def torch_load(self, filename):
         import torch
 
-        return torch.load(self.read(filename))
+        return torch.load(self.read(filename, as_byteIO=True))
 
     def torch_save(self, data, filename):
         import torch
