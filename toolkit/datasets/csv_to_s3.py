@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 import re
 import shutil
+from botocore.config import Config
 
 # Constants
 conn_timeout = 6
@@ -193,12 +194,15 @@ def get_caption_column(df):
 
 def initialize_s3_client(args):
     """Initialize the boto3 S3 client using the provided AWS credentials and settings."""
+    s3_config = Config(max_pool_connections=100)
+
     s3_client = boto3.client(
         "s3",
         endpoint_url=args.aws_endpoint_url,
         region_name=args.aws_region_name,
         aws_access_key_id=args.aws_access_key_id,
         aws_secret_access_key=args.aws_secret_access_key,
+        config=s3_config
     )
     return s3_client
 
