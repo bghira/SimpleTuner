@@ -214,7 +214,7 @@ class PromptHandler:
         )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
             logger.debug(f'Got nested list in tuple from data_backend.list_files: {all_image_files}')
-            all_image_files = all_image_files[0[2]
+            all_image_files = all_image_files[0][2]
         else:
             logger.debug(f'Got {type(all_image_files)} from data_backend.list_files: {all_image_files}')
         for image_path in all_image_files:
