@@ -29,12 +29,12 @@ class VAECache:
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
 
-    def _generate_filename(self, filepath: str):
-        """Get the cache filename for a given image filepath."""
+    def _generate_filename(self, filepath: str) -> tuple:
+        """Get the cache filename for a given image filepath and its base name."""
         # Extract the base name from the filepath and replace the image extension with .pt
-        return os.path.join(
-            self.cache_dir, os.path.splitext(os.path.basename(filepath))[0] + ".pt"
-        )
+        base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
+        full_filename = os.path.join(self.cache_dir, base_filename)
+        return full_filename, base_filename
 
     def save_to_cache(self, filename, embeddings):
         self.data_backend.torch_save(embeddings, filename)
@@ -91,6 +91,14 @@ class VAECache:
         # Define a transform to convert the image to tensor
         transform = MultiaspectImage.get_image_transforms()
 
+        # Get a list of all existing .pt files in the directory
+        existing_pt_files = set()
+        for _, _, files in self.data_backend.list_files(
+            instance_data_root=self.cache_dir, str_pattern="*.pt"
+        ):
+            for file in files:
+                existing_pt_files.add(os.path.join(_, file))
+
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
         logger.debug(f"Beginning processing of VAECache directory {directory}")
@@ -107,12 +115,12 @@ class VAECache:
         batch_data = []
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
-            filename = self._generate_filename(filepath)
+            full_filename, base_filename = self._generate_filename(filepath)
 
             # If processed file already exists, skip processing for this image
-            if self.data_backend.exists(filename):
+            if base_filename in existing_pt_files or self.data_backend.exists(full_filename):
                 logger.debug(
-                    f"Skipping processing for {filepath} as cached file {filename} already exists."
+                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
                 )
                 continue
 
