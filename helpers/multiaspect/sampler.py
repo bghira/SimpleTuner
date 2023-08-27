@@ -318,6 +318,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     len(available_images) < self.batch_size
                     and idx == len(self.buckets) - 1
                 ):
+                    self.log_state()
                     assert (
                         False
                     ), "Not enough images left to form a complete batch. Fatal condition."
