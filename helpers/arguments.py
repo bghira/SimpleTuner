@@ -408,6 +408,11 @@ def parse_args(input_args=None):
         help="Whether or not to use 8-bit Adam from bitsandbytes.",
     )
     parser.add_argument(
+        "--use_adafactor_optimizer",
+        action="store_true",
+        help="Whether or not to use the Adafactor optimizer.",
+    )
+    parser.add_argument(
         "--use_dadapt_optimizer",
         action="store_true",
         help="Whether or not to use the discriminator adaptation optimizer.",
