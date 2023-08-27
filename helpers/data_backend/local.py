@@ -28,6 +28,9 @@ class LocalDataBackend(BaseDataBackend):
                 data = data.encode("utf-8")
             else:
                 file.write(data)
+        # Check if file exists:
+        if not self.exists(filepath):
+            raise Exception(f"Failed to write to {filepath}")
 
     def delete(self, filepath):
         """Delete the specified file."""
@@ -35,6 +38,9 @@ class LocalDataBackend(BaseDataBackend):
             os.remove(filepath)
         else:
             raise FileNotFoundError(f"{filepath} not found.")
+        # Check if file exists:
+        if self.exists(filepath):
+            raise Exception(f"Failed to delete {filepath}")
 
     def exists(self, filepath):
         """Check if the file exists."""
@@ -94,6 +100,9 @@ class LocalDataBackend(BaseDataBackend):
         os.makedirs(directory_path, exist_ok=True)
 
     def torch_load(self, filename):
+        # Check if file exists:
+        if not self.exists(filename):
+            raise FileNotFoundError(f"{filename} not found.")
         return torch.load(self.read(filename, as_byteIO=True))
 
     def torch_save(self, data, location):
@@ -109,3 +118,6 @@ class LocalDataBackend(BaseDataBackend):
         """Write a batch of data to the specified filepaths."""
         for filepath, data in zip(filepaths, data_list):
             self.write(filepath, data)
+            # Check if file was written:
+            if not self.exists(filepath):
+                raise Exception(f"Failed to write to {filepath}")
