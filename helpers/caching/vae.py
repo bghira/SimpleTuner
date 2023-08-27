@@ -102,9 +102,8 @@ class VAECache:
         logger.debug(f"Truncated list of items: {remote_cache_list[:5]}")
         for subdir, _, files in remote_cache_list:
             for file in files:
-                logger.debug(f'Found existing .pt file: {file}')
                 existing_pt_files.add(os.path.join(subdir, file))
-
+        logger.debug(f"Truncated list of processed VAE cache items: {existing_pt_files[:5]}")
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
         logger.debug(f"Beginning processing of VAECache directory {directory}")
