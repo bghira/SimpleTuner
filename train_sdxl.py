@@ -695,13 +695,28 @@ def main():
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
+    # Check if we have a valid gradient accumulation steps.
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError(
+            f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
+        )
+    # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
+    # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
     )
-    if args.max_train_steps is None:
+    if args.max_train_steps is None or args.max_train_steps == 0:
+        if args.num_train_epochs is None or args.num_train_epochs == 0:
+            raise ValueError(
+                "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
+            )
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        logger.info(
+            f"Calculated our maximum training steps at {args.max_train_steps} because we have"
+            " {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+        )
         overrode_max_train_steps = True
-    logger.info(f"Loading noise scheduler...")
+    logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
     if args.lr_scheduler != "polynomial":
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
@@ -766,6 +781,10 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    logger.info(
+        "After all of the heave-ho messing around, we have settled on"
+        f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+    )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
@@ -836,9 +855,22 @@ def main():
             global_step = int(path.split("-")[1])
 
             resume_global_step = global_step * args.gradient_accumulation_steps
+            logger.info(
+                f"Resuming from global step {resume_global_step},"
+                f" because we have global_step {global_step} and"
+                " gradient_accumulation_steps {args.gradient_accumulation_steps}"
+            )
             first_epoch = global_step // num_update_steps_per_epoch
+            logger.info(
+                f"Our first training epoch for this run will be {first_epoch}"
+            )
             resume_step = resume_global_step % (
                 num_update_steps_per_epoch * args.gradient_accumulation_steps
+            )
+            logger.info(
+                f"Basically, we have resume_step {resume_step} after considering"
+                f" {num_update_steps_per_epoch} steps per epoch and"
+                f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
     else:
         StateTracker.start_training()
