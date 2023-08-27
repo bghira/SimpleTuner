@@ -293,6 +293,7 @@ def main():
 
         optimizer_cls = bnb.optim.AdamW8bit
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
     elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
         logger.info("Using D-Adaptation optimizer.")
         try:
@@ -314,6 +315,8 @@ def main():
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
             extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+            extra_optimizer_args["lr"] = args.learning_rate
+
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         from transformers import Adafactor
 
@@ -326,7 +329,6 @@ def main():
     )
     optimizer = optimizer_cls(
         unet.parameters(),
-        lr=args.learning_rate,
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
         **extra_optimizer_args,
