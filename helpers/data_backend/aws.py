@@ -107,7 +107,11 @@ class S3DataBackend(BaseDataBackend):
 
         # Using a dictionary to hold files based on their prefixes (subdirectories)
         prefix_dict = {}
-
+        # Log the first few items, alphabetically sorted:
+        logger.debug(f"Listing files in S3 bucket {self.bucket_name} with prefix {pattern}")
+        for item in sorted(self.list_by_prefix(pattern))[:5]:
+            logger.debug(f"Found item: {item}")
+            
         # Paginating over the entire bucket objects
         for page in paginator.paginate(Bucket=self.bucket_name):
             for obj in page.get("Contents", []):
