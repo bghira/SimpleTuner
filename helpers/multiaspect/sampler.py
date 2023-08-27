@@ -165,6 +165,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self.move_to_exhausted()
             self.change_bucket()
             return True
+        logging.debug(f'Bucket {bucket} has sufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images.')
         return False
 
     def _reset_if_not_enough_unseen_images(self):
@@ -311,7 +312,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if len(available_images) < self.batch_size:
                 self._reset_if_not_enough_unseen_images()
                 self.change_bucket()
-                self.move_to_exhausted()
                 logging.debug(f'Bucket {bucket} has insufficient images.')
                 continue
 
