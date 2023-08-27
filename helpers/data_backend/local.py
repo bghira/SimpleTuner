@@ -121,3 +121,4 @@ class LocalDataBackend(BaseDataBackend):
             # Check if file was written:
             if not self.exists(filepath):
                 raise Exception(f"Failed to write to {filepath}")
+            logger.debug(f'Succesfully validated file creation: {filepath}')
