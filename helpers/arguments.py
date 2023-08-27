@@ -712,6 +712,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--delete_problematic_images",
+        action="store_true",
+        help=(
+            "If set, any images that error out during load will be removed from the underlying storage medium."
+            " This is useful to prevent repeatedly attempting to cache bad files on a cloud bucket."
+        )
+    )
+    parser.add_argument(
         "--offset_noise",
         action="store_true",
         default=False,

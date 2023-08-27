@@ -537,6 +537,7 @@ def main():
                 accelerator=accelerator,
                 data_backend=data_backend,
                 resolution=args.resolution,
+                delete_problematic_images=args.delete_problematic_images
             )
 
         pixel_values = []
@@ -771,7 +772,7 @@ def main():
     logger.info(f"Loaded VAE into VRAM.")
     if accelerator.is_main_process:
         logger.info(f"Pre-computing VAE latent space.")
-        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend)
+        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend, delete_problematic_images=args.delete_problematic_images)
         vaecache.process_directory(args.instance_data_dir)
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
