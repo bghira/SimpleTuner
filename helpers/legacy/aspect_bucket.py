@@ -28,6 +28,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         debug_aspect_buckets: bool = False,
         delete_unwanted_images: bool = False,
         minimum_image_size: int = None,
+        resolution: int = 1024
     ):
         """
         Initializes the sampler with provided settings.
@@ -52,6 +53,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
         self.delete_unwanted_images = delete_unwanted_images
         self.current_bucket = 0
         self.minimum_image_size = minimum_image_size
+        self.resolution = resolution
         self.seen_images = self.load_seen_images()
 
     def save_state(self):
@@ -300,23 +302,23 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
     def log_state(self):
         logger.debug(
-            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.buckets)}'
+            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
         )
         logger.debug(
-            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b]) for b in self.exhausted_buckets)}'
+            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.aspect_ratio_bucket_indices[b], self.resolution) for b in self.exhausted_buckets)}'
         )
 
     @staticmethod
-    def convert_to_human_readable(aspect_ratio_float: float, bucket):
+    def convert_to_human_readable(aspect_ratio_float: float, bucket: iter, resolution: int = 1024):
         from math import gcd
 
         # The smallest side is always 1024. It could be portrait or landscape (eg. under or over 1)
         if aspect_ratio_float < 1:
-            ratio_width = 1024
-            ratio_height = int(1024 / aspect_ratio_float)
+            ratio_width = resolution
+            ratio_height = int(resolution / aspect_ratio_float)
         else:
-            ratio_width = int(1024 * aspect_ratio_float)
-            ratio_height = 1024
+            ratio_width = int(resolution * aspect_ratio_float)
+            ratio_height = resolution
 
         # Return the aspect ratio as a string in the format "width:height"
         return f"{aspect_ratio_float} (remaining: {len(bucket)})"

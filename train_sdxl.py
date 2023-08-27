@@ -528,7 +528,10 @@ def main():
         global vaecache
         if "vaecache" not in globals():
             vaecache = VAECache(
-                vae=vae, accelerator=accelerator, data_backend=data_backend
+                vae=vae,
+                accelerator=accelerator,
+                data_backend=data_backend,
+                resolution=args.resolution,
             )
 
         pixel_values = []
@@ -651,7 +654,8 @@ def main():
     if args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in tqdm(
-            user_prompt_library.items(), desc="Precomputing user prompt library embeddings"
+            user_prompt_library.items(),
+            desc="Precomputing user prompt library embeddings",
         ):
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
