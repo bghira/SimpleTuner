@@ -91,6 +91,7 @@ prompts = {
     "alien_invasion": "The first moments of an alien invasion from a civilian's perspective.",
 }
 
+
 def prompt_library_injection(new_prompts: dict) -> dict:
     """
     Add more prompts to the built-in SimpleTuner Prompt library.
@@ -105,30 +106,41 @@ def prompt_library_injection(new_prompts: dict) -> dict:
     Returns:
         dict: Completed prompt library.
     """
-    
+
     # Unpack the new prompts into the library.
     global prompts
-    return {
-        **prompts,
-        **new_prompts
-    }
+    return {**prompts, **new_prompts}
+
 
 import logging
+from helpers.data_backend.base import BaseDataBackend
+from helpers.data_backend.aws import S3DataBackend
 from pathlib import Path
 import os
 
 logger = logging.getLogger("PromptHandler")
-logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'WARNING'))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+
 
 class PromptHandler:
     @staticmethod
     def prepare_instance_prompt(
-        image_path: str, use_captions: bool, prepend_instance_prompt: bool, instance_prompt: str = None
+        image_path: str,
+        use_captions: bool,
+        data_backend: BaseDataBackend,
+        prepend_instance_prompt: bool,
+        instance_prompt: str = None,
     ) -> str:
+        instance_prompt = Path(image_path).stem
         if not instance_prompt and prepend_instance_prompt:
             # If we did not get a specific instance prompt, use the folder name.
-            instance_prompt = Path(image_path).stem
+            logger.debug(f'Prepending instance prompt: {instance_prompt}')
+            if type(data_backend) == S3DataBackend:
+                raise ValueError(
+                    "S3 data backend is not yet compatible with --prepend_instance_prompt"
+                )
         if use_captions:
+            logger.debug(f'Using captions on image path: {image_path}')
             # Underscores to spaces.
             instance_prompt = instance_prompt.replace("_", " ")
             # Remove some midjourney messes.
@@ -136,6 +148,8 @@ class PromptHandler:
             instance_prompt = instance_prompt.split("upscaled beta")[0]
             if prepend_instance_prompt:
                 instance_prompt = instance_prompt + " " + instance_prompt
+        else:
+            logger.warning(f'Not using captions.')
         return instance_prompt
 
     @staticmethod
@@ -156,6 +170,7 @@ class PromptHandler:
         caption_strategy: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -176,6 +191,7 @@ class PromptHandler:
                 image_path=image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
+                data_backend=data_backend,
             )
         elif caption_strategy == "textfile":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
@@ -187,33 +203,28 @@ class PromptHandler:
 
     @staticmethod
     def get_all_captions(
-        instance_data_root: str, use_captions: bool, prepend_instance_prompt: bool
+        instance_data_root: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
     ) -> list:
-        import os
-
         captions = []
-
-        def rglob_follow_symlinks(path: Path, pattern: str):
-            for p in path.glob(pattern):
-                yield p
-            for p in path.iterdir():
-                if p.is_dir() and not p.is_symlink():
-                    yield from rglob_follow_symlinks(p, pattern)
-                elif p.is_symlink():
-                    real_path = Path(os.readlink(p))
-                    if real_path.is_dir():
-                        yield from rglob_follow_symlinks(real_path, pattern)
-
-        all_image_files = list(
-            rglob_follow_symlinks(Path(instance_data_root), "*.[jJpP][pPnN][gG]")
+        all_image_files = data_backend.list_files(
+            instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
-
+        if type(all_image_files) == list and type(all_image_files[0]) == tuple:
+            logger.debug(f'Got nested list in tuple from data_backend.list_files: {all_image_files}')
+            all_image_files = all_image_files[0][2]
+        else:
+            logger.debug(f'Got {type(all_image_files)} from data_backend.list_files: {all_image_files}')
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
+                data_backend=data_backend,
             )
+            logger.debug(f'Processing image path: {image_path} into caption: {caption}')
             captions.append(caption)
 
         return captions

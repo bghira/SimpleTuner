@@ -1,4 +1,5 @@
 from helpers.multiaspect.image import MultiaspectImage
+from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
 import json, logging, os, multiprocessing
 from tqdm import tqdm
@@ -11,7 +12,10 @@ logger.setLevel(target_level)
 
 
 class BucketManager:
-    def __init__(self, instance_data_root, cache_file):
+    def __init__(
+        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend
+    ):
+        self.data_backend = data_backend
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
         self.aspect_ratio_bucket_indices = {}
@@ -23,27 +27,6 @@ class BucketManager:
             [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
         )
 
-    def _rglob_follow_symlinks(self, path: Path, pattern: str):
-        """
-        A custom implementation of rglob that efficiently follows symlinks.
-
-        Args:
-            path (Path): The path to search.
-            pattern (str): The pattern to match.
-
-        Yields:
-            Path: The next path that matches the pattern.
-        """
-        for p in path.glob(pattern):
-            yield p
-        for p in path.iterdir():
-            if p.is_dir() and not p.is_symlink():
-                yield from self._rglob_follow_symlinks(p, pattern)
-            elif p.is_symlink():
-                real_path = Path(os.readlink(p))
-                if real_path.is_dir():
-                    yield from self._rglob_follow_symlinks(real_path, pattern)
-
     def _discover_new_files(self):
         """
         Discover new files that have not been processed yet.
@@ -51,9 +34,16 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files = list(
-            self._rglob_follow_symlinks(self.instance_data_root, "*.[jJpP][pPnN][gG]")
+        all_image_files_data = self.data_backend.list_files(
+            instance_data_root=self.instance_data_root,
+            str_pattern="*.[jJpP][pPnN][gG]",
         )
+
+        # Extract only the files from the data
+        all_image_files = [
+            file for _, _, files in all_image_files_data for file in files
+        ]
+
         return [
             file
             for file in all_image_files
@@ -67,34 +57,45 @@ class BucketManager:
         Returns:
             dict: The cache data.
         """
-        if self.cache_file.exists():
-            with self.cache_file.open("r") as f:
-                cache_data = json.load(f)
-                self.aspect_ratio_bucket_indices = cache_data.get(
-                    "aspect_ratio_bucket_indices", {}
-                )
-                self.instance_images_path = set(
-                    cache_data.get("instance_images_path", [])
-                )
+        # Query our DataBackend to see whether the cache file exists.
+        if self.data_backend.exists(self.cache_file):
+            try:
+                # Use our DataBackend to actually read the cache file.
+                cache_data_raw = self.data_backend.read(self.cache_file)
+                cache_data = json.loads(cache_data_raw)
+            except Exception as e:
+                logger.warning(f'Error loading aspect bucket cache, creating new one: {e}')
+                cache_data = {}
+            self.aspect_ratio_bucket_indices = cache_data.get(
+                "aspect_ratio_bucket_indices", {}
+            )
+            self.instance_images_path = set(cache_data.get("instance_images_path", []))
 
     def _save_cache(self):
         """
         Save cache data to file.
         """
+        # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
             for key, value in self.aspect_ratio_bucket_indices.items()
         }
-
+        # Encode the cache as JSON.
         cache_data = {
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
             "instance_images_path": [str(path) for path in self.instance_images_path],
         }
-        with self.cache_file.open("w") as f:
-            json.dump(cache_data, f)
+        cache_data_str = json.dumps(cache_data)
+        # Use our DataBackend to write the cache file.
+        self.data_backend.write(self.cache_file, cache_data_str)
 
     def _bucket_worker(
-        self, tqdm_queue, files, aspect_ratio_bucket_indices_queue, existing_files_set
+        self,
+        tqdm_queue,
+        files,
+        aspect_ratio_bucket_indices_queue,
+        existing_files_set,
+        data_backend,
     ):
         """
         A worker function to bucket a list of files.
@@ -112,7 +113,7 @@ class BucketManager:
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    file, local_aspect_ratio_bucket_indices
+                    data_backend, file, local_aspect_ratio_bucket_indices
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
@@ -147,6 +148,7 @@ class BucketManager:
                     file_shard,
                     aspect_ratio_bucket_indices_queue,
                     existing_files_set,
+                    self.data_backend,
                 ),
             )
             for file_shard in files_split
@@ -225,7 +227,7 @@ class BucketManager:
                 logger.warning(
                     f"Image {image_path} too small: DELETING image and continuing search."
                 )
-                os.remove(image_path)
+                self.data_backend.remove(image_path)
             except Exception as e:
                 logger.debug(
                     f"Image {image_path} was already deleted. Another GPU must have gotten to it."

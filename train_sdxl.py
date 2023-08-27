@@ -25,13 +25,16 @@ from pathlib import Path
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.state_tracker import StateTracker
-from helpers.sdxl_embeds import TextEmbeddingCache
-from helpers.image_tools import calculate_luminance, calculate_batch_luminance
-from helpers.vae_cache import VAECache
+from helpers.training.state_tracker import StateTracker
+from helpers.caching.vae import VAECache
+from helpers.caching.sdxl_embeds import TextEmbeddingCache
+from helpers.image_manipulation.brightness import (
+    calculate_luminance,
+    calculate_batch_luminance,
+)
 from helpers.arguments import parse_args
-from helpers.custom_schedule import get_polynomial_decay_schedule_with_warmup
-from helpers.min_snr_gamma import compute_snr
+from helpers.training.custom_schedule import get_polynomial_decay_schedule_with_warmup
+from helpers.training.min_snr_gamma import compute_snr
 from helpers.prompts import PromptHandler
 
 logger = logging.getLogger()
@@ -241,7 +244,7 @@ def main():
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        from helpers.sdxl_save_hooks import SDXLSaveHook
+        from helpers.sdxl.save_hooks import SDXLSaveHook
 
         model_hooks = SDXLSaveHook(
             args=args,
@@ -289,6 +292,8 @@ def main():
             )
 
         optimizer_cls = bnb.optim.AdamW8bit
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
     elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
         logger.info("Using D-Adaptation optimizer.")
         try:
@@ -309,9 +314,15 @@ def main():
             )
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
-    elif hasattr(args, 'use_adafactor_optimizer') and args.use_adafactor_optimizer:
+            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+            extra_optimizer_args["lr"] = args.learning_rate
+
+    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         from transformers import Adafactor
+
         optimizer_cls = Adafactor
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["relative_step"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_cls = torch.optim.AdamW
@@ -320,18 +331,36 @@ def main():
     )
     optimizer = optimizer_cls(
         unet.parameters(),
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
         **extra_optimizer_args,
     )
+
+    # Create a DataBackend, so that we can access our dataset.
+    if args.data_backend == "local":
+        from helpers.data_backend.local import LocalDataBackend
+
+        data_backend = LocalDataBackend()
+    elif args.data_backend == "aws":
+        from helpers.data_backend.aws import S3DataBackend
+
+        data_backend = S3DataBackend(
+            bucket_name=args.aws_bucket_name,
+            region_name=args.aws_region_name,
+            endpoint_url=args.aws_endpoint_url,
+            aws_access_key_id=args.aws_access_key_id,
+            aws_secret_access_key=args.aws_secret_access_key,
+        )
+    else:
+        raise ValueError(f"Unsupported data backend: {args.data_backend}")
+    logger.info(f"Created {args.data_backend} data backend.")
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
+        data_backend=data_backend,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
@@ -400,7 +429,7 @@ def main():
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
         logger.warning(
-            f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
+            f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
 
     # Preprocessing the datasets.
@@ -503,7 +532,12 @@ def main():
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
         if "vaecache" not in globals():
-            vaecache = VAECache(vae, accelerator)
+            vaecache = VAECache(
+                vae=vae,
+                accelerator=accelerator,
+                data_backend=data_backend,
+                resolution=args.resolution,
+            )
 
         pixel_values = []
         filepaths = []  # we will store the file paths here
@@ -549,6 +583,7 @@ def main():
     logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
+        data_backend=data_backend,
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
         size=args.resolution,
@@ -565,6 +600,7 @@ def main():
     logger.info("Creating aspect bucket sampler")
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
+        data_backend=data_backend,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
@@ -599,13 +635,13 @@ def main():
 
     logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
-        embed_cache.precompute_embeddings_for_prompts(
-            PromptHandler.get_all_captions(
-                instance_data_root=args.instance_data_dir,
-                prepend_instance_prompt=args.prepend_instance_prompt or False,
-                use_captions=args.only_instance_prompt or False,
-            )
+        all_captions = PromptHandler.get_all_captions(
+            data_backend=data_backend,
+            instance_data_root=args.instance_data_dir,
+            prepend_instance_prompt=args.prepend_instance_prompt or False,
+            use_captions=not args.only_instance_prompt,
         )
+        embed_cache.precompute_embeddings_for_prompts(all_captions)
 
     validation_prompts = []
     validation_shortnames = []
@@ -613,16 +649,19 @@ def main():
         # Use the SimpleTuner prompts library for validation prompts.
         from helpers.prompts import prompts as prompt_library
 
-        # Prompt format: { 'shortname': 'this is the prompt', ... }
-        for shortname, prompt in prompt_library.items():
-            logger.info(f"Precomputing validation prompt library embeds: {shortname}")
+        # Iterate through the prompts with a progress bar
+        for shortname, prompt in tqdm(
+            prompt_library.items(), desc="Precomputing validation prompt embeddings"
+        ):
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
-        for shortname, prompt in user_prompt_library.items():
-            logger.info(f"Precomputing validation user prompt library embeds: {shortname}")
+        for shortname, prompt in tqdm(
+            user_prompt_library.items(),
+            desc="Precomputing user prompt library embeddings",
+        ):
             embed_cache.compute_embeddings_for_prompts([prompt])
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
@@ -656,13 +695,28 @@ def main():
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
+    # Check if we have a valid gradient accumulation steps.
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError(
+            f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
+        )
+    # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
+    # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
     )
-    if args.max_train_steps is None:
+    if args.max_train_steps is None or args.max_train_steps == 0:
+        if args.num_train_epochs is None or args.num_train_epochs == 0:
+            raise ValueError(
+                "You must specify either --max_train_steps or --num_train_epochs with a value > 0"
+            )
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        logger.info(
+            f"Calculated our maximum training steps at {args.max_train_steps} because we have"
+            " {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+        )
         overrode_max_train_steps = True
-    logger.info(f"Loading noise scheduler...")
+    logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
     if args.lr_scheduler != "polynomial":
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
@@ -717,7 +771,7 @@ def main():
     logger.info(f"Loaded VAE into VRAM.")
     if accelerator.is_main_process:
         logger.info(f"Pre-computing VAE latent space.")
-        vaecache = VAECache(vae, accelerator)
+        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend)
         vaecache.process_directory(args.instance_data_dir)
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -727,18 +781,32 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    logger.info(
+        "After all of the heave-ho messing around, we have settled on"
+        f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+    )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
+        # Copy args into public_args:
+        import copy
+
+        public_args = copy.deepcopy(args)
+        # Remove the args that we don't want to track:
+        del public_args.aws_access_key_id
+        del public_args.aws_secret_access_key
+        del public_args.aws_bucket_name
+        del public_args.aws_region_name
+        del public_args.aws_endpoint_url
         accelerator.init_trackers(
             project_name=args.tracker_run_name,
-            config=vars(args),
+            config=vars(public_args),
             init_kwargs={
                 "name": args.tracker_project_name,
                 "id": args.tracker_project_name,
-                "resume": "allow"
-            }
+                "resume": "allow",
+            },
         )
 
     # Train!
@@ -782,14 +850,27 @@ def main():
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             custom_balanced_sampler.load_states(
-                state_path=os.path.join(args.output_dir, path, 'training_state.json'),
+                state_path=os.path.join(args.output_dir, path, "training_state.json"),
             )
             global_step = int(path.split("-")[1])
 
             resume_global_step = global_step * args.gradient_accumulation_steps
+            logger.info(
+                f"Resuming from global step {resume_global_step},"
+                f" because we have global_step {global_step} and"
+                " gradient_accumulation_steps {args.gradient_accumulation_steps}"
+            )
             first_epoch = global_step // num_update_steps_per_epoch
+            logger.info(
+                f"Our first training epoch for this run will be {first_epoch}"
+            )
             resume_step = resume_global_step % (
                 num_update_steps_per_epoch * args.gradient_accumulation_steps
+            )
+            logger.info(
+                f"Basically, we have resume_step {resume_step} after considering"
+                f" {num_update_steps_per_epoch} steps per epoch and"
+                f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
     else:
         StateTracker.start_training()
@@ -1049,9 +1130,7 @@ def main():
                         )
                         accelerator.save_state(save_path)
                         custom_balanced_sampler.save_state(
-                            state_path=os.path.join(
-                                save_path, "training_state.json"
-                            ),
+                            state_path=os.path.join(save_path, "training_state.json"),
                         )
                         logger.info(f"Saved state to {save_path}")
 
@@ -1084,8 +1163,7 @@ def main():
                         # We do not want to perform validation on a partial batch.
                         continue
                     logger.info(
-                        f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-                        f" {args.validation_prompt}."
+                        f"Running validation... \n Generating {len(validation_prompts)} images."
                     )
                     # create pipeline
                     if args.use_ema:
@@ -1202,7 +1280,7 @@ def main():
                     torch.cuda.empty_cache()
                 ### END: Perform validation every `validation_epochs` steps
 
-            if global_step >= args.max_train_steps:
+            if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 break
 
     # Create the pipeline using the trained modules and save it.
@@ -1230,13 +1308,13 @@ def main():
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         )
         pipeline.save_pretrained(
-            os.path.join(args.output_dir, 'pipeline'), safe_serialization=True
+            os.path.join(args.output_dir, "pipeline"), safe_serialization=True
         )
 
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
-                folder_path=os.path.join(args.output_dir, 'pipeline'),
+                folder_path=os.path.join(args.output_dir, "pipeline"),
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
