@@ -321,6 +321,8 @@ def main():
         from transformers import Adafactor
 
         optimizer_cls = Adafactor
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["relative_step"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_cls = torch.optim.AdamW
