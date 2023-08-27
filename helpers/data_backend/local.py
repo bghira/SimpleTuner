@@ -100,6 +100,10 @@ class LocalDataBackend(BaseDataBackend):
         if type(location) == str:
             location = self.open_file(location, "wb")
         torch.save(data, location)
+        # Check whether the file created:
+        location.seek(0)
+        if not location.read(1):
+            raise Exception(f"Failed to save to {location}")
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
         """Write a batch of data to the specified filepaths."""
