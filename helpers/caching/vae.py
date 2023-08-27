@@ -118,9 +118,6 @@ class VAECache:
             for file in files:
                 # If processed file already exists, skip processing for this image
                 if os.path.splitext(file)[0] in existing_pt_files:
-                    logger.debug(
-                        f"Skipping processing for {filepath} as cached file {full_filename} already exists."
-                    )
                     continue
                 files_to_process.append(os.path.join(subdir, file))
 
