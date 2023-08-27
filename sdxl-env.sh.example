@@ -102,3 +102,9 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --gradient_checkpointing --grad
 
 ## For experimental min-SNR weighted loss training (5 is suggested value by the original researchers):
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --snr_gamma=5.0"
+
+# For Wasabi S3 filesystem backend (experimental)
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --data_backend=aws --aws_bucket_name=test123"
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aws_endpoint_url=https://s3.wasabisys.com"
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aws_access_key=1234567890"
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aws_secret_access_key=0987654321"

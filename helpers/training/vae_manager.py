@@ -1,6 +1,6 @@
 import torch, logging
 from diffusers import AutoencoderKL
-from helpers.vae_cache import VAECache
+from helpers.cache.vae import VAECache
 
 logger = logging.getLogger("VAEManager")
 logger.setLevel("DEBUG")

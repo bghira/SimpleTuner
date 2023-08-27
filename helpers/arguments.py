@@ -104,6 +104,58 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--data_backend",
+        type=str,
+        default="local",
+        choices=["local", "aws"],
+        help=(
+            "The data backend to use. Choose between ['local', 'aws']. Default: local."
+            " If using AWS, you must set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+        ),
+    )
+    parser.add_argument(
+        "--aws_bucket_name",
+        type=str,
+        default=None,
+        help=(
+            "The AWS bucket name to use."
+        )
+    )
+    parser.add_argument(
+        "--aws_endpoint_url",
+        type=str,
+        default=None,
+        help=(
+            "The AWS server to use. If not specified, will use the default server for the region specified."
+            " For Wasabi, use https://s3.wasabisys.com."
+        ),
+    )
+    parser.add_argument(
+        "--aws_region_name",
+        type=str,
+        default="us-east-1",
+        help=(
+            "The AWS region to use. If not specified, will use the default region for the server specified."
+            " For example, if you specify 's3.amazonaws.com', the default region will be 'us-east-1'."
+        ),
+    )
+    parser.add_argument(
+        "--aws_access_key_id",
+        type=str,
+        default=None,
+        help=(
+            "The AWS access key ID."
+        ),
+    )
+    parser.add_argument(
+        "--aws_secret_access_key",
+        type=str,
+        default=None,
+        help=(
+            "The AWS secret access key."
+        )
+    )
+    parser.add_argument(
         "--cache_dir",
         type=str,
         default=None,
@@ -354,6 +406,11 @@ def parse_args(input_args=None):
         "--use_8bit_adam",
         action="store_true",
         help="Whether or not to use 8-bit Adam from bitsandbytes.",
+    )
+    parser.add_argument(
+        "--use_adafactor_optimizer",
+        action="store_true",
+        help="Whether or not to use the Adafactor optimizer.",
     )
     parser.add_argument(
         "--use_dadapt_optimizer",
