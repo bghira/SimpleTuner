@@ -116,7 +116,6 @@ class VAECache:
         )
         for subdir, _, files in all_image_files:
             for file in files:
-                logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
                 files_to_process.append(os.path.join(subdir, os.path.splitext(file))[0])
 
         # Iterate through the files, displaying a progress bar
