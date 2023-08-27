@@ -167,6 +167,9 @@ class VAECache:
                 batch_filepaths.clear()
                 batch_data.clear()
 
+        if batch_data:  # If there are any remaining items in batch_data
+            self.data_backend.write_batch(batch_filepaths, batch_data)
+
     def _resize_for_condition_image(self, input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
         W, H = input_image.size
