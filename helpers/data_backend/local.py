@@ -121,6 +121,10 @@ class LocalDataBackend(BaseDataBackend):
             # A file path was given. Check it.
             if not self.exists(original_location):
                 raise Exception(f"Failed to write to {original_location}")
+        elif hasattr(original_location, 'name'):
+            # A file object was given. Check it.
+            if not self.exists(original_location.name):
+                raise Exception(f"Failed to write to {original_location.name}")
         else:
             import traceback
             raise Exception(f"Unknown error writing to {original_location}, traceback: {traceback.format_exc()}")
