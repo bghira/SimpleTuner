@@ -116,7 +116,13 @@ class VAECache:
         )
         for subdir, _, files in all_image_files:
             for file in files:
-                files_to_process.append(os.path.join(subdir, os.path.splitext(file))[0])
+                # If processed file already exists, skip processing for this image
+                if os.path.splitext(base_filename)[0] in existing_pt_files or self.data_backend.exists(full_filename):
+                    logger.debug(
+                        f"Skipping processing for {filepath} as cached file {full_filename} already exists."
+                    )
+                    continue
+                files_to_process.append(os.path.join(subdir, file))
 
         # Iterate through the files, displaying a progress bar
 
@@ -125,14 +131,6 @@ class VAECache:
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
             full_filename, base_filename = self._generate_filename(filepath)
-
-            # If processed file already exists, skip processing for this image
-            if base_filename in existing_pt_files or self.data_backend.exists(full_filename):
-                logger.debug(
-                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
-                )
-                continue
-
             # Open the image using PIL
             try:
                 logger.debug(f"Loading image: {filepath}")
