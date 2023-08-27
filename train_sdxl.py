@@ -1248,7 +1248,7 @@ def main():
                     torch.cuda.empty_cache()
                 ### END: Perform validation every `validation_epochs` steps
 
-            if global_step >= args.max_train_steps:
+            if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 break
 
     # Create the pipeline using the trained modules and save it.
