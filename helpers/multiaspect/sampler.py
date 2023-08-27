@@ -292,6 +292,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - If the number of seen images reaches the reset threshold, reset all buckets and seen images.
         """
         while True:
+            logging.debug(f'Hitting __iter__')
             early_yield = self._yield_random_image_if_not_training()
             if early_yield:
                 yield early_yield
@@ -302,6 +303,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket = self.buckets[self.current_bucket]
 
             if self._handle_bucket_with_insufficient_images(bucket):
+                logging.debug(f'Bucket {bucket} has insufficient images.')
                 continue
 
             available_images = self._get_unseen_images(bucket)
@@ -309,6 +311,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if len(available_images) < self.batch_size:
                 self._reset_if_not_enough_unseen_images()
                 self.change_bucket()
+                logging.debug(f'Bucket {bucket} has insufficient images.')
                 continue
 
             samples = random.sample(available_images, k=self.batch_size)
