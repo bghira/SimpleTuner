@@ -99,18 +99,19 @@ class VAECache:
         remote_cache_list = self.data_backend.list_files(
             instance_data_root=self.cache_dir, str_pattern="*.pt"
         )
-        logger.debug(f"Truncated list of items: {remote_cache_list[:5]}")
         for subdir, _, files in remote_cache_list:
             for file in files:
-                existing_pt_files.add(os.path.join(subdir, file))
-        logger.debug(f"Truncated list of processed VAE cache items: {existing_pt_files[:5]}")
+                if subdir != '':
+                    file = os.path.join(subdir, file)
+                existing_pt_files.add(file)
+        logger.debug(f"Full List of processed VAE cache items: {existing_pt_files}")
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
         logger.debug(f"Beginning processing of VAECache directory {directory}")
         all_image_files = self.data_backend.list_files(
             instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
         )
-        logger.debug(f"Truncated list of images: {all_image_files[:5]}")
+        logger.debug(f"Full List of images: {all_image_files}")
         for subdir, _, files in all_image_files:
             for file in files:
                 logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
