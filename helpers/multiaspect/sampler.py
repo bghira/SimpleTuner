@@ -153,7 +153,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return self._yield_random_image()
         return False
 
-    def _handle_bucket_with_insufficient_images(self, bucket):
+    def d_handle_bucket_with_insufficient_images(self, bucket):
         """
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
@@ -165,7 +165,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self.move_to_exhausted()
             self.change_bucket()
             return True
-        logging.debug(f'Bucket {bucket} has sufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images.')
+        logging.debug(
+            f"Bucket {bucket} has sufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
+        )
         return False
 
     def _reset_if_not_enough_unseen_images(self):
@@ -287,42 +289,41 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def __iter__(self):
         """
         Iterate over the sampler to yield image paths.
-        - If the system is in training mode, yield batches of unseen images.
-        - If not in training mode, yield random images.
-        - If the number of unseen images in a bucket is less than the batch size, yield all unseen images.
-        - If the number of seen images reaches the reset threshold, reset all buckets and seen images.
         """
         while True:
-            logging.debug(f'Hitting __iter__')
+            # If not in training mode, yield a random image immediately
             early_yield = self._yield_random_image_if_not_training()
             if early_yield:
                 yield early_yield
                 continue
-            if not self.buckets:
+
+            all_buckets_exhausted = True  # Initial assumption
+            for idx, bucket in enumerate(self.buckets):
+                available_images = self._get_unseen_images(bucket)
+                while len(available_images) >= self.batch_size:
+                    all_buckets_exhausted = False  # Found a non-exhausted bucket
+                    samples = random.sample(available_images, k=self.batch_size)
+                    to_yield = self._validate_and_yield_images_from_samples(
+                        samples, bucket
+                    )
+
+                    for image_to_yield in to_yield:
+                        yield image_to_yield
+
+                    # Update available images after yielding
+                    available_images = self._get_unseen_images(bucket)
+
+                # If this bucket is exhausted and it's the last bucket
+                if (
+                    len(available_images) < self.batch_size
+                    and idx == len(self.buckets) - 1
+                ):
+                    assert (
+                        False
+                    ), "Not enough images left to form a complete batch. Fatal condition."
+
+            if all_buckets_exhausted:
                 self._reset_buckets()
-
-            bucket = self.buckets[self.current_bucket]
-
-            if self._handle_bucket_with_insufficient_images(bucket):
-                logging.debug(f'Bucket {bucket} has insufficient images.')
-                continue
-
-            available_images = self._get_unseen_images(bucket)
-
-            if len(available_images) < self.batch_size:
-                self._reset_if_not_enough_unseen_images()
-                self.change_bucket()
-                logging.debug(f'Bucket {bucket} has insufficient images.')
-                continue
-
-            samples = random.sample(available_images, k=self.batch_size)
-            to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
-
-            if len(to_yield) == self.batch_size:
-                # Select a random bucket for the next iteration:
-                self.change_bucket()
-                for image_to_yield in to_yield:
-                    yield image_to_yield
 
     def __len__(self):
         return sum(
