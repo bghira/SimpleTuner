@@ -117,7 +117,7 @@ class VAECache:
         for subdir, _, files in all_image_files:
             for file in files:
                 # If processed file already exists, skip processing for this image
-                if os.path.splitext(base_filename)[0] in existing_pt_files or self.data_backend.exists(full_filename):
+                if os.path.splitext(file)[0] in existing_pt_files:
                     logger.debug(
                         f"Skipping processing for {filepath} as cached file {full_filename} already exists."
                     )
@@ -132,6 +132,11 @@ class VAECache:
             # Create a hash based on the filename
             full_filename, base_filename = self._generate_filename(filepath)
             # Open the image using PIL
+            if self.data_backend.exists(full_filename):
+                logger.debug(
+                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
+                )
+                continue
             try:
                 logger.debug(f"Loading image: {filepath}")
                 image = self.data_backend.read_image(filepath)
