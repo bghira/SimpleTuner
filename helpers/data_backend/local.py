@@ -105,17 +105,28 @@ class LocalDataBackend(BaseDataBackend):
             raise FileNotFoundError(f"{filename} not found.")
         return torch.load(self.read(filename, as_byteIO=True))
 
-    def torch_save(self, data, location):
-        if type(location) == str:
-            location = self.open_file(location, "wb")
+    def torch_save(self, data, original_location):
+        if type(original_location) == str:
+            # A file path was given. Open it.
+            logger.debug(f'Using file path: {original_location}')
+            location = self.open_file(original_location, "wb")
+        else:
+            # A file object was given. Use it.
+            logger.debug(f'Using file object: {original_location}')
+            location = original_location
         torch.save(data, location)
         # Check whether the file created:
-        location.seek(0)
-        if not location.read(1):
-            raise Exception(f"Failed to save to {location}")
+        if type(original_location) == str:
+            # A file path was given. Check it.
+            if not self.exists(original_location):
+                raise Exception(f"Failed to write to {original_location}")
+        else:
+            import traceback
+            raise Exception(f"Unknown error writing to {original_location}, traceback: {traceback.format_exc()}")
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
         """Write a batch of data to the specified filepaths."""
+        logger.debug(f'Reached write_batch in LocalDataBackend.')
         for filepath, data in zip(filepaths, data_list):
             self.write(filepath, data)
             # Check if file was written:
