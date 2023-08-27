@@ -95,9 +95,12 @@ class VAECache:
 
         # Get a list of all existing .pt files in the directory
         existing_pt_files = set()
-        for subdir, _, files in self.data_backend.list_files(
+        logger.debug(f"Retrieving list of pytorch cache files from {self.cache_dir}")
+        remote_cache_list = self.data_backend.list_files(
             instance_data_root=self.cache_dir, str_pattern="*.pt"
-        ):
+        )
+        logger.debug(f"Truncated list of items: {remote_cache_list[:5]}")
+        for subdir, _, files in remote_cache_list:
             for file in files:
                 logger.debug(f'Found existing .pt file: {file}')
                 existing_pt_files.add(os.path.join(subdir, file))
@@ -105,9 +108,11 @@ class VAECache:
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
         logger.debug(f"Beginning processing of VAECache directory {directory}")
-        for subdir, _, files in self.data_backend.list_files(
+        all_image_files = self.data_backend.list_files(
             instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
-        ):
+        )
+        logger.debug(f"Truncated list of images: {all_image_files[:5]}")
+        for subdir, _, files in all_image_files:
             for file in files:
                 logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
                 files_to_process.append(os.path.join(subdir, file))
