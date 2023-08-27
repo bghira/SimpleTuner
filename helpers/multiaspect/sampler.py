@@ -153,7 +153,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return self._yield_random_image()
         return False
 
-    def d_handle_bucket_with_insufficient_images(self, bucket):
+    def _handle_bucket_with_insufficient_images(self, bucket):
         """
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
@@ -319,9 +319,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     and idx == len(self.buckets) - 1
                 ):
                     self.log_state()
-                    assert (
-                        False
-                    ), "Not enough images left to form a complete batch. Fatal condition."
+                    self.move_to_exhausted()
+                    self.change_bucket()
 
             if all_buckets_exhausted:
                 self._reset_buckets()
