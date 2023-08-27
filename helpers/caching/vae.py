@@ -69,6 +69,8 @@ class VAECache:
                 f"Loading latents of shape {latents.shape} from existing cache file: {full_filename}"
             )
         else:
+            # Print the shape of the pixel values:
+            logger.debug(f"Pixel values shape: {pixel_values.shape}")
             with torch.no_grad():
                 latents = self.vae.encode(
                     pixel_values.unsqueeze(0).to(
@@ -169,7 +171,7 @@ class VAECache:
         input_image = input_image.convert("RGB")
         W, H = input_image.size
         aspect_ratio = round(W / H, 2)
-        msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
+        msg = f"Resizing image of aspect {aspect_ratio} and size {W}x{H} to its new size: "
         if W < H:
             W = resolution
             H = int(resolution / aspect_ratio)  # Calculate the new height
