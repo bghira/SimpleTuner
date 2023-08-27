@@ -161,7 +161,14 @@ class VAECache:
                 continue
 
             # Process the image with the VAE.
-            latents = self.encode_image(pixel_values, filepath)
+            try:
+                latents = self.encode_image(pixel_values, filepath)
+            except Exception as e:
+                logger.error(f"Encountered error encoding image: {e}")
+                if self.delete_problematic_images:
+                    self.data_backend.delete(filepath)
+                else:
+                    raise e
             logger.debug(f"Processed image {filepath}")
 
             # Instead of directly saving, append to batches
