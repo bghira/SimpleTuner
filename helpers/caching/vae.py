@@ -103,7 +103,7 @@ class VAECache:
             for file in files:
                 if subdir != '':
                     file = os.path.join(subdir, file)
-                existing_pt_files.add(file)
+                existing_pt_files.add(os.path.splitext(file)[0])
         logger.debug(f"Full List of processed VAE cache items: {existing_pt_files}")
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
@@ -115,7 +115,7 @@ class VAECache:
         for subdir, _, files in all_image_files:
             for file in files:
                 logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
-                files_to_process.append(os.path.join(subdir, file))
+                files_to_process.append(os.path.join(subdir, os.path.splitext(file))[0])
 
         # Iterate through the files, displaying a progress bar
 
