@@ -114,6 +114,7 @@ class LocalDataBackend(BaseDataBackend):
             # A file object was given. Use it.
             logger.debug(f'Using file object: {original_location}')
             location = original_location
+        logger.debug(f'Torch save was given data: {data}')
         torch.save(data, location)
         # Check whether the file created:
         if type(original_location) == str:
