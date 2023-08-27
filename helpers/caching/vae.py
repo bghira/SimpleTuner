@@ -3,6 +3,7 @@ from tqdm import tqdm
 from PIL import Image
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+from helpers.data_backend.aws import S3DataBackend
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -104,14 +105,15 @@ class VAECache:
                 if subdir != '':
                     file = os.path.join(subdir, file)
                 existing_pt_files.add(os.path.splitext(file)[0])
-        logger.debug(f"Full List of processed VAE cache items: {existing_pt_files}")
         # Get a list of all the files to process (customize as needed)
         files_to_process = []
-        logger.debug(f"Beginning processing of VAECache directory {directory}")
+        target_name = directory
+        if type(self.data_backend) == S3DataBackend:
+            target_name = f'S3 bucket {self.data_backend.bucket_name}'
+        logger.debug(f"Beginning processing of VAECache source data {target_name}")
         all_image_files = self.data_backend.list_files(
             instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
         )
-        logger.debug(f"Full List of images: {all_image_files}")
         for subdir, _, files in all_image_files:
             for file in files:
                 logger.debug(f"Discovered image: {os.path.join(subdir, file)}")
