@@ -173,17 +173,9 @@ class S3DataBackend(BaseDataBackend):
 
     def write_batch(self, s3_keys, data_list):
         """Write a batch of files to the specified S3 keys concurrently."""
-        
-        def upload_to_s3(s3_key, data):
-            """Helper function to upload data to S3."""
-            # Convert data to Bytes if it's a string
-            if isinstance(data, str):
-                data = data.encode("utf-8")
-            self.write(s3_key, data)
-        
         # Use ThreadPoolExecutor for concurrent uploads
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            executor.map(upload_to_s3, s3_keys, data_list)
+            executor.map(self.write, s3_keys, data_list)
     def read_batch(self, s3_keys):
         """Read a batch of files from the specified S3 keys concurrently."""
         
