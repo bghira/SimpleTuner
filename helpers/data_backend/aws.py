@@ -5,26 +5,27 @@ import concurrent.futures
 from helpers.data_backend.base import BaseDataBackend
 
 loggers_to_silence = [
-    'botocore.hooks',
-    'botocore.auth',
-    'botocore.httpsession',
-    'botocore.parsers',
-    'botocore.retryhandler',
-    'botocore.loaders',
-    'botocore.regions',
-    'botocore.utils',
-    'botocore.client',
-    'botocore.handler',
-    'botocore.awsrequest'
+    "botocore.hooks",
+    "botocore.auth",
+    "botocore.httpsession",
+    "botocore.parsers",
+    "botocore.retryhandler",
+    "botocore.loaders",
+    "botocore.regions",
+    "botocore.utils",
+    "botocore.client",
+    "botocore.handler",
+    "botocore.awsrequest",
 ]
 
 for logger_name in loggers_to_silence:
     logger = logging.getLogger(logger_name)
-    logger.setLevel('WARNING')
+    logger.setLevel("WARNING")
 
 # Arguably, the most interesting one:
 boto_logger = logging.getLogger("botocore.endpoint")
-boto_logger.setLevel('WARNING')
+boto_logger.setLevel("WARNING")
+
 
 class S3DataBackend(BaseDataBackend):
     def __init__(
@@ -49,7 +50,7 @@ class S3DataBackend(BaseDataBackend):
             "s3",
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
-            **extra_args
+            **extra_args,
         )
 
     def exists(self, s3_key) -> bool:
@@ -81,7 +82,7 @@ class S3DataBackend(BaseDataBackend):
             Bucket=self.bucket_name,
             Key=self._convert_path_to_key(str(s3_key)),
         )
-       logger.debug(f"S3-Key {s3_key} Response: {response}")
+        logger.debug(f"S3-Key {s3_key} Response: {response}")
 
     def delete(self, s3_key):
         """Delete the specified file from S3."""
@@ -97,7 +98,7 @@ class S3DataBackend(BaseDataBackend):
     def list_files(self, str_pattern: str, instance_data_root: str = None):
         # Initialize the results list
         results = []
-        
+
         # Temporarily, we do not use prefixes in S3.
         instance_data_root = None
 
@@ -110,10 +111,12 @@ class S3DataBackend(BaseDataBackend):
         # Using a dictionary to hold files based on their prefixes (subdirectories)
         prefix_dict = {}
         # Log the first few items, alphabetically sorted:
-        logger.debug(f"Listing files in S3 bucket {self.bucket_name} with prefix {pattern}")
+        logger.debug(
+            f"Listing files in S3 bucket {self.bucket_name} with prefix {pattern}"
+        )
         for item in sorted(self.list_by_prefix(pattern))[:5]:
             logger.debug(f"Found item: {item}")
-            
+
         # Paginating over the entire bucket objects
         for page in paginator.paginate(Bucket=self.bucket_name):
             for obj in page.get("Contents", []):
@@ -178,24 +181,25 @@ class S3DataBackend(BaseDataBackend):
         # Use ThreadPoolExecutor for concurrent uploads
         with concurrent.futures.ThreadPoolExecutor() as executor:
             executor.map(self.write, s3_keys, data_list)
+
     def read_batch(self, s3_keys):
         """Read a batch of files from the specified S3 keys concurrently."""
-        
+
         def read_from_s3(s3_key):
             """Helper function to read data from S3."""
             response = self.client.get_object(Bucket=self.bucket_name, Key=s3_key)
-            return response['Body'].read()
-        
+            return response["Body"].read()
+
         # Use ThreadPoolExecutor for concurrent reads
         with concurrent.futures.ThreadPoolExecutor() as executor:
             return list(executor.map(read_from_s3, s3_keys))
 
     def bulk_exists(self, s3_keys, prefix=""):
         """Check the existence of a list of S3 keys in bulk."""
-        
+
         # List all objects with the given prefix
         objects = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
-        existing_keys = set(obj['Key'] for obj in objects.get('Contents', []))
-        
+        existing_keys = set(obj["Key"] for obj in objects.get("Contents", []))
+
         # Check existence for each key
         return [key in existing_keys for key in s3_keys]
