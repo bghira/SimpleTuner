@@ -76,7 +76,7 @@ class S3DataBackend(BaseDataBackend):
     def write(self, s3_key, data):
         """Upload data to the specified S3 key."""
         logger.debug(f"Writing to S3 key {s3_key}")
-       response = self.client.put_object(
+        response = self.client.put_object(
             Body=data,
             Bucket=self.bucket_name,
             Key=self._convert_path_to_key(str(s3_key)),
