@@ -1,5 +1,6 @@
 import boto3, os
 import fnmatch, logging
+from torch import Tensor
 from pathlib import PosixPath
 import concurrent.futures
 from helpers.data_backend.base import BaseDataBackend
@@ -179,10 +180,12 @@ class S3DataBackend(BaseDataBackend):
     def torch_save(self, data, s3_key):
         import torch
         from io import BytesIO
-
-        buffer = BytesIO()
-        torch.save(data, buffer)
-        self.write(s3_key, buffer.getvalue())
+        try:
+            buffer = BytesIO()
+            torch.save(data, buffer)
+            return self.write(s3_key, buffer.getvalue())
+        except Exception as e:
+            logger.error(f'Could not torch save to backend: {e}')
 
     def write_batch(self, s3_keys, data_list):
         """Write a batch of files to the specified S3 keys concurrently."""
