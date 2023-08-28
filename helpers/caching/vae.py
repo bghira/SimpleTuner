@@ -117,10 +117,7 @@ class VAECache:
         for subdir, _, files in all_image_files:
             for file in files:
                 # If processed file already exists, skip processing for this image
-                if os.path.splitext(base_filename)[0] in existing_pt_files or self.data_backend.exists(full_filename):
-                    logger.debug(
-                        f"Skipping processing for {filepath} as cached file {full_filename} already exists."
-                    )
+                if os.path.splitext(file)[0] in existing_pt_files:
                     continue
                 files_to_process.append(os.path.join(subdir, file))
 
@@ -132,6 +129,11 @@ class VAECache:
             # Create a hash based on the filename
             full_filename, base_filename = self._generate_filename(filepath)
             # Open the image using PIL
+            if self.data_backend.exists(full_filename):
+                logger.debug(
+                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
+                )
+                continue
             try:
                 logger.debug(f"Loading image: {filepath}")
                 image = self.data_backend.read_image(filepath)
@@ -159,7 +161,14 @@ class VAECache:
                 continue
 
             # Process the image with the VAE.
-            latents = self.encode_image(pixel_values, filepath)
+            try:
+                latents = self.encode_image(pixel_values, filepath)
+            except Exception as e:
+                logger.error(f"Encountered error encoding image: {e}")
+                if self.delete_problematic_images:
+                    self.data_backend.delete(filepath)
+                else:
+                    raise e
             logger.debug(f"Processed image {filepath}")
 
             # Instead of directly saving, append to batches

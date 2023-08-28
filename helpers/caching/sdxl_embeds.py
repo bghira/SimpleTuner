@@ -90,15 +90,10 @@ class TextEmbeddingCache:
             for prompt in tqdm(
                 prompts, desc="Processing prompts", disable=return_concat
             ):
-                logger.debug(f'Processing prompt "{prompt}"')
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                logger.debug(f'Filename for prompt "{prompt}": {filename}')
                 if os.path.exists(filename) and not return_concat:
-                    logger.debug(
-                        f"Not loading from cache, since we are only precomputing the embeds."
-                    )
                     continue
                 if os.path.exists(filename):
                     logger.debug(f"Loading from cache: {filename}")

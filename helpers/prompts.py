@@ -140,7 +140,6 @@ class PromptHandler:
                     "S3 data backend is not yet compatible with --prepend_instance_prompt"
                 )
         if use_captions:
-            logger.debug(f'Using captions on image path: {image_path}')
             # Underscores to spaces.
             instance_prompt = instance_prompt.replace("_", " ")
             # Remove some midjourney messes.
@@ -148,8 +147,6 @@ class PromptHandler:
             instance_prompt = instance_prompt.split("upscaled beta")[0]
             if prepend_instance_prompt:
                 instance_prompt = instance_prompt + " " + instance_prompt
-        else:
-            logger.warning(f'Not using captions.')
         return instance_prompt
 
     @staticmethod
@@ -213,10 +210,7 @@ class PromptHandler:
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
-            logger.debug(f'Got nested list in tuple from data_backend.list_files: {all_image_files}')
             all_image_files = all_image_files[0][2]
-        else:
-            logger.debug(f'Got {type(all_image_files)} from data_backend.list_files: {all_image_files}')
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
@@ -224,7 +218,6 @@ class PromptHandler:
                 prepend_instance_prompt=prepend_instance_prompt,
                 data_backend=data_backend,
             )
-            logger.debug(f'Processing image path: {image_path} into caption: {caption}')
             captions.append(caption)
 
         return captions

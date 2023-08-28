@@ -1,7 +1,17 @@
 #!/bin/bash
 
 echo "Running dependency installation for Ubuntu."
-apt -y install nvidia-cuda-dev nvidia-cuda-toolkit cuda-cupti-11-7 libnccl-dev
+
+mkdir ubuntu_temp
+pushd ubuntu_temp || exit
+	wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+	sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+	sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub
+	sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
+	sudo apt-get update
+popd || exit
+
+apt -y install nvidia-cuda-dev nvidia-cuda-toolkit cuda-cupti-11-7 libnccl-dev cuda-11-7
 echo "Creating python venv"
 python -m venv .venv
 echo "Activating venv"

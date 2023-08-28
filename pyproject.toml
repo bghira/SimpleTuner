@@ -10,7 +10,7 @@ readme = "README.md"
 python = ">=3.9,<3.13"
 torch = "^2.0.1"
 torchvision = "^0.15.2"
-diffusers = {git = "https://github.com/huggingface/diffusers", rev = "improve_backprop"}
+diffusers = {git = "https://github.com/huggingface/diffusers"}
 transformers = "^4.31.0"
 datasets = "^2.14.3"
 xformers = "^0.0.20"
