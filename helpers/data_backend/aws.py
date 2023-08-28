@@ -26,6 +26,8 @@ for logger_name in loggers_to_silence:
 boto_logger = logging.getLogger("botocore.endpoint")
 boto_logger.setLevel("WARNING")
 
+logger = logging.getLogger("S3DataBackend")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 class S3DataBackend(BaseDataBackend):
     def __init__(
