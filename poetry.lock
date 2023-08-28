@@ -532,7 +532,7 @@ develop = false
 [package.dependencies]
 filelock = "*"
 huggingface-hub = ">=0.13.2"
-importlib-metadata = "*"
+importlib_metadata = "*"
 numpy = "*"
 Pillow = "*"
 regex = "!=2019.12.17"
