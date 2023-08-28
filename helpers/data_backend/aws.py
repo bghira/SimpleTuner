@@ -80,11 +80,14 @@ class S3DataBackend(BaseDataBackend):
         """Upload data to the specified S3 key."""
         real_key = self._convert_path_to_key(str(s3_key))
         logger.debug(f"Writing to S3 key {real_key}, body: {data}")
-        response = self.client.put_object(
-            Body=data,
-            Bucket=self.bucket_name,
-            Key=real_key,
-        )
+        try:
+            response = self.client.put_object(
+                Body=data,
+                Bucket=self.bucket_name,
+                Key=real_key,
+            )
+        except Exception as e:
+            logger.error(f'Could not upload to backend: {e}')
         logger.debug(f"S3-Key {s3_key} Response: {response}")
 
     def delete(self, s3_key):
