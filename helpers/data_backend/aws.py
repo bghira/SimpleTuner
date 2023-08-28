@@ -21,11 +21,11 @@ loggers_to_silence = [
 
 for logger_name in loggers_to_silence:
     logger = logging.getLogger(logger_name)
-    logger.setLevel("WARNING")
+    logger.setLevel("ERROR")
 
 # Arguably, the most interesting one:
 boto_logger = logging.getLogger("botocore.endpoint")
-boto_logger.setLevel("WARNING")
+boto_logger.setLevel(os.environ.get("SIMPLETUNER_AWS_LOG_LEVEL", "ERROR"))
 
 logger = logging.getLogger("S3DataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
