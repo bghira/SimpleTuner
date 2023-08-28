@@ -179,7 +179,7 @@ class S3DataBackend(BaseDataBackend):
             # Convert data to Bytes if it's a string
             if isinstance(data, str):
                 data = data.encode("utf-8")
-            self.client.put_object(Bucket=self.bucket_name, Key=s3_key, Body=data)
+            self.write(s3_key, data)
         
         # Use ThreadPoolExecutor for concurrent uploads
         with concurrent.futures.ThreadPoolExecutor() as executor:
