@@ -3,6 +3,7 @@ import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
 import concurrent.futures
+from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
 
 loggers_to_silence = [
@@ -49,10 +50,12 @@ class S3DataBackend(BaseDataBackend):
             extra_args = {
                 "endpoint_url": endpoint_url,
             }
+        s3_config = Config(max_pool_connections=100)
         self.client = boto3.client(
             "s3",
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
+            config=s3_config,
             **extra_args,
         )
 
