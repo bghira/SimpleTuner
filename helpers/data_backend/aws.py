@@ -78,6 +78,8 @@ class S3DataBackend(BaseDataBackend):
 
     def write(self, s3_key, data):
         """Upload data to the specified S3 key."""
+        if type(data) == Tensor:
+            return self.torch_save(data, s3_key)
         real_key = self._convert_path_to_key(str(s3_key))
         logger.debug(f"Writing to S3 key {real_key}, body: {data}")
         try:
