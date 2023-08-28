@@ -213,10 +213,7 @@ class PromptHandler:
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
-            logger.debug(f'Got nested list in tuple from data_backend.list_files: {all_image_files}')
             all_image_files = all_image_files[0][2]
-        else:
-            logger.debug(f'Got {type(all_image_files)} from data_backend.list_files: {all_image_files}')
         for image_path in all_image_files:
             caption = PromptHandler.prepare_instance_prompt(
                 image_path=str(image_path),
@@ -224,7 +221,6 @@ class PromptHandler:
                 prepend_instance_prompt=prepend_instance_prompt,
                 data_backend=data_backend,
             )
-            logger.debug(f'Processing image path: {image_path} into caption: {caption}')
             captions.append(caption)
 
         return captions
