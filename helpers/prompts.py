@@ -140,7 +140,6 @@ class PromptHandler:
                     "S3 data backend is not yet compatible with --prepend_instance_prompt"
                 )
         if use_captions:
-            logger.debug(f'Using captions on image path: {image_path}')
             # Underscores to spaces.
             instance_prompt = instance_prompt.replace("_", " ")
             # Remove some midjourney messes.
@@ -148,8 +147,6 @@ class PromptHandler:
             instance_prompt = instance_prompt.split("upscaled beta")[0]
             if prepend_instance_prompt:
                 instance_prompt = instance_prompt + " " + instance_prompt
-        else:
-            logger.warning(f'Not using captions.')
         return instance_prompt
 
     @staticmethod

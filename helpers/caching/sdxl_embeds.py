@@ -93,7 +93,6 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                logger.debug(f'Filename for prompt "{prompt}": {filename}')
                 if os.path.exists(filename) and not return_concat:
                     continue
                 if os.path.exists(filename):
