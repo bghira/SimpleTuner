@@ -32,5 +32,8 @@ for handler in logger.handlers[:]:
 if not logger.handlers:
     logger.addHandler(new_handler)
 
+forward_logger = logging.getLogger('diffusers.models.unet_2d_condition')
+forward_logger.setLevel(logging.WARNING)
+
 pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)
