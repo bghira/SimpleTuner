@@ -884,7 +884,7 @@ def main():
     progress_bar.set_description("Steps")
 
     for epoch in range(first_epoch, args.num_train_epochs):
-        logger.debug(f"Starting into epoch: {epoch}")
+        logger.debug(f"Starting into epoch: {epoch} (final epoch: {args.num_train_epochs})")
         unet.train()
         train_loss = 0.0
         training_luminance_values = []
