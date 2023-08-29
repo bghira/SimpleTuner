@@ -30,8 +30,7 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
 
 ## Dependencies
 
-1. Clone the SimpleTuner repository.
-2. Install the required packages as detailed in [INSTALL.md](/INSTALL.md) or use the `requirements.txt` file if available.
+Install SimpleTuner as detailed in [INSTALL.md](/INSTALL.md)
 
 ## Training data
 
