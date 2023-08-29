@@ -105,7 +105,12 @@ class S3DataBackend(BaseDataBackend):
     def list_by_prefix(self, prefix=""):
         """List all files under a specific path (prefix) in the S3 bucket."""
         response = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
-        return [item["Key"] for item in response.get("Contents", [])]
+        bucket_prefix = f"{self.bucket_name}/"
+        
+        return [
+            item["Key"][len(bucket_prefix):] if item["Key"].startswith(bucket_prefix) else item["Key"]
+            for item in response.get("Contents", [])
+        ]
 
     def list_files(self, str_pattern: str, instance_data_root: str = None):
         # Initialize the results list
