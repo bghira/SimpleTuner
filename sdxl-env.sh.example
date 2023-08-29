@@ -31,7 +31,6 @@ export VALIDATION_PROMPT="ethnographic photography of teddy bear at a picnic"
 export VALIDATION_GUIDANCE=7.5
 # You'll want to set this to 0.7 if you are training a terminal SNR model.
 export VALIDATION_GUIDANCE_RESCALE=0.0
-
 # How frequently we will save and run a pipeline for validations.
 export VALIDATION_STEPS=100
 # Max number of steps OR epochs can be used. But we default to Epochs.
@@ -46,6 +45,7 @@ export OUTPUT_DIR="${BASE_DIR}/models"
 # By default, images will be resized so their SMALLER EDGE is 1024 pixels, maintaining aspect ratio.
 # Setting this value to 768px might result in more reasonable training data sizes for SDXL.
 export RESOLUTION=1024
+export VALIDATION_RESOLUTION=$RESOLUTION
 # Adjust this for your GPU memory size. This, and resolution, are the biggest VRAM killers.
 export TRAIN_BATCH_SIZE=10
 # Accumulate your update gradient over many steps, to save VRAM while still having higher effective batch size:
