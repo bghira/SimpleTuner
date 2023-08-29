@@ -39,19 +39,34 @@ A publicly-available dataset is available [on huggingface hub](https://huggingfa
 
 Approximately 162GB of images are available in the `split_train` directory, although this format is not required by SimpleTuner.
 
-### Batch size impacts aspect bucketing
+You can simply create a single folder full of jumbled-up images, or they can be neatly organised into subdirectories.
 
-Your maximum batch size is a function of your available VRAM and image resolution.
+**Here are some important guidelines:**
+
+### Training batch size
+
+Your maximum batch size is a function of your available VRAM and image resolution:
+
+```
+vram use = batch size * resolution + base_requirements
+```
+
+To reduce VRAM use, you can reduce batch size or resolution, but the base requirements will always bite us in the ass. SDXL is a **huge** model.
+
+To summarise:
 
 - You want as high of a batch size as you can tolerate.
 - The larger you set `RESOLUTION`, the more VRAM is used, and the lower your batch size can be.
 - A larger batch size requires more training data in each bucket, since each one **must** contain a minimum of that many images.
+- If you can't get a single iteration done with batch size of 1 and resolution of 128x128 on Adafactor or AdamW8Bit, your hardware just won't work.
 
-Consequently, this means you should use as much high quality training data as you can acquire.
+Which brings up the next point: **you should use as much high quality training data as you can acquire.**
 
 ### Selecting images
 
-- JPEG artifacts and blurry images are a no-go. If you're trying to extract frames from a movie to train from, you're going to have a bad time as the compression ruins most of it - only the excessively large releases in the 40+ GB range are really going to be useful for improving image clarity.
+- JPEG artifacts and blurry images are a no-go. The model **will** pick these up.
+- Same goes for watermarks and "badges", artist signatures. That will all be picked up effortlessly.
+- If you're trying to extract frames from a movie to train from, you're going to have a bad time. Compression ruins most films - only the large 40+ GB releases are really going to be useful for improving image clarity.
 - Image resolutions optimally should be divisible by 64.
   - This isn't **required**, but is beneficial to follow.
 - Square images are not required, though they will work.
