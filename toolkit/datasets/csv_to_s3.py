@@ -138,8 +138,8 @@ def parse_args():
     parser.add_argument(
         "--similarity_threshold",
         type=float,
-        default=0.5,
-        help="The similarity score of an image describes how closely its caption followed the embed. Higher = better. Default: 0.5",
+        default=0.33,
+        help="The similarity score of an image describes how closely its caption followed the embed. Higher = better. Default: 0.33",
     )
     parser.add_argument(
         "--unsafe_threshold",
