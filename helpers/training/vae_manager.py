@@ -51,5 +51,5 @@ class VAEManager:
     def process_directory(self, vae, accelerator, args):
         if accelerator.is_main_process:
             logger.info(f"Pre-computing VAE latent space.")
-            vaecache = VAECache(vae, accelerator)
+            vaecache = VAECache(vae, accelerator, resolution=args.resolution)
             vaecache.process_directory(args.instance_data_dir)

@@ -100,7 +100,7 @@ def parse_args():
     parser.add_argument(
         "--data_backend",
         choices=["local", "aws"],
-        default="local",
+        default="aws",
         help="The data backend to use.",
     )
     parser.add_argument(
@@ -126,14 +126,31 @@ def parse_args():
     parser.add_argument(
         "--pwatermark_threshold",
         type=float,
-        default=0.0,
-        help="Threshold for pwatermark value.",
+        default=0.7,
+        help="Threshold for pwatermark value. A higher score indicates a more likely chance of a watermark. Default: 0.7",
     )
     parser.add_argument(
         "--aesthetic_threshold",
         type=int,
-        default=0,
-        help="Threshold for aesthetic score.",
+        default=5,
+        help="Threshold for aesthetic score, where a low score indicates a lower-quality image, often containing text. Default: 5",
+    )
+    parser.add_argument(
+        "--similarity_threshold",
+        type=float,
+        default=0.33,
+        help="The similarity score of an image describes how closely its caption followed the embed. Higher = better. Default: 0.33",
+    )
+    parser.add_argument(
+        "--unsafe_threshold",
+        type=float,
+        default=0.5,
+        help="The probability of an image containing harmful content. Values higher than this will be ignored, unless --inverse_unsafe_threshold is given. Default: 0.5",
+    )
+    parser.add_argument(
+        "--invert_unsafe_threshold",
+        action="store_true",
+        help="If set, images with a probability of harmful content higher than --unsafe_threshold will be included. This may be useful for training eg. NSFW classifiers.",
     )
     parser.add_argument(
         "--caption_field",
@@ -184,6 +201,8 @@ def get_uri_column(df):
 
 
 def get_caption_column(df):
+    if "top_caption" in df.columns:
+        return "top_caption"
     if "Content" in df.columns:
         return "Content"
     elif "TEXT" in df.columns:
@@ -320,7 +339,7 @@ def main():
             logger.info(
                 f"Applying pwatermark filter with threshold {args.pwatermark_threshold}"
             )
-            df = df[df["pwatermark"] >= args.pwatermark_threshold]
+            df = df[df["pwatermark"] <= args.pwatermark_threshold]
             logger.info(f"Filtered to {len(df)} rows.")
         if "aesthetic" in df.columns:
             logger.info(
@@ -340,6 +359,23 @@ def main():
             )
             df = df[df["HEIGHT"] >= args.minimum_resolution]
             logger.info(f"Filtered to {len(df)} rows.")
+        if "similarity" in df.columns:
+            logger.info(
+                f"Applying similarity filter with threshold {args.similarity_threshold}"
+            )
+            df = df[df["similarity"] >= args.similarity_threshold]
+            logger.info(f"Filtered to {len(df)} rows.")
+        if "punsafe" in df.columns:
+            logger.info(
+                f"Applying unsafe filter with threshold {args.unsafe_threshold}"
+            )
+            if args.invert_unsafe_threshold:
+                logger.info("Inverting unsafe threshold, so that more harmful content is included, rather than excluded.")
+                df = df[df["punsafe"] >= args.unsafe_threshold]
+            else:
+                df = df[df["punsafe"] <= args.unsafe_threshold]
+            logger.info(f"Filtered to {len(df)} rows.")
+
         # TODO: Add more filters as needed
 
         # Fetch and process images

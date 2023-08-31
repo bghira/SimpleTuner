@@ -608,6 +608,7 @@ def main():
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
+        resolution=args.resolution
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -714,7 +715,7 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         logger.info(
             f"Calculated our maximum training steps at {args.max_train_steps} because we have"
-            " {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+            f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
         )
         overrode_max_train_steps = True
     logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
@@ -772,7 +773,7 @@ def main():
     logger.info(f"Loaded VAE into VRAM.")
     if accelerator.is_main_process:
         logger.info(f"Pre-computing VAE latent space.")
-        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend, delete_problematic_images=args.delete_problematic_images)
+        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend, delete_problematic_images=args.delete_problematic_images, resolution=args.resolution)
         vaecache.process_directory(args.instance_data_dir)
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -859,7 +860,7 @@ def main():
             logger.info(
                 f"Resuming from global step {resume_global_step},"
                 f" because we have global_step {global_step} and"
-                " gradient_accumulation_steps {args.gradient_accumulation_steps}"
+                f" gradient_accumulation_steps {args.gradient_accumulation_steps}"
             )
             first_epoch = global_step // num_update_steps_per_epoch
             logger.info(
@@ -884,7 +885,7 @@ def main():
     progress_bar.set_description("Steps")
 
     for epoch in range(first_epoch, args.num_train_epochs):
-        logger.debug(f"Starting into epoch: {epoch}")
+        logger.debug(f"Starting into epoch: {epoch} (final epoch: {args.num_train_epochs})")
         unet.train()
         train_loss = 0.0
         training_luminance_values = []

@@ -121,8 +121,11 @@ class VAECache:
                     continue
                 files_to_process.append(os.path.join(subdir, file))
 
-        # Iterate through the files, displaying a progress bar
+        # Shuffle the files.
+        import random
+        random.shuffle(files_to_process)
 
+        # Iterate through the files, displaying a progress bar
         batch_filepaths = []
         batch_data = []
         for filepath in tqdm(files_to_process, desc="Processing images"):

@@ -2,134 +2,90 @@
 
 This repository contains a set of experimental scripts that could damage your training data. Keep backups!
 
-This project's code is simple in its implementations. If anything is overly complicated, it is likely a bug.
+This project's code intended to be simple and easy to read. Parts of it are difficult to follow, though it's hoped they'll improve over time.
 
 This code is a shared academic exercise. Please feel free to contribute improvements, or open issue reports.
 
-## Why? (SDXL)
+The features implemented will eventually be shared between SD 2.1 and SDXL as much as possible.
 
-The popular trainers available have complicated code that seems to intentionally make things as difficult to understand.
-
-Alternatively, I'm simply just one who needs things written a bit simpler (and in English)!
-
-The functionality of this script is shared between SD 2.1 and SDXL as much as possible, with room for improvement;
-
+* Multi-GPU support is in a minimal implementation, and more help is wanted there.
 * Aspect bucketing is shared
-* Latent caching is currently only done for SDXL
-* Prompt embed caching is also only done for SDXL
-* Multi-GPU support has been enhanced and fixed
+* Legacy trainer does not implement precomputed embeds/latents
+* Currently, the legacy trainer is somewhat neglected. The last release pre-SDXL support should be used for SD 2.1.
 
-With this script, at 1024x1024 batch size 10, we can nearly saturate a single 80G A100!
+## Tutorial
 
-At 1024x1024 batch size 4, we can use a 48G A6000 GPU, which reduces the cost of multi-GPU training!
+Please fully explore this README before embarking on [the tutorial](/TUTORIAL.md), as it contains vital information that you might need to know first.
 
-## Why? (Stable Diffusion 2.1)
+## General design philosophy
 
-Stable Diffusion 2.1 is notoriously difficult to fine-tune. Many of the default scripts are not making the smartest choices, and result in poor-quality outputs.
+* Just throw captioned images into a dir and the script does the rest.
+* The more images, the merrier - though small datasets are supported, too.
+* Not supporting cutting edge features just for the sake of it - they must be proven first.
 
-Some of the problems I've encountered in other tools:
+## SDXL Training Features
+
+* VAE (latents) outputs are precomputed before training and saved to storage, so that we do not need to invoke the VAE during the forward pass.
+* Since SDXL has two text encoders, we precompute all of the captions into embeds and then store those as well.
+* **Train on a 40G GPU** when using lower base resolutions. Sorry, but it's just not doable to train SDXL's full U-net on 24G, even with Adafactor.
+* EMA (Exponential moving average) weight network as an optional way to reduce model over-cooking.
+
+## Stable Diffusion 2.0 / 2.1
+
+Stable Diffusion 2.1 is notoriously difficult to fine-tune. Many of the default scripts are not making the smartest choices, and result in poor-quality outputs:
 
 * Training OpenCLIP concurrently to the U-net. They must be trained in sequence, with the text encoder being tuned first.
-
 * Not using enforced zero SNR on the terminal timestep, using offset noise instead. This results in a more noisy image.
+* Training on only square, 768x768 images, that will result in the model losing the ability to (or at the very least, simply not improving) generalise across aspect ratios.
 
-* Training on only square, 768x768 images, that will result in the model losing the ability to (or at the very least, simply not improving) super-resolution its output into other aspect ratios.
+## Hardware Requirements
 
-* Overfitting the unet on textures, results in "burning". So far, I've not worked around this much other than mix-matching text encoder and unet checkpoints.
+All testing of this script has been done using:
 
-Additionally, if something does not provide value to the training process by default, it is simply not included.
+* A100-80G
+* A6000 48G
+* 4090 24G
+
+Despite optimisations, SDXL training **will not work on a 24G GPU**, though SD 2.1 training works fantastically well there.
+
+### SDXL 1.0
+
+At 1024x1024 batch size 10, we can nearly saturate a single 80G A100's entire VRAM pool!
+
+At 1024x1024 batch size 4, we can begin to make use of a 48G A6000 GPU, which substantially reduces the cost of multi-GPU training!
+
+With a resolution reduction down to 768 pixels, you can shift requirements down to an A100-40G.
+
+For further reductions, when training at a resolution of `256x256` the model can still generalise training data quite well, in addition to supporting a much higher batch size around 15 if the VRAM is present.
+
+### Stable Diffusion 2.x
+
+Generally, a batch size of 4-8 for aspect bucketed data at 768px base was achievable within 24G of VRAM.
+
+On an A100-80G, a batch size of 15 could be reached with nearly all of the VRAM in use
+
+For 1024px training, the VRAM requirement goes up substantially, but it is still doable in roughly an equivalent footprint to an _optimised_ SDXL setup.
+
+Optimizations from the SDXL trainer could be ported to the legacy trainer (text embed cache, precomputed latents) to bring this down, substantially, and make 1024px training more viable on consumer kit.
 
 ## Scripts
 
-* `training.sh` - some variables are here, but if they are, they're not meant to be tuned.
+* `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance.
+* `train_sdxl.sh` - This is where the magic happens.
+* `training.sh` - This is the legacy Stable Diffusion 1.x / 2.x trainer. The last stable version was before SDXL support was introduced. 😞
 * `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
 * `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
 
-* `interrogate.py` - This is useful for labelling datasets using BLIP. Not very accurate, but good enough for a LARGE dataset that's being used for fine-tuning.
+## Toolkit
 
-* `analyze_laion_data.py` - After downloading a lot of LAION's data, you can use this to throw a lot of it away.
-* `analyze_aspect_ratios_json.py` - Use the output from `analyze_laion_data.py` to nuke images that do not fit our aspect goals.
-* `helpers/broken_images.py` - Scan and remove any images that will not load properly.
-
-Another note here: You might want to make sure it knows your most important concepts. If it doesn't, you can try to fine-tune BLIP using a subset of your data with manually created captions. This generally has a lot of success.
-
-* `inference.py` - Generate validation results from the prompts catalogue (`prompts.py`) using DDIMScheduler.
-* `inference_ddpm.py` - Use DDPMScheduler to assemble a checkpoint from a base model configuration and run through validation prompts.
-* `inference_karras.py` - Use the Karras sigmas with DPM 2M Karras. Useful for testing what might happen in Automatic1111.
-* `tile_shortnames.py` - Tile the outputs from the above scripts into strips.
-
-* `inference_snr_test.py` - Generate a large number of CFG range images, and catalogue the results for tiling.
-* `tile_images.py` - Generate large image tiles to compare CFG results for zero SNR training / inference tuning.
+For information on the associated toolkit distributed with SimpleTuner, see [this page](/toolkit/README.md).
 
 ## Setup
 
-1. Clone the repository and install the dependencies:
+For setup information, see the [install documentation](/INSTALL.md).
 
-```bash
-git clone https://github.com/bghira/SimpleTuner --branch release
-python -m venv .venv
-pip3 install -U poetry pip
-poetry install
-```
+## Troubleshooting
 
-You will need to install some Linux-specific dependencies (Ubuntu is used here):
+* To enable debug logs (caution, this is extremely noisy) add `export SIMPLETUNER_LOG_LEVEL=DEBUG` to your env file.
 
-```bash
-apt -y install nvidia-cuda-dev nvidia-cuda-toolkit
-```
-
-If you get an error about missing cudNN library, you will want to install torch manually (replace 118 with your CUDA version if not using 11.8):
-
-```bash
-pip3 install xformers torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118 --force
-```
-
-Alternatively, Pytorch Nightly may be used (Torch 2.1) with Xformers 0.0.21dev (note that this includes torchtriton now):
-
-```bash
-pip3 install --pre torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
-pip3 install --pre https://github.com/facebookresearch/xformers.git@main\#egg=xformers
-```
-
-If the egg install for Xformers does not work, try including `xformers` on the first line, and run only that:
-
-```bash
-pip3 install --pre xformers torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
-```
-
-2. For SD2.1, copy `sd21-env.sh.example` to `env.sh` - be sure to fill out the details. Try to change as little as possible.
-
-For SDXL, copy `sdxl-env.sh.example` to `sdxl-env.sh` and then fill in the details.
-
-For both training scripts, any missing values from your user config will fallback to the defaults.
-
-3. If you are using `--report_to='wandb'` (the default), the following will help you report your statistics:
-
-```bash
-wandb login
-```
-
-Follow the instructions that are printed, to locate your API key and configure it.
-
-Once that is done, any of your training sessions and validation data will be available on Weights & Biases.
-
-4. For SD2.1, run the `training.sh` script, probably by redirecting the output to a log file:
-
-```bash
-bash training.sh > /path/to/training-$(date +%s).log 2>&1
-```
-
-For SDXL, run the `train_sdxl.sh` script, redirecting outputs to the log file:
-
-```bash
-bash train_sdxl.sh > /path/to/training-$(date +%s).log 2>&1
-```
-
-From here, that's really up to you.
-
-
-## Known issues
-
-* For very poorly distributed aspect buckets, some problems with uneven training are being worked on.
-* Some hardcoded values need to be adjusted/removed - images under 860x860 are discarded.
-* SDXL latent caching is currently non-deterministic, and will be adjusted for a better hashing method soon.
+For a web version of the options available for the SDXL trainer, see [this document](/OPTIONS.md)
