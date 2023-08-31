@@ -35,6 +35,9 @@ botocore = "^1.31.38"
 urllib3 = "<1.27"
 torchaudio = "^2.0.2+cu118"
 triton-library = "^1.0.0rc2"
+torchsde = "^0.2.5"
+torchmetrics = "^1.1.1"
+pytorch-triton = "^0.0.1"
 
 
 [build-system]
