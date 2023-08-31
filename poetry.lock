@@ -2372,6 +2372,23 @@ url = "https://download.pytorch.org/whl/cu118"
 reference = "pytorch"
 
 [[package]]
+name = "triton-library"
+version = "1.0.0rc2"
+description = "Triton is a dynamic binary analysis library"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "triton_library-1.0.0rc2-cp310-cp310-manylinux_2_24_x86_64.whl", hash = "sha256:22457792a3250def668ff63297fac3251f266fdcdf8af7b42074fbced4c56f76"},
+    {file = "triton_library-1.0.0rc2-cp310-cp310-win_amd64.whl", hash = "sha256:ce51e294fc8b40346a56b567393a42423f274fcdd2cc0ef92a13a7f371b333dc"},
+    {file = "triton_library-1.0.0rc2-cp311-cp311-manylinux_2_24_x86_64.whl", hash = "sha256:e3afaf8d8261c932b98c3ef17993795f8c66118fe5076e96655ea9f6c99fc3a6"},
+    {file = "triton_library-1.0.0rc2-cp311-cp311-win_amd64.whl", hash = "sha256:e99469878518c81d5415cc18048d7e5c46df55f56521d314b151266bf256181e"},
+    {file = "triton_library-1.0.0rc2-cp38-cp38-manylinux_2_24_x86_64.whl", hash = "sha256:f81d9a9bcadf323598a148d77e55f002ecf8190c1e6f41d7226ea363d853e6c4"},
+    {file = "triton_library-1.0.0rc2-cp38-cp38-win_amd64.whl", hash = "sha256:647a632ba763fa0a19649e44184e93be1dc69d5b06dca16d3649822af151b7ab"},
+    {file = "triton_library-1.0.0rc2-cp39-cp39-manylinux_2_24_x86_64.whl", hash = "sha256:9d0742bde2dc2be4ab597bb252df7b5f6b7b104cba180fd71ef0a0bf9921e2f7"},
+    {file = "triton_library-1.0.0rc2-cp39-cp39-win_amd64.whl", hash = "sha256:c4370850295474c6b9c68ad0783aaa27cbe65d908e9cb369aaee78f3c3504356"},
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.7.1"
 description = "Backported and Experimental Type Hints for Python 3.7+"
@@ -2683,4 +2700,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "9ced3c635005ed8fbe1d904a03f75ae1c4c21aca3c61a658fbf4992a7c8f045f"
+content-hash = "1c6649d1a04f5af1367d27e8c1d78924b12c70a8ff64e1d709c7579b22cd78ec"
