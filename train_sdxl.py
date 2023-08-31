@@ -608,6 +608,7 @@ def main():
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
+        resolution=args.resolution
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
