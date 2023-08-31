@@ -37,7 +37,7 @@ torchaudio = "^2.0.2+cu118"
 triton-library = "^1.0.0rc2"
 torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
-pytorch-triton = "^0.0.1"
+pytorch-triton = ">2.0.1"
 
 
 [build-system]
@@ -47,3 +47,7 @@ build-backend = "poetry.core.masonry.api"
 [[tool.poetry.source]]
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu118"
+
+[[tool.poetry.source]]
+name = "pytorch-nightly"
+url = "https://download.pytorch.org/whl/nightly/cu118"

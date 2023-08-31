@@ -1573,13 +1573,31 @@ six = ">=1.5"
 
 [[package]]
 name = "pytorch-triton"
-version = "0.0.1"
+version = "2.1.0+e650d3708b"
 description = "A language and compiler for custom Deep Learning operations"
 optional = false
 python-versions = "*"
 files = [
-    {file = "pytorch_triton-0.0.1-py3-none-any.whl", hash = "sha256:f3f1052e3e4ac2937bfbbb5bc3b73854319c43d2a597594465e62f514e7be890"},
+    {file = "pytorch_triton-2.1.0+e650d3708b-cp310-cp310-linux_x86_64.whl", hash = "sha256:6071067f77ce14a38bbe1ca3b3b2c862868ea43825e3ed70ed2d149864cc03eb"},
+    {file = "pytorch_triton-2.1.0+e650d3708b-cp311-cp311-linux_x86_64.whl", hash = "sha256:97bd8444af19234a1d4d6045b39da124ab1689153f67a6761b4565e50364e8f1"},
+    {file = "pytorch_triton-2.1.0+e650d3708b-cp38-cp38-linux_x86_64.whl", hash = "sha256:60f85edbef59773e8f560468c02d206ad3d1ee87b12333c939d37397c12a62cf"},
+    {file = "pytorch_triton-2.1.0+e650d3708b-cp39-cp39-linux_x86_64.whl", hash = "sha256:d174f313801f1667e3e3d6e5bc3f71102696f411617db32cf77ba5ceb4fbe875"},
 ]
+
+[package.dependencies]
+cmake = ">=3.20"
+filelock = "*"
+lit = "*"
+torch = "*"
+
+[package.extras]
+tests = ["autopep8", "flake8", "isort", "numpy", "pytest", "scipy (>=1.7.1)"]
+tutorials = ["matplotlib", "pandas", "tabulate"]
+
+[package.source]
+type = "legacy"
+url = "https://download.pytorch.org/whl/nightly/cu118"
+reference = "pytorch-nightly"
 
 [[package]]
 name = "pytz"
@@ -2797,4 +2815,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "ae0281cb55ef8f1ee4bed4907436fcedefd9e81194313e819c96c1502f4cfba5"
+content-hash = "86d54c5842dfaee03c1d2d3c3299ef3e2fd94b6149c4ce1479d773123acd2e5f"
