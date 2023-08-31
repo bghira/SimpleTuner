@@ -715,7 +715,7 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         logger.info(
             f"Calculated our maximum training steps at {args.max_train_steps} because we have"
-            " {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+            f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
         )
         overrode_max_train_steps = True
     logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
@@ -860,7 +860,7 @@ def main():
             logger.info(
                 f"Resuming from global step {resume_global_step},"
                 f" because we have global_step {global_step} and"
-                " gradient_accumulation_steps {args.gradient_accumulation_steps}"
+                f" gradient_accumulation_steps {args.gradient_accumulation_steps}"
             )
             first_epoch = global_step // num_update_steps_per_epoch
             logger.info(
