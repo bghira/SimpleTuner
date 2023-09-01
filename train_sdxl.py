@@ -719,16 +719,24 @@ def main():
         )
         overrode_max_train_steps = True
     logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
-    if args.lr_scheduler != "polynomial":
-        lr_scheduler = get_scheduler(
-            name=args.lr_scheduler,
+    if args.lr_scheduler == "cosine_annealing_warm_restarts":
+        """
+        optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
+
+            T_0 (int) – Number of iterations for the first restart.
+            T_mult (int, optional) – A factor increases Ti after a restart. Default: 1.
+            eta_min (float, optional) – Minimum learning rate. Default: 0.
+
+        """
+        from torch.optim import CosineAnnealingWarmRestarts
+        lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-            num_cycles=args.lr_num_cycles,
-            power=args.lr_power,
+            T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            T_mult=args.lr_num_cycles,
+            eta_min=args.learning_rate_end,
+            last_epoch=-1,
         )
-    else:
+    elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
@@ -737,6 +745,16 @@ def main():
             power=args.lr_power,
             last_epoch=-1,
         )
+    else:
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power,
+        )
+
     accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
@@ -830,6 +848,7 @@ def main():
     global_step = 0
     first_epoch = 0
     resume_step = 0
+    scheduler_kwargs = {}
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -886,6 +905,8 @@ def main():
 
     for epoch in range(first_epoch, args.num_train_epochs):
         logger.debug(f"Starting into epoch: {epoch} (final epoch: {args.num_train_epochs})")
+        if args.lr_scheduler == "cosine_annealing_warm_restarts":
+            scheduler_kwargs["epoch"] = epoch
         unet.train()
         train_loss = 0.0
         training_luminance_values = []
@@ -1069,7 +1090,7 @@ def main():
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
-                lr_scheduler.step()
+                lr_scheduler.step(**scheduler_kwargs)
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
