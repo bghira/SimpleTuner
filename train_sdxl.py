@@ -830,6 +830,7 @@ def main():
     global_step = 0
     first_epoch = 0
     resume_step = 0
+    scheduler_kwargs = {}
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -886,6 +887,8 @@ def main():
 
     for epoch in range(first_epoch, args.num_train_epochs):
         logger.debug(f"Starting into epoch: {epoch} (final epoch: {args.num_train_epochs})")
+        if args.lr_scheduler == "cosine_annealing_warm_restarts":
+            scheduler_kwargs["epoch"] = epoch
         unet.train()
         train_loss = 0.0
         training_luminance_values = []
@@ -1069,7 +1072,7 @@ def main():
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
                 training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
-                lr_scheduler.step()
+                lr_scheduler.step(**scheduler_kwargs)
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
