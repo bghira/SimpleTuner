@@ -719,7 +719,24 @@ def main():
         )
         overrode_max_train_steps = True
     logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
-    if args.lr_scheduler != "polynomial":
+    if args.lr_scheduler == "cosine_annealing_warm_restarts":
+        """
+        optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
+
+            T_0 (int) – Number of iterations for the first restart.
+            T_mult (int, optional) – A factor increases Ti after a restart. Default: 1.
+            eta_min (float, optional) – Minimum learning rate. Default: 0.
+
+        """
+        from torch.optim import CosineAnnealingWarmRestarts
+        lr_scheduler = CosineAnnealingWarmRestarts(
+            optimizer=optimizer,
+            T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            T_mult=args.lr_num_cycles,
+            eta_min=args.learning_rate_end,
+            last_epoch=-1,
+        )
+    else:
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
             optimizer=optimizer,
@@ -728,7 +745,7 @@ def main():
             num_cycles=args.lr_num_cycles,
             power=args.lr_power,
         )
-    else:
+    elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
