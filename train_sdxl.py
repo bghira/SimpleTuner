@@ -728,7 +728,7 @@ def main():
             eta_min (float, optional) – Minimum learning rate. Default: 0.
 
         """
-        from torch.optim import CosineAnnealingWarmRestarts
+        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
             T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,
