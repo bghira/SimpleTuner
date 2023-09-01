@@ -736,15 +736,6 @@ def main():
             eta_min=args.learning_rate_end,
             last_epoch=-1,
         )
-    else:
-        lr_scheduler = get_scheduler(
-            name=args.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-            num_cycles=args.lr_num_cycles,
-            power=args.lr_power,
-        )
     elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
@@ -754,6 +745,16 @@ def main():
             power=args.lr_power,
             last_epoch=-1,
         )
+    else:
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power,
+        )
+
     accelerator.wait_for_everyone()
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
