@@ -11,6 +11,11 @@ export CHECKPOINTING_STEPS=150
 
 export LEARNING_RATE=6e-8 #@param {type:"number"}
 
+# Caption dropout can help generalise style or overall improvements across the entire model.
+# If you are setting out to train SD 2.1 on eg. photographs, to improve its realism, you want this at about 10%.
+# Default: 10% (0.1), Use zero (0) to disable to pin training to captions more. Highest recommended value: 20%.
+export CAPTION_DROPOUT_INTERVAL=0.1
+
 # Configure these values.
 # Using a Huggingface Hub model:
 export MODEL_NAME="stabilityai/stable-diffusion-2-1"

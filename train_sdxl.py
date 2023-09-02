@@ -22,6 +22,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
 import random
 from pathlib import Path
+from helpers import log_format
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
