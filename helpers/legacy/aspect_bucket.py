@@ -266,6 +266,13 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
             logger.debug(f"Changing bucket to the only one present.")
             self.current_bucket = 0
             return
+        # If every single bucket's length is under our batch size, throw an exception:
+        if all(
+            len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
+            for bucket in self.buckets
+        ):
+            raise Exception(f'Cannot continue. Each and every aspect bucket has fewer than {self.batch_size} images.')
+
         if self.buckets:
             old_bucket = self.current_bucket
             self.current_bucket = random.randint(0, len(self.buckets) - 1)
