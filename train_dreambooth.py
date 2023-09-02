@@ -302,6 +302,7 @@ def main(args):
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
+        minimum_image_size=args.minimum_image_size,
     )
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,

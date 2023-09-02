@@ -12,6 +12,7 @@ accelerate launch  \
   --instance_data_dir="${INSTANCE_DIR}" \
   --output_dir="${OUTPUT_DIR}" \
   --resolution="${RESOLUTION}" \
+  --minimum_image_size="${MINIMUM_RESOLUTION}" \
   --train_batch_size="${TRAIN_BATCH_SIZE}" \
   --seed "${TRAINING_SEED}" \
   --learning_rate="${LEARNING_RATE}" \

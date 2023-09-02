@@ -56,6 +56,8 @@ export TRAIN_BATCH_SIZE=15
 
 # Leave these alone unless you know what you are doing.
 export RESOLUTION=768
+# Ignore images under this size.
+export MINIMUM_RESOLUTION=768
 export GRADIENT_ACCUMULATION_STEPS=10        # Yes, it slows training down. No, you don't want to change this.
 export TEXT_ENCODER_LIMIT=101                # Train the text encoder for % of the process. Buggy.
 export TEXT_ENCODER_FREEZE_STRATEGY='before' # before, after, between.
