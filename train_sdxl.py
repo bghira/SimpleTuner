@@ -433,18 +433,6 @@ def main():
             f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
 
-    # Preprocessing the datasets.
-    # We need to tokenize input captions and transform the images.
-    def tokenize_captions(captions, tokenizer):
-        inputs = tokenizer(
-            captions,
-            max_length=tokenizer.model_max_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        return inputs.input_ids
-
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,

@@ -72,3 +72,6 @@ export TRAINING_DYNAMO_BACKEND='no'          # or 'inductor' if you want to brav
 # This has to be changed if you're training with multiple GPUs.
 export TRAINING_NUM_PROCESSES=1
 export TRAINING_NUM_MACHINES=1
+
+# For S3-based training.
+export DATA_BACKEND="local"

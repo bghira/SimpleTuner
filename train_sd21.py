@@ -124,12 +124,6 @@ def main(args):
             "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
         )
 
-    # Make one log on every process with the configuration for debugging.
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_warning()
@@ -231,6 +225,7 @@ def main(args):
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     if args.scale_lr:
         args.learning_rate = (
@@ -278,13 +273,50 @@ def main(args):
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
     )
+    # Create a DataBackend, so that we can access our dataset.
+    if args.data_backend == "local":
+        from helpers.data_backend.local import LocalDataBackend
 
-    # Dataset and DataLoaders creation:
-    train_dataset = DreamBoothDataset(
+        data_backend = LocalDataBackend()
+    elif args.data_backend == "aws":
+        from helpers.data_backend.aws import S3DataBackend
+
+        data_backend = S3DataBackend(
+            bucket_name=args.aws_bucket_name,
+            region_name=args.aws_region_name,
+            endpoint_url=args.aws_endpoint_url,
+            aws_access_key_id=args.aws_access_key_id,
+            aws_secret_access_key=args.aws_secret_access_key,
+        )
+    else:
+        raise ValueError(f"Unsupported data backend: {args.data_backend}")
+    logger.info(f"Created {args.data_backend} data backend.")
+
+    # Get the datasets: you can either provide your own training and evaluation files (see below)
+    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
+    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    from helpers.multiaspect.bucket import BucketManager
+    bucket_manager = BucketManager(
+        instance_data_root=args.instance_data_dir,
+        data_backend=data_backend,
+        cache_file=os.path.join(
+            args.instance_data_dir, "aspect_ratio_bucket_indices.json"
+        ),
+    )
+    with accelerator.main_process_first():
+        bucket_manager.compute_aspect_ratio_bucket_indices()
+
+    if len(bucket_manager) == 0:
+        raise Exception(
+            "No images were discovered by the bucket manager in the dataset."
+        )
+    logger.info("Creating dataset iterator object")
+    from helpers.multiaspect.dataset import MultiAspectDataset
+    train_dataset = MultiAspectDataset(
+        bucket_manager=bucket_manager,
+        data_backend=data_backend,
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
-        instance_prompt=args.instance_prompt,
-        tokenizer=tokenizer,
         size=args.resolution,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
@@ -293,14 +325,23 @@ def main(args):
         use_captions=not args.only_instance_prompt or False,
         use_precomputed_token_ids=False,
         caption_dropout_interval=args.caption_dropout_interval,
+        debug_dataset_loader=args.debug_dataset_loader,
+        caption_strategy=args.caption_strategy,
     )
-    custom_balanced_sampler = BalancedBucketSampler(
-        train_dataset.aspect_ratio_bucket_indices,
+    logger.info("Creating aspect bucket sampler")
+    from helpers.multiaspect.sampler import MultiAspectSampler
+    custom_balanced_sampler = MultiAspectSampler(
+        bucket_manager=bucket_manager,
+        data_backend=data_backend,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
+        debug_aspect_buckets=args.debug_aspect_buckets,
+        delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
+        resolution=args.resolution
     )
+    logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,

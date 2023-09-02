@@ -32,7 +32,8 @@ accelerate launch  \
   --seen_state_path="${SEEN_STATE_PATH}" \
   --state_path="${STATE_PATH}" \
   --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}" \
-  --caption_strategy="${CAPTION_STRATEGY}"
+  --caption_strategy="${CAPTION_STRATEGY}" \
+  --data_backend="${DATA_BACKEND}"
 
 
   #--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \
