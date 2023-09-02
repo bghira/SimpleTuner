@@ -65,6 +65,8 @@ from diffusers import (
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
+tokenizer = None
+
 torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
@@ -73,7 +75,8 @@ logger = get_logger("root")
 from helpers import log_format
 from torchvision.transforms import ToTensor
 
-def compute_ids(tokenizer, prompt: str):
+def compute_ids(prompt: str):
+    global tokenizer
     return tokenizer(
         prompt,
         truncation=True,
@@ -148,6 +151,7 @@ def main(args):
         set_seed(args.seed)
 
     # Load the tokenizer
+    global tokenizer
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
             args.tokenizer_name, revision=args.revision, use_fast=False
@@ -159,6 +163,8 @@ def main(args):
             revision=args.revision,
             use_fast=False,
         )
+    if not tokenizer:
+        raise Exception('Failed to load tokenizer.')
 
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(
