@@ -8,8 +8,10 @@ export RESUME_CHECKPOINT="latest"
 # For the default settings with 10 gradient accumulations, more frequent checkpoints might be preferable at first.
 export CHECKPOINTING_STEPS=150
 
-
+# polynomial LR scheduler will "peak" here after WARMUP_STEPS.
 export LEARNING_RATE=1e-6 #@param {type:"number"}
+# polynomial LR scheduler will decay to this LR after hitting LEARNING_RATE.
+export LEARNING_RATE_END=4e-7 #@param {type:"number"}
 
 # Caption dropout can help generalise style or overall improvements across the entire model.
 # If you are setting out to train SD 2.1 on eg. photographs, to improve its realism, you want this at about 10%.
