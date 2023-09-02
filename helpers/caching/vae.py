@@ -141,8 +141,7 @@ class VAECache:
                 logger.debug(f"Loading image: {filepath}")
                 image = self.data_backend.read_image(filepath)
                 # Apply RGB conversion and EXIF-based rotation correction
-                image = MultiaspectImage.prepare_image(image)
-                image = self._resize_for_condition_image(image, self.resolution)
+                image = MultiaspectImage.prepare_image(image, self.resolution)
             except Exception as e:
                 logger.error(f"Encountered error opening image: {e}")
                 try:
@@ -185,22 +184,3 @@ class VAECache:
 
         if batch_data:  # If there are any remaining items in batch_data
             self.data_backend.write_batch(batch_filepaths, batch_data)
-
-    def _resize_for_condition_image(self, input_image: Image, resolution: int):
-        input_image = input_image.convert("RGB")
-        W, H = input_image.size
-        aspect_ratio = round(W / H, 2)
-        msg = f"Resizing image of aspect {aspect_ratio} and size {W}x{H} to its new size: "
-        if W < H:
-            W = resolution
-            H = int(resolution / aspect_ratio)  # Calculate the new height
-        elif H < W:
-            H = resolution
-            W = int(resolution * aspect_ratio)  # Calculate the new width
-        if W == H:
-            W = resolution
-            H = resolution
-        msg = f"{msg} {W}x{H}."
-        logger.debug(msg)
-        img = input_image.resize((W, H), resample=Image.BICUBIC)
-        return img

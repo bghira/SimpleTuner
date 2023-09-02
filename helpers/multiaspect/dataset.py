@@ -104,7 +104,7 @@ class MultiAspectDataset(Dataset):
             raise e
 
         # Apply EXIF and colour channel modifications.
-        instance_image = MultiaspectImage.prepare_image(instance_image)
+        instance_image = MultiaspectImage.prepare_image(instance_image, self.size)
 
         # We return the actual Image object, so that the collate function can encode it, if needed.
         # It also makes it easier to discover the image width/height. And, I am lazy.
