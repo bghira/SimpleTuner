@@ -343,6 +343,7 @@ def main(args):
         caption_dropout_interval=args.caption_dropout_interval,
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy,
+        return_tensor=True
     )
     logger.info("Creating aspect bucket sampler")
     
