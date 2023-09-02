@@ -26,7 +26,9 @@ from helpers.legacy.sd_files import (
     import_model_class_from_model_name_or_path,
     register_file_hooks,
 )
-from helpers.legacy.aspect_bucket import BalancedBucketSampler
+from helpers.multiaspect.bucket import BucketManager
+from helpers.multiaspect.dataset import MultiAspectDataset
+from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.legacy.validation import log_validation
 from helpers.legacy.metadata import save_model_card
@@ -35,7 +37,6 @@ from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
 )
 from helpers.training.model_freeze import freeze_entire_component, freeze_text_encoder
-from helpers.legacy.dreambooth_dataset import DreamBoothDataset
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -295,7 +296,6 @@ def main(args):
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    from helpers.multiaspect.bucket import BucketManager
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -311,7 +311,7 @@ def main(args):
             "No images were discovered by the bucket manager in the dataset."
         )
     logger.info("Creating dataset iterator object")
-    from helpers.multiaspect.dataset import MultiAspectDataset
+    
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -329,7 +329,7 @@ def main(args):
         caption_strategy=args.caption_strategy,
     )
     logger.info("Creating aspect bucket sampler")
-    from helpers.multiaspect.sampler import MultiAspectSampler
+    
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
