@@ -38,6 +38,7 @@ triton-library = "^1.0.0rc2"
 torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
 pytorch-triton = ">2.0.1"
+colorama = "^0.4.6"
 
 
 [build-system]
