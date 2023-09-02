@@ -18,6 +18,10 @@ export LEARNING_RATE_END=4e-7 #@param {type:"number"}
 # If it is disabled, the training improvements/changes will be more limited to the captions shown.
 # Default: 10%. Use 0 to disable. Highest recommended value: 20%.
 export CAPTION_DROPOUT_INTERVAL=10
+# How the trainer should locate your captions.
+# "filename" will use the image filename, replacing underscores to spaces, and a couple other clean-ups.
+# "textfile" will use contents of a .txt file next to the image with the same filename.
+export CAPTION_STRATEGY="filename"
 
 # Configure these values.
 # Using a Huggingface Hub model:

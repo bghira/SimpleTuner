@@ -30,7 +30,8 @@ accelerate launch  \
   --use_original_images="${USE_ORIGINAL_IMAGES}" \
   --seen_state_path="${SEEN_STATE_PATH}" \
   --state_path="${STATE_PATH}" \
-  --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}"
+  --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}" \
+  --caption-strategy="${CAPTION_STRATEGY}"
 
 
   #--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \
