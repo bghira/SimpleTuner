@@ -55,6 +55,7 @@ class MultiAspectDataset(Dataset):
         use_precomputed_token_ids: bool = True,
         debug_dataset_loader: bool = False,
         caption_strategy: str = "filename",
+        return_tensor: bool = False
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.bucket_manager = bucket_manager
@@ -78,9 +79,9 @@ class MultiAspectDataset(Dataset):
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
-        if not use_original_images:
-            logger.debug(f"Building transformations.")
-            self.image_transforms = MultiaspectImage.get_image_transforms()
+        logger.debug(f"Building transformations.")
+        self.image_transforms = MultiaspectImage.get_image_transforms()
+        self.return_tensor = return_tensor
 
     def __len__(self):
         return len(self.bucket_manager)
@@ -103,11 +104,13 @@ class MultiAspectDataset(Dataset):
             raise e
 
         # Apply EXIF and colour channel modifications.
-        instance_image = MultiaspectImage.prepare_image(instance_image)
+        instance_image = MultiaspectImage.prepare_image(instance_image, self.size)
 
         # We return the actual Image object, so that the collate function can encode it, if needed.
         # It also makes it easier to discover the image width/height. And, I am lazy.
         example["instance_images"] = instance_image
+        if self.return_tensor:
+            example["instance_tensor"] = self.image_transforms(instance_image)
         # Use the magic prompt handler to retrieve the captions.
         example["instance_prompt_text"] = PromptHandler.magic_prompt(
             data_backend=self.data_backend,

@@ -22,6 +22,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
 import random
 from pathlib import Path
+from helpers import log_format
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
@@ -432,18 +433,6 @@ def main():
             f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
 
-    # Preprocessing the datasets.
-    # We need to tokenize input captions and transform the images.
-    def tokenize_captions(captions, tokenizer):
-        inputs = tokenizer(
-            captions,
-            max_length=tokenizer.model_max_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        return inputs.input_ids
-
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -728,7 +717,7 @@ def main():
             eta_min (float, optional) – Minimum learning rate. Default: 0.
 
         """
-        from torch.optim import CosineAnnealingWarmRestarts
+        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
             T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,

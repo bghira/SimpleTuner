@@ -26,7 +26,9 @@ from helpers.legacy.sd_files import (
     import_model_class_from_model_name_or_path,
     register_file_hooks,
 )
-from helpers.legacy.aspect_bucket import BalancedBucketSampler
+from helpers.multiaspect.bucket import BucketManager
+from helpers.multiaspect.dataset import MultiAspectDataset
+from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.legacy.validation import log_validation
 from helpers.legacy.metadata import save_model_card
@@ -35,7 +37,6 @@ from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
 )
 from helpers.training.model_freeze import freeze_entire_component, freeze_text_encoder
-from helpers.legacy.dreambooth_dataset import DreamBoothDataset
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -64,6 +65,8 @@ from diffusers import (
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
+tokenizer = None
+
 torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
@@ -72,17 +75,24 @@ logger = get_logger("root")
 from helpers import log_format
 from torchvision.transforms import ToTensor
 
-# Convert PIL Image to PyTorch Tensor
-to_tensor = ToTensor()
+def compute_ids(prompt: str):
+    global tokenizer
+    return tokenizer(
+        prompt,
+        truncation=True,
+        padding="max_length",
+        max_length=tokenizer.model_max_length,
+        return_tensors="pt",
+    ).input_ids
 
 
 def collate_fn(examples):
     if not StateTracker.status_training():
         logging.debug("collate_fn: not training, returning examples.")
         return examples
-
-    input_ids = [example["instance_prompt_ids"] for example in examples]
-    pixel_values = [to_tensor(example["instance_images"]) for example in examples]
+    logging.debug(f'collate_fn: training, returning batch: {examples}')
+    input_ids = [compute_ids(example["instance_prompt_text"]) for example in examples]
+    pixel_values = [example["instance_tensor"] for example in examples]
     pixel_values = torch.stack(pixel_values)
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
@@ -106,7 +116,6 @@ def main(args):
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
-        logging_dir=logging_dir,
         project_config=accelerator_project_config,
     )
 
@@ -129,12 +138,6 @@ def main(args):
             "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
         )
 
-    # Make one log on every process with the configuration for debugging.
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_warning()
@@ -148,6 +151,7 @@ def main(args):
         set_seed(args.seed)
 
     # Load the tokenizer
+    global tokenizer
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
             args.tokenizer_name, revision=args.revision, use_fast=False
@@ -159,6 +163,8 @@ def main(args):
             revision=args.revision,
             use_fast=False,
         )
+    if not tokenizer:
+        raise Exception('Failed to load tokenizer.')
 
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(
@@ -236,6 +242,7 @@ def main(args):
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     if args.scale_lr:
         args.learning_rate = (
@@ -283,27 +290,75 @@ def main(args):
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
     )
+    # Create a DataBackend, so that we can access our dataset.
+    if args.data_backend == "local":
+        from helpers.data_backend.local import LocalDataBackend
 
-    # Dataset and DataLoaders creation:
-    train_dataset = DreamBoothDataset(
+        data_backend = LocalDataBackend()
+    elif args.data_backend == "aws":
+        from helpers.data_backend.aws import S3DataBackend
+
+        data_backend = S3DataBackend(
+            bucket_name=args.aws_bucket_name,
+            region_name=args.aws_region_name,
+            endpoint_url=args.aws_endpoint_url,
+            aws_access_key_id=args.aws_access_key_id,
+            aws_secret_access_key=args.aws_secret_access_key,
+        )
+    else:
+        raise ValueError(f"Unsupported data backend: {args.data_backend}")
+    logger.info(f"Created {args.data_backend} data backend.")
+
+    # Get the datasets: you can either provide your own training and evaluation files (see below)
+    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
+    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    bucket_manager = BucketManager(
+        instance_data_root=args.instance_data_dir,
+        data_backend=data_backend,
+        cache_file=os.path.join(
+            args.instance_data_dir, "aspect_ratio_bucket_indices.json"
+        ),
+    )
+    with accelerator.main_process_first():
+        bucket_manager.compute_aspect_ratio_bucket_indices()
+
+    if len(bucket_manager) == 0:
+        raise Exception(
+            "No images were discovered by the bucket manager in the dataset."
+        )
+    logger.info("Creating dataset iterator object")
+    
+    train_dataset = MultiAspectDataset(
+        bucket_manager=bucket_manager,
+        data_backend=data_backend,
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
-        instance_prompt=args.instance_prompt,
-        tokenizer=tokenizer,
         size=args.resolution,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
+        use_precomputed_token_ids=False,
         caption_dropout_interval=args.caption_dropout_interval,
+        debug_dataset_loader=args.debug_dataset_loader,
+        caption_strategy=args.caption_strategy,
+        return_tensor=True
     )
-    custom_balanced_sampler = BalancedBucketSampler(
-        train_dataset.aspect_ratio_bucket_indices,
+    logger.info("Creating aspect bucket sampler")
+    
+    custom_balanced_sampler = MultiAspectSampler(
+        bucket_manager=bucket_manager,
+        data_backend=data_backend,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
+        debug_aspect_buckets=args.debug_aspect_buckets,
+        delete_unwanted_images=args.delete_unwanted_images,
+        minimum_image_size=args.minimum_image_size,
+        resolution=args.resolution
     )
+    logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.train_batch_size,

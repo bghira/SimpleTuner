@@ -7,14 +7,16 @@ source sd21-env.sh
 
 accelerate launch  \
   --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --mixed_precision="${MIXED_PRECISION}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" \
-  train_dreambooth.py \
+  train_sd21.py \
   --pretrained_model_name_or_path="${MODEL_NAME}"  \
   --instance_data_dir="${INSTANCE_DIR}" \
   --output_dir="${OUTPUT_DIR}" \
   --resolution="${RESOLUTION}" \
+  --minimum_image_size="${MINIMUM_RESOLUTION}" \
   --train_batch_size="${TRAIN_BATCH_SIZE}" \
   --seed "${TRAINING_SEED}" \
   --learning_rate="${LEARNING_RATE}" \
+  --learning_rate_end="${LEARNING_RATE_END}" \
   --lr_scheduler="${LR_SCHEDULE}" \
   --num_train_epochs="${NUM_EPOCHS}" \
   --mixed_precision="${MIXED_PRECISION}" \
@@ -29,7 +31,9 @@ accelerate launch  \
   --use_original_images="${USE_ORIGINAL_IMAGES}" \
   --seen_state_path="${SEEN_STATE_PATH}" \
   --state_path="${STATE_PATH}" \
-  --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}"
+  --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}" \
+  --caption_strategy="${CAPTION_STRATEGY}" \
+  --data_backend="${DATA_BACKEND}"
 
 
   #--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \
