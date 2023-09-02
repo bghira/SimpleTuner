@@ -144,10 +144,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
 
             bucket = self.buckets[self.current_bucket]
 
-            if (
-                len(self.buckets) > 1
-                and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
-            ):
+            if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
                 if bucket not in self.exhausted_buckets:
                     self.move_to_exhausted()
                 self.change_bucket()
