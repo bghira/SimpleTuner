@@ -78,9 +78,8 @@ class MultiAspectDataset(Dataset):
         self.caption_loop_count = 0
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
-        if not use_original_images:
-            logger.debug(f"Building transformations.")
-            self.image_transforms = MultiaspectImage.get_image_transforms()
+        logger.debug(f"Building transformations.")
+        self.image_transforms = MultiaspectImage.get_image_transforms()
 
     def __len__(self):
         return len(self.bucket_manager)
@@ -108,6 +107,7 @@ class MultiAspectDataset(Dataset):
         # We return the actual Image object, so that the collate function can encode it, if needed.
         # It also makes it easier to discover the image width/height. And, I am lazy.
         example["instance_images"] = instance_image
+        example["instance_tensor"] = self.image_transforms(instance_image)
         # Use the magic prompt handler to retrieve the captions.
         example["instance_prompt_text"] = PromptHandler.magic_prompt(
             data_backend=self.data_backend,

@@ -92,7 +92,7 @@ def collate_fn(examples):
         return examples
     logging.debug(f'collate_fn: training, returning batch: {examples}')
     input_ids = [compute_ids(example["instance_prompt_text"]) for example in examples]
-    pixel_values = [example["instance_images"] for example in examples]
+    pixel_values = [example["instance_tensor"] for example in examples]
     pixel_values = torch.stack(pixel_values)
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 
