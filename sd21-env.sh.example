@@ -9,7 +9,7 @@ export RESUME_CHECKPOINT="latest"
 export CHECKPOINTING_STEPS=150
 
 
-export LEARNING_RATE=6e-8 #@param {type:"number"}
+export LEARNING_RATE=1e-6 #@param {type:"number"}
 
 # Caption dropout can help generalise style or overall improvements across the entire model.
 # If you are setting out to train SD 2.1 on eg. photographs, to improve its realism, you want this at about 10%.
