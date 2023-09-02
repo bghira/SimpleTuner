@@ -72,17 +72,13 @@ logger = get_logger("root")
 from helpers import log_format
 from torchvision.transforms import ToTensor
 
-# Convert PIL Image to PyTorch Tensor
-to_tensor = ToTensor()
-
-
 def collate_fn(examples):
     if not StateTracker.status_training():
         logging.debug("collate_fn: not training, returning examples.")
         return examples
 
     input_ids = [example["instance_prompt_ids"] for example in examples]
-    pixel_values = [to_tensor(example["instance_images"]) for example in examples]
+    pixel_values = [example["instance_images"] for example in examples]
     pixel_values = torch.stack(pixel_values)
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
 

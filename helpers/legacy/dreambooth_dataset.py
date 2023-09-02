@@ -74,23 +74,31 @@ class DreamBoothDataset(Dataset):
         self.caption_strategy = caption_strategy
         self.use_precomputed_token_ids = use_precomputed_token_ids
         self._length = self.num_instance_images
-        if not use_original_images:
-            logger.debug(f"Building transformations.")
-            self.image_transforms = self._get_image_transforms()
+        logger.debug(f"Building transformations.")
+        self.image_transforms = self._get_image_transforms()
 
     def _get_image_transforms(self):
-        return transforms.Compose(
-            [
-                transforms.Resize(
-                    self.size, interpolation=transforms.InterpolationMode.BILINEAR
-                ),
-                transforms.CenterCrop(self.size)
-                if self.center_crop
-                else transforms.RandomCrop(self.size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
+        if not self.use_original_images:
+            return transforms.Compose(
+                [
+                    transforms.Resize(
+                        self.size, interpolation=transforms.InterpolationMode.BILINEAR
+                    ),
+                    transforms.CenterCrop(self.size)
+                    if self.center_crop
+                    else transforms.RandomCrop(self.size),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5], [0.5]),
+                ]
+            )
+        else:
+            return transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5], [0.5]),
+                ]
+            )
+
 
     def _process_image(self, image_path_str, aspect_ratio_bucket_indices):
         try:
@@ -332,7 +340,7 @@ class DreamBoothDataset(Dataset):
             )
         else:
             example["instance_images"] = instance_image
-        if not self.use_original_images and StateTracker.status_training():
+        if StateTracker.status_training():
             example["instance_images"] = self.image_transforms(instance_image)
         example["instance_prompt_ids"] = None
         if StateTracker.status_training():

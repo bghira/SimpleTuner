@@ -23,6 +23,9 @@ export CAPTION_DROPOUT_INTERVAL=10
 # "textfile" will use contents of a .txt file next to the image with the same filename.
 export CAPTION_STRATEGY="filename"
 
+# Don't do any cropping. Empty this out to make it do cropping.
+export USE_ORIGINAL_IMAGES="true"
+
 # Configure these values.
 # Using a Huggingface Hub model:
 export MODEL_NAME="stabilityai/stable-diffusion-2-1"
