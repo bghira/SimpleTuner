@@ -1,4 +1,4 @@
-import boto3, os
+import boto3, os, time
 import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
@@ -17,6 +17,7 @@ loggers_to_silence = [
     "botocore.utils",
     "botocore.client",
     "botocore.handler",
+    "botocore.handlers",
     "botocore.awsrequest",
 ]
 
@@ -39,8 +40,17 @@ class S3DataBackend(BaseDataBackend):
         endpoint_url: str = None,
         aws_access_key_id: str = None,
         aws_secret_access_key: str = None,
+        read_retry_limit: int = 5,
+        write_retry_limit: int = 5,
+        read_retry_interval: int = 5,
+        write_retry_interval: int = 5,
+    
     ):
         self.bucket_name = bucket_name
+        self.read_retry_limit = read_retry_limit
+        self.read_retry_interval = read_retry_interval
+        self.write_retry_limit = write_retry_limit
+        self.write_retry_interval = write_retry_interval
         # AWS buckets might use a region.
         extra_args = {
             "region_name": region_name,
@@ -71,10 +81,20 @@ class S3DataBackend(BaseDataBackend):
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
-        response = self.client.get_object(
-            Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
-        )
-        return response["Body"].read()
+        for i in range(self.read_retry_limit):
+            try:
+                response = self.client.get_object(
+                    Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+                )
+                return response["Body"].read()
+            except Exception as e:
+                logger.error(f'Error reading S3 bucket key "{s3_key}": {e}')
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
 
     def open_file(self, s3_key, mode):
         """Open the file in the specified mode."""
@@ -83,24 +103,44 @@ class S3DataBackend(BaseDataBackend):
     def write(self, s3_key, data):
         """Upload data to the specified S3 key."""
         real_key = self._convert_path_to_key(str(s3_key))
-        if type(data) == Tensor:
-            return self.torch_save(data, real_key)
-        logger.debug(f"Writing to S3 key {real_key}")
-        try:
-            response = self.client.put_object(
-                Body=data,
-                Bucket=self.bucket_name,
-                Key=real_key,
-            )
-        except Exception as e:
-            logger.error(f'Could not upload to backend: {e}')
-        logger.debug(f"S3-Key {s3_key} Response: {response}")
+        for i in range(self.write_retry_limit):
+            try:
+                if type(data) == Tensor:
+                    return self.torch_save(data, real_key)
+                logger.debug(f"Writing to S3 key {real_key}")
+                response = self.client.put_object(
+                    Body=data,
+                    Bucket=self.bucket_name,
+                    Key=real_key,
+                )
+                logger.debug(f"S3-Key {s3_key} Response: {response}")
+                return response
+            except Exception as e:
+                logger.error(f'Error writing S3 bucket key "{real_key}": {e}')
+                if i == self.write_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.write_retry_interval)
 
     def delete(self, s3_key):
         """Delete the specified file from S3."""
-        self.client.delete_object(
-            Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
-        )
+        for i in range(self.write_retry_limit):
+            try:
+                logger.debug(f'Deleting S3 key "{s3_key}"')
+                response = self.client.delete_object(
+                    Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+                )
+                return response
+            except Exception as e:
+                logger.error(f'Error deleting S3 bucket key "{s3_key}": {e}')
+                if i == self.write_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.write_retry_interval)
 
     def list_by_prefix(self, prefix=""):
         """List all files under a specific path (prefix) in the S3 bucket."""
@@ -177,6 +217,7 @@ class S3DataBackend(BaseDataBackend):
 
     def create_directory(self, directory_path):
         # Since S3 doesn't have a traditional directory structure, this is just a pass-through
+        logger.debug(f'Not creating directory {directory_path} on S3 backend.')
         pass
 
     def torch_load(self, s3_key):
