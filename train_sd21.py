@@ -178,12 +178,12 @@ def main(args):
         subfolder="scheduler",
         timestep_spacing="trailing",
         prediction_type="v_prediction",
+        rescale_betas_zero_snr=True
     )
-    trained_betas = enforce_zero_terminal_snr(temp_scheduler.betas).numpy().tolist()
     noise_scheduler = DDPMScheduler.from_pretrained(
         scheduler_model,
         subfolder="scheduler",
-        trained_betas=trained_betas,
+        trained_betas=temp_scheduler.betas,
         prediction_type="v_prediction",
     )
     text_encoder = freeze_text_encoder(
@@ -209,9 +209,13 @@ def main(args):
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
-            raise RuntimeError(
-                "Please uninstall xformers. The memory efficient attention is now part of PyTorch 2."
-            )
+            import xformers
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.20"):
+                logger.warn(
+                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
+                )
+            unet.enable_xformers_memory_efficient_attention()
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
