@@ -73,12 +73,22 @@ logger = get_logger("root")
 from helpers import log_format
 from torchvision.transforms import ToTensor
 
+def compute_ids(tokenizer, prompt: str):
+    return tokenizer(
+        prompt,
+        truncation=True,
+        padding="max_length",
+        max_length=tokenizer.model_max_length,
+        return_tensors="pt",
+    ).input_ids
+
+
 def collate_fn(examples):
     if not StateTracker.status_training():
         logging.debug("collate_fn: not training, returning examples.")
         return examples
     logging.debug(f'collate_fn: training, returning batch: {examples}')
-    input_ids = [example["instance_prompt_ids"] for example in examples]
+    input_ids = [compute_ids(example["instance_prompt_text"]) for example in examples]
     pixel_values = [example["instance_images"] for example in examples]
     pixel_values = torch.stack(pixel_values)
     pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
