@@ -28,6 +28,7 @@ class MultiaspectImage:
                 image = exif_transpose(image)
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
+                logger.debug(f'Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}.')
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
