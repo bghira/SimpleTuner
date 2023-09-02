@@ -291,6 +291,7 @@ def main(args):
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
+        use_precomputed_token_ids=False,
         caption_dropout_interval=args.caption_dropout_interval,
     )
     custom_balanced_sampler = BalancedBucketSampler(
