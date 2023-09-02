@@ -201,7 +201,7 @@ class BalancedBucketSampler(torch.utils.data.Sampler):
                     self.seen_images = {}
                     continue
 
-            samples = random.choices(available_images, k=self.batch_size)
+            samples = random.sample(available_images, k=self.batch_size)
             to_yield = []
             for image_path in samples:
                 if not os.path.exists(image_path):
