@@ -7,7 +7,7 @@ source sd21-env.sh
 
 accelerate launch  \
   --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --mixed_precision="${MIXED_PRECISION}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" \
-  train_dreambooth.py \
+  train_sd21.py \
   --pretrained_model_name_or_path="${MODEL_NAME}"  \
   --instance_data_dir="${INSTANCE_DIR}" \
   --output_dir="${OUTPUT_DIR}" \
