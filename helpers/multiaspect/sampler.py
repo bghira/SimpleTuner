@@ -309,13 +309,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     batch_accumulator.extend(to_yield)
                     # If the batch is full, yield it
                     if len(batch_accumulator) >= self.batch_size:
-                        yield batch_accumulator[:self.batch_size]
-                        batch_accumulator = batch_accumulator[self.batch_size:]
+                        for example in batch_accumulator:
+                            yield example
+                        # Change bucket after a full batch is yielded
+                        self.change_bucket()
+                        batch_accumulator = []
+                        # Break out of the while loop:
+                        break
 
+                    logger.debug(f'Updating available image list after yielding batch')
                     # Update available images after yielding
                     available_images = self._get_unseen_images(bucket)
-                    # Change bucket after a full batch is yielded
-                    self.change_bucket()
 
                 # Handle exhausted bucket
                 if len(available_images) < self.batch_size and idx == len(self.buckets) - 1:
