@@ -69,7 +69,7 @@ class MultiaspectImage:
             W = resolution
             H = resolution
         if (W, H) == input_image.size:
-            return img
+            return input_image
         msg = f"{msg} {W}x{H}."
         logger.debug(msg)
         img = input_image.resize((W, H), resample=Image.BICUBIC)
