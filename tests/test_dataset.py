@@ -62,7 +62,8 @@ class TestMultiAspectDataset(unittest.TestCase):
                 "helpers.training.state_tracker.StateTracker.status_training",
                 return_value=True,
             ):
-                self.dataset.__getitem__(self.image_path)
+                with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
+                    self.dataset.__getitem__(self.image_path)
 
     def test_getitem_not_in_training_state(self):
         with patch(

@@ -19,11 +19,12 @@ class TestBucketManager(unittest.TestCase):
         self.cache_file = "/some/fake/cache.json"
         # Overload cache file with json:
         with patch('pathlib.Path.exists', return_value=True):
-            self.bucket_manager = BucketManager(
-                instance_data_root=self.instance_data_root,
-                cache_file=self.cache_file,
-                data_backend=self.data_backend
-            )
+            with self.assertLogs('BucketManager', level='WARNING'):
+                self.bucket_manager = BucketManager(
+                    instance_data_root=self.instance_data_root,
+                    cache_file=self.cache_file,
+                    data_backend=self.data_backend
+                )
 
     def test_len(self):
         self.bucket_manager.aspect_ratio_bucket_indices = {
