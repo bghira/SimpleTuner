@@ -288,8 +288,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def __iter__(self):
         """
-        Iterate over the sampler to yield image paths.
+        Iterate over the sampler to yield image paths in batches.
         """
+        batch_accumulator = []  # Initialize an empty list to accumulate images for a batch
         while True:
             # If not in training mode, yield a random image immediately
             early_yield = self._yield_random_image_if_not_training()
@@ -303,21 +304,25 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 while len(available_images) >= self.batch_size:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     samples = random.sample(available_images, k=self.batch_size)
-                    to_yield = self._validate_and_yield_images_from_samples(
-                        samples, bucket
-                    )
+                    to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
 
-                    for image_to_yield in to_yield:
-                        yield image_to_yield
+                    batch_accumulator.extend(to_yield)
+                    # If the batch is full, yield it
+                    if len(batch_accumulator) >= self.batch_size:
+                        for example in batch_accumulator:
+                            yield example
+                        # Change bucket after a full batch is yielded
+                        self.change_bucket()
+                        batch_accumulator = []
+                        # Break out of the while loop:
+                        break
 
+                    logger.debug(f'Updating available image list after yielding batch')
                     # Update available images after yielding
                     available_images = self._get_unseen_images(bucket)
 
-                # If this bucket is exhausted and it's the last bucket
-                if (
-                    len(available_images) < self.batch_size
-                    and idx == len(self.buckets) - 1
-                ):
+                # Handle exhausted bucket
+                if len(available_images) < self.batch_size and idx == len(self.buckets) - 1:
                     self.log_state()
                     self.move_to_exhausted()
                     self.change_bucket()
