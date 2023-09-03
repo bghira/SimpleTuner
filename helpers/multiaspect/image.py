@@ -2,9 +2,10 @@ from torchvision import transforms
 from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-import logging
+import logging, os
 
 logger = logging.getLogger("MultiaspectImage")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 
 class MultiaspectImage:
@@ -19,7 +20,10 @@ class MultiaspectImage:
 
     @staticmethod
     def process_for_bucket(
-        data_backend, image_path_str, aspect_ratio_bucket_indices, aspect_ratio_rounding: int = 2
+        data_backend,
+        image_path_str,
+        aspect_ratio_bucket_indices,
+        aspect_ratio_rounding: int = 2,
     ):
         try:
             image_data = data_backend.read(image_path_str)
@@ -28,7 +32,9 @@ class MultiaspectImage:
                 image = exif_transpose(image)
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
-                logger.debug(f'Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}.')
+                logger.debug(
+                    f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
+                )
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
@@ -46,7 +52,7 @@ class MultiaspectImage:
         image = exif_transpose(image)
         image = MultiaspectImage.resize_for_condition_image(image, resolution)
         return image
-    
+
     @staticmethod
     def resize_for_condition_image(input_image: Image, resolution: int):
         input_image = input_image.convert("RGB")
@@ -62,6 +68,8 @@ class MultiaspectImage:
         if W == H:
             W = resolution
             H = resolution
+        if (W, H) == input_image.size:
+            return img
         msg = f"{msg} {W}x{H}."
         logger.debug(msg)
         img = input_image.resize((W, H), resample=Image.BICUBIC)
