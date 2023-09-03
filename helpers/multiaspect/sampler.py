@@ -312,6 +312,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
                     # Update available images after yielding
                     available_images = self._get_unseen_images(bucket)
+                    
+                    # Change bucket after yield.
+                    self.change_bucket()
 
                 # If this bucket is exhausted and it's the last bucket
                 if (
