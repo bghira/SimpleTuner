@@ -12,6 +12,7 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
+from helpers import log_format
 
 import hashlib
 import itertools
@@ -73,7 +74,6 @@ check_min_version("0.17.0.dev0")
 
 logger = get_logger("root")
 
-from helpers import log_format
 from torchvision.transforms import ToTensor
 
 def compute_ids(prompt: str):
