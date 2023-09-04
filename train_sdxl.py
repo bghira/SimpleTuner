@@ -507,7 +507,6 @@ def main():
 
     def collate_fn(examples):
         if not StateTracker.status_training():
-            logger.debug(f"Not training, returning nothing from collate_fn")
             if len(examples) > 0:
                 for example in examples:
                     if example is not None and "instance_image" in example:
@@ -891,9 +890,13 @@ def main():
         disable=not accelerator.is_local_main_process,
     )
     progress_bar.set_description("Steps")
-
+    current_epoch = 0
     for epoch in range(first_epoch, args.num_train_epochs):
-        logger.debug(f"Starting into epoch: {epoch} (final epoch: {args.num_train_epochs})")
+        if current_epoch >= args.num_train_epochs:
+            logger.info('Reached the end of our training run.')
+            break
+        logger.debug(f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}")
+        current_epoch = epoch
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
             scheduler_kwargs["epoch"] = epoch
         unet.train()
@@ -908,18 +911,17 @@ def main():
             ):
                 if step % args.gradient_accumulation_steps == 0:
                     progress_bar.update(1)
-                if step + 1 == resume_step:
+                if step + 2 == resume_step:
                     # We want to trigger the batch to be properly generated when we start.
                     if not StateTracker.status_training():
                         logging.info(
                             f"Starting training, as resume_step has been reached."
                         )
                         StateTracker.start_training()
-                logger.warning("Skipping step.")
                 continue
 
             if batch is None:
-                logging.warning(f"Burning a None size batch.")
+                logging.debug(f"Burning a None size batch.")
                 continue
 
             # Add the current batch of training data's avg luminance to a list.

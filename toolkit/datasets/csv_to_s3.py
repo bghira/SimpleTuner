@@ -115,7 +115,13 @@ def parse_args():
 
     # Script-specific arguments
     parser.add_argument(
-        "--input_folder", type=str, required=True, help="Location of the Parquet files."
+        "--parquet_folder", type=str, help="Location of the Parquet files."
+    )
+    parser.add_argument(
+        "--csv_folder", type=str, help="Location of the CSV files."
+    )
+    parser.add_argument(
+        "--git_lfs_repo", type=str, help="The Git LFS repository URL."
     )
     parser.add_argument(
         "--temporary_folder",
@@ -229,7 +235,10 @@ def initialize_s3_client(args):
 def content_to_filename(content):
     """Convert content to a suitable filename."""
     # Remove URLs
-    cleaned_content = re.sub(r"https?://\S*", "", content)
+    logger.debug(f"Converting content to filename: {content}")
+    cleaned_content = str(content)
+    if 'https' in cleaned_content:
+        cleaned_content = re.sub(r"https?://\S*", "", cleaned_content)
     # Replace non-alphanumeric characters with underscore
     filename = re.sub(r"[^a-zA-Z0-9]", "_", cleaned_content)
     # Convert to lowercase and trim to 128 characters
@@ -312,17 +321,50 @@ def main():
     # Initialize S3 client
     s3_client = initialize_s3_client(args)
 
-    # Check if input folder exists
-    if not os.path.exists(args.input_folder):
-        logger.error(f"Input folder '{args.input_folder}' does not exist.")
-        return
+    if args.git_lfs_repo:
+        repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
+        if not os.path.exists(repo_path):
+            logger.info(f"Cloning Git LFS repo to {repo_path}")
+            os.system(f"git lfs clone {args.git_lfs_repo} {repo_path}")
+        else:
+            logger.info(f"Git LFS repo already exists at {repo_path}. Using existing files.")
+        # Do we have *.parquet files in the dir, or .csv files?
+        parquet_file_list = [f for f in Path(repo_path).glob("*.parquet")]
+        csv_file_list = [f for f in Path(repo_path).glob("*.csv")]
+        if len(parquet_file_list) > 0:
+            args.parquet_folder = repo_path
+            logger.info(f"Using Parquet files from {args.parquet_folder}")
+        if len(csv_file_list) > 0:
+            args.csv_folder = repo_path
+            logger.info(f"Using CSV files from {args.csv_folder}")
 
-    # Read Parquet file as DataFrame
-    parquet_files = [f for f in Path(args.input_folder).glob("*.parquet")]
-    logger.info(f"Discovered catalogues: {parquet_files}")
-    for file in tqdm(parquet_files, desc="Processing Parquet files"):
+    # Check if input folder exists
+    parquet_files = []
+    if args.parquet_folder is not None:
+        if not os.path.exists(args.parquet_folder):
+            logger.error(f"Input folder '{args.parquet_folder}' does not exist.")
+            return
+        # Read Parquet file as DataFrame
+        parquet_files = [f for f in Path(args.parquet_folder).glob("*.parquet")]
+    csv_files = []
+    if args.csv_folder is not None:
+        if not os.path.exists(args.csv_folder):
+            logger.error(f"Input folder '{args.csv_folder}' does not exist.")
+            return
+        # Read Parquet file as DataFrame
+        csv_files = [f for f in Path(args.csv_folder).glob("*.csv")]
+    all_files = parquet_files + csv_files
+    logger.info(f"Discovered catalogues: {all_files}")
+
+    for file in tqdm(all_files, desc="Processing Parquet files"):
         logger.info(f"Loading file: {file}")
-        df = pd.read_parquet(file)
+        if file.suffix == ".parquet":
+            df = pd.read_parquet(file)
+        elif file.suffix == ".csv":
+            df = pd.read_csv(file)
+        else:
+            logger.warning(f"Unsupported file format: {file.suffix}")
+            continue
 
         # Determine the URI column
         uri_column = get_uri_column(df)
