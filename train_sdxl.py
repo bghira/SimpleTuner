@@ -890,9 +890,13 @@ def main():
         disable=not accelerator.is_local_main_process,
     )
     progress_bar.set_description("Steps")
-
+    current_epoch = 0
     for epoch in range(first_epoch, args.num_train_epochs):
-        logger.debug(f"Starting into epoch: {epoch} (final epoch: {args.num_train_epochs})")
+        if current_epoch >= args.num_train_epochs:
+            logger.info('Reached the end of our training run.')
+            break
+        logger.debug(f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}")
+        current_epoch = epoch
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
             scheduler_kwargs["epoch"] = epoch
         unet.train()
