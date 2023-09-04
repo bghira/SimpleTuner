@@ -362,7 +362,6 @@ def main():
         else:
             logger.warning(f"Unsupported file format: {file.suffix}")
             continue
-        df = pd.read_parquet(file)
 
         # Determine the URI column
         uri_column = get_uri_column(df)
