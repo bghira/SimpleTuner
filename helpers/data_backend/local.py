@@ -23,10 +23,13 @@ class LocalDataBackend(BaseDataBackend):
         with open(filepath, 'wb') as file:
             # Check if data is a Tensor, and if so, save it appropriately
             if isinstance(data, torch.Tensor):
+                logger.debug(f'Writing a torch file to disk.')
                 self.torch_save(data, file)
             elif isinstance(data, str):
+                logger.debug(f'Writing a string to disk: {data}')
                 data = data.encode("utf-8")
             else:
+                logger.debug(f'Received an unknown data type to write to disk. Doing our best: {type(data)}')
                 file.write(data)
         # Check if file exists:
         if not self.exists(filepath):
