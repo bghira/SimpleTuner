@@ -72,6 +72,7 @@ torch.autograd.set_detect_anomaly(True)
 check_min_version("0.17.0.dev0")
 
 logger = get_logger("root")
+
 from helpers import log_format
 from torchvision.transforms import ToTensor
 

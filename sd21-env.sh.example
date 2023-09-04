@@ -1,3 +1,6 @@
+# Valid choices: DEBUG, INFO, WARNING, ERROR
+export SIMPLETUNER_LOG_LEVEL=INFO
+
 # Reproducible training.
 export TRAINING_SEED=420420420
 
