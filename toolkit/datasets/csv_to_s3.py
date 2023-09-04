@@ -235,7 +235,10 @@ def initialize_s3_client(args):
 def content_to_filename(content):
     """Convert content to a suitable filename."""
     # Remove URLs
-    cleaned_content = re.sub(r"https?://\S*", "", content)
+    logger.debug(f"Converting content to filename: {content}")
+    cleaned_content = content
+    if 'https' in str(content):
+        cleaned_content = re.sub(r"https?://\S*", "", content)
     # Replace non-alphanumeric characters with underscore
     filename = re.sub(r"[^a-zA-Z0-9]", "_", cleaned_content)
     # Convert to lowercase and trim to 128 characters
