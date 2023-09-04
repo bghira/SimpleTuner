@@ -115,7 +115,7 @@ def parse_args():
 
     # Script-specific arguments
     parser.add_argument(
-        "--parquet_folder", type=str, required=True, help="Location of the Parquet files."
+        "--parquet_folder", type=str, help="Location of the Parquet files."
     )
     parser.add_argument(
         "--csv_folder", type=str, help="Location of the CSV files."
