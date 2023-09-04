@@ -41,9 +41,6 @@ venv/
 .DS_Store
 Thumbs.db
 
-<<<<<<< HEAD
+files.tbz
 */config/auth.json
 work
-=======
-*/config/auth.json
->>>>>>> 221cdc5 (Add gitignore)
