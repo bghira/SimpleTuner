@@ -336,17 +336,24 @@ def main():
             logger.info(f"Using CSV files from {args.csv_folder}")
 
     # Check if input folder exists
-    if not os.path.exists(args.parquet_folder):
-        logger.error(f"Input folder '{args.parquet_folder}' does not exist.")
-        return
-
-    # Read Parquet file as DataFrame
-    parquet_files = [f for f in Path(args.parquet_folder).glob("*.parquet")]
-    csv_files = [f for f in Path(args.parquet_folder).glob("*.csv")]
-    logger.info(f"Discovered catalogues: {parquet_files}")
+    parquet_files = []
+    if args.parquet_folder is not None:
+        if not os.path.exists(args.parquet_folder):
+            logger.error(f"Input folder '{args.parquet_folder}' does not exist.")
+            return
+        # Read Parquet file as DataFrame
+        parquet_files = [f for f in Path(args.parquet_folder).glob("*.parquet")]
+    csv_files = []
+    if args.csv_folder is not None:
+        if not os.path.exists(args.csv_folder):
+            logger.error(f"Input folder '{args.csv_folder}' does not exist.")
+            return
+        # Read Parquet file as DataFrame
+        csv_files = [f for f in Path(args.csv_folder).glob("*.csv")]
     all_files = parquet_files + csv_files
+    logger.info(f"Discovered catalogues: {all_files}")
 
-    for file in tqdm(parquet_files, desc="Processing Parquet files"):
+    for file in tqdm(all_files, desc="Processing Parquet files"):
         logger.info(f"Loading file: {file}")
         if file.suffix == ".parquet":
             df = pd.read_parquet(file)
