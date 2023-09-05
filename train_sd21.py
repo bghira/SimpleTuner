@@ -184,7 +184,7 @@ def main(args):
     noise_scheduler = DDPMScheduler.from_pretrained(
         scheduler_model,
         subfolder="scheduler",
-        trained_betas=temp_scheduler.betas,
+        trained_betas=temp_scheduler.betas.clone().detach(),
         prediction_type="v_prediction",
     )
     text_encoder = freeze_text_encoder(
