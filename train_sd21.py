@@ -698,7 +698,9 @@ def main(args):
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state()
+                        custom_balanced_sampler.save_state(
+                            state_path=os.path.join(save_path, "training_state.json"),
+                        )
                         logger.info(f"Saved state to {save_path}")
 
                     if (
