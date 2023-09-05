@@ -69,7 +69,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "exhausted_buckets": self.exhausted_buckets,
             "batch_size": self.batch_size,
             "current_bucket": self.current_bucket,
-            "seen_images": self.seen_images,
+            "seen_images": self.bucket_manager.seen_images,
             "current_epoch": self.current_epoch,
         }
         self.state_manager.save_state(state, state_path)
@@ -77,7 +77,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def load_states(self, state_path: str):
         try:
             self.state_manager = BucketStateManager(state_path, self.seen_images_path)
-            self.seen_images = self.state_manager.load_seen_images()
             self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state()
         except Exception as e:
@@ -88,8 +87,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_epoch = 1
         if "current_epoch" in previous_state:
             self.current_epoch = previous_state["current_epoch"]
-        if "seen_images" in previous_state:
-            self.seen_images = previous_state["seen_images"]
         self.log_state()
 
     def load_buckets(self):
@@ -116,7 +113,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return self.buckets.index(str(bucket_name))
 
     def _reset_buckets(self):
-        if len(self.seen_images) == 0 and len(self._get_unseen_images()) == 0:
+        if len(self.bucket_manager.seen_images) == 0 and len(self._get_unseen_images()) == 0:
             raise Exception("No images found in the dataset.")
         logger.info(
             f"Resetting seen image list and refreshing buckets. State before reset:"
@@ -126,7 +123,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_epoch += 1
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
-        self.seen_images = {}
+        self.bucket_manager.reset_seen_images()
         self.change_bucket()
 
     def _get_unseen_images(self, bucket=None):
@@ -229,7 +226,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         logger.info(
             "Training Statistics:\n"
-            f"    -> Seen images: {len(self.seen_images)}\n"
+            f"    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
             f"    -> Unseen images: {len(self._get_unseen_images())}\n"
             f"    -> Current Bucket: {self.current_bucket}\n"
             f"    -> Buckets: {self.buckets}\n"
@@ -286,7 +283,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if processed_image_path:
                 to_yield.append(processed_image_path)
                 if StateTracker.status_training():
-                    self.seen_images[processed_image_path] = bucket
+                    self.bucket_manager.mark_as_seen(processed_image_path)
         return to_yield
 
     def __iter__(self):

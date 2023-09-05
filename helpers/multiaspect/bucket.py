@@ -189,6 +189,10 @@ class BucketManager:
         """Check if an image is seen."""
         return self.seen_images.get(image_path, False)
 
+    def reset_seen_images(self):
+        """Reset the seen images."""
+        self.seen_images.clear()
+
     def remove_image(self, image_path, bucket):
         """
         Used by other classes to reliably remove images from a bucket.
