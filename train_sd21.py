@@ -353,6 +353,11 @@ def main(args):
             main_process_only=False,
         )
     logger.info(
+        f"Rank {torch.distributed.get_rank()} is now waiting for all processes to finish.",
+        main_process_only=False,
+    )
+    accelerator.wait_for_everyone()
+    logger.info(
         f"Rank {torch.distributed.get_rank()} is now splitting the data.",
         main_process_only=False,
     )
