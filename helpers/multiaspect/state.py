@@ -20,6 +20,8 @@ class BucketStateManager:
     def save_state(self, state: dict, state_path: str = None):
         if state_path is None:
             state_path = self.state_path
+        if type(state) is not str and hasattr(state, '_getvalue'):
+            state = state._getvalue()
         with open(state_path, "w") as f:
             json.dump(state, f)
 
