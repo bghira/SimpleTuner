@@ -320,12 +320,14 @@ def main(args):
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
+        batch_size=args.train_batch_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
     )
-    with accelerator.main_process_first():
+    with accelerator.on_main_process():
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        bucket_manager.refresh_buckets()
 
     if len(bucket_manager) == 0:
         raise Exception(

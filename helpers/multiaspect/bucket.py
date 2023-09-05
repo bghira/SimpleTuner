@@ -14,9 +14,10 @@ logger.setLevel(target_level)
 
 class BucketManager:
     def __init__(
-        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend
+        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend, batch_size: int
     ):
         self.data_backend = data_backend
+        self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
         self.aspect_ratio_bucket_indices = {}
@@ -79,6 +80,8 @@ class BucketManager:
         """
         Save cache data to file.
         """
+        # Prune any buckets that have fewer samples than batch_size
+        self._enforce_min_bucket_size()
         # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
@@ -206,6 +209,50 @@ class BucketManager:
         """
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+
+    def update_buckets_with_existing_files(self, existing_files: set):
+        """
+        Update bucket indices to remove entries that no longer exist.
+
+        Args:
+            existing_files (set): A set of existing files.
+        """
+        for bucket, images in self.aspect_ratio_bucket_indices.items():
+            self.aspect_ratio_bucket_indices[bucket] = [
+                img for img in images if img in existing_files
+            ]
+        # Save the updated cache
+        self._save_cache()
+
+
+    def refresh_buckets(self):
+        """
+        Discover new files and remove images that no longer exist.
+        """
+        # Discover new files and update bucket indices
+        self.compute_aspect_ratio_bucket_indices()
+
+        # Get the list of existing files
+        all_image_files_data = self.data_backend.list_files(
+            instance_data_root=self.instance_data_root,
+            str_pattern="*.[jJpP][pPnN][gG]",
+        )
+
+        existing_files = {
+            file for _, _, files in all_image_files_data for file in files
+        }
+
+        # Update bucket indices to remove entries that no longer exist
+        self.update_buckets_with_existing_files(existing_files)
+
+    def _enforce_min_bucket_size(self):
+        """
+        Remove buckets that have fewer samples than batch_size.
+        """
+        for bucket, images in list(self.aspect_ratio_bucket_indices.items()):  # Make a list of items to iterate
+            if len(images) < self.batch_size:
+                del self.aspect_ratio_bucket_indices[bucket]
+                logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
         """

@@ -23,6 +23,7 @@ class TestBucketManager(unittest.TestCase):
                 self.bucket_manager = BucketManager(
                     instance_data_root=self.instance_data_root,
                     cache_file=self.cache_file,
+                    batch_size=1,
                     data_backend=self.data_backend
                 )
 
