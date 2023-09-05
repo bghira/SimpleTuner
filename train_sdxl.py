@@ -371,6 +371,7 @@ def main():
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    logger.info(f"Loading a bucket manager")
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -381,7 +382,9 @@ def main():
         ),
     )
     if accelerator.is_main_process:
+        logger.info(f"Computing aspect bucket cache index.")
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        logger.info(f"Refreshing buckets.")
         bucket_manager.refresh_buckets()
     accelerator.wait_for_everyone()
     logger.info("Refreshed buckets and computed aspect ratios.")
