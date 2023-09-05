@@ -138,13 +138,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return [
                 image
                 for image in self.bucket_manager.aspect_ratio_bucket_indices[bucket]
-                if image not in self.seen_images
+                if not self.bucket_manager.is_seen(image)
             ]
         else:
             unseen_images = []
             for b, images in self.bucket_manager.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
-                    [image for image in images if image not in self.seen_images]
+                    [image for image in images if not self.bucket_manager.is_seen(image)]
                 )
             return unseen_images
 

@@ -1,7 +1,8 @@
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
-import json, logging, os, multiprocessing
+import json, logging, os
+from multiprocessing import Manager
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
@@ -20,6 +21,9 @@ class BucketManager:
         self.cache_file = Path(cache_file)
         self.aspect_ratio_bucket_indices = {}
         self.instance_images_path = set()
+        # Initialize a multiprocessing.Manager dict for seen_images
+        manager = Manager()
+        self.seen_images = manager.dict()
         self._load_cache()
 
     def __len__(self):
@@ -176,6 +180,14 @@ class BucketManager:
         self.instance_images_path.update(new_files)
         self._save_cache()
         logger.info("Completed aspect bucket update.")
+
+    def mark_as_seen(self, image_path):
+        """Mark an image as seen."""
+        self.seen_images[image_path] = True  # This will be shared across all processes
+    
+    def is_seen(self, image_path):
+        """Check if an image is seen."""
+        return self.seen_images.get(image_path, False)
 
     def remove_image(self, image_path, bucket):
         """
