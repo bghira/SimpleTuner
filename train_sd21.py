@@ -76,6 +76,7 @@ logger = get_logger("root")
 
 from torchvision.transforms import ToTensor
 
+
 def compute_ids(prompt: str):
     global tokenizer
     return tokenizer(
@@ -91,7 +92,7 @@ def collate_fn(examples):
     if not StateTracker.status_training():
         logging.debug("collate_fn: not training, returning examples.")
         return examples
-    logging.debug(f'collate_fn: training, returning batch: {examples}')
+    logging.debug(f"collate_fn: training, returning batch: {examples}")
     input_ids = [compute_ids(example["instance_prompt_text"]) for example in examples]
     pixel_values = [example["instance_tensor"] for example in examples]
     pixel_values = torch.stack(pixel_values)
@@ -165,7 +166,7 @@ def main(args):
             use_fast=False,
         )
     if not tokenizer:
-        raise Exception('Failed to load tokenizer.')
+        raise Exception("Failed to load tokenizer.")
 
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(
@@ -179,7 +180,7 @@ def main(args):
         subfolder="scheduler",
         timestep_spacing="trailing",
         prediction_type="v_prediction",
-        rescale_betas_zero_snr=True
+        rescale_betas_zero_snr=True,
     )
     noise_scheduler = DDPMScheduler.from_pretrained(
         scheduler_model,
@@ -211,6 +212,7 @@ def main(args):
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             import xformers
+
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.20"):
                 logger.warn(
@@ -329,6 +331,15 @@ def main(args):
     if accelerator.is_main_process:
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
+    else:
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is waiting for bucket manager to finish.",
+            main_process_only=False,
+        )
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} is now splitting the data.",
+        main_process_only=False,
+    )
     # Now split the contents of these buckets between all processes
     bucket_manager.split_buckets_between_processes()
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
@@ -336,14 +347,13 @@ def main(args):
         print(
             f"Rank {torch.distributed.get_rank()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
         )
-    accelerator.wait_for_everyone()
 
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
         )
     logger.info("Creating dataset iterator object")
-    
+
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -359,10 +369,10 @@ def main(args):
         caption_dropout_interval=args.caption_dropout_interval,
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy,
-        return_tensor=True
+        return_tensor=True,
     )
     logger.info("Creating aspect bucket sampler")
-    
+
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -372,7 +382,7 @@ def main(args):
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
-        resolution=args.resolution
+        resolution=args.resolution,
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -738,7 +748,9 @@ def main(args):
             text_encoder=accelerator.unwrap_model(text_encoder),
             revision=args.revision,
         )
-        pipeline.save_pretrained(os.path.join(args.output_dir, args.hub_repo_id or "pipeline"))
+        pipeline.save_pretrained(
+            os.path.join(args.output_dir, args.hub_repo_id or "pipeline")
+        )
 
         if args.push_to_hub:
             repo_id = create_repo(
