@@ -21,6 +21,7 @@ class BucketStateManager:
         final_state = state
         if state_path is None:
             state_path = self.state_path
+        print(f'Type of state: {type(state)}')
         if isinstance(state, multiprocessing.managers.DictProxy):
             def deep_convert_dict(d):
                 if isinstance(d, dict):
