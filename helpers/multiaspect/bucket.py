@@ -1,5 +1,6 @@
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+import accelerate
 from pathlib import Path
 import json, logging, os
 from multiprocessing import Manager
@@ -14,8 +15,9 @@ logger.setLevel(target_level)
 
 class BucketManager:
     def __init__(
-        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend, batch_size: int
+        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend, accelerator: accelerate.Accelerator, batch_size: int
     ):
+        self.accelerator = accelerator
         self.data_backend = data_backend
         self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)

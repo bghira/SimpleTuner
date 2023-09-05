@@ -10,7 +10,7 @@ from helpers.data_backend.base import BaseDataBackend
 class TestMultiAspectDataset(unittest.TestCase):
     def setUp(self):
         self.instance_data_root = "/some/fake/path"
-        self.accelerator = None  # Replace with a suitable mock or fixture
+        self.accelerator = Mock()
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.__len__ = Mock(return_value=10)
         self.data_backend = Mock(spec=BaseDataBackend)
