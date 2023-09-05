@@ -314,7 +314,10 @@ def main(args):
         )
     else:
         raise ValueError(f"Unsupported data backend: {args.data_backend}")
-    logger.info(f"Created {args.data_backend} data backend.")
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} created {args.data_backend} data backend.",
+        main_process_only=False,
+    )
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
