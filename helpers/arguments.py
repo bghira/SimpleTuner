@@ -683,6 +683,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--conditioning_dropout_probability",
+        type=float,
+        default=None,
+        help="Conditioning dropout probability. Experimental. See section 3.2.1 in the paper: https://arxiv.org/abs/2211.09800.",
+    )
+    parser.add_argument(
         "--caption_dropout_probability",
         type=float,
         default=None,
