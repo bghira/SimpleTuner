@@ -340,7 +340,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     len(available_images) < self.batch_size
                     and idx == len(self.buckets) - 1
                 ):
-                    self.log_state()
                     self.move_to_exhausted()
                     self.change_bucket()
 
