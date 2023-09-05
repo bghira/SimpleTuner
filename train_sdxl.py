@@ -384,19 +384,16 @@ def main():
     with accelerator.main_process_first():
         print(
             f"(Rank: {torch.distributed.get_rank()}) Computing aspect bucket cache index.",
-            main_process_only=False,
         )
         bucket_manager.compute_aspect_ratio_bucket_indices()
         print(
             f"(Rank: {torch.distributed.get_rank()}) Refreshing buckets.",
-            main_process_only=False,
         )
         bucket_manager.refresh_buckets()
         print(
             f"(Rank: {torch.distributed.get_rank()}) Control is returned to the main training script.",
-            main_process_only=False,
         )
-    print("Refreshed buckets and computed aspect ratios.", main_process_only=False)
+    print("Refreshed buckets and computed aspect ratios.")
 
     if len(bucket_manager) == 0:
         raise Exception(
