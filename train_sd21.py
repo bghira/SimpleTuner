@@ -733,7 +733,7 @@ def main(args):
             text_encoder=accelerator.unwrap_model(text_encoder),
             revision=args.revision,
         )
-        pipeline.save_pretrained(args.output_dir)
+        pipeline.save_pretrained(os.path.join(args.output_dir, args.hub_repo_id or "pipeline"))
 
         if args.push_to_hub:
             repo_id = create_repo(
