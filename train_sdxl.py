@@ -381,13 +381,11 @@ def main():
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
     )
-    if accelerator.is_main_process:
+    with accelerator.main_process_first():
         logger.info(f"Computing aspect bucket cache index.")
         bucket_manager.compute_aspect_ratio_bucket_indices()
         logger.info(f"Refreshing buckets.")
         bucket_manager.refresh_buckets()
-    logger.info(f"Waiting for all processes to gather..")
-    accelerator.wait_for_everyone()
     logger.info("Refreshed buckets and computed aspect ratios.")
 
     if len(bucket_manager) == 0:
