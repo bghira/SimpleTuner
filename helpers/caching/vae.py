@@ -47,7 +47,9 @@ class VAECache:
         """Identify files that haven't been processed yet."""
         all_files = {
             os.path.join(subdir, file)
-            for subdir, _, files in self.data_backend.list_files('*.[jJpP][pPnN][gG]', directory)
+            for subdir, _, files in self.data_backend.list_files(
+                "*.[jJpP][pPnN][gG]", directory
+            )
             for file in files
             if file.endswith((".png", ".jpg", ".jpeg"))
         }
@@ -93,7 +95,8 @@ class VAECache:
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
         # Use the accelerator to split the data
-        self.local_unprocessed_files = self.accelerator.scatter(all_unprocessed_files)
+        with self.accelerator.split_between_processes(all_unprocessed_files) as split_files:
+            self.local_unprocessed_files = self.accelerator.scatter(split_files)
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
