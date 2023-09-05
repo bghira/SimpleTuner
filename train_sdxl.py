@@ -381,7 +381,7 @@ def main():
     if accelerator.is_main_process:
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
-    accelerate.wait_for_everyone()
+    accelerator.wait_for_everyone()
     logger.info('Refreshed buckets and computed aspect ratios.')
 
     if len(bucket_manager) == 0:
