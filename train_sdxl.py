@@ -386,6 +386,7 @@ def main():
         bucket_manager.compute_aspect_ratio_bucket_indices()
         logger.info(f"Refreshing buckets.")
         bucket_manager.refresh_buckets()
+    logger.info(f"Waiting for all processes to gather..")
     accelerator.wait_for_everyone()
     logger.info("Refreshed buckets and computed aspect ratios.")
 
