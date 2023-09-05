@@ -21,9 +21,11 @@ class BucketManager:
         data_backend: BaseDataBackend,
         accelerator: accelerate.Accelerator,
         batch_size: int,
+        apply_dataset_padding: bool = False,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
+        self.apply_dataset_padding = apply_dataset_padding
         self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
@@ -200,7 +202,7 @@ class BucketManager:
         new_aspect_ratio_bucket_indices = {}
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             with self.accelerator.split_between_processes(
-                images, apply_padding=False
+                images, apply_padding=self.apply_dataset_padding
             ) as images_split:
                 # Now images_split contains only the part of the images list that this process should handle
                 new_aspect_ratio_bucket_indices[bucket] = images_split

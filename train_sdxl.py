@@ -381,6 +381,7 @@ def main():
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        apply_dataset_padding=args.apply_dataset_padding or False,
     )
     print(f"(Rank: {torch.distributed.get_rank()}) Beginning aspect bucket stuff.")
     with accelerator.main_process_first():

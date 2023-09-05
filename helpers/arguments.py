@@ -114,12 +114,19 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--apply_dataset_padding",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will apply padding to the dataset to ensure that the number of images is divisible by the batch."
+            " This has some side-effects (especially on smaller datasets) of over-sampling and overly repeating images."
+        ),
+    )
+    parser.add_argument(
         "--aws_bucket_name",
         type=str,
         default=None,
-        help=(
-            "The AWS bucket name to use."
-        )
+        help=("The AWS bucket name to use."),
     )
     parser.add_argument(
         "--aws_endpoint_url",
@@ -143,17 +150,13 @@ def parse_args(input_args=None):
         "--aws_access_key_id",
         type=str,
         default=None,
-        help=(
-            "The AWS access key ID."
-        ),
+        help=("The AWS access key ID."),
     )
     parser.add_argument(
         "--aws_secret_access_key",
         type=str,
         default=None,
-        help=(
-            "The AWS secret access key."
-        )
+        help=("The AWS secret access key."),
     )
     parser.add_argument(
         "--cache_dir",
@@ -723,7 +726,7 @@ def parse_args(input_args=None):
         help=(
             "If set, any images that error out during load will be removed from the underlying storage medium."
             " This is useful to prevent repeatedly attempting to cache bad files on a cloud bucket."
-        )
+        ),
     )
     parser.add_argument(
         "--offset_noise",
