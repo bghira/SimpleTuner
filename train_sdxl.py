@@ -372,12 +372,17 @@ def main():
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
+        accelerator=accelerator,
+        batch_size=args.train_batch_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
     )
-    with accelerator.main_process_first():
+    with accelerator.on_main_process():
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        bucket_manager.refresh_buckets()
+    logger.info('Refreshed buckets and computed aspect ratios.')
+    accelerate.wait_for_everyone()
 
     if len(bucket_manager) == 0:
         raise Exception(
@@ -1000,7 +1005,7 @@ def main():
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
-                if args.conditioning_dropout_prob is not None:
+                if args.conditioning_dropout_probability is not None:
                     random_p = torch.rand(bsz, device=latents.device, generator=generator)
                     # Final text conditioning.
                     encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
@@ -1008,8 +1013,8 @@ def main():
                     # Sample masks for the original images.
                     image_mask_dtype = original_image_embeds.dtype
                     image_mask = 1 - (
-                        (random_p >= args.conditioning_dropout_prob).to(image_mask_dtype)
-                        * (random_p < 3 * args.conditioning_dropout_prob).to(image_mask_dtype)
+                        (random_p >= args.conditioning_dropout_probability).to(image_mask_dtype)
+                        * (random_p < 3 * args.conditioning_dropout_probability).to(image_mask_dtype)
                     )
                     image_mask = image_mask.reshape(bsz, 1, 1, 1)
                     # Final image conditioning.
