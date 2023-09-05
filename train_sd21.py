@@ -327,6 +327,7 @@ def main(args):
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        apply_dataset_padding=args.apply_dataset_padding or False,
     )
     if accelerator.is_main_process:
         bucket_manager.compute_aspect_ratio_bucket_indices()
@@ -336,6 +337,7 @@ def main(args):
             f"Rank {torch.distributed.get_rank()} is waiting for bucket manager to finish.",
             main_process_only=False,
         )
+        accelerator.wait_for_everyone()
     logger.info(
         f"Rank {torch.distributed.get_rank()} is now splitting the data.",
         main_process_only=False,
