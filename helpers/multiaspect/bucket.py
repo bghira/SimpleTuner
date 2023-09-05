@@ -271,6 +271,8 @@ class BucketManager:
         # Update bucket indices to remove entries that no longer exist
         logger.debug("Finally, we can update the bucket index")
         self.update_buckets_with_existing_files(existing_files)
+        logger.debug("Done updating bucket index, continuing.")
+        return
 
     def _enforce_min_bucket_size(self):
         """

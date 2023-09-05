@@ -386,6 +386,7 @@ def main():
         bucket_manager.compute_aspect_ratio_bucket_indices()
         logger.info(f"Refreshing buckets.")
         bucket_manager.refresh_buckets()
+        logger.info(f"Control is returned to the main training script.")
     logger.info("Refreshed buckets and computed aspect ratios.")
 
     if len(bucket_manager) == 0:
