@@ -372,6 +372,7 @@ def main():
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     logger.info(f"Loading a bucket manager")
+    print(f"(Rank: {torch.distributed.get_rank()}) Beginning bucket manager stuff.")
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -381,6 +382,7 @@ def main():
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
     )
+    print(f"(Rank: {torch.distributed.get_rank()}) Beginning aspect bucket stuff.")
     with accelerator.main_process_first():
         print(
             f"(Rank: {torch.distributed.get_rank()}) Computing aspect bucket cache index.",
