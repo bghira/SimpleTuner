@@ -1,4 +1,4 @@
-import json, os
+import json, os, multiprocessing
 
 
 class BucketStateManager:
@@ -20,8 +20,9 @@ class BucketStateManager:
     def save_state(self, state: dict, state_path: str = None):
         if state_path is None:
             state_path = self.state_path
-        if type(state) is not str and hasattr(state, 'copy'):
-            state = state.copy()
+        if type(state) == multiprocessing.Manager:
+            state = state.deepcopy()
+        print(f'Saving state type: {type(state)}')
         with open(state_path, "w") as f:
             json.dump(state, f)
 
