@@ -333,7 +333,7 @@ def main(args):
     bucket_manager.split_buckets_between_processes()
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
     logger.info(
-        f"Rank {accelerator.rank}: {bucket_manager.aspect_ratio_bucket_indices}"
+        f"Rank {torch.distributed.get_rank()}: {bucket_manager.aspect_ratio_bucket_indices}"
     )
     accelerator.wait_for_everyone()
 
