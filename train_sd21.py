@@ -319,17 +319,18 @@ def main(args):
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    bucket_manager = BucketManager(
-        instance_data_root=args.instance_data_dir,
-        data_backend=data_backend,
-        accelerator=accelerator,
-        batch_size=args.train_batch_size,
-        cache_file=os.path.join(
-            args.instance_data_dir, "aspect_ratio_bucket_indices.json"
-        ),
-        apply_dataset_padding=args.apply_dataset_padding or False,
-    )
+
     with accelerator.local_main_process_first():
+        bucket_manager = BucketManager(
+            instance_data_root=args.instance_data_dir,
+            data_backend=data_backend,
+            accelerator=accelerator,
+            batch_size=args.train_batch_size,
+            cache_file=os.path.join(
+                args.instance_data_dir, "aspect_ratio_bucket_indices.json"
+            ),
+            apply_dataset_padding=args.apply_dataset_padding or False,
+        )
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
         logger.info(
