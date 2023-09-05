@@ -638,7 +638,7 @@ def main():
             f"Not using caption dropout will potentially lead to overfitting on captions."
         )
 
-    null_conditioning = compute_null_conditioning()
+    # null_conditioning = compute_null_conditioning()
 
     logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
