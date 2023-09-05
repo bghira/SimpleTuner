@@ -325,7 +325,7 @@ def main(args):
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
     )
-    if accelerator.is_main_process():
+    if accelerator.is_main_process:
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
     accelerator.wait_for_everyone()
