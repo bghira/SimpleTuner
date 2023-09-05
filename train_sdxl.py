@@ -140,6 +140,7 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
+
 def compute_null_conditioning():
     null_conditioning_list = []
     for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
@@ -150,6 +151,7 @@ def compute_null_conditioning():
             ).hidden_states[-2]
         )
     return torch.concat(null_conditioning_list, dim=-1)
+
 
 def main():
     args = parse_args()
@@ -382,7 +384,7 @@ def main():
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
     accelerator.wait_for_everyone()
-    logger.info('Refreshed buckets and computed aspect ratios.')
+    logger.info("Refreshed buckets and computed aspect ratios.")
 
     if len(bucket_manager) == 0:
         raise Exception(
@@ -540,7 +542,7 @@ def main():
                 accelerator=accelerator,
                 data_backend=data_backend,
                 resolution=args.resolution,
-                delete_problematic_images=args.delete_problematic_images
+                delete_problematic_images=args.delete_problematic_images,
             )
 
         pixel_values = []
@@ -611,7 +613,7 @@ def main():
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
-        resolution=args.resolution
+        resolution=args.resolution,
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -723,7 +725,9 @@ def main():
             f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
         )
         overrode_max_train_steps = True
-    logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
+    logger.info(
+        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+    )
     if args.lr_scheduler == "cosine_annealing_warm_restarts":
         """
         optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
@@ -734,6 +738,7 @@ def main():
 
         """
         from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
             T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,
@@ -794,10 +799,17 @@ def main():
         logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
     logger.info(f"Loaded VAE into VRAM.")
-    if accelerator.is_main_process:
-        logger.info(f"Pre-computing VAE latent space.")
-        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend, delete_problematic_images=args.delete_problematic_images, resolution=args.resolution)
-        vaecache.process_directory(args.instance_data_dir)
+    logger.info(f"Pre-computing VAE latent space.")
+    vaecache = VAECache(
+        vae=vae,
+        accelerator=accelerator,
+        data_backend=data_backend,
+        delete_problematic_images=args.delete_problematic_images,
+        resolution=args.resolution,
+    )
+    vaecache.split_cache_between_processes()
+    vaecache.process_directory(args.instance_data_dir)
+    accelerator.wait_for_everyone()
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -887,9 +899,7 @@ def main():
                 f" gradient_accumulation_steps {args.gradient_accumulation_steps}"
             )
             first_epoch = global_step // num_update_steps_per_epoch
-            logger.info(
-                f"Our first training epoch for this run will be {first_epoch}"
-            )
+            logger.info(f"Our first training epoch for this run will be {first_epoch}")
             resume_step = resume_global_step % (
                 num_update_steps_per_epoch * args.gradient_accumulation_steps
             )
@@ -910,9 +920,11 @@ def main():
     current_epoch = 0
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
-            logger.info('Reached the end of our training run.')
+            logger.info("Reached the end of our training run.")
             break
-        logger.debug(f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}")
+        logger.debug(
+            f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
+        )
         current_epoch = epoch
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
             scheduler_kwargs["epoch"] = epoch

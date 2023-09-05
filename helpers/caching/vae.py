@@ -90,6 +90,11 @@ class VAECache:
         logger.debug(f"Output latents shape: {output_latents.shape}")
         return output_latents
 
+    def split_cache_between_processes(self):
+        all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
+        # Use the accelerator to split the data
+        self.local_unprocessed_files = self.accelerator.scatter(all_unprocessed_files)
+
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
         transform = MultiaspectImage.get_image_transforms()
@@ -106,7 +111,7 @@ class VAECache:
                     file = os.path.join(subdir, file)
                 existing_pt_files.add(os.path.splitext(file)[0])
         # Get a list of all the files to process (customize as needed)
-        files_to_process = []
+        files_to_process = self.local_unprocessed_files  # Use the local slice of files
         target_name = directory
         if type(self.data_backend) == S3DataBackend:
             target_name = f'S3 bucket {self.data_backend.bucket_name}'
