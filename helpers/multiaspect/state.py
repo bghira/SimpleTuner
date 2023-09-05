@@ -20,8 +20,8 @@ class BucketStateManager:
     def save_state(self, state: dict, state_path: str = None):
         if state_path is None:
             state_path = self.state_path
-        if type(state) == multiprocessing.Manager:
-            state = state.deepcopy()
+        if isinstance(state, multiprocessing.managers.DictProxy):
+            state = dict(state)
         print(f'Saving state type: {type(state)}')
         with open(state_path, "w") as f:
             json.dump(state, f)
