@@ -1,5 +1,7 @@
-import logging
+import logging, os
 
+logger = logging.getLogger('ModelFreeze')
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def freeze_entire_component(component):
     for name, param in component.named_parameters():
@@ -41,7 +43,7 @@ def freeze_text_encoder(args, component):
         if freeze_param:
             if hasattr(param, "requires_grad"):
                 param.requires_grad = False
-                logging.info(
+                logging.debug(
                     f"Froze layer {name} with method {method} and range {first_layer} - {last_layer}"
                 )
             else:
