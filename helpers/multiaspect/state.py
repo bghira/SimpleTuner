@@ -17,21 +17,26 @@ class BucketStateManager:
         with open(self.seen_images_path, "w") as f:
             json.dump(seen_images, f)
 
+    def deep_convert_dict(self, d):
+        if isinstance(d, dict):
+            print(f'Found a dictionary to convert: {d}')
+            return {key: self.deep_convert_dict(value) for key, value in d.items()}
+        elif isinstance(d, list):
+            print(f'Found a list to convert: {d}')
+            return [self.deep_convert_dict(value) for value in d]
+        elif isinstance(d, multiprocessing.managers.DictProxy):
+            print(f'Found a DictProxy to convert: {d}')
+            return self.deep_convert_dict(dict(d))
+        else:
+            print(f'Returning straight-through type {type(d)}')
+            return d
+
     def save_state(self, state: dict, state_path: str = None):
         final_state = state
         if state_path is None:
             state_path = self.state_path
         print(f'Type of state: {type(state)}')
-        def deep_convert_dict(d):
-            if isinstance(d, dict):
-                return {key: deep_convert_dict(value) for key, value in d.items()}
-            elif isinstance(d, list):
-                return [deep_convert_dict(value) for value in d]
-            elif isinstance(d, multiprocessing.managers.DictProxy):
-                return deep_convert_dict(dict(d))
-            else:
-                return d
-        final_state = deep_convert_dict(state)
+        final_state = self.deep_convert_dict(state)
         with open(state_path, "w") as f:
             json.dump(final_state, f)
 
