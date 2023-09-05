@@ -382,12 +382,16 @@ def main():
         ),
     )
     with accelerator.main_process_first():
-        logger.info(f"Computing aspect bucket cache index.")
+        logger.info(f"Computing aspect bucket cache index.", main_process_only=False)
         bucket_manager.compute_aspect_ratio_bucket_indices()
-        logger.info(f"Refreshing buckets.")
+        logger.info(f"Refreshing buckets.", main_process_only=False)
         bucket_manager.refresh_buckets()
-        logger.info(f"Control is returned to the main training script.")
-    logger.info("Refreshed buckets and computed aspect ratios.")
+        logger.info(
+            f"Control is returned to the main training script.", main_process_only=False
+        )
+    logger.info(
+        "Refreshed buckets and computed aspect ratios.", main_process_only=False
+    )
 
     if len(bucket_manager) == 0:
         raise Exception(
