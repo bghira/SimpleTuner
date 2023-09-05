@@ -324,6 +324,10 @@ def main(args):
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
 
     with accelerator.local_main_process_first():
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is creating a bucket manager.",
+            main_process_only=False,
+        )
         bucket_manager = BucketManager(
             instance_data_root=args.instance_data_dir,
             data_backend=data_backend,
@@ -334,7 +338,15 @@ def main(args):
             ),
             apply_dataset_padding=args.apply_dataset_padding or False,
         )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is on its way to computing the indicies.",
+            main_process_only=False,
+        )
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is now refreshing the buckets..",
+            main_process_only=False,
+        )
         bucket_manager.refresh_buckets()
         logger.info(
             f"Rank {torch.distributed.get_rank()} has completed its bucket manager tasks.",
