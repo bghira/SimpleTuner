@@ -18,7 +18,7 @@ import math
 import os
 
 # Quiet down, you.
-os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
+os.environ["ACCELERATE_LOG_LEVEL"] = "DEBUG"
 import shutil
 import random
 from pathlib import Path
