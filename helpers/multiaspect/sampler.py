@@ -181,6 +181,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
 
         if total_unseen_images < self.batch_size:
+            logger.debug(f'_reset_if_not_enough_unseen_images: total_unseen_images={total_unseen_images}, batch_size={self.batch_size} triggered reset')
             self._reset_buckets()
             return True
         return False
@@ -194,6 +195,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
         ]
         if not available_buckets:
+            logger.debug(f'_get_next_bucket: all buckets exhausted, resetting')
             self._reset_buckets()
             available_buckets = self.buckets
 
@@ -328,6 +330,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.change_bucket()
 
             if all_buckets_exhausted:
+                # If all buckets are exhausted, reset the seen images and refresh buckets
+                logger.debug(f'All buckets exhausted, resetting inside __iter__')
                 self._reset_buckets()
 
     def __len__(self):
