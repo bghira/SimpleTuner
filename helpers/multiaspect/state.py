@@ -1,5 +1,6 @@
-import json, os, multiprocessing
-
+import json, os, multiprocessing, logging
+logger = logging.getLogger('BucketStateManager')
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class BucketStateManager:
     def __init__(self, state_path, seen_images_path):
@@ -19,24 +20,25 @@ class BucketStateManager:
 
     def deep_convert_dict(self, d):
         if isinstance(d, dict):
-            print(f'Found a dictionary to convert: {d}')
+            logger.debug(f'Found a dictionary to convert: {d}')
             return {key: self.deep_convert_dict(value) for key, value in d.items()}
         elif isinstance(d, list):
-            print(f'Found a list to convert: {d}')
+            logger.debug(f'Found a list to convert: {d}')
             return [self.deep_convert_dict(value) for value in d]
         elif isinstance(d, multiprocessing.managers.DictProxy):
-            print(f'Found a DictProxy to convert: {d}')
+            logger.debug(f'Found a DictProxy to convert: {d}')
             return self.deep_convert_dict(dict(d))
         else:
-            print(f'Returning straight-through type {type(d)}')
+            logger.debug(f'Returning straight-through type {type(d)}')
             return d
 
     def save_state(self, state: dict, state_path: str = None):
         final_state = state
         if state_path is None:
             state_path = self.state_path
-        print(f'Type of state: {type(state)}')
+        logger.debug(f'Type of state: {type(state)}')
         final_state = self.deep_convert_dict(state)
+        logger.info(f'Saving trainer state to {state_path}')
         with open(state_path, "w") as f:
             json.dump(final_state, f)
 
