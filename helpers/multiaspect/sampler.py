@@ -226,7 +226,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         logger.debug(
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
         )
-        self.log_state()
 
     def log_state(self):
         logger.debug(

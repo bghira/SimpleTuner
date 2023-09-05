@@ -140,6 +140,16 @@ def import_model_class_from_model_name_or_path(
     else:
         raise ValueError(f"{model_class} is not supported.")
 
+def compute_null_conditioning():
+    null_conditioning_list = []
+    for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
+        null_conditioning_list.append(
+            a_text_encoder(
+                tokenize_captions([""], tokenizer=a_tokenizer).to(accelerator.device),
+                output_hidden_states=True,
+            ).hidden_states[-2]
+        )
+    return torch.concat(null_conditioning_list, dim=-1)
 
 def main():
     args = parse_args()
@@ -623,6 +633,8 @@ def main():
             f"Not using caption dropout will potentially lead to overfitting on captions."
         )
 
+    null_conditioning = compute_null_conditioning()
+
     logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
         all_captions = PromptHandler.get_all_captions(
@@ -985,8 +997,23 @@ def main():
                             batch["add_text_embeds_all"],
                         ) = embed_cache.compute_embeddings_for_prompts([""])
 
-                # Conditioning dropout not yet supported.
+                # Conditioning dropout to support classifier-free guidance during inference. For more details
+                # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
+                if args.conditioning_dropout_prob is not None:
+                    random_p = torch.rand(bsz, device=latents.device, generator=generator)
+                    # Final text conditioning.
+                    encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
+
+                    # Sample masks for the original images.
+                    image_mask_dtype = original_image_embeds.dtype
+                    image_mask = 1 - (
+                        (random_p >= args.conditioning_dropout_prob).to(image_mask_dtype)
+                        * (random_p < 3 * args.conditioning_dropout_prob).to(image_mask_dtype)
+                    )
+                    image_mask = image_mask.reshape(bsz, 1, 1, 1)
+                    # Final image conditioning.
+                    original_image_embeds = image_mask * original_image_embeds
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
