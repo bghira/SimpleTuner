@@ -1006,19 +1006,7 @@ def main():
                 # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
                 if args.conditioning_dropout_probability is not None:
-                    random_p = torch.rand(bsz, device=latents.device, generator=generator)
-                    # Final text conditioning.
-                    encoder_hidden_states = torch.where(prompt_mask, null_conditioning, encoder_hidden_states)
-
-                    # Sample masks for the original images.
-                    image_mask_dtype = original_image_embeds.dtype
-                    image_mask = 1 - (
-                        (random_p >= args.conditioning_dropout_probability).to(image_mask_dtype)
-                        * (random_p < 3 * args.conditioning_dropout_probability).to(image_mask_dtype)
-                    )
-                    image_mask = image_mask.reshape(bsz, 1, 1, 1)
-                    # Final image conditioning.
-                    original_image_embeds = image_mask * original_image_embeds
+                    pass
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
