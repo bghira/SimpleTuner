@@ -184,7 +184,7 @@ def main(args):
     noise_scheduler = DDPMScheduler.from_pretrained(
         scheduler_model,
         subfolder="scheduler",
-        trained_betas=temp_scheduler.betas,
+        trained_betas=temp_scheduler.betas.clone().detach(),
         prediction_type="v_prediction",
     )
     text_encoder = freeze_text_encoder(
@@ -320,12 +320,23 @@ def main(args):
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
+        accelerator=accelerator,
+        batch_size=args.train_batch_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
     )
-    with accelerator.main_process_first():
+    if accelerator.is_main_process:
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        bucket_manager.refresh_buckets()
+    # Now split the contents of these buckets between all processes
+    bucket_manager.split_buckets_between_processes()
+    # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
+    for bucket in bucket_manager.aspect_ratio_bucket_indices:
+        print(
+            f"Rank {torch.distributed.get_rank()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
+        )
+    accelerator.wait_for_everyone()
 
     if len(bucket_manager) == 0:
         raise Exception(
@@ -484,6 +495,9 @@ def main(args):
         else:
             logging.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            custom_balanced_sampler.load_states(
+                state_path=os.path.join(args.output_dir, path, "training_state.json"),
+            )
             global_step = int(path.split("-")[1])
 
             resume_global_step = global_step * args.gradient_accumulation_steps
@@ -687,7 +701,9 @@ def main(args):
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state()
+                        custom_balanced_sampler.save_state(
+                            state_path=os.path.join(save_path, "training_state.json"),
+                        )
                         logger.info(f"Saved state to {save_path}")
 
                     if (
@@ -722,7 +738,7 @@ def main(args):
             text_encoder=accelerator.unwrap_model(text_encoder),
             revision=args.revision,
         )
-        pipeline.save_pretrained(args.output_dir)
+        pipeline.save_pretrained(os.path.join(args.output_dir, args.hub_repo_id or "pipeline"))
 
         if args.push_to_hub:
             repo_id = create_repo(

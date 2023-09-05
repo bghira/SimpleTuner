@@ -4,12 +4,14 @@ from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
-
+import accelerate
 class TestMultiAspectSampler(unittest.TestCase):
 
     def setUp(self):
+        self.accelerator = Mock(spec=accelerate.Accelerator)
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.aspect_ratio_bucket_indices = {'1.0': ['image1', 'image2']}
+        self.bucket_manager.seen_images = {}
         self.data_backend = MockDataBackend()
         self.batch_size = 2
         self.seen_images_path = "/some/fake/seen_images.json"
