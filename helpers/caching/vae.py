@@ -99,7 +99,7 @@ class VAECache:
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
-            print(f"Local rank {self.accelerator.local_rank}: has {len(split_files)}")
+            print(f"Local rank {torch.distributed.get_rank()}: has {len(split_files)}")
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
