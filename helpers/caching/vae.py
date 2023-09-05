@@ -95,8 +95,10 @@ class VAECache:
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
         # Use the accelerator to split the data
-        with self.accelerator.split_between_processes(all_unprocessed_files) as split_files:
-            self.local_unprocessed_files = self.accelerator.scatter(split_files)
+        with self.accelerator.split_between_processes(
+            all_unprocessed_files
+        ) as split_files:
+            self.local_unprocessed_files = split_files
 
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
