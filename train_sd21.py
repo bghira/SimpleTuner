@@ -332,9 +332,10 @@ def main(args):
     # Now split the contents of these buckets between all processes
     bucket_manager.split_buckets_between_processes()
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
-    print(
-        f"Rank {torch.distributed.get_rank()}: {bucket_manager.aspect_ratio_bucket_indices}"
-    )
+    for bucket in bucket_manager.aspect_ratio_bucket_indices:
+        print(
+            f"Rank {torch.distributed.get_rank()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
+        )
     accelerator.wait_for_everyone()
 
     if len(bucket_manager) == 0:
