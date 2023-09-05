@@ -329,9 +329,12 @@ def main(args):
     if accelerator.is_main_process:
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
-    bucket_manager.aspect_ratio_bucket_indices = accelerator.broadcast(bucket_manager.aspect_ratio_bucket_indices)
     # Now split the contents of these buckets between all processes
     bucket_manager.split_buckets_between_processes()
+    # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
+    logger.info(
+        f"Rank {accelerator.rank}: {bucket_manager.aspect_ratio_bucket_indices}"
+    )
     accelerator.wait_for_everyone()
 
     if len(bucket_manager) == 0:
