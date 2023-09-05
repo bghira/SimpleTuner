@@ -41,15 +41,15 @@ class TestMultiAspectDataset(unittest.TestCase):
         mock_image_data = b"fake_image_data"
         self.data_backend.read.return_value = mock_image_data
 
-        with patch("PIL.Image.open") as mock_image_open:
-            # Create a blank canvas:
-            mock_image = Image.new(mode='RGB', size=(16, 8))
-            mock_image_open.return_value = mock_image
-            with patch(
+        with patch("PIL.Image.open") as mock_image_open, \
+            patch(
                 "helpers.training.state_tracker.StateTracker.status_training",
                 return_value=True,
             ):
-                example = self.dataset.__getitem__(self.image_path)
+            # Create a blank canvas:
+            mock_image = Image.new(mode='RGB', size=(16, 8))
+            mock_image_open.return_value = mock_image
+            example = self.dataset.__getitem__(self.image_path)
 
         self.assertIsNotNone(example)
         self.assertEqual(example["instance_images_path"], self.image_path)
