@@ -15,7 +15,12 @@ logger.setLevel(target_level)
 
 class BucketManager:
     def __init__(
-        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend, accelerator: accelerate.Accelerator, batch_size: int
+        self,
+        instance_data_root: str,
+        cache_file: str,
+        data_backend: BaseDataBackend,
+        accelerator: accelerate.Accelerator,
+        batch_size: int,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -71,7 +76,9 @@ class BucketManager:
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
-                logger.warning(f'Error loading aspect bucket cache, creating new one: {e}')
+                logger.warning(
+                    f"Error loading aspect bucket cache, creating new one: {e}"
+                )
                 cache_data = {}
             self.aspect_ratio_bucket_indices = cache_data.get(
                 "aspect_ratio_bucket_indices", {}
@@ -186,10 +193,25 @@ class BucketManager:
         self._save_cache()
         logger.info("Completed aspect bucket update.")
 
+    def split_buckets_between_processes(self):
+        """
+        Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
+        """
+        new_aspect_ratio_bucket_indices = {}
+        for bucket, images in self.aspect_ratio_bucket_indices.items():
+            with self.accelerator.split_between_processes(
+                images, apply_padding=False
+            ) as images_split:
+                # Now images_split contains only the part of the images list that this process should handle
+                new_aspect_ratio_bucket_indices[bucket] = images_split
+
+        # Replace the original aspect_ratio_bucket_indices with the new one containing only this process's share
+        self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
+
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
         self.seen_images[image_path] = True  # This will be shared across all processes
-    
+
     def is_seen(self, image_path):
         """Check if an image is seen."""
         return self.seen_images.get(image_path, False)
@@ -226,7 +248,6 @@ class BucketManager:
         # Save the updated cache
         self._save_cache()
 
-
     def refresh_buckets(self):
         """
         Discover new files and remove images that no longer exist.
@@ -251,7 +272,9 @@ class BucketManager:
         """
         Remove buckets that have fewer samples than batch_size.
         """
-        for bucket, images in list(self.aspect_ratio_bucket_indices.items()):  # Make a list of items to iterate
+        for bucket, images in list(
+            self.aspect_ratio_bucket_indices.items()
+        ):  # Make a list of items to iterate
             if len(images) < self.batch_size:
                 del self.aspect_ratio_bucket_indices[bucket]
                 logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
