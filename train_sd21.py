@@ -329,15 +329,14 @@ def main(args):
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
-    if accelerator.is_main_process:
+    with accelerator.main_process_only():
         bucket_manager.compute_aspect_ratio_bucket_indices()
         bucket_manager.refresh_buckets()
-    else:
-        logger.info(
-            f"Rank {torch.distributed.get_rank()} is waiting for bucket manager to finish.",
-            main_process_only=False,
-        )
-        accelerator.wait_for_everyone()
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} is waiting for bucket manager to finish.",
+        main_process_only=False,
+    )
+    accelerator.wait_for_everyone()
     logger.info(
         f"Rank {torch.distributed.get_rank()} is now splitting the data.",
         main_process_only=False,
@@ -395,7 +394,7 @@ def main(args):
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
-
+    logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(
@@ -403,6 +402,9 @@ def main(args):
     )
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        logger.debug(
+            f"Overriding max_train_steps to {args.max_train_steps} = {args.num_train_epochs} * {num_update_steps_per_epoch}"
+        )
         overrode_max_train_steps = True
 
     if args.lr_scheduler != "polynomial":
@@ -423,7 +425,7 @@ def main(args):
             power=args.lr_power,
             last_epoch=-1,
         )
-
+    logger.info("Preparing accelerator..")
     # Prepare everything with our `accelerator`.
     if args.train_text_encoder:
         (
@@ -447,13 +449,15 @@ def main(args):
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-
+    logging.info("Moving VAE to GPU..")
     # Move vae and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
     if not args.train_text_encoder:
+        logging.info("Moving text encoder to GPU..")
         text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    logging.info("Recalculating max step count.")
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
     )
@@ -465,6 +469,7 @@ def main(args):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
+        logging.info("Initializing trackers.")
         accelerator.init_trackers(args.tracker_run_name, config=vars(args))
 
     # Train!
