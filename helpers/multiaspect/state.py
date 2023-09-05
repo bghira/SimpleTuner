@@ -22,8 +22,16 @@ class BucketStateManager:
         if state_path is None:
             state_path = self.state_path
         if isinstance(state, multiprocessing.managers.DictProxy):
-            final_state = dict(state)
-        print(f'Saving state type: {type(final_state)}')
+            def deep_convert_dict(d):
+                if isinstance(d, dict):
+                    return {key: deep_convert_dict(value) for key, value in d.items()}
+                elif isinstance(d, list):
+                    return [deep_convert_dict(value) for value in d]
+                elif isinstance(d, multiprocessing.managers.DictProxy):
+                    return deep_convert_dict(dict(d))
+                else:
+                    return d
+            final_state = deep_convert_dict(state)
         with open(state_path, "w") as f:
             json.dump(final_state, f)
 
