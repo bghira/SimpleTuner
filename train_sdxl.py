@@ -757,7 +757,7 @@ def main():
 
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
-            T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,
+            T_0=args.lr_warmup_steps * accelerator.num_processes,
             T_mult=args.lr_num_cycles,
             eta_min=args.learning_rate_end,
             last_epoch=-1,
@@ -765,8 +765,8 @@ def main():
     elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.learning_rate_end,
             power=args.lr_power,
             last_epoch=-1,
@@ -775,8 +775,8 @@ def main():
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-            num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
             num_cycles=args.lr_num_cycles,
             power=args.lr_power,
         )
