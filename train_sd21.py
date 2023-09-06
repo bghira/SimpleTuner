@@ -757,8 +757,11 @@ def main(args):
             accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
-                logging.warn(f"Reached stopping point. Beginning to unwind.")
+                logging.warn(f"Ending iteration, training has completed.")
                 break
+        if global_step >= args.max_train_steps:
+            logging.warn(f"Reached stopping point. Beginning to unwind.")
+            break
 
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
