@@ -393,7 +393,7 @@ def main():
         logger.debug(
             f"{rank_info(accelerator)}Refreshing buckets.",
         )
-        bucket_manager.refresh_buckets()
+        bucket_manager.refresh_buckets(rank_info(accelerator))
         logger.debug(
             f"{rank_info(accelerator)}Control is returned to the main training script.",
         )
