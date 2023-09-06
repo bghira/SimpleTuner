@@ -337,24 +337,26 @@ def main(args):
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} is on its way to computing the indicies.",
-        main_process_only=False,
-    )
-    bucket_manager.compute_aspect_ratio_bucket_indices()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} is now refreshing the buckets..",
-        main_process_only=False,
-    )
-    bucket_manager.refresh_buckets()
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} has completed its bucket manager tasks.",
-        main_process_only=False,
-    )
-    logger.info(
-        f"Rank {torch.distributed.get_rank()} is now splitting the data.",
-        main_process_only=False,
-    )
+    if accelerator.is_main_process:
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is on its way to computing the indicies.",
+            main_process_only=False,
+        )
+        bucket_manager.compute_aspect_ratio_bucket_indices()
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is now refreshing the buckets..",
+            main_process_only=False,
+        )
+        bucket_manager.refresh_buckets()
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} has completed its bucket manager tasks.",
+            main_process_only=False,
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is now splitting the data.",
+            main_process_only=False,
+        )
+    accelerator.wait_for_everyone()
     # Now split the contents of these buckets between all processes
     bucket_manager.split_buckets_between_processes()
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
