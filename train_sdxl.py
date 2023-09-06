@@ -1341,9 +1341,17 @@ def main():
                     del pipeline
                     torch.cuda.empty_cache()
                 ### END: Perform validation every `validation_epochs` steps
-
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
+                logger.info(
+                    f"Training has completed.",
+                    f"\n -> global_step = {global_step}, max_train_steps = {args.max_train_steps}, epoch = {epoch}, num_train_epochs = {args.num_train_epochs}",
+                )
                 break
+        if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
+            logger.info(
+                f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {global_step}"
+            )
+            break
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
