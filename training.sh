@@ -5,6 +5,21 @@ source sd21-env.sh.example
 # Pull config from env.sh
 source sd21-env.sh
 
+if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
+  # We had no value for protecting the folders, so we nuke them!
+  echo "Deleting Jupyter notebook folders in 5 seconds if you do not cancel out."
+  echo "These folders are generally useless, and will cause problems if they remain."
+  export seconds
+  seconds=4
+  for ((i=seconds;i>0;i--)); do
+    echo -n "."
+    sleep 1
+  done
+  echo "." # Newline
+  echo "YOUR TIME HAS COME."
+  find . -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+fi
+
 accelerate launch  \
   --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --mixed_precision="${MIXED_PRECISION}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" \
   train_sd21.py \
