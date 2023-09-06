@@ -47,7 +47,9 @@ class VAECache:
         """Identify files that haven't been processed yet."""
         all_files = {
             os.path.join(subdir, file)
-            for subdir, _, files in self.data_backend.list_files(directory)
+            for subdir, _, files in self.data_backend.list_files(
+                "*.[jJpP][pPnN][gG]", directory
+            )
             for file in files
             if file.endswith((".png", ".jpg", ".jpeg"))
         }
@@ -90,6 +92,15 @@ class VAECache:
         logger.debug(f"Output latents shape: {output_latents.shape}")
         return output_latents
 
+    def split_cache_between_processes(self):
+        all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
+        # Use the accelerator to split the data
+        with self.accelerator.split_between_processes(
+            all_unprocessed_files
+        ) as split_files:
+            self.local_unprocessed_files = split_files
+            print(f"Local rank {torch.distributed.get_rank()}: has {len(split_files)}")
+
     def process_directory(self, directory):
         # Define a transform to convert the image to tensor
         transform = MultiaspectImage.get_image_transforms()
@@ -102,14 +113,14 @@ class VAECache:
         )
         for subdir, _, files in remote_cache_list:
             for file in files:
-                if subdir != '':
+                if subdir != "":
                     file = os.path.join(subdir, file)
                 existing_pt_files.add(os.path.splitext(file)[0])
         # Get a list of all the files to process (customize as needed)
-        files_to_process = []
+        files_to_process = self.local_unprocessed_files  # Use the local slice of files
         target_name = directory
         if type(self.data_backend) == S3DataBackend:
-            target_name = f'S3 bucket {self.data_backend.bucket_name}'
+            target_name = f"S3 bucket {self.data_backend.bucket_name}"
         logger.debug(f"Beginning processing of VAECache source data {target_name}")
         all_image_files = self.data_backend.list_files(
             instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
@@ -123,6 +134,7 @@ class VAECache:
 
         # Shuffle the files.
         import random
+
         random.shuffle(files_to_process)
 
         # Iterate through the files, displaying a progress bar

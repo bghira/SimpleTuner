@@ -76,6 +76,7 @@ logger = get_logger("root")
 
 from torchvision.transforms import ToTensor
 
+
 def compute_ids(prompt: str):
     global tokenizer
     return tokenizer(
@@ -91,7 +92,7 @@ def collate_fn(examples):
     if not StateTracker.status_training():
         logging.debug("collate_fn: not training, returning examples.")
         return examples
-    logging.debug(f'collate_fn: training, returning batch: {examples}')
+    logging.debug(f"collate_fn: training, returning batch: {examples}")
     input_ids = [compute_ids(example["instance_prompt_text"]) for example in examples]
     pixel_values = [example["instance_tensor"] for example in examples]
     pixel_values = torch.stack(pixel_values)
@@ -165,7 +166,7 @@ def main(args):
             use_fast=False,
         )
     if not tokenizer:
-        raise Exception('Failed to load tokenizer.')
+        raise Exception("Failed to load tokenizer.")
 
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(
@@ -179,12 +180,12 @@ def main(args):
         subfolder="scheduler",
         timestep_spacing="trailing",
         prediction_type="v_prediction",
-        rescale_betas_zero_snr=True
+        rescale_betas_zero_snr=True,
     )
     noise_scheduler = DDPMScheduler.from_pretrained(
         scheduler_model,
         subfolder="scheduler",
-        trained_betas=temp_scheduler.betas,
+        trained_betas=temp_scheduler.betas.clone().detach(),
         prediction_type="v_prediction",
     )
     text_encoder = freeze_text_encoder(
@@ -211,6 +212,7 @@ def main(args):
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             import xformers
+
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.20"):
                 logger.warn(
@@ -312,27 +314,63 @@ def main(args):
         )
     else:
         raise ValueError(f"Unsupported data backend: {args.data_backend}")
-    logger.info(f"Created {args.data_backend} data backend.")
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} created {args.data_backend} data backend.",
+        main_process_only=False,
+    )
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+
+    logger.info(
+        f"Rank {torch.distributed.get_rank()} is creating a bucket manager.",
+        main_process_only=False,
+    )
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
+        accelerator=accelerator,
+        batch_size=args.train_batch_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        apply_dataset_padding=args.apply_dataset_padding or False,
     )
-    with accelerator.main_process_first():
+    if accelerator.is_main_process:
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is on its way to computing the indicies.",
+            main_process_only=False,
+        )
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is now refreshing the buckets..",
+            main_process_only=False,
+        )
+        bucket_manager.refresh_buckets()
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} has completed its bucket manager tasks.",
+            main_process_only=False,
+        )
+        logger.info(
+            f"Rank {torch.distributed.get_rank()} is now splitting the data.",
+            main_process_only=False,
+        )
+    accelerator.wait_for_everyone()
+    # Now split the contents of these buckets between all processes
+    bucket_manager.split_buckets_between_processes()
+    # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
+    for bucket in bucket_manager.aspect_ratio_bucket_indices:
+        print(
+            f"Rank {torch.distributed.get_rank()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
+        )
 
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
         )
     logger.info("Creating dataset iterator object")
-    
+
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -348,10 +386,10 @@ def main(args):
         caption_dropout_interval=args.caption_dropout_interval,
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy,
-        return_tensor=True
+        return_tensor=True,
     )
     logger.info("Creating aspect bucket sampler")
-    
+
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -361,7 +399,7 @@ def main(args):
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
-        resolution=args.resolution
+        resolution=args.resolution,
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -372,7 +410,7 @@ def main(args):
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
-
+    logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(
@@ -380,6 +418,9 @@ def main(args):
     )
     if args.max_train_steps is None:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        logger.debug(
+            f"Overriding max_train_steps to {args.max_train_steps} = {args.num_train_epochs} * {num_update_steps_per_epoch}"
+        )
         overrode_max_train_steps = True
 
     if args.lr_scheduler != "polynomial":
@@ -400,7 +441,7 @@ def main(args):
             power=args.lr_power,
             last_epoch=-1,
         )
-
+    logger.info("Preparing accelerator..")
     # Prepare everything with our `accelerator`.
     if args.train_text_encoder:
         (
@@ -424,13 +465,15 @@ def main(args):
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-
+    logging.info("Moving VAE to GPU..")
     # Move vae and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
     if not args.train_text_encoder:
+        logging.info("Moving text encoder to GPU..")
         text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    logging.info("Recalculating max step count.")
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
     )
@@ -442,6 +485,7 @@ def main(args):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
+        logging.info("Initializing trackers.")
         accelerator.init_trackers(args.tracker_run_name, config=vars(args))
 
     # Train!
@@ -484,6 +528,9 @@ def main(args):
         else:
             logging.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            custom_balanced_sampler.load_states(
+                state_path=os.path.join(args.output_dir, path, "training_state.json"),
+            )
             global_step = int(path.split("-")[1])
 
             resume_global_step = global_step * args.gradient_accumulation_steps
@@ -687,7 +734,9 @@ def main(args):
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state()
+                        custom_balanced_sampler.save_state(
+                            state_path=os.path.join(save_path, "training_state.json"),
+                        )
                         logger.info(f"Saved state to {save_path}")
 
                     if (
@@ -710,8 +759,11 @@ def main(args):
             accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
-                logging.warn(f"Reached stopping point. Beginning to unwind.")
+                logging.warn(f"Ending iteration, training has completed.")
                 break
+        if global_step >= args.max_train_steps:
+            logging.warn(f"Reached stopping point. Beginning to unwind.")
+            break
 
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
@@ -722,7 +774,9 @@ def main(args):
             text_encoder=accelerator.unwrap_model(text_encoder),
             revision=args.revision,
         )
-        pipeline.save_pretrained(args.output_dir)
+        pipeline.save_pretrained(
+            os.path.join(args.output_dir, args.hub_model_id or "pipeline")
+        )
 
         if args.push_to_hub:
             repo_id = create_repo(

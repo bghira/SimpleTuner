@@ -26,7 +26,7 @@ pil_logger.setLevel("WARNING")
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel("WARNING")
 
-multiprocessing.set_start_method("fork")
+# multiprocessing.set_start_method("fork")
 
 
 class MultiAspectDataset(Dataset):
@@ -55,7 +55,7 @@ class MultiAspectDataset(Dataset):
         use_precomputed_token_ids: bool = True,
         debug_dataset_loader: bool = False,
         caption_strategy: str = "filename",
-        return_tensor: bool = False
+        return_tensor: bool = False,
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.bucket_manager = bucket_manager

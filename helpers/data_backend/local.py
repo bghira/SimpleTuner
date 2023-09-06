@@ -7,6 +7,7 @@ from typing import Any
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
+
 class LocalDataBackend(BaseDataBackend):
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
@@ -20,20 +21,23 @@ class LocalDataBackend(BaseDataBackend):
     def write(self, filepath: str, data: Any) -> None:
         """Write the provided data to the specified filepath."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, 'wb') as file:
+        with open(filepath, "wb") as file:
             # Check if data is a Tensor, and if so, save it appropriately
             if isinstance(data, torch.Tensor):
-                logger.debug(f'Writing a torch file to disk.')
+                logger.debug(f"Writing a torch file to disk.")
                 return self.torch_save(data, file)
             elif isinstance(data, str):
-                logger.debug(f'Writing a string to disk: {data}')
+                logger.debug(f"Writing a string to disk: {data}")
                 data = data.encode("utf-8")
             else:
-                logger.debug(f'Received an unknown data type to write to disk. Doing our best: {type(data)}')
+                logger.debug(
+                    f"Received an unknown data type to write to disk. Doing our best: {type(data)}"
+                )
             file.write(data)
         # Check if file exists:
         if not self.exists(filepath):
             raise Exception(f"Failed to write to {filepath}")
+        logger.debug(f"Completed write()")
 
     def delete(self, filepath):
         """Delete the specified file."""
@@ -90,6 +94,7 @@ class LocalDataBackend(BaseDataBackend):
 
     def read_image(self, filepath):
         from PIL import Image
+
         # Remove embedded null byte:
         filepath = filepath.replace("\x00", "")
         try:
@@ -111,33 +116,36 @@ class LocalDataBackend(BaseDataBackend):
     def torch_save(self, data, original_location):
         if type(original_location) == str:
             # A file path was given. Open it.
-            logger.debug(f'Using file path: {original_location}')
+            logger.debug(f"Using file path: {original_location}")
             location = self.open_file(original_location, "wb")
         else:
             # A file object was given. Use it.
-            logger.debug(f'Using file object: {original_location}')
+            logger.debug(f"Using file object: {original_location}")
             location = original_location
-        logger.debug(f'Torch save was given data: {data}')
+        logger.debug(f"Torch save was given data: {data}")
         torch.save(data, location)
         # Check whether the file created:
         if type(original_location) == str:
             # A file path was given. Check it.
             if not self.exists(original_location):
                 raise Exception(f"Failed to write to {original_location}")
-        elif hasattr(original_location, 'name'):
+        elif hasattr(original_location, "name"):
             # A file object was given. Check it.
             if not self.exists(original_location.name):
                 raise Exception(f"Failed to write to {original_location.name}")
         else:
             import traceback
-            raise Exception(f"Unknown error writing to {original_location}, traceback: {traceback.format_exc()}")
+
+            raise Exception(
+                f"Unknown error writing to {original_location}, traceback: {traceback.format_exc()}"
+            )
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
         """Write a batch of data to the specified filepaths."""
-        logger.debug(f'Reached write_batch in LocalDataBackend.')
+        logger.debug(f"Reached write_batch in LocalDataBackend.")
         for filepath, data in zip(filepaths, data_list):
             self.write(filepath, data)
             # Check if file was written:
             if not self.exists(filepath):
                 raise Exception(f"Failed to write to {filepath}")
-            logger.debug(f'Succesfully validated file creation: {filepath}')
+            logger.debug(f"Succesfully validated file creation: {filepath}")

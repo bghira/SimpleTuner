@@ -18,7 +18,7 @@ import math
 import os
 
 # Quiet down, you.
-os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
+os.environ["ACCELERATE_LOG_LEVEL"] = "DEBUG"
 import shutil
 import random
 from pathlib import Path
@@ -139,6 +139,18 @@ def import_model_class_from_model_name_or_path(
         return CLIPTextModelWithProjection
     else:
         raise ValueError(f"{model_class} is not supported.")
+
+
+def compute_null_conditioning():
+    null_conditioning_list = []
+    for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
+        null_conditioning_list.append(
+            a_text_encoder(
+                tokenize_captions([""], tokenizer=a_tokenizer).to(accelerator.device),
+                output_hidden_states=True,
+            ).hidden_states[-2]
+        )
+    return torch.concat(null_conditioning_list, dim=-1)
 
 
 def main():
@@ -359,15 +371,36 @@ def main():
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
+    logger.info(f"Loading a bucket manager")
+    logger.debug(
+        f"(Rank: {torch.distributed.get_rank()}) Beginning bucket manager stuff."
+    )
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
+        accelerator=accelerator,
+        batch_size=args.train_batch_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        apply_dataset_padding=args.apply_dataset_padding or False,
+    )
+    logger.debug(
+        f"(Rank: {torch.distributed.get_rank()}) Beginning aspect bucket stuff."
     )
     with accelerator.main_process_first():
+        logger.debug(
+            f"(Rank: {torch.distributed.get_rank()}) Computing aspect bucket cache index.",
+        )
         bucket_manager.compute_aspect_ratio_bucket_indices()
+        logger.debug(
+            f"(Rank: {torch.distributed.get_rank()}) Refreshing buckets.",
+        )
+        bucket_manager.refresh_buckets()
+        logger.debug(
+            f"(Rank: {torch.distributed.get_rank()}) Control is returned to the main training script.",
+        )
+    logger.debug("Refreshed buckets and computed aspect ratios.")
 
     if len(bucket_manager) == 0:
         raise Exception(
@@ -525,7 +558,7 @@ def main():
                 accelerator=accelerator,
                 data_backend=data_backend,
                 resolution=args.resolution,
-                delete_problematic_images=args.delete_problematic_images
+                delete_problematic_images=args.delete_problematic_images,
             )
 
         pixel_values = []
@@ -596,7 +629,7 @@ def main():
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
-        resolution=args.resolution
+        resolution=args.resolution,
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -622,6 +655,8 @@ def main():
         logger.warning(
             f"Not using caption dropout will potentially lead to overfitting on captions."
         )
+
+    # null_conditioning = compute_null_conditioning()
 
     logger.info(f"Pre-computing text embeds / updating cache.")
     with accelerator.main_process_first():
@@ -706,7 +741,9 @@ def main():
             f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
         )
         overrode_max_train_steps = True
-    logger.info(f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps")
+    logger.info(
+        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+    )
     if args.lr_scheduler == "cosine_annealing_warm_restarts":
         """
         optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
@@ -717,6 +754,7 @@ def main():
 
         """
         from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
             T_0=args.lr_warmup_steps * args.gradient_accumulation_steps,
@@ -777,10 +815,17 @@ def main():
         logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
     logger.info(f"Loaded VAE into VRAM.")
-    if accelerator.is_main_process:
-        logger.info(f"Pre-computing VAE latent space.")
-        vaecache = VAECache(vae=vae, accelerator=accelerator, data_backend=data_backend, delete_problematic_images=args.delete_problematic_images, resolution=args.resolution)
-        vaecache.process_directory(args.instance_data_dir)
+    logger.info(f"Pre-computing VAE latent space.")
+    vaecache = VAECache(
+        vae=vae,
+        accelerator=accelerator,
+        data_backend=data_backend,
+        delete_problematic_images=args.delete_problematic_images,
+        resolution=args.resolution,
+    )
+    vaecache.split_cache_between_processes()
+    vaecache.process_directory(args.instance_data_dir)
+    accelerator.wait_for_everyone()
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -870,9 +915,7 @@ def main():
                 f" gradient_accumulation_steps {args.gradient_accumulation_steps}"
             )
             first_epoch = global_step // num_update_steps_per_epoch
-            logger.info(
-                f"Our first training epoch for this run will be {first_epoch}"
-            )
+            logger.info(f"Our first training epoch for this run will be {first_epoch}")
             resume_step = resume_global_step % (
                 num_update_steps_per_epoch * args.gradient_accumulation_steps
             )
@@ -893,9 +936,11 @@ def main():
     current_epoch = 0
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
-            logger.info('Reached the end of our training run.')
+            logger.info("Reached the end of our training run.")
             break
-        logger.debug(f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}")
+        logger.debug(
+            f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
+        )
         current_epoch = epoch
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
             scheduler_kwargs["epoch"] = epoch
@@ -985,8 +1030,11 @@ def main():
                             batch["add_text_embeds_all"],
                         ) = embed_cache.compute_embeddings_for_prompts([""])
 
-                # Conditioning dropout not yet supported.
+                # Conditioning dropout to support classifier-free guidance during inference. For more details
+                # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
+                if args.conditioning_dropout_probability is not None:
+                    pass
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )

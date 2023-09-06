@@ -1,7 +1,9 @@
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+import accelerate, torch
 from pathlib import Path
-import json, logging, os, multiprocessing
+import json, logging, os
+from multiprocessing import Manager
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
@@ -13,13 +15,25 @@ logger.setLevel(target_level)
 
 class BucketManager:
     def __init__(
-        self, instance_data_root: str, cache_file: str, data_backend: BaseDataBackend
+        self,
+        instance_data_root: str,
+        cache_file: str,
+        data_backend: BaseDataBackend,
+        accelerator: accelerate.Accelerator,
+        batch_size: int,
+        apply_dataset_padding: bool = False,
     ):
+        self.accelerator = accelerator
         self.data_backend = data_backend
+        self.apply_dataset_padding = apply_dataset_padding
+        self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
         self.aspect_ratio_bucket_indices = {}
         self.instance_images_path = set()
+        # Initialize a multiprocessing.Manager dict for seen_images
+        manager = Manager()
+        self.seen_images = manager.dict()
         self._load_cache()
 
     def __len__(self):
@@ -64,7 +78,9 @@ class BucketManager:
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
-                logger.warning(f'Error loading aspect bucket cache, creating new one: {e}')
+                logger.warning(
+                    f"Error loading aspect bucket cache, creating new one: {e}"
+                )
                 cache_data = {}
             self.aspect_ratio_bucket_indices = cache_data.get(
                 "aspect_ratio_bucket_indices", {}
@@ -75,6 +91,8 @@ class BucketManager:
         """
         Save cache data to file.
         """
+        # Prune any buckets that have fewer samples than batch_size
+        self._enforce_min_bucket_size()
         # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
@@ -177,6 +195,33 @@ class BucketManager:
         self._save_cache()
         logger.info("Completed aspect bucket update.")
 
+    def split_buckets_between_processes(self):
+        """
+        Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
+        """
+        new_aspect_ratio_bucket_indices = {}
+        for bucket, images in self.aspect_ratio_bucket_indices.items():
+            with self.accelerator.split_between_processes(
+                images, apply_padding=self.apply_dataset_padding
+            ) as images_split:
+                # Now images_split contains only the part of the images list that this process should handle
+                new_aspect_ratio_bucket_indices[bucket] = images_split
+
+        # Replace the original aspect_ratio_bucket_indices with the new one containing only this process's share
+        self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
+
+    def mark_as_seen(self, image_path):
+        """Mark an image as seen."""
+        self.seen_images[image_path] = True  # This will be shared across all processes
+
+    def is_seen(self, image_path):
+        """Check if an image is seen."""
+        return self.seen_images.get(image_path, False)
+
+    def reset_seen_images(self):
+        """Reset the seen images."""
+        self.seen_images.clear()
+
     def remove_image(self, image_path, bucket):
         """
         Used by other classes to reliably remove images from a bucket.
@@ -190,6 +235,63 @@ class BucketManager:
         """
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+
+    def update_buckets_with_existing_files(self, existing_files: set):
+        """
+        Update bucket indices to remove entries that no longer exist.
+
+        Args:
+            existing_files (set): A set of existing files.
+        """
+        for bucket, images in self.aspect_ratio_bucket_indices.items():
+            self.aspect_ratio_bucket_indices[bucket] = [
+                img for img in images if img in existing_files
+            ]
+        # Save the updated cache
+        self._save_cache()
+
+    def refresh_buckets(self):
+        """
+        Discover new files and remove images that no longer exist.
+        """
+        print(
+            f"Rank {torch.distributed.get_rank()} now Computing new file aspect bucket indices"
+        )
+        # Discover new files and update bucket indices
+        self.compute_aspect_ratio_bucket_indices()
+
+        # Get the list of existing files
+        print(f"Rank {torch.distributed.get_rank()} now Discovering all image files")
+        all_image_files_data = self.data_backend.list_files(
+            instance_data_root=self.instance_data_root,
+            str_pattern="*.[jJpP][pPnN][gG]",
+        )
+
+        print(f"Rank {torch.distributed.get_rank()} now Discovering existing files")
+        existing_files = {
+            file for _, _, files in all_image_files_data for file in files
+        }
+
+        # Update bucket indices to remove entries that no longer exist
+        print(
+            f"Rank {torch.distributed.get_rank()} now Finally, we can update the bucket index"
+        )
+        self.update_buckets_with_existing_files(existing_files)
+        print(
+            f"Rank {torch.distributed.get_rank()} now Done updating bucket index, continuing."
+        )
+        return
+
+    def _enforce_min_bucket_size(self):
+        """
+        Remove buckets that have fewer samples than batch_size.
+        """
+        for bucket, images in list(
+            self.aspect_ratio_bucket_indices.items()
+        ):  # Make a list of items to iterate
+            if len(images) < self.batch_size:
+                del self.aspect_ratio_bucket_indices[bucket]
+                logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
         """

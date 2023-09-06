@@ -69,7 +69,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "exhausted_buckets": self.exhausted_buckets,
             "batch_size": self.batch_size,
             "current_bucket": self.current_bucket,
-            "seen_images": self.seen_images,
+            "seen_images": self.bucket_manager.seen_images,
             "current_epoch": self.current_epoch,
         }
         self.state_manager.save_state(state, state_path)
@@ -77,7 +77,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def load_states(self, state_path: str):
         try:
             self.state_manager = BucketStateManager(state_path, self.seen_images_path)
-            self.seen_images = self.state_manager.load_seen_images()
             self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state()
         except Exception as e:
@@ -88,8 +87,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_epoch = 1
         if "current_epoch" in previous_state:
             self.current_epoch = previous_state["current_epoch"]
-        if "seen_images" in previous_state:
-            self.seen_images = previous_state["seen_images"]
         self.log_state()
 
     def load_buckets(self):
@@ -116,7 +113,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return self.buckets.index(str(bucket_name))
 
     def _reset_buckets(self):
-        if len(self.seen_images) == 0 and len(self._get_unseen_images()) == 0:
+        if (
+            len(self.bucket_manager.seen_images) == 0
+            and len(self._get_unseen_images()) == 0
+        ):
             raise Exception("No images found in the dataset.")
         logger.info(
             f"Resetting seen image list and refreshing buckets. State before reset:"
@@ -126,7 +126,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_epoch += 1
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
-        self.seen_images = {}
+        self.bucket_manager.reset_seen_images()
         self.change_bucket()
 
     def _get_unseen_images(self, bucket=None):
@@ -138,13 +138,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return [
                 image
                 for image in self.bucket_manager.aspect_ratio_bucket_indices[bucket]
-                if image not in self.seen_images
+                if not self.bucket_manager.is_seen(image)
             ]
         else:
             unseen_images = []
             for b, images in self.bucket_manager.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
-                    [image for image in images if image not in self.seen_images]
+                    [
+                        image
+                        for image in images
+                        if not self.bucket_manager.is_seen(image)
+                    ]
                 )
             return unseen_images
 
@@ -184,6 +188,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
 
         if total_unseen_images < self.batch_size:
+            logger.debug(
+                f"_reset_if_not_enough_unseen_images: total_unseen_images={total_unseen_images}, batch_size={self.batch_size} triggered reset"
+            )
             self._reset_buckets()
             return True
         return False
@@ -197,6 +204,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
         ]
         if not available_buckets:
+            logger.debug(f"_get_next_bucket: all buckets exhausted, resetting")
             self._reset_buckets()
             available_buckets = self.buckets
 
@@ -218,7 +226,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         logger.debug(
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
         )
-        self.log_state()
 
     def log_state(self):
         logger.debug(
@@ -229,7 +236,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         logger.info(
             "Training Statistics:\n"
-            f"    -> Seen images: {len(self.seen_images)}\n"
+            f"    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
             f"    -> Unseen images: {len(self._get_unseen_images())}\n"
             f"    -> Current Bucket: {self.current_bucket}\n"
             f"    -> Buckets: {self.buckets}\n"
@@ -286,14 +293,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if processed_image_path:
                 to_yield.append(processed_image_path)
                 if StateTracker.status_training():
-                    self.seen_images[processed_image_path] = bucket
+                    self.bucket_manager.mark_as_seen(processed_image_path)
         return to_yield
 
     def __iter__(self):
         """
         Iterate over the sampler to yield image paths in batches.
         """
-        batch_accumulator = []  # Initialize an empty list to accumulate images for a batch
+        batch_accumulator = (
+            []
+        )  # Initialize an empty list to accumulate images for a batch
         while True:
             # If not in training mode, yield a random image immediately
             early_yield = self._yield_random_image_if_not_training()
@@ -307,7 +316,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 while len(available_images) >= self.batch_size:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     samples = random.sample(available_images, k=self.batch_size)
-                    to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
+                    to_yield = self._validate_and_yield_images_from_samples(
+                        samples, bucket
+                    )
 
                     batch_accumulator.extend(to_yield)
                     # If the batch is full, yield it
@@ -320,17 +331,23 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         # Break out of the while loop:
                         break
 
-                    logger.debug(f'Updating available image list after yielding batch')
+                    logger.debug(f"Updating available image list after yielding batch")
                     # Update available images after yielding
                     available_images = self._get_unseen_images(bucket)
 
                 # Handle exhausted bucket
-                if len(available_images) < self.batch_size and idx == len(self.buckets) - 1:
-                    self.log_state()
+                if (
+                    len(available_images) < self.batch_size
+                    and idx == len(self.buckets) - 1
+                ):
                     self.move_to_exhausted()
                     self.change_bucket()
 
             if all_buckets_exhausted:
+                # If all buckets are exhausted, reset the seen images and refresh buckets
+                logger.warning(
+                    f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
+                )
                 self._reset_buckets()
 
     def __len__(self):

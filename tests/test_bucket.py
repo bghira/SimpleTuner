@@ -8,6 +8,7 @@ class TestBucketManager(unittest.TestCase):
 
     def setUp(self):
         self.data_backend = MockDataBackend()
+        self.accelerator = Mock()
         self.data_backend.exists = Mock(return_value=True)
         self.data_backend.write = Mock(return_value=True)
         self.data_backend.list_files = Mock(
@@ -23,7 +24,9 @@ class TestBucketManager(unittest.TestCase):
                 self.bucket_manager = BucketManager(
                     instance_data_root=self.instance_data_root,
                     cache_file=self.cache_file,
-                    data_backend=self.data_backend
+                    batch_size=1,
+                    data_backend=self.data_backend,
+                    accelerator=self.accelerator
                 )
 
     def test_len(self):

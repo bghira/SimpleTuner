@@ -257,6 +257,16 @@ def valid_exif_data(image_path):
         pass
     return False
 
+def list_all_s3_objects(s3_client, bucket_name):
+    paginator = s3_client.get_paginator("list_objects_v2")
+    existing_files = set()
+
+    for page in paginator.paginate(Bucket=bucket_name):
+        if "Contents" in page:
+            for item in page["Contents"]:
+                existing_files.add(item["Key"])
+
+    return existing_files
 
 def upload_to_s3(filename, args, s3_client):
     """Upload the specified file to the S3 bucket."""
@@ -321,6 +331,10 @@ def main():
     # Initialize S3 client
     s3_client = initialize_s3_client(args)
 
+    # List existing files in the S3 bucket
+    existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
+    logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
+
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
@@ -356,7 +370,11 @@ def main():
     all_files = parquet_files + csv_files
     logger.info(f"Discovered catalogues: {all_files}")
 
-    for file in tqdm(all_files, desc="Processing Parquet files"):
+    total_files = len(all_files)
+    for i, file in enumerate(tqdm(all_files, desc=f"Processing {total_files} Parquet files")):
+        if content_to_filename(file.name) in existing_files:
+            logger.info(f"Skipping already processed file: {file}")
+            continue
         logger.info(f"Loading file: {file}")
         if file.suffix == ".parquet":
             df = pd.read_parquet(file)
