@@ -1,9 +1,9 @@
-import torch
+import accelerate, torch
 
 
-def rank_info():
+def rank_info(acc: accelerate.accelerator.Accelerator):
     try:
-        if not torch.is_distributed():
+        if not acc.use_distributed_training:
             return None
         return f"(Rank: {torch.distributed.get_rank()}) "
     except:

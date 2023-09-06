@@ -373,7 +373,7 @@ def main():
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     logger.info(f"Loading a bucket manager")
-    logger.debug(f"{rank_info()}Beginning bucket manager stuff.")
+    logger.debug(f"{rank_info(accelerator)}Beginning bucket manager stuff.")
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -384,18 +384,18 @@ def main():
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
-    logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
+    logger.debug(f"{rank_info(accelerator)}Beginning aspect bucket stuff.")
     with accelerator.main_process_first():
         logger.debug(
-            f"{rank_info()}Computing aspect bucket cache index.",
+            f"{rank_info(accelerator)}Computing aspect bucket cache index.",
         )
         bucket_manager.compute_aspect_ratio_bucket_indices()
         logger.debug(
-            f"{rank_info()}Refreshing buckets.",
+            f"{rank_info(accelerator)}Refreshing buckets.",
         )
         bucket_manager.refresh_buckets()
         logger.debug(
-            f"{rank_info()}Control is returned to the main training script.",
+            f"{rank_info(accelerator)}Control is returned to the main training script.",
         )
     logger.debug("Refreshed buckets and computed aspect ratios.")
 
