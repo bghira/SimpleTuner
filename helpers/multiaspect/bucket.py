@@ -254,30 +254,34 @@ class BucketManager:
         """
         Discover new files and remove images that no longer exist.
         """
-        print(
+        logger.debug(
             f"Rank {torch.distributed.get_rank()} now Computing new file aspect bucket indices"
         )
         # Discover new files and update bucket indices
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        print(f"Rank {torch.distributed.get_rank()} now Discovering all image files")
+        logger.debug(
+            f"Rank {torch.distributed.get_rank()} now Discovering all image files"
+        )
         all_image_files_data = self.data_backend.list_files(
             instance_data_root=self.instance_data_root,
             str_pattern="*.[jJpP][pPnN][gG]",
         )
 
-        print(f"Rank {torch.distributed.get_rank()} now Discovering existing files")
+        logger.debug(
+            f"Rank {torch.distributed.get_rank()} now Discovering existing files"
+        )
         existing_files = {
             file for _, _, files in all_image_files_data for file in files
         }
 
         # Update bucket indices to remove entries that no longer exist
-        print(
+        logger.debug(
             f"Rank {torch.distributed.get_rank()} now Finally, we can update the bucket index"
         )
         self.update_buckets_with_existing_files(existing_files)
-        print(
+        logger.debug(
             f"Rank {torch.distributed.get_rank()} now Done updating bucket index, continuing."
         )
         return
