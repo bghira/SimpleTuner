@@ -1,4 +1,4 @@
-import argparse, os, warnings
+import argparse, os, random, time
 
 
 def parse_args(input_args=None):
@@ -231,6 +231,15 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
+    )
+    parser.add_argument(
+        "--seed_for_each_device",
+        action="store_true",
+        default=False,
+        help=(
+            "If provided, a unique seed will be used for each GPU.",
+            " This is done deterministically, so that each GPU will receive the same seed across invocations.",
+        ),
     )
     parser.add_argument(
         "--resolution",
@@ -755,6 +764,14 @@ def parse_args(input_args=None):
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
+
+    if args.seed is not None:
+        if args.seed == 0:
+            # the current time should be used if value is zero, providing a rolling seed.
+            args.seed = int(time.time())
+        elif args.seed == -1:
+            # more random seed if value is -1, it will be very different on each startup.
+            args.seed = int(random.randint(0, 2**30))
 
     # default to using the same revision for the non-ema model if not specified
     if args.non_ema_revision is None:

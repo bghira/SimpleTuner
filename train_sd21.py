@@ -14,12 +14,7 @@
 # See the License for the specific language governing permissions and
 from helpers import log_format
 
-import hashlib
-import itertools
-import logging
-import math
-import time
-import os
+import hashlib, random, itertools, logging, math, time, os
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
@@ -150,7 +145,7 @@ def main(args):
 
     # If passed along, set the training seed now.
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed, args.seed_for_each_device)
 
     # Load the tokenizer
     global tokenizer
