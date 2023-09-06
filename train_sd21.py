@@ -773,7 +773,7 @@ def main(args):
             revision=args.revision,
         )
         pipeline.save_pretrained(
-            os.path.join(args.output_dir, args.hub_repo_id or "pipeline")
+            os.path.join(args.output_dir, args.hub_model_id or "pipeline")
         )
 
         if args.push_to_hub:
