@@ -852,13 +852,17 @@ def main():
         del public_args.aws_bucket_name
         del public_args.aws_region_name
         del public_args.aws_endpoint_url
+        project_name = args.tracker_project_name or "simpletuner-training"
+        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         accelerator.init_trackers(
-            project_name=args.tracker_run_name,
+            project_name,
             config=vars(public_args),
             init_kwargs={
-                "name": args.tracker_project_name,
-                "id": args.tracker_project_name,
-                "resume": "allow",
+                "wandb": {
+                    "name": tracker_run_name,
+                    "id": f"{project_name},{tracker_run_name}",
+                    "resume": "allow",
+                }
             },
         )
 
