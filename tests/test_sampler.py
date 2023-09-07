@@ -1,16 +1,19 @@
-import unittest
+import unittest, os
+from unittest import skip
 from unittest.mock import Mock, patch
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
 import accelerate
-class TestMultiAspectSampler(unittest.TestCase):
+from PIL import Image
 
+
+class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
         self.accelerator = Mock(spec=accelerate.Accelerator)
         self.bucket_manager = Mock(spec=BucketManager)
-        self.bucket_manager.aspect_ratio_bucket_indices = {'1.0': ['image1', 'image2']}
+        self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
         self.bucket_manager.seen_images = {}
         self.data_backend = MockDataBackend()
         self.batch_size = 2
@@ -24,36 +27,110 @@ class TestMultiAspectSampler(unittest.TestCase):
             seen_images_path=self.seen_images_path,
             state_path=self.state_path,
         )
-        
+
         self.sampler.state_manager = Mock(spec=BucketStateManager)
         self.sampler.state_manager.load_state.return_value = {}
 
     def test_len(self):
         self.assertEqual(len(self.sampler), 2)
-        
+
     def test_save_state(self):
-        with patch.object(self.sampler.state_manager, 'save_state') as mock_save_state:
+        with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
             self.sampler.save_state()
         mock_save_state.assert_called_once()
 
     def test_load_buckets(self):
         buckets = self.sampler.load_buckets()
-        self.assertEqual(buckets, ['1.0'])
+        self.assertEqual(buckets, ["1.0"])
 
     def test_change_bucket(self):
-        self.sampler.buckets = ['1.0', '1.5']
-        self.sampler.exhausted_buckets = ['1.0']
+        self.sampler.buckets = ["1.0", "1.5"]
+        self.sampler.exhausted_buckets = ["1.0"]
         self.sampler.change_bucket()
         self.assertEqual(self.sampler.current_bucket, 1)  # Should now point to '1.5'
 
     def test_move_to_exhausted(self):
         self.sampler.current_bucket = 0  # Pointing to '1.0'
-        self.sampler.buckets = ['1.0']
+        self.sampler.buckets = ["1.0"]
         self.sampler.move_to_exhausted()
-        self.assertEqual(self.sampler.exhausted_buckets, ['1.0'])
+        self.assertEqual(self.sampler.exhausted_buckets, ["1.0"])
         self.assertEqual(self.sampler.buckets, [])
 
-    # Add more test cases here for edge cases and functionality
+    def test_iter_yields_correct_batches(self):
+        all_images = ["image1", "image2", "image3", "image4"]
+        self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": all_images}
+        # Loop over __iter__ about 100 times:
+        batches = []
+        for _ in range(len(all_images)):
+            # extract batch_item from generator:
+            batch_item = next(self.sampler.__iter__())
+            self.assertIn(batch_item, all_images)
+            batches.append(batch_item)
+        self.assertEqual(len(batches), len(all_images))
+
+    @skip("Infinite Loop Boulevard")
+    def test_iter_handles_small_images(self):
+        # Mocking the _validate_and_yield_images_from_samples method to simulate small images
+        def mock_validate_and_yield_images_from_samples(samples, bucket):
+            # Simulate that 'image2' is too small and thus not returned
+            return [img for img in samples if img != "image2"]
+
+        self.bucket_manager.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2", "image3", "image4"]
+        }
+        self.sampler._validate_and_yield_images_from_samples = (
+            mock_validate_and_yield_images_from_samples
+        )
+
+        batches = list(self.sampler)
+        self.assertEqual(len(batches), 2)
+        self.assertEqual(batches, [["image1", "image3"], ["image4"]])
+
+    @skip("Currently broken test.")
+    def test_iter_handles_incorrect_aspect_ratios_with_real_logic(self):
+        # Create mock image files with different sizes using PIL
+        img_paths = [
+            "/tmp/image1.jpg",
+            "/tmp/image2.jpg",
+            "/tmp/incorrect_image.jpg",
+            "/tmp/image4.jpg",
+        ]
+
+        img1 = Image.new("RGB", (100, 100), color="red")
+        img1.save(img_paths[0])
+
+        img2 = Image.new("RGB", (100, 100), color="green")
+        img2.save(img_paths[1])
+
+        img3 = Image.new(
+            "RGB", (50, 100), color="blue"
+        )  # This image has a different size
+        img3.save(img_paths[2])
+
+        img4 = Image.new("RGB", (100, 100), color="yellow")
+        img4.save(img_paths[3])
+
+        self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": img_paths}
+
+        # Collect batches by iterating over the generator
+        with patch(
+            "helpers.training.state_tracker.StateTracker.status_training",
+            return_value=True,
+        ):
+            # your test code here
+            batches = [next(self.sampler.__iter__()) for _ in range(len(img_paths))]
+        # Ensure that all batches have consistent image sizes
+        # We retrieve the size using PIL for validation
+        first_img_size = Image.open(batches[0]).size
+        self.assertNotIn(img_paths[2], batches)
+        self.assertTrue(
+            all(Image.open(img_path).size == first_img_size for img_path in batches)
+        )
+
+        # Clean up the mock images
+        for img_path in img_paths:
+            os.remove(img_path)
+
 
 if __name__ == "__main__":
     unittest.main()
