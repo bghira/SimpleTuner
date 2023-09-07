@@ -481,9 +481,32 @@ def main(args):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        logging.info("Initializing trackers.")
-        accelerator.init_trackers(args.tracker_run_name, config=vars(args))
+        # Copy args into public_args:
+        import copy
 
+        public_args = copy.deepcopy(args)
+        # Remove the args that we don't want to track:
+        del public_args.aws_access_key_id
+        del public_args.aws_secret_access_key
+        del public_args.aws_bucket_name
+        del public_args.aws_region_name
+        del public_args.aws_endpoint_url
+        project_name = args.tracker_project_name or "simpletuner-training"
+        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
+        # Add allow_val_change to public_args:
+        public_args_dict = vars(public_args)
+        accelerator.init_trackers(
+            project_name,
+            config=vars(public_args),
+            init_kwargs={
+                "wandb": {
+                    "name": tracker_run_name,
+                    "id": f"{project_name},{tracker_run_name}",
+                    "resume": "allow",
+                    "allow_val_change": True,
+                }
+            },
+        )
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -558,9 +581,7 @@ def main(args):
                 and epoch == first_epoch
                 and step < resume_step
             ):
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
-                if step + 1 == resume_step:
+                if step + 2 == resume_step:
                     # We want to trigger the batch to be properly generated when we start.
                     if not StateTracker.status_training():
                         logging.info(

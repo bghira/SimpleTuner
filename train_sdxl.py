@@ -18,7 +18,7 @@ import math
 import os
 
 # Quiet down, you.
-os.environ["ACCELERATE_LOG_LEVEL"] = "DEBUG"
+os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 import shutil
 import random
 from pathlib import Path
@@ -142,7 +142,9 @@ def import_model_class_from_model_name_or_path(
         raise ValueError(f"{model_class} is not supported.")
 
 
-def compute_null_conditioning():
+def compute_null_conditioning(
+    tokenizers, text_encoders, tokenize_captions, accelerator
+):
     null_conditioning_list = []
     for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
         null_conditioning_list.append(
@@ -227,52 +229,6 @@ def main():
         force_upcast=False,
     )
     vae.enable_slicing()
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
-
-    # Create EMA for the unet.
-    ema_unet = None
-    if args.use_ema:
-        logger.info("Using EMA. Creating EMAModel.")
-        ema_unet = EMAModel(
-            unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
-        )
-        logger.info("EMA model creation complete.")
-
-    if args.enable_xformers_memory_efficient_attention:
-        logger.info("Enabling xformers memory-efficient attention.")
-        if is_xformers_available():
-            import xformers
-
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
-                logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError(
-                "xformers is not available. Make sure it is installed correctly"
-            )
-
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        from helpers.sdxl.save_hooks import SDXLSaveHook
-
-        model_hooks = SDXLSaveHook(
-            args=args,
-            ema_unet=ema_unet,
-            accelerator=accelerator,
-        )
-        accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
-        accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
-
-    if args.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
-        if hasattr(args, "train_text_encoder") and args.train_text_encoder:
-            text_encoder_1.gradient_checkpointing_enable()
-            text_encoder_2.gradient_checkpointing_enable()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -293,62 +249,6 @@ def main():
             * args.train_batch_size
             * accelerator.num_processes
         )
-    logger.info(f"Learning rate: {args.learning_rate}")
-    extra_optimizer_args = {}
-    # Initialize the optimizer
-    if args.use_8bit_adam:
-        logger.info("Using 8bit AdamW optimizer.")
-        try:
-            import bitsandbytes as bnb
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-
-        optimizer_cls = bnb.optim.AdamW8bit
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
-    elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
-        logger.info("Using D-Adaptation optimizer.")
-        try:
-            from dadaptation import DAdaptAdam
-        except ImportError:
-            raise ImportError(
-                "Please install the dadaptation library to make use of DaDapt optimizer."
-                "You can do so by running `pip install dadaptation`"
-            )
-
-        optimizer_cls = DAdaptAdam
-        if (
-            hasattr(args, "dadaptation_learning_rate")
-            and args.dadaptation_learning_rate is not None
-        ):
-            logger.debug(
-                f"Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer."
-            )
-            args.learning_rate = args.dadaptation_learning_rate
-            extra_optimizer_args["decouple"] = True
-            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-            extra_optimizer_args["lr"] = args.learning_rate
-
-    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        from transformers import Adafactor
-
-        optimizer_cls = Adafactor
-        extra_optimizer_args["lr"] = args.learning_rate
-        extra_optimizer_args["relative_step"] = False
-    else:
-        logger.info("Using AdamW optimizer.")
-        optimizer_cls = torch.optim.AdamW
-    logger.info(
-        f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
-    )
-    optimizer = optimizer_cls(
-        unet.parameters(),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
-        **extra_optimizer_args,
-    )
 
     # Create a DataBackend, so that we can access our dataset.
     if args.data_backend == "local":
@@ -509,8 +409,6 @@ def main():
         revision=args.revision,
     )
 
-    # We ALWAYS pre-compute the additional condition embeddings needed for SDXL
-    # UNet as the model is already big and it uses two text encoders.
     text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     text_encoder_2.to(accelerator.device, dtype=weight_dtype)
     tokenizers = [tokenizer_1, tokenizer_2]
@@ -704,16 +602,26 @@ def main():
         logger.info(
             f"Moving text encoders back to CPU, to save VRAM. Currently, we cannot completely unload the text encoder."
         )
-    memory_before_unload = torch.cuda.memory_allocated() / 1024**3
-    text_encoder_1.to("cpu")
-    text_encoder_2.to("cpu")
-    memory_after_unload = torch.cuda.memory_allocated() / 1024**3
-    memory_saved = memory_after_unload - memory_before_unload
-    logger.info(
-        f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-        "This number might be massively understated, because of how CUDA memory management works."
-        "The real memories were the friends we trained a model on along the way."
-    )
+    if args.fully_unload_text_encoder:
+        logger.warning(
+            "Fully unloading the text encoder means we do not have functioning validations later (yet)."
+        )
+        import gc
+
+        del text_encoder_1, text_encoder_2
+        gc.collect()
+        torch.cuda.empty_cache()
+    else:
+        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        text_encoder_1.to("cpu")
+        text_encoder_2.to("cpu")
+        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        memory_saved = memory_after_unload - memory_before_unload
+        logger.info(
+            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+            "This number might be massively understated, because of how CUDA memory management works."
+            "The real memories were the friends we trained a model on along the way."
+        )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -741,6 +649,87 @@ def main():
     logger.info(
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
+    unet = UNet2DConditionModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+    )
+    if args.enable_xformers_memory_efficient_attention:
+        logger.info("Enabling xformers memory-efficient attention.")
+        if is_xformers_available():
+            import xformers
+
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.16"):
+                logger.warn(
+                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                )
+            unet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
+    if args.gradient_checkpointing:
+        unet.enable_gradient_checkpointing()
+        if hasattr(args, "train_text_encoder") and args.train_text_encoder:
+            text_encoder_1.gradient_checkpointing_enable()
+            text_encoder_2.gradient_checkpointing_enable()
+
+    logger.info(f"Learning rate: {args.learning_rate}")
+    extra_optimizer_args = {}
+    # Initialize the optimizer
+    if args.use_8bit_adam:
+        logger.info("Using 8bit AdamW optimizer.")
+        try:
+            import bitsandbytes as bnb
+        except ImportError:
+            raise ImportError(
+                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
+            )
+
+        optimizer_cls = bnb.optim.AdamW8bit
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
+    elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
+        logger.info("Using D-Adaptation optimizer.")
+        try:
+            from dadaptation import DAdaptAdam
+        except ImportError:
+            raise ImportError(
+                "Please install the dadaptation library to make use of DaDapt optimizer."
+                "You can do so by running `pip install dadaptation`"
+            )
+
+        optimizer_cls = DAdaptAdam
+        if (
+            hasattr(args, "dadaptation_learning_rate")
+            and args.dadaptation_learning_rate is not None
+        ):
+            logger.debug(
+                f"Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer."
+            )
+            args.learning_rate = args.dadaptation_learning_rate
+            extra_optimizer_args["decouple"] = True
+            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+            extra_optimizer_args["lr"] = args.learning_rate
+
+    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
+        from transformers import Adafactor
+
+        optimizer_cls = Adafactor
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["relative_step"] = False
+    else:
+        logger.info("Using AdamW optimizer.")
+        optimizer_cls = torch.optim.AdamW
+    logger.info(
+        f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
+    )
+    optimizer = optimizer_cls(
+        unet.parameters(),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon,
+        **extra_optimizer_args,
+    )
+
     if args.lr_scheduler == "cosine_annealing_warm_restarts":
         """
         optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
@@ -779,6 +768,28 @@ def main():
         )
 
     accelerator.wait_for_everyone()
+
+    # Create EMA for the unet.
+    ema_unet = None
+    if args.use_ema:
+        logger.info("Using EMA. Creating EMAModel.")
+        ema_unet = EMAModel(
+            unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
+        )
+        logger.info("EMA model creation complete.")
+
+    # `accelerate` 0.16.0 will have better support for customized saving
+    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
+        from helpers.sdxl.save_hooks import SDXLSaveHook
+
+        model_hooks = SDXLSaveHook(
+            args=args,
+            ema_unet=ema_unet,
+            accelerator=accelerator,
+        )
+        accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
+        accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
+
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
@@ -849,6 +860,8 @@ def main():
         del public_args.aws_bucket_name
         del public_args.aws_region_name
         del public_args.aws_endpoint_url
+        # Add allow_val_change to public_args:
+        public_args.allow_val_change = True
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         accelerator.init_trackers(
@@ -859,6 +872,7 @@ def main():
                     "name": tracker_run_name,
                     "id": f"{project_name},{tracker_run_name}",
                     "resume": "allow",
+                    "allow_val_change": True,
                 }
             },
         )
@@ -955,8 +969,6 @@ def main():
                 and epoch == first_epoch
                 and step < resume_step
             ):
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
                 if step + 2 == resume_step:
                     # We want to trigger the batch to be properly generated when we start.
                     if not StateTracker.status_training():
@@ -1271,10 +1283,12 @@ def main():
                     ):
                         validation_images = []
                         pipeline = pipeline.to(accelerator.device)
+                        extra_validation_kwargs = {}
                         with torch.autocast(str(accelerator.device).replace(":0", "")):
-                            validation_generator = torch.Generator(
-                                device=accelerator.device
-                            ).manual_seed(args.seed or 0)
+                            if not args.validation_randomize:
+                                extra_validation_kwargs["generator"] = torch.Generator(
+                                    device=accelerator.device
+                                ).manual_seed(args.validation_seed or args.seed or 0)
                             for validation_prompt in validation_prompts:
                                 # Each validation prompt needs its own embed.
                                 (
@@ -1296,9 +1310,9 @@ def main():
                                         num_inference_steps=30,
                                         guidance_scale=args.validation_guidance,
                                         guidance_rescale=args.validation_guidance_rescale,
-                                        generator=validation_generator,
                                         height=args.validation_resolution,
                                         width=args.validation_resolution,
+                                        **extra_validation_kwargs,
                                     ).images
                                 )
 
