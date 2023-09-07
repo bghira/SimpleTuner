@@ -300,12 +300,6 @@ def parse_args(input_args=None):
         default=4,
         help="Batch size (per device) for the training dataloader.",
     )
-    parser.add_argument(
-        "--sample_batch_size",
-        type=int,
-        default=4,
-        help="Batch size (per device) for sampling images.",
-    )
     parser.add_argument("--num_train_epochs", type=int, default=1)
     parser.add_argument(
         "--max_train_samples",
@@ -616,6 +610,15 @@ def parse_args(input_args=None):
         type=float,
         default=0.0,
         help="CFG rescale value for validation images. Default: 0.0, max 1.0",
+    )
+    parser.add_argument(
+        "--fully_unload_text_encoder",
+        action="store_true",
+        help=(
+            "If set, will fully unload the text_encoder from memory when not in use."
+            " This currently has the side effect of crashing validations, but it is useful"
+            " for initiating VAE caching on GPUs that would otherwise be too small."
+        ),
     )
     parser.add_argument(
         "--freeze_encoder_before",
