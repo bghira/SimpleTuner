@@ -126,7 +126,7 @@ def parse_args(input_args=None):
         "--aws_bucket_name",
         type=str,
         default=None,
-        help=("The AWS bucket name to use."),
+        help="The AWS bucket name to use.",
     )
     parser.add_argument(
         "--aws_endpoint_url",
@@ -150,13 +150,13 @@ def parse_args(input_args=None):
         "--aws_access_key_id",
         type=str,
         default=None,
-        help=("The AWS access key ID."),
+        help="The AWS access key ID.",
     )
     parser.add_argument(
         "--aws_secret_access_key",
         type=str,
         default=None,
-        help=("The AWS secret access key."),
+        help="The AWS secret access key.",
     )
     parser.add_argument(
         "--cache_dir",
@@ -237,8 +237,8 @@ def parse_args(input_args=None):
         action="store_true",
         default=False,
         help=(
-            "If provided, a unique seed will be used for each GPU.",
-            " This is done deterministically, so that each GPU will receive the same seed across invocations.",
+            "If provided, a unique seed will be used for each GPU."
+            " This is done deterministically, so that each GPU will receive the same seed across invocations."
         ),
     )
     parser.add_argument(
@@ -332,7 +332,7 @@ def parse_args(input_args=None):
         "--checkpoints_total_limit",
         type=int,
         default=None,
-        help=("Max number of checkpoints to store."),
+        help="Max number of checkpoints to store.",
     )
     parser.add_argument(
         "--resume_from_checkpoint",
@@ -615,7 +615,7 @@ def parse_args(input_args=None):
         "--validation_randomize",
         action="store_true",
         default=False,
-        help=("If supplied, validations will be random, ignoring any seeds."),
+        help="If supplied, validations will be random, ignoring any seeds.",
     )
     parser.add_argument(
         "--validation_seed",
@@ -639,13 +639,13 @@ def parse_args(input_args=None):
         "--freeze_encoder_before",
         type=int,
         default=12,
-        help=("When using 'before' strategy, we will freeze layers earlier than this."),
+        help="When using 'before' strategy, we will freeze layers earlier than this.",
     )
     parser.add_argument(
         "--freeze_encoder_after",
         type=int,
         default=17,
-        help=("When using 'after' strategy, we will freeze layers later than this."),
+        help="When using 'after' strategy, we will freeze layers later than this.",
     )
     parser.add_argument(
         "--freeze_encoder_strategy",
@@ -679,7 +679,7 @@ def parse_args(input_args=None):
         "--freeze_encoder",
         action="store_true",
         default=True,
-        help=("Whether or not to freeze the text_encoder. The default is true."),
+        help="Whether or not to freeze the text_encoder. The default is true.",
     )
     parser.add_argument(
         "--text_encoder_limit",
@@ -699,7 +699,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--only_instance_prompt",
         action="store_true",
-        help=("Use the instance prompt instead of the caption from filename."),
+        help="Use the instance prompt instead of the caption from filename.",
     )
     parser.add_argument(
         "--caption_dropout_interval",
