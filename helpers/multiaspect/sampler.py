@@ -218,6 +218,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
+        self._clear_batch_accumulator()
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -296,13 +297,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.bucket_manager.mark_as_seen(processed_image_path)
         return to_yield
 
+    def _clear_batch_accumulator(self):
+        self.batch_accumulator = []
+
     def __iter__(self):
         """
         Iterate over the sampler to yield image paths in batches.
         """
-        batch_accumulator = (
-            []
-        )  # Initialize an empty list to accumulate images for a batch
+        self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
         while True:
             # If not in training mode, yield a random image immediately
             early_yield = self._yield_random_image_if_not_training()
@@ -320,14 +322,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         samples, bucket
                     )
 
-                    batch_accumulator.extend(to_yield)
+                    self.batch_accumulator.extend(to_yield)
                     # If the batch is full, yield it
-                    if len(batch_accumulator) >= self.batch_size:
-                        for example in batch_accumulator:
+                    if len(self.batch_accumulator) >= self.batch_size:
+                        for example in self.batch_accumulator:
                             yield example
                         # Change bucket after a full batch is yielded
                         self.change_bucket()
-                        batch_accumulator = []
                         # Break out of the while loop:
                         break
 
