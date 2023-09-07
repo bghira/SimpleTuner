@@ -13,7 +13,15 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
 - **Why**: To specify the base model you'll start training from.
 
+### `--hub_model_id`
+
+- **What**: The name of the Huggingface Hub model and local results directory.
+- **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
 ---
+
+### `--push_to_hub`
+
+- **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes.
 
 ## 📂 Data Storage and Management
 
@@ -34,12 +42,17 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--resolution`
 
 - **What**: Input image resolution.
-- **Why**: All images in the dataset will be resized to this resolution for training.
+- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. If you use 1024px, the images may become very large and use an excessive amount of VRAM. The best mileage tends to be a 768 or 800 pixel base resolution, although 512px resolution training can really pay off with SDXL in particular.
+
+### `--validation_resolution`
+
+- **What**: Output image resolution.
+- **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
 ### `--caption_strategy`
 
-- **What**: Strategy for deriving image captions.
-- **Why**: Determines how captions are generated for training images.
+- **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`
+- **Why**: Determines how captions are generated for training images. `textfile` will use the contents of a `.txt` file with the same filename as the image, and `filename` will apply some cleanup to the filename before using it as the caption.
 
 ---
 
@@ -47,13 +60,18 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--num_train_epochs`
 
-- **What**: Number of training epochs.
-- **Why**: Determines the duration of the training process.
+- **What**: Number of training epochs (the number of times that all images are seen)
+- **Why**: Determines the number of image repeats, which impacts the duration of the training process. More epochs tends to result in overfitting, but might be required to pick up the concepts you wish to train in. A reasonable value might be from 5 to 50.
+
+### `--max_train_steps`
+
+- **What**: Number of training steps to exit training after.
+- **Why**: Useful for shortening the length of training.
 
 ### `--train_batch_size`
 
 - **What**: Batch size for the training data loader.
-- **Why**: Affects the model's performance and training speed.
+- **Why**: Affects the model's memory consumption, convergence quality, and training speed. The higher the batch size, the better the results will be, but a very high batch size might result in overfitting or destabilized training, as well as increasing the duration of the training session unnecessarily. Experimentation is warranted, but in general, you want to try to max out your video memory while not decreasing the training speed.
 
 ---
 
@@ -67,7 +85,12 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--learning_rate`
 
 - **What**: Initial learning rate after potential warmup.
-- **Why**: Affects the speed and quality of model training.
+- **Why**: The learning rate designates how much the weights and biases are nudged on each optimisation step. A minimal value might be as low as `4e-7` and a maximal value would likely be as high as `1e-6`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema` and `--lr_warmup_steps`.
+
+### `--snr_gamma`
+
+- **What**: Utilising min-SNR weighted loss factor.
+- **Why**: Though it does not currently work with zero terminal SNR models, min-SNR on an epsilon / offset noise model can greatly assist with convergence. Value recommended by the original paper is **5** but you can use values as low as **1** or as high as **20**.
 
 ---
 
@@ -76,12 +99,12 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--checkpointing_steps`
 
 - **What**: Interval at which training state checkpoints are saved.
-- **Why**: Useful for resuming training and for inference.
+- **Why**: Useful for resuming training and for inference. Every _n_ iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
 
 ### `--resume_from_checkpoint`
 
 - **What**: Specifies if and from where to resume training.
-- **Why**: Allows you to continue training from a saved state, either manually specified or the latest available.
+- **Why**: Allows you to continue training from a saved state, either manually specified or the latest available. A checkpoint is composed of a `unet` and optionally, an `ema_unet`. The `unet` may be dropped into any Diffusers layout SDXL model, allowing it to be used as a normal model would.
 
 ---
 
