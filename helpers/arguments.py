@@ -396,7 +396,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lr_power",
         type=float,
-        default=1.0,
+        default=0.8,
         help="Power factor of the polynomial scheduler.",
     )
     parser.add_argument(
