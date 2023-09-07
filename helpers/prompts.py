@@ -75,7 +75,7 @@ prompts = {
     "cosmic": "cosmic entity sitting in an impossible position, quantum reality, colours, fractals",
     "coral_reef": "A vibrant coral reef teeming with life, underwater, sharp focus",
     "comparison": "Film still, mid shot, Fashion Photography, a very pretty American girl, colourful straight hairstyle, plain colour skirt, realistic skin texture, photo realistic, raining, night time, Low saturation, masterpiece, global illumination, cinematic realism",
-    "childmid": "a happy child flying a kite on a sunny day",
+    "childmid": "a school portrait of a happy child, sharp focus",
     "child": "a happy child flying a kite on a sunny day",
     "child_dreaming": "A child dreaming of fantastical creatures and far-off worlds.",
     "busy_market": "A bustling market scene in Marrakech, vibrant colors, sharp",
@@ -89,6 +89,16 @@ prompts = {
     "alien": "an ancient alien exploring the Martian surface, photorealistic",
     "alien_marketplace": "A bustling marketplace in an alien world.",
     "alien_invasion": "The first moments of an alien invasion from a civilian's perspective.",
+    "butterfly": "photo of a yellow butterfly perched on a colorful flower, taken with a Canon EOS Rebel T6 camera on aperture f/4",
+    "spiderweb": "a close-up of a delicate spider web with morning dew drops, captured with a Sony Alpha A7 III on f/8",
+    "cityscape_sunset": "a striking black and white image of a cityscape at sunset, shot with a Nikon D7500 on f/8",
+    "dronecam": "an aerial view of a lush green forest, photographed with a DJI Mavic Pro drone at 200 feet",
+    "otters": "an adorable shot of a family of otters playing in the waves, captured with a Nikon D7500 on f/8",
+    "mountains": "a majestic portrait of a snow-capped mountain range, taken with a Canon EOS RP on f/16",
+    "rainbow_park": "a vibrant shot of a rainbow over a colorful park, captured with an iPhone 11 Pro Max on f/16",
+    "stormy_sky_night": "a powerful image of a stormy sky at night, photographed with a Sony Alpha A7 III on f/8",
+    "masked_dancer": "a thought-provoking portrait of a masked dancer, shot with a Canon EOS 5D Mark IV on f/2",
+    "mist_over_lake": "an ethereal image of mist floating over a serene lake, captured with a Fujifilm X-T3 on f/11",
 }
 
 
@@ -134,7 +144,7 @@ class PromptHandler:
         instance_prompt = Path(image_path).stem
         if not instance_prompt and prepend_instance_prompt:
             # If we did not get a specific instance prompt, use the folder name.
-            logger.debug(f'Prepending instance prompt: {instance_prompt}')
+            logger.debug(f"Prepending instance prompt: {instance_prompt}")
             if type(data_backend) == S3DataBackend:
                 raise ValueError(
                     "S3 data backend is not yet compatible with --prepend_instance_prompt"
