@@ -864,15 +864,15 @@ def main():
         public_args.allow_val_change = True
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
-        public_args_dict = vars(public_args)
         accelerator.init_trackers(
             project_name,
-            config={"allow_val_change": True, **public_args_dict},
+            config=vars(public_args),
             init_kwargs={
                 "wandb": {
                     "name": tracker_run_name,
                     "id": f"{project_name},{tracker_run_name}",
                     "resume": "allow",
+                    "allow_val_change": True,
                 }
             },
         )

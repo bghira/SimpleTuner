@@ -497,16 +497,16 @@ def main(args):
         public_args_dict = vars(public_args)
         accelerator.init_trackers(
             project_name,
-            config={"allow_val_change": True, **public_args_dict},
+            config=vars(public_args),
             init_kwargs={
                 "wandb": {
                     "name": tracker_run_name,
                     "id": f"{project_name},{tracker_run_name}",
                     "resume": "allow",
+                    "allow_val_change": True,
                 }
             },
         )
-
     # Train!
     total_batch_size = (
         args.train_batch_size
