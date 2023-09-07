@@ -773,6 +773,19 @@ def main():
     ema_unet = None
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
+        decay = unet.config["decay"]
+        del unet.config["decay"]
+        min_decay = unet.config["min_decay"]
+        del unet.config["min_decay"]
+        update_after_step = unet.config["update_after_step"]
+        del unet.config["update_after_step"]
+        use_ema_warmup = unet.config["use_ema_warmup"]
+        del unet.config["use_ema_warmup"]
+        inv_gamma = unet.config["inv_gamma"]
+        del unet.config["inv_gamma"]
+        power = unet.config["power"]
+        del unet.config["power"]
+
         ema_unet = EMAModel(
             unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
         )
