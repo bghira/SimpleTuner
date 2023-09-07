@@ -969,8 +969,6 @@ def main():
                 and epoch == first_epoch
                 and step < resume_step
             ):
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
                 if step + 2 == resume_step:
                     # We want to trigger the batch to be properly generated when we start.
                     if not StateTracker.status_training():
