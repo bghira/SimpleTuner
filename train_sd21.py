@@ -493,6 +493,8 @@ def main(args):
         del public_args.aws_endpoint_url
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
+        # Add allow_val_change to public_args:
+        public_args.allow_val_change = True
         accelerator.init_trackers(
             project_name,
             config=vars(public_args),
@@ -501,7 +503,6 @@ def main(args):
                     "name": tracker_run_name,
                     "id": f"{project_name},{tracker_run_name}",
                     "resume": "allow",
-                    "allow_val_change": True,
                 }
             },
         )
