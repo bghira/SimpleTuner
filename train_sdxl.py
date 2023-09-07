@@ -864,6 +864,7 @@ def main():
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         accelerator.init_trackers(
             project_name,
+            allow_val_change=True,
             config=vars(public_args),
             init_kwargs={
                 "wandb": {
