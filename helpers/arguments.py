@@ -612,6 +612,21 @@ def parse_args(input_args=None):
         help="CFG rescale value for validation images. Default: 0.0, max 1.0",
     )
     parser.add_argument(
+        "--validation_randomize",
+        action="store_true",
+        default=False,
+        help=("If supplied, validations will be random, ignoring any seeds."),
+    )
+    parser.add_argument(
+        "--validation_seed",
+        type=int,
+        default=None,
+        help=(
+            "If not supplied, the value for --seed will be used."
+            " If neither those nor --validation_randomize are supplied, a seed of zero is used."
+        ),
+    )
+    parser.add_argument(
         "--fully_unload_text_encoder",
         action="store_true",
         help=(

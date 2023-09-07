@@ -1282,10 +1282,12 @@ def main():
                     ):
                         validation_images = []
                         pipeline = pipeline.to(accelerator.device)
+                        extra_validation_kwargs = {}
                         with torch.autocast(str(accelerator.device).replace(":0", "")):
-                            validation_generator = torch.Generator(
-                                device=accelerator.device
-                            ).manual_seed(args.seed or 0)
+                            if not args.validation_randomize:
+                                extra_validation_kwargs["generator"] = torch.Generator(
+                                    device=accelerator.device
+                                ).manual_seed(args.validation_seed or args.seed or 0)
                             for validation_prompt in validation_prompts:
                                 # Each validation prompt needs its own embed.
                                 (
@@ -1307,9 +1309,9 @@ def main():
                                         num_inference_steps=30,
                                         guidance_scale=args.validation_guidance,
                                         guidance_rescale=args.validation_guidance_rescale,
-                                        generator=validation_generator,
                                         height=args.validation_resolution,
                                         width=args.validation_resolution,
+                                        **extra_validation_kwargs,
                                     ).images
                                 )
 
