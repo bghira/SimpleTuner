@@ -314,6 +314,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             all_buckets_exhausted = True  # Initial assumption
             for idx, bucket in enumerate(self.buckets):
+                self._clear_batch_accumulator()
                 available_images = self._get_unseen_images(bucket)
                 while len(available_images) >= self.batch_size:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
@@ -350,6 +351,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
                 self._reset_buckets()
+                # Exit with a False so that the loop knows we are done this epoch.
+                return False
 
     def __len__(self):
         return sum(

@@ -962,13 +962,20 @@ def main():
         unet.train()
         train_loss = 0.0
         training_luminance_values = []
+        current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
+            # If we receive a False from the enumerator, we know we reached the next epoch.
+            if batch is False:
+                logger.info(f'Reached the end of epoch {epoch}')
+                break
             # Skip steps until we reach the resumed step
             if (
                 args.resume_from_checkpoint
                 and epoch == first_epoch
                 and step < resume_step
             ):
+                if step % args.gradient_accumulation_steps == 0:
+                    progress_bar.update(1)
                 if step + 2 == resume_step:
                     # We want to trigger the batch to be properly generated when we start.
                     if not StateTracker.status_training():
@@ -1152,6 +1159,7 @@ def main():
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
+                current_epoch_step += 1
                 # Average out the luminance values of each batch, so that we can store that in this step.
                 avg_training_data_luminance = sum(training_luminance_values) / len(
                     training_luminance_values
@@ -1208,6 +1216,9 @@ def main():
                             state_path=os.path.join(save_path, "training_state.json"),
                         )
                         logger.info(f"Saved state to {save_path}")
+                if current_epoch_step > num_update_steps_per_epoch:
+                    logger.info('Epoch {epoch} is now completed, as we have observed {current_epoch_step}/{num_update_steps_per_epoch} steps per epoch.')
+                    break
 
             logs = {
                 "step_loss": loss.detach().item(),
@@ -1289,7 +1300,9 @@ def main():
                                 extra_validation_kwargs["generator"] = torch.Generator(
                                     device=accelerator.device
                                 ).manual_seed(args.validation_seed or args.seed or 0)
-                            for validation_prompt in validation_prompts:
+                            for validation_prompt in tqdm(
+                                validation_prompts, desc="Generating validation images"
+                            ):
                                 # Each validation prompt needs its own embed.
                                 (
                                     current_validation_prompt_embeds,
@@ -1297,7 +1310,7 @@ def main():
                                 ) = embed_cache.compute_embeddings_for_prompts(
                                     [validation_prompt]
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"Generating validation image: {validation_prompt}"
                                 )
                                 validation_images.extend(
