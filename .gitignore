@@ -44,3 +44,6 @@ Thumbs.db
 files.tbz
 */config/auth.json
 work
+
+sd21-env.sh
+sdxl-env.sh
