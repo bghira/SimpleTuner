@@ -351,6 +351,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
                 self._reset_buckets()
+                # Exit with a False so that the loop knows we are done this epoch.
+                return False
 
     def __len__(self):
         return sum(
