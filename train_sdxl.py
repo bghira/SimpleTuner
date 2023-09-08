@@ -1302,7 +1302,9 @@ def main():
                                 extra_validation_kwargs["generator"] = torch.Generator(
                                     device=accelerator.device
                                 ).manual_seed(args.validation_seed or args.seed or 0)
-                            for validation_prompt in validation_prompts:
+                            for validation_prompt in tqdm(
+                                validation_prompts, desc="Generating validation images"
+                            ):
                                 # Each validation prompt needs its own embed.
                                 (
                                     current_validation_prompt_embeds,
@@ -1310,7 +1312,7 @@ def main():
                                 ) = embed_cache.compute_embeddings_for_prompts(
                                     [validation_prompt]
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"Generating validation image: {validation_prompt}"
                                 )
                                 validation_images.extend(
