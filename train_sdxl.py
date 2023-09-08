@@ -975,7 +975,12 @@ def main():
         unet.train()
         train_loss = 0.0
         training_luminance_values = []
+        current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
+            # If we receive a False from the enumerator, we know we reached the next epoch.
+            if batch is False:
+                logger.info(f'Reached the end of epoch {epoch}')
+                break
             # Skip steps until we reach the resumed step
             if (
                 args.resume_from_checkpoint
@@ -1165,6 +1170,7 @@ def main():
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
+                current_epoch_step += 1
                 # Average out the luminance values of each batch, so that we can store that in this step.
                 avg_training_data_luminance = sum(training_luminance_values) / len(
                     training_luminance_values
@@ -1221,6 +1227,9 @@ def main():
                             state_path=os.path.join(save_path, "training_state.json"),
                         )
                         logger.info(f"Saved state to {save_path}")
+                if current_epoch_step > num_update_steps_per_epoch:
+                    logger.info('Epoch {epoch} is now completed, as we have observed {current_epoch_step}/{num_update_steps_per_epoch} steps per epoch.')
+                    break
 
             logs = {
                 "step_loss": loss.detach().item(),

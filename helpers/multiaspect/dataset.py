@@ -87,6 +87,9 @@ class MultiAspectDataset(Dataset):
         return len(self.bucket_manager)
 
     def __getitem__(self, image_path):
+        if image_path is False:
+            logger.debug(f'Received {image_path} instead of image path, we are assuming this is the end of an epoch, and passing it up the chain.')
+            return image_path
         logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
         example = {"instance_images_path": image_path}
         if not StateTracker.status_training():
