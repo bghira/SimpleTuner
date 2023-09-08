@@ -862,7 +862,7 @@ def main():
         del public_args.aws_endpoint_url
         # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
         public_args_hash = hashlib.md5(
-            json.dumps(public_args, sort_keys=True).encode("utf-8")
+            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
         ).hexdigest()
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
