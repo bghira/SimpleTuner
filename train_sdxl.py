@@ -19,7 +19,7 @@ import os
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-import shutil
+import shutil, hashlib, json
 import random
 from pathlib import Path
 from helpers import log_format
@@ -860,8 +860,10 @@ def main():
         del public_args.aws_bucket_name
         del public_args.aws_region_name
         del public_args.aws_endpoint_url
-        # Add allow_val_change to public_args:
-        public_args.allow_val_change = True
+        # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
+        public_args_hash = hashlib.md5(
+            json.dumps(public_args, sort_keys=True).encode("utf-8")
+        ).hexdigest()
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         accelerator.init_trackers(
@@ -870,7 +872,7 @@ def main():
             init_kwargs={
                 "wandb": {
                     "name": tracker_run_name,
-                    "id": f"{project_name},{tracker_run_name}",
+                    "id": f"{public_args_hash}",
                     "resume": "allow",
                     "allow_val_change": True,
                 }
@@ -966,7 +968,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False:
-                logger.info(f'Reached the end of epoch {epoch}')
+                logger.info(f"Reached the end of epoch {epoch}")
                 break
             # Skip steps until we reach the resumed step
             if (
@@ -1217,7 +1219,9 @@ def main():
                         )
                         logger.info(f"Saved state to {save_path}")
                 if current_epoch_step > num_update_steps_per_epoch:
-                    logger.info('Epoch {epoch} is now completed, as we have observed {current_epoch_step}/{num_update_steps_per_epoch} steps per epoch.')
+                    logger.info(
+                        "Epoch {epoch} is now completed, as we have observed {current_epoch_step}/{num_update_steps_per_epoch} steps per epoch."
+                    )
                     break
 
             logs = {
