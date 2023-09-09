@@ -244,8 +244,8 @@ def content_to_filename(content):
         filename = re.sub(r"\s+", " ", filename)
         # Strip surrounding whitespace
         filename = filename.strip()
-        # Convert to lowercase and trim to 500 characters
-        filename = filename.lower()[:500] + ".png"
+        # Convert to lowercase and trim to 251 characters
+        filename = filename.lower()[:251] + ".png"
         logger.debug(f"-> Resulting filename: {filename}")
         return filename
     except Exception as e:
