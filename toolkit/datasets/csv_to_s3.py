@@ -73,7 +73,7 @@ def fetch_image(info, args):
         else:
             pass
     except Exception as e:
-        pass
+        raise e
 
 
 def parse_args():
@@ -298,7 +298,7 @@ def fetch_and_upload_image(info, args, s3_client):
     try:
         fetch_image(info, args)
     except Exception as e:
-        pass
+        logger.error(f"Encountered error fetching file: {e}")
     upload_to_s3(info["filename"], args, s3_client)
 
 
