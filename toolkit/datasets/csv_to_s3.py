@@ -221,20 +221,31 @@ def content_to_filename(content):
     """
     # Remove URLs
     logger.debug(f"Converting content to filename: {content}")
-    cleaned_content = str(content)
-    if "https" in cleaned_content:
-        cleaned_content = re.sub(r"https?://\S*", "", cleaned_content)
-    # Replace non-alphanumeric characters with underscore
-    filename = re.sub(r"[^a-zA-Z0-9]", "_", cleaned_content)
-    # Remove any '*' character:
-    filename = filename.replace("*", "")
-    # Remove anything after ' - Upscaled by'
-    filename = filename.split(" - Upscaled by", 1)[0]
-    # Remove anything after '--'
-    filename = filename.split("--", 1)[0]
-    # Convert to lowercase and trim to 128 characters
-    filename = filename.lower()[:128] + ".png"
-    return filename
+    filename = str(content)
+    try:
+        if "https" in filename:
+            filename = re.sub(r"https?://\S*", "", filename)
+        if "_" in filename:
+            # Replace non-alphanumeric characters with underscore
+            filename = re.sub(r"[^a-zA-Z0-9]", "_", filename)
+        if "*" in filename:
+            # Remove any '*' character:
+            filename = filename.replace("*", "")
+        # Remove anything after ' - Upscaled by'
+        if "Upscaled" in filename:
+            filename = filename.split(" - Upscaled by", 1)[0]
+        if "--" in filename:
+            # Remove anything after '--'
+            filename = filename.split("--", 1)[0]
+        if "," in filename:
+            # Remove commas
+            filename = filename.replace(",", "")
+        # Convert to lowercase and trim to 128 characters
+        filename = filename.lower()[:128] + ".png"
+        logger.debug(f"-> Resulting filename: {filename}")
+        return filename
+    except Exception as e:
+        logger.error(f"Encountered error processing filename: {e}")
 
 
 def valid_exif_data(image_path):
