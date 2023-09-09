@@ -240,8 +240,8 @@ def content_to_filename(content):
         if "," in filename:
             # Remove commas
             filename = filename.replace(",", "")
-        # Convert to lowercase and trim to 128 characters
-        filename = filename.lower()[:128] + ".png"
+        # Convert to lowercase and trim to 500 characters
+        filename = filename.lower()[:500] + ".png"
         logger.debug(f"-> Resulting filename: {filename}")
         return filename
     except Exception as e:
