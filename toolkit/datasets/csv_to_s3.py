@@ -25,23 +25,8 @@ logger = logging.getLogger(__name__)
 
 http = requests.Session()
 adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
-http.mount('http://', adapter)
-http.mount('https://', adapter)
-
-def content_to_filename(content):
-    """
-    Function to convert content to filename by stripping everything after '--',
-    replacing non-alphanumeric characters and spaces, converting to lowercase,
-    removing leading/trailing underscores, and limiting filename length to 128.
-    """
-    # Split on '--' and take the first part
-    content = content.split("--", 1)[0]
-    # Split on 'Upscaled by' and take the first part
-    content = content.split(" - Upscaled by", 1)[0]
-    # Remove URLs
-    cleaned_content = re.sub(r"https*://\S*", "", content)
-    
-    return cleaned_content
+http.mount("http://", adapter)
+http.mount("https://", adapter)
 
 
 def resize_for_condition_image(input_image: Image, resolution: int):
@@ -117,12 +102,8 @@ def parse_args():
     parser.add_argument(
         "--parquet_folder", type=str, help="Location of the Parquet files."
     )
-    parser.add_argument(
-        "--csv_folder", type=str, help="Location of the CSV files."
-    )
-    parser.add_argument(
-        "--git_lfs_repo", type=str, help="The Git LFS repository URL."
-    )
+    parser.add_argument("--csv_folder", type=str, help="Location of the CSV files.")
+    parser.add_argument("--git_lfs_repo", type=str, help="The Git LFS repository URL.")
     parser.add_argument(
         "--temporary_folder",
         type=str,
@@ -227,20 +208,30 @@ def initialize_s3_client(args):
         region_name=args.aws_region_name,
         aws_access_key_id=args.aws_access_key_id,
         aws_secret_access_key=args.aws_secret_access_key,
-        config=s3_config
+        config=s3_config,
     )
     return s3_client
 
 
 def content_to_filename(content):
-    """Convert content to a suitable filename."""
+    """
+    Function to convert content to filename by stripping everything after '--',
+    replacing non-alphanumeric characters and spaces, converting to lowercase,
+    removing leading/trailing underscores, and limiting filename length to 128.
+    """
     # Remove URLs
     logger.debug(f"Converting content to filename: {content}")
     cleaned_content = str(content)
-    if 'https' in cleaned_content:
+    if "https" in cleaned_content:
         cleaned_content = re.sub(r"https?://\S*", "", cleaned_content)
     # Replace non-alphanumeric characters with underscore
     filename = re.sub(r"[^a-zA-Z0-9]", "_", cleaned_content)
+    # Remove any '*' character:
+    filename = filename.replace("*", "")
+    # Remove anything after ' - Upscaled by'
+    filename = filename.split(" - Upscaled by", 1)[0]
+    # Remove anything after '--'
+    filename = filename.split("--", 1)[0]
     # Convert to lowercase and trim to 128 characters
     filename = filename.lower()[:128] + ".png"
     return filename
@@ -257,6 +248,7 @@ def valid_exif_data(image_path):
         pass
     return False
 
+
 def list_all_s3_objects(s3_client, bucket_name):
     paginator = s3_client.get_paginator("list_objects_v2")
     existing_files = set()
@@ -267,6 +259,7 @@ def list_all_s3_objects(s3_client, bucket_name):
                 existing_files.add(item["Key"])
 
     return existing_files
+
 
 def upload_to_s3(filename, args, s3_client):
     """Upload the specified file to the S3 bucket."""
@@ -321,7 +314,7 @@ def fetch_data(s3_client, data, args, uri_column):
         [args] * len(to_fetch),
         [s3_client] * len(to_fetch),
         desc="Fetching & Uploading Images",
-        max_workers=args.num_workers
+        max_workers=args.num_workers,
     )
 
 
@@ -341,7 +334,9 @@ def main():
             logger.info(f"Cloning Git LFS repo to {repo_path}")
             os.system(f"git lfs clone {args.git_lfs_repo} {repo_path}")
         else:
-            logger.info(f"Git LFS repo already exists at {repo_path}. Using existing files.")
+            logger.info(
+                f"Git LFS repo already exists at {repo_path}. Using existing files."
+            )
         # Do we have *.parquet files in the dir, or .csv files?
         parquet_file_list = [f for f in Path(repo_path).glob("*.parquet")]
         csv_file_list = [f for f in Path(repo_path).glob("*.csv")]
@@ -371,7 +366,9 @@ def main():
     logger.info(f"Discovered catalogues: {all_files}")
 
     total_files = len(all_files)
-    for i, file in enumerate(tqdm(all_files, desc=f"Processing {total_files} Parquet files")):
+    for i, file in enumerate(
+        tqdm(all_files, desc=f"Processing {total_files} Parquet files")
+    ):
         if content_to_filename(file.name) in existing_files:
             logger.info(f"Skipping already processed file: {file}")
             continue
@@ -430,7 +427,9 @@ def main():
                 f"Applying unsafe filter with threshold {args.unsafe_threshold}"
             )
             if args.invert_unsafe_threshold:
-                logger.info("Inverting unsafe threshold, so that more harmful content is included, rather than excluded.")
+                logger.info(
+                    "Inverting unsafe threshold, so that more harmful content is included, rather than excluded."
+                )
                 df = df[df["punsafe"] >= args.unsafe_threshold]
             else:
                 df = df[df["punsafe"] <= args.unsafe_threshold]
