@@ -142,8 +142,9 @@ class VAECache:
         batch_filepaths = []
         batch_data = []
         # Use the MultiAspectSampler to sample images in batches from aspect ratio buckets
-        for filepath in tqdm(enumerate(sampler), desc="Processing images"):
+        for raw_path in tqdm(enumerate(sampler), desc="Processing images"):
             # Create a hash based on the filename
+            _, filepath = raw_path
             full_filename, base_filename = self._generate_filename(filepath)
             # Open the image using PIL
             if self.data_backend.exists(full_filename):
