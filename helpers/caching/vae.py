@@ -188,7 +188,8 @@ class VAECache:
                 for f in aspect_bucket_cache[bucket]
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
             ]
-
+            if len(relevant_files) == 0:
+                continue
             for raw_filepath in tqdm(
                 relevant_files, desc=f"Processing bucket {bucket}"
             ):
