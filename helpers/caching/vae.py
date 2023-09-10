@@ -69,6 +69,9 @@ class VAECache:
     def _list_cached_images(self):
         """Return a set of filenames (without the .pt extension) that have been processed."""
         pt_files = self.data_backend.list_files("*.pt", self.cache_dir)
+        logging.debug(
+            f"Found {len(pt_files)} cached files in {self.cache_dir}: {pt_files}"
+        )
         # Extract just the base filename without the extension
         return {os.path.splitext(os.path.basename(f))[0] for f in pt_files}
 
