@@ -139,7 +139,7 @@ class VAECache:
     def process_directory(self, directory, bucket_manager):
         files_to_process = self.discover_unprocessed_files(directory)
         batch_data, batch_filepaths = [], []
-        aspect_bucket_cache = bucket_manager.read_cache().deepcopy()
+        aspect_bucket_cache = bucket_manager.read_cache().copy()
 
         for bucket in aspect_bucket_cache:
             for raw_filepath in tqdm(
