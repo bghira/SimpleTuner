@@ -61,36 +61,41 @@ class VAECache:
         }
         return list(unprocessed_files)
 
-    def encode_image(self, pixel_values, filepath: str):
-        full_filename, base_filename = self._generate_filename(filepath)
-        logger.debug(
-            f"Created filename {full_filename} from filepath {filepath} for resulting .pt filename."
-        )
-        if self.data_backend.exists(full_filename):
-            latents = self.load_from_cache(full_filename)
-            logger.debug(
-                f"Loading latents of shape {latents.shape} from existing cache file: {full_filename}"
-            )
-        else:
-            # Print the shape of the pixel values:
-            logger.debug(f"Pixel values shape: {pixel_values.shape}")
-            with torch.no_grad():
-                latents = self.vae.encode(
-                    pixel_values.unsqueeze(0).to(
-                        self.accelerator.device, dtype=torch.bfloat16
-                    )
-                ).latent_dist.sample()
-                logger.debug(
-                    f"Using shape {latents.shape}, creating new latent cache: {full_filename}"
-                )
-            latents = latents * self.vae.config.scaling_factor
-            logger.debug(f"Latent shape after re-scale: {latents.shape}")
+    def encode_image(self, pixel_values, filepath):
+        full_filenames, latents = self.encode_image_batch([pixel_values], [filepath])
+        return latents[0]
 
-        output_latents = latents.squeeze().to(
+    def encode_image_batch(self, pixel_values_batch, filepaths):
+        # Initialize lists to store filenames and latent vectors
+        full_filenames = []
+        latents_list = []
+
+        # Convert the list of pixel_values to a single tensor for batch processing
+        pixel_values_tensor = torch.stack(pixel_values_batch).to(
             self.accelerator.device, dtype=self.vae.dtype
         )
-        logger.debug(f"Output latents shape: {output_latents.shape}")
-        return output_latents
+
+        # Perform batch encoding using VAE
+        with torch.no_grad():
+            latent_distributions = self.vae.encode(pixel_values_tensor)
+            latents = latent_distributions.latent_dist.sample()
+
+        # Rescale latents if necessary
+        latents = latents * self.vae.config.scaling_factor
+
+        # Iterate through each filepath to generate filenames and check cache
+        for i, filepath in enumerate(filepaths):
+            full_filename, base_filename = self._generate_filename(filepath)
+            if self.data_backend.exists(full_filename):
+                latents[i] = self.load_from_cache(full_filename)
+
+            # Append to lists
+            full_filenames.append(full_filename)
+            latents_list.append(
+                latents[i].squeeze().to(self.accelerator.device, dtype=self.vae.dtype)
+            )
+
+        return full_filenames, torch.stack(latents_list)
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
