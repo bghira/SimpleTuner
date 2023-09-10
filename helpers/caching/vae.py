@@ -177,12 +177,16 @@ class VAECache:
 
     def process_buckets(self, bucket_manager):
         processed_images = self._list_cached_images()
+        batch_data, batch_filepaths, vae_input_images, vae_input_filepaths = (
+            [],
+            [],
+            [],
+            [],
+        )
 
-        batch_data, batch_filepaths = [], []
         aspect_bucket_cache = bucket_manager.read_cache().copy()
 
         for bucket in aspect_bucket_cache:
-            # Filter out files that have already been processed
             relevant_files = [
                 f
                 for f in aspect_bucket_cache[bucket]
@@ -190,6 +194,7 @@ class VAECache:
             ]
             if len(relevant_files) == 0:
                 continue
+
             for raw_filepath in tqdm(
                 relevant_files, desc=f"Processing bucket {bucket}"
             ):
@@ -200,11 +205,51 @@ class VAECache:
                 else:
                     raise ValueError(f"Received unknown filepath value: {raw_filepath}")
 
-                latents = self._process_image(filepath)
-                if latents is not None:
-                    batch_data, batch_filepaths = self._accumulate_batch(
-                        latents, filepath, batch_data, batch_filepaths
+                try:
+                    image = self.data_backend.read_image(filepath)
+                    image = MultiaspectImage.prepare_image(image, self.resolution)
+                    pixel_values = self.transform(image).to(
+                        self.accelerator.device, dtype=self.vae.dtype
                     )
+                    vae_input_images.append(pixel_values)
+                    vae_input_filepaths.append(filepath)
+                except Exception as e:
+                    logger.error(f"Error processing image {filepath}: {e}")
+                    if self.delete_problematic_images:
+                        self.data_backend.delete(filepath)
+                    else:
+                        raise e
 
-            if batch_data:  # Write remaining batches
+                # If VAE input batch is ready
+                if len(vae_input_images) >= self.vae_batch_size:
+                    latents_batch = self.encode_images(
+                        vae_input_images, vae_input_filepaths
+                    )
+                    batch_data.extend(latents_batch)
+                    batch_filepaths.extend(
+                        [self._generate_filename(f)[0] for f in vae_input_filepaths]
+                    )
+                    vae_input_images, vae_input_filepaths = [], []
+
+                # If write batch is ready
+                if len(batch_filepaths) >= self.write_batch_size:
+                    self.data_backend.write_batch(batch_filepaths, batch_data)
+                    batch_filepaths.clear()
+                    batch_data.clear()
+
+            # Handle remainders after processing the bucket
+            if vae_input_images:  # If there are images left to be encoded
+                latents_batch = self.encode_images(
+                    vae_input_images, vae_input_filepaths
+                )
+                batch_data.extend(latents_batch)
+                batch_filepaths.extend(
+                    [self._generate_filename(f)[0] for f in vae_input_filepaths]
+                )
+                vae_input_images, vae_input_filepaths = [], []
+
+            # Write the remaining batches
+            if batch_data:
                 self.data_backend.write_batch(batch_filepaths, batch_data)
+                batch_filepaths.clear()
+                batch_data.clear()
