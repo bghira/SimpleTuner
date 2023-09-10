@@ -152,7 +152,7 @@ class VAECache:
                 idx, filepath = raw_filepath
                 full_filename, base_filename = self._generate_filename(filepath)
                 # Open the image using PIL
-                if self.data_backend.exists(full_filename):
+                if os.path.splitext(full_filename)[0] in existing_pt_files:
                     logger.debug(
                         f"Skipping processing for {filepath} as cached file {full_filename} already exists."
                     )
