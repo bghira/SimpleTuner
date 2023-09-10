@@ -67,7 +67,9 @@ class VAECache:
         return list(unprocessed_files)
 
     def _list_cached_images(self):
-        """Return a set of filenames (without the .pt extension) that have been processed."""
+        """
+        Return a set of filenames (without the .pt extension) that have been processed.
+        """
         pt_files = self.data_backend.list_files("*.pt", self.cache_dir)
         logging.debug(
             f"Found {len(pt_files)} cached files in {self.cache_dir}: {pt_files}"
@@ -75,36 +77,58 @@ class VAECache:
         # Extract just the base filename without the extension
         return {os.path.splitext(os.path.basename(f))[0] for f in pt_files}
 
-    def encode_image(self, pixel_values, filepath: str):
-        full_filename, base_filename = self._generate_filename(filepath)
-        logger.debug(
-            f"Created filename {full_filename} from filepath {filepath} for resulting .pt filename."
-        )
-        if self.data_backend.exists(full_filename):
-            latents = self.load_from_cache(full_filename)
-            logger.debug(
-                f"Loading latents of shape {latents.shape} from existing cache file: {full_filename}"
-            )
-        else:
-            # Print the shape of the pixel values:
-            logger.debug(f"Pixel values shape: {pixel_values.shape}")
-            with torch.no_grad():
-                latents = self.vae.encode(
-                    pixel_values.unsqueeze(0).to(
-                        self.accelerator.device, dtype=torch.bfloat16
-                    )
-                ).latent_dist.sample()
-                logger.debug(
-                    f"Using shape {latents.shape}, creating new latent cache: {full_filename}"
-                )
-            latents = latents * self.vae.config.scaling_factor
-            logger.debug(f"Latent shape after re-scale: {latents.shape}")
+    def encode_image(self, image, filepath):
+        """
+        Use the encode_images method to emulate a single image encoding.
+        """
+        return self.encode_images([image], [filepath])[0]
 
-        output_latents = latents.squeeze().to(
-            self.accelerator.device, dtype=self.vae.dtype
-        )
-        logger.debug(f"Output latents shape: {output_latents.shape}")
-        return output_latents
+    def encode_images(self, images, filepaths):
+        """
+        Encode a batch of input images. Images must be the same dimension.
+        """
+        batch_size = len(images)
+        if batch_size != len(filepaths):
+            raise ValueError("Mismatch between number of images and filepaths.")
+
+        full_filenames = [
+            self._generate_filename(filepath)[0] for filepath in filepaths
+        ]
+
+        # Check cache for each image and filter out already cached ones
+        uncached_image_indices = [
+            i
+            for i, filename in enumerate(full_filenames)
+            if not self.data_backend.exists(filename)
+        ]
+        uncached_images = [images[i] for i in uncached_image_indices]
+
+        if not uncached_images:
+            # If all images are cached, simply load them
+            latents = [self.load_from_cache(filename) for filename in full_filenames]
+        else:
+            # Only process images not found in cache
+            with torch.no_grad():
+                processed_images = torch.stack(uncached_images).to(
+                    self.accelerator.device, dtype=torch.bfloat16
+                )
+                latents_uncached = self.vae.encode(
+                    processed_images
+                ).latent_dist.sample()
+                latents_uncached = latents_uncached * self.vae.config.scaling_factor
+
+            # Prepare final latents list by combining cached and newly computed latents
+            latents = []
+            cached_idx, uncached_idx = 0, 0
+            for i in range(batch_size):
+                if i in uncached_image_indices:
+                    latents.append(latents_uncached[uncached_idx])
+                    uncached_idx += 1
+                else:
+                    latents.append(self.load_from_cache(full_filenames[i]))
+                    cached_idx += 1
+
+        return latents
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
