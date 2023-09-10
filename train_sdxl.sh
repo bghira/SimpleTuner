@@ -134,7 +134,8 @@ if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
   done
   echo "." # Newline
   echo "YOUR TIME HAS COME."
-  find . -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+  find "${OUTPUT_DIR}" -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+  find "." -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
 fi
 
 # Run the training script.
