@@ -146,7 +146,7 @@ class VAECache:
         for bucket in aspect_bucket_cache:
             logging.info(f"Processing bucket: {bucket}")
             for raw_filepath in tqdm(
-                enumerate(aspect_bucket_cache[bucket]), desc="Processing images"
+                aspect_bucket_cache[bucket], desc="Processing images"
             ):
                 # Create a hash based on the filename
                 idx, filepath = raw_filepath
