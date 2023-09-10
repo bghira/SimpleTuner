@@ -144,7 +144,7 @@ class VAECache:
 
         for bucket in aspect_bucket_cache:
             for raw_filepath in tqdm(
-                aspect_bucket_cache[bucket], desc="Processing images"
+                aspect_bucket_cache[bucket], desc=f"Processing bucket {bucket}"
             ):
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
