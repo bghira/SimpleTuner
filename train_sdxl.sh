@@ -126,6 +126,8 @@ if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
   # We had no value for protecting the folders, so we nuke them!
   echo "Deleting Jupyter notebook folders in 5 seconds if you do not cancel out."
   echo "These folders are generally useless, and will cause problems if they remain."
+  echo "Use 'export PROTECT_JUPYTER_FOLDERS=1' to prevent this behaviour, before starting the script."
+  echo "Alternatively, place this value in your env file."
   export seconds
   seconds=4
   for ((i=seconds;i>0;i--)); do
