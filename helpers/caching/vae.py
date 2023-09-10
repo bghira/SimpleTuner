@@ -33,6 +33,7 @@ class VAECache:
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.vae_batch_size = vae_batch_size
+        self.transform = MultiaspectImage.get_image_transforms()
 
     def _generate_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
