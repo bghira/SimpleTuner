@@ -70,7 +70,12 @@ class VAECache:
         """
         Return a set of filenames (without the .pt extension) that have been processed.
         """
-        pt_files = self.data_backend.list_files("*.pt", self.cache_dir)
+        # Extract array of tuple into just, an array of files:
+        pt_files = [
+            f
+            for _, _, files in self.data_backend.list_files("*.pt", self.cache_dir)
+            for f in files
+        ]
         logging.debug(
             f"Found {len(pt_files)} cached files in {self.cache_dir}: {pt_files}"
         )
