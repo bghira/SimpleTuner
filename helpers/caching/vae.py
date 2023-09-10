@@ -2,6 +2,8 @@ import os, torch, logging
 from tqdm import tqdm
 from PIL import Image
 from helpers.multiaspect.image import MultiaspectImage
+from helpers.multiaspect.sampler import MultiAspectSampler
+from helpers.multiaspect.bucket import BucketManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.data_backend.aws import S3DataBackend
 
@@ -100,7 +102,7 @@ class VAECache:
         ) as split_files:
             self.local_unprocessed_files = split_files
 
-    def process_directory(self, directory):
+    def process_directory(self, directory: str, sampler: MultiAspectSampler):
         # Define a transform to convert the image to tensor
         transform = MultiaspectImage.get_image_transforms()
 
@@ -139,7 +141,8 @@ class VAECache:
         # Iterate through the files, displaying a progress bar
         batch_filepaths = []
         batch_data = []
-        for filepath in tqdm(files_to_process, desc="Processing images"):
+        # Use the MultiAspectSampler to sample images in batches from aspect ratio buckets
+        for filepath in tqdm(enumerate(sampler), desc="Processing images"):
             # Create a hash based on the filename
             full_filename, base_filename = self._generate_filename(filepath)
             # Open the image using PIL
