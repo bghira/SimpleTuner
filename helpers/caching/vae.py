@@ -145,10 +145,11 @@ class VAECache:
         aspect_bucket_cache = bucket_manager.read_cache()
         for bucket in aspect_bucket_cache:
             logging.info(f"Processing bucket: {bucket}")
-            for filepath in tqdm(
+            for raw_filepath in tqdm(
                 enumerate(aspect_bucket_cache[bucket]), desc="Processing images"
             ):
                 # Create a hash based on the filename
+                idx, filepath = raw_filepath
                 full_filename, base_filename = self._generate_filename(filepath)
                 # Open the image using PIL
                 if self.data_backend.exists(full_filename):
