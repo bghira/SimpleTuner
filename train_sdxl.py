@@ -619,8 +619,8 @@ def main():
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            "This number might be massively understated, because of how CUDA memory management works."
-            "The real memories were the friends we trained a model on along the way."
+            " This number might be massively understated, because of how CUDA memory management works."
+            " The real memories were the friends we trained a model on along the way."
         )
 
     # Scheduler and math around the number of training steps.
