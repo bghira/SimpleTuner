@@ -66,6 +66,12 @@ class VAECache:
         }
         return list(unprocessed_files)
 
+    def _list_cached_images(self):
+        """Return a set of filenames (without the .pt extension) that have been processed."""
+        pt_files = self.data_backend.list_files("*.pt", self.cache_dir)
+        # Extract just the base filename without the extension
+        return {os.path.splitext(os.path.basename(f))[0] for f in pt_files}
+
     def encode_image(self, pixel_values, filepath: str):
         full_filename, base_filename = self._generate_filename(filepath)
         logger.debug(
@@ -137,14 +143,22 @@ class VAECache:
 
         return batch_data, batch_filepaths
 
-    def process_directory(self, directory, bucket_manager):
-        files_to_process = self.discover_unprocessed_files(directory)
+    def process_buckets(self, bucket_manager):
+        processed_images = self._list_cached_images()
+
         batch_data, batch_filepaths = [], []
         aspect_bucket_cache = bucket_manager.read_cache().copy()
 
         for bucket in aspect_bucket_cache:
+            # Filter out files that have already been processed
+            relevant_files = [
+                f
+                for f in aspect_bucket_cache[bucket]
+                if os.path.splitext(os.path.basename(f))[0] not in processed_images
+            ]
+
             for raw_filepath in tqdm(
-                aspect_bucket_cache[bucket], desc=f"Processing bucket {bucket}"
+                relevant_files, desc=f"Processing bucket {bucket}"
             ):
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
