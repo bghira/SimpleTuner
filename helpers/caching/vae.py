@@ -142,61 +142,42 @@ class VAECache:
         random.shuffle(files_to_process)
 
         # Iterate through the files, displaying a progress bar
-        batch_filepaths = []
-        batch_data = []
+        current_batch_filepaths = []
+        batch_pixel_values = []
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
             full_filename, base_filename = self._generate_filename(filepath)
-            # Open the image using PIL
+
+            # If processed file already exists in cache, skip processing for this image
             if self.data_backend.exists(full_filename):
-                logger.debug(
-                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
-                )
-                continue
-            try:
-                logger.debug(f"Loading image: {filepath}")
-                image = self.data_backend.read_image(filepath)
-                # Apply RGB conversion and EXIF-based rotation correction
-                image = MultiaspectImage.prepare_image(image, self.resolution)
-            except Exception as e:
-                logger.error(f"Encountered error opening image: {e}")
-                try:
-                    if self.delete_problematic_images:
-                        self.data_backend.delete(filepath)
-                except Exception as e:
-                    logger.error(
-                        f"Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}"
-                    )
                 continue
 
-            # Convert the image to a tensor
             try:
+                image = self.data_backend.read_image(filepath)
+                image = MultiaspectImage.prepare_image(image, self.resolution)
                 pixel_values = transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
-            except OSError as e:
-                logger.error(f"Encountered error converting image to tensor: {e}")
-                continue
-
-            # Process the image with the VAE.
-            try:
-                latents = self.encode_image(pixel_values, filepath)
-            except Exception as e:
-                logger.error(f"Encountered error encoding image: {e}")
+                current_batch_filepaths.append(filepath)
+                batch_pixel_values.append(pixel_values)
+            except (OSError, RuntimeError) as e:
+                logger.error(f"Encountered error: {e}")
                 if self.delete_problematic_images:
                     self.data_backend.delete(filepath)
-                else:
-                    raise e
-            logger.debug(f"Processed image {filepath}")
+                continue
 
-            # Instead of directly saving, append to batches
-            batch_filepaths.append(full_filename)
-            batch_data.append(latents.squeeze())
+            # If batch size is reached, process the batch
+            if len(batch_pixel_values) == self.write_batch_size:
+                full_filenames, batch_latents = self.encode_image_batch(
+                    batch_pixel_values, current_batch_filepaths
+                )
+                self.data_backend.write_batch(full_filenames, batch_latents)
+                current_batch_filepaths.clear()
+                batch_pixel_values.clear()
 
-            if len(batch_filepaths) >= self.write_batch_size:
-                self.data_backend.write_batch(batch_filepaths, batch_data)
-                batch_filepaths.clear()
-                batch_data.clear()
-
-        if batch_data:  # If there are any remaining items in batch_data
-            self.data_backend.write_batch(batch_filepaths, batch_data)
+        # Process any remaining items in batch_pixel_values
+        if batch_pixel_values:
+            full_filenames, batch_latents = self.encode_image_batch(
+                batch_pixel_values, files_to_process
+            )
+            self.data_backend.write_batch(full_filenames, batch_latents)
