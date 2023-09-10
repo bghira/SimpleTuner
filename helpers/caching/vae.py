@@ -104,110 +104,59 @@ class VAECache:
         ) as split_files:
             self.local_unprocessed_files = split_files
 
-    def process_directory(self, directory: str, bucket_manager: BucketManager):
-        # Define a transform to convert the image to tensor
-        transform = MultiaspectImage.get_image_transforms()
+    def _process_image(self, filepath):
+        full_filename, base_filename = self._generate_filename(filepath)
+        if self.data_backend.exists(full_filename):
+            return None
 
-        # Get a list of all existing .pt files in the directory
-        existing_pt_files = set()
-        logger.debug(f"Retrieving list of pytorch cache files from {self.cache_dir}")
-        remote_cache_list = self.data_backend.list_files(
-            instance_data_root=self.cache_dir, str_pattern="*.pt"
-        )
-        for subdir, _, files in remote_cache_list:
-            for file in files:
-                if subdir != "":
-                    file = os.path.join(subdir, file)
-                existing_pt_files.add(os.path.splitext(file)[0])
-        # Get a list of all the files to process (customize as needed)
-        files_to_process = self.local_unprocessed_files  # Use the local slice of files
-        target_name = directory
-        if type(self.data_backend) == S3DataBackend:
-            target_name = f"S3 bucket {self.data_backend.bucket_name}"
-        logger.debug(f"Beginning processing of VAECache source data {target_name}")
-        all_image_files = self.data_backend.list_files(
-            instance_data_root=directory, str_pattern="*.[jJpP][pPnN][gG]"
-        )
-        for subdir, _, files in all_image_files:
-            for file in files:
-                # If processed file already exists, skip processing for this image
-                if os.path.splitext(file)[0] in existing_pt_files:
-                    continue
-                files_to_process.append(os.path.join(subdir, file))
+        try:
+            image = self.data_backend.read_image(filepath)
+            image = MultiaspectImage.prepare_image(image, self.resolution)
+            pixel_values = self.transform(image).to(
+                self.accelerator.device, dtype=self.vae.dtype
+            )
+            latents = self.encode_image(pixel_values, filepath)
+            return latents
+        except Exception as e:
+            logger.error(f"Error processing image {filepath}: {e}")
+            if self.delete_problematic_images:
+                self.data_backend.delete(filepath)
+            else:
+                raise e
 
-        # Shuffle the files.
-        import random
+    def _accumulate_batch(self, latents, filepath, batch_data, batch_filepaths):
+        full_filename, _ = self._generate_filename(filepath)
+        batch_data.append(latents.squeeze())
+        batch_filepaths.append(full_filename)
 
-        random.shuffle(files_to_process)
+        if len(batch_filepaths) >= self.write_batch_size:
+            self.data_backend.write_batch(batch_filepaths, batch_data)
+            batch_filepaths.clear()
+            batch_data.clear()
 
-        # Iterate through the files, displaying a progress bar
-        batch_filepaths = []
-        batch_data = []
-        # Use the MultiAspectSampler to sample images in batches from aspect ratio buckets
-        aspect_bucket_cache = bucket_manager.read_cache()
+        return batch_data, batch_filepaths
+
+    def process_directory(self, directory, bucket_manager):
+        files_to_process = self.discover_unprocessed_files(directory)
+        batch_data, batch_filepaths = [], []
+        aspect_bucket_cache = bucket_manager.read_cache().deepcopy()
+
         for bucket in aspect_bucket_cache:
-            logging.info(f"Processing bucket: {bucket}")
             for raw_filepath in tqdm(
                 aspect_bucket_cache[bucket], desc="Processing images"
             ):
-                # Create a hash based on the filename
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
                 elif len(raw_filepath) == 2:
                     idx, filepath = raw_filepath
                 else:
                     raise ValueError(f"Received unknown filepath value: {raw_filepath}")
-                full_filename, base_filename = self._generate_filename(filepath)
-                # Open the image using PIL
-                if self.data_backend.exists(full_filename):
-                    logger.debug(
-                        f"Skipping processing for {filepath} as cached file {full_filename} already exists."
+
+                latents = self._process_image(filepath)
+                if latents is not None:
+                    batch_data, batch_filepaths = self._accumulate_batch(
+                        latents, filepath, batch_data, batch_filepaths
                     )
-                    continue
-                try:
-                    logger.debug(f"Loading image: {filepath}")
-                    image = self.data_backend.read_image(filepath)
-                    # Apply RGB conversion and EXIF-based rotation correction
-                    image = MultiaspectImage.prepare_image(image, self.resolution)
-                except Exception as e:
-                    logger.error(f"Encountered error opening image: {e}")
-                    try:
-                        if self.delete_problematic_images:
-                            self.data_backend.delete(filepath)
-                    except Exception as e:
-                        logger.error(
-                            f"Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}"
-                        )
-                    continue
 
-                # Convert the image to a tensor
-                try:
-                    pixel_values = transform(image).to(
-                        self.accelerator.device, dtype=self.vae.dtype
-                    )
-                except OSError as e:
-                    logger.error(f"Encountered error converting image to tensor: {e}")
-                    continue
-
-                # Process the image with the VAE.
-                try:
-                    latents = self.encode_image(pixel_values, filepath)
-                except Exception as e:
-                    logger.error(f"Encountered error encoding image: {e}")
-                    if self.delete_problematic_images:
-                        self.data_backend.delete(filepath)
-                    else:
-                        raise e
-                logger.debug(f"Processed image {filepath}")
-
-                # Instead of directly saving, append to batches
-                batch_filepaths.append(full_filename)
-                batch_data.append(latents.squeeze())
-
-                if len(batch_filepaths) >= self.write_batch_size:
-                    self.data_backend.write_batch(batch_filepaths, batch_data)
-                    batch_filepaths.clear()
-                    batch_data.clear()
-
-            if batch_data:  # If there are any remaining items in batch_data
+            if batch_data:  # Write remaining batches
                 self.data_backend.write_batch(batch_filepaths, batch_data)
