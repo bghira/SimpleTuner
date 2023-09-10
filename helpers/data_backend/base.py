@@ -38,7 +38,7 @@ class BaseDataBackend(ABC):
         pass
 
     @abstractmethod
-    def list_files(self, pattern: str, instance_data_root: str = None):
+    def list_files(self, pattern: str, instance_data_root: str = None) -> tuple:
         """
         List all files matching the pattern.
         """
