@@ -333,3 +333,9 @@ class BucketManager:
                 f"Image {image_path} too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
             )
         self.remove_image(image_path, bucket)
+
+    def read_cache(self):
+        """
+        Read the entire bucket cache.
+        """
+        return self.aspect_ratio_bucket_indices
