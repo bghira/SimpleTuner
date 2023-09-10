@@ -61,41 +61,36 @@ class VAECache:
         }
         return list(unprocessed_files)
 
-    def encode_image(self, pixel_values, filepath):
-        full_filenames, latents = self.encode_image_batch([pixel_values], [filepath])
-        return latents[0]
+    def encode_image(self, pixel_values, filepath: str):
+        full_filename, base_filename = self._generate_filename(filepath)
+        logger.debug(
+            f"Created filename {full_filename} from filepath {filepath} for resulting .pt filename."
+        )
+        if self.data_backend.exists(full_filename):
+            latents = self.load_from_cache(full_filename)
+            logger.debug(
+                f"Loading latents of shape {latents.shape} from existing cache file: {full_filename}"
+            )
+        else:
+            # Print the shape of the pixel values:
+            logger.debug(f"Pixel values shape: {pixel_values.shape}")
+            with torch.no_grad():
+                latents = self.vae.encode(
+                    pixel_values.unsqueeze(0).to(
+                        self.accelerator.device, dtype=torch.bfloat16
+                    )
+                ).latent_dist.sample()
+                logger.debug(
+                    f"Using shape {latents.shape}, creating new latent cache: {full_filename}"
+                )
+            latents = latents * self.vae.config.scaling_factor
+            logger.debug(f"Latent shape after re-scale: {latents.shape}")
 
-    def encode_image_batch(self, pixel_values_batch, filepaths):
-        # Initialize lists to store filenames and latent vectors
-        full_filenames = []
-        latents_list = []
-
-        # Convert the list of pixel_values to a single tensor for batch processing
-        pixel_values_tensor = torch.stack(pixel_values_batch).to(
+        output_latents = latents.squeeze().to(
             self.accelerator.device, dtype=self.vae.dtype
         )
-
-        # Perform batch encoding using VAE
-        with torch.no_grad():
-            latent_distributions = self.vae.encode(pixel_values_tensor)
-            latents = latent_distributions.latent_dist.sample()
-
-        # Rescale latents if necessary
-        latents = latents * self.vae.config.scaling_factor
-
-        # Iterate through each filepath to generate filenames and check cache
-        for i, filepath in enumerate(filepaths):
-            full_filename, base_filename = self._generate_filename(filepath)
-            if self.data_backend.exists(full_filename):
-                latents[i] = self.load_from_cache(full_filename)
-
-            # Append to lists
-            full_filenames.append(full_filename)
-            latents_list.append(
-                latents[i].squeeze().to(self.accelerator.device, dtype=self.vae.dtype)
-            )
-
-        return full_filenames, torch.stack(latents_list)
+        logger.debug(f"Output latents shape: {output_latents.shape}")
+        return output_latents
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
@@ -142,42 +137,61 @@ class VAECache:
         random.shuffle(files_to_process)
 
         # Iterate through the files, displaying a progress bar
-        current_batch_filepaths = []
-        batch_pixel_values = []
+        batch_filepaths = []
+        batch_data = []
         for filepath in tqdm(files_to_process, desc="Processing images"):
             # Create a hash based on the filename
             full_filename, base_filename = self._generate_filename(filepath)
-
-            # If processed file already exists in cache, skip processing for this image
+            # Open the image using PIL
             if self.data_backend.exists(full_filename):
+                logger.debug(
+                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
+                )
+                continue
+            try:
+                logger.debug(f"Loading image: {filepath}")
+                image = self.data_backend.read_image(filepath)
+                # Apply RGB conversion and EXIF-based rotation correction
+                image = MultiaspectImage.prepare_image(image, self.resolution)
+            except Exception as e:
+                logger.error(f"Encountered error opening image: {e}")
+                try:
+                    if self.delete_problematic_images:
+                        self.data_backend.delete(filepath)
+                except Exception as e:
+                    logger.error(
+                        f"Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}"
+                    )
                 continue
 
+            # Convert the image to a tensor
             try:
-                image = self.data_backend.read_image(filepath)
-                image = MultiaspectImage.prepare_image(image, self.resolution)
                 pixel_values = transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
-                current_batch_filepaths.append(filepath)
-                batch_pixel_values.append(pixel_values)
-            except (OSError, RuntimeError) as e:
-                logger.error(f"Encountered error: {e}")
-                if self.delete_problematic_images:
-                    self.data_backend.delete(filepath)
+            except OSError as e:
+                logger.error(f"Encountered error converting image to tensor: {e}")
                 continue
 
-            # If batch size is reached, process the batch
-            if len(batch_pixel_values) == self.write_batch_size:
-                full_filenames, batch_latents = self.encode_image_batch(
-                    batch_pixel_values, current_batch_filepaths
-                )
-                self.data_backend.write_batch(full_filenames, batch_latents)
-                current_batch_filepaths.clear()
-                batch_pixel_values.clear()
+            # Process the image with the VAE.
+            try:
+                latents = self.encode_image(pixel_values, filepath)
+            except Exception as e:
+                logger.error(f"Encountered error encoding image: {e}")
+                if self.delete_problematic_images:
+                    self.data_backend.delete(filepath)
+                else:
+                    raise e
+            logger.debug(f"Processed image {filepath}")
 
-        # Process any remaining items in batch_pixel_values
-        if batch_pixel_values:
-            full_filenames, batch_latents = self.encode_image_batch(
-                batch_pixel_values, files_to_process
-            )
-            self.data_backend.write_batch(full_filenames, batch_latents)
+            # Instead of directly saving, append to batches
+            batch_filepaths.append(full_filename)
+            batch_data.append(latents.squeeze())
+
+            if len(batch_filepaths) >= self.write_batch_size:
+                self.data_backend.write_batch(batch_filepaths, batch_data)
+                batch_filepaths.clear()
+                batch_data.clear()
+
+        if batch_data:  # If there are any remaining items in batch_data
+            self.data_backend.write_batch(batch_filepaths, batch_data)
