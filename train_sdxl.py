@@ -832,7 +832,9 @@ def main():
         resolution=args.resolution,
     )
     vaecache.split_cache_between_processes()
-    vaecache.process_directory(args.instance_data_dir, custom_balanced_sampler)
+    vaecache.process_directory(
+        directory=args.instance_data_dir, bucket_manager=bucket_manager
+    )
     accelerator.wait_for_everyone()
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
