@@ -21,6 +21,7 @@ class VAECache:
         resolution: int = 1024,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
+        vae_batch_size: int = 4,
     ):
         self.data_backend = data_backend
         self.vae = vae
@@ -31,6 +32,7 @@ class VAECache:
         self.data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
+        self.vae_batch_size = vae_batch_size
 
     def _generate_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
@@ -149,10 +151,15 @@ class VAECache:
                 aspect_bucket_cache[bucket], desc="Processing images"
             ):
                 # Create a hash based on the filename
-                idx, filepath = raw_filepath
+                if type(raw_filepath) == str or len(raw_filepath) == 1:
+                    filepath = raw_filepath
+                elif len(raw_filepath) == 2:
+                    idx, filepath = raw_filepath
+                else:
+                    raise ValueError(f"Received unknown filepath value: {raw_filepath}")
                 full_filename, base_filename = self._generate_filename(filepath)
                 # Open the image using PIL
-                if os.path.splitext(full_filename)[0] in existing_pt_files:
+                if self.data_backend.exists(full_filename):
                     logger.debug(
                         f"Skipping processing for {filepath} as cached file {full_filename} already exists."
                     )
