@@ -102,7 +102,7 @@ class VAECache:
         ) as split_files:
             self.local_unprocessed_files = split_files
 
-    def process_directory(self, directory: str, sampler: MultiAspectSampler):
+    def process_directory(self, directory: str, bucket_manager: BucketManager):
         # Define a transform to convert the image to tensor
         transform = MultiaspectImage.get_image_transforms()
 
@@ -142,60 +142,63 @@ class VAECache:
         batch_filepaths = []
         batch_data = []
         # Use the MultiAspectSampler to sample images in batches from aspect ratio buckets
-        for raw_path in tqdm(enumerate(sampler), desc="Processing images"):
-            # Create a hash based on the filename
-            _, filepath = raw_path
-            full_filename, base_filename = self._generate_filename(filepath)
-            # Open the image using PIL
-            if self.data_backend.exists(full_filename):
-                logger.debug(
-                    f"Skipping processing for {filepath} as cached file {full_filename} already exists."
-                )
-                continue
-            try:
-                logger.debug(f"Loading image: {filepath}")
-                image = self.data_backend.read_image(filepath)
-                # Apply RGB conversion and EXIF-based rotation correction
-                image = MultiaspectImage.prepare_image(image, self.resolution)
-            except Exception as e:
-                logger.error(f"Encountered error opening image: {e}")
+        aspect_bucket_cache = bucket_manager.read_cache()
+        for bucket in aspect_bucket_cache:
+            logging.info(f"Processing bucket: {bucket}")
+            for raw_path in tqdm(enumerate(bucket), desc="Processing images"):
+                # Create a hash based on the filename
+                _, filepath = raw_path
+                full_filename, base_filename = self._generate_filename(filepath)
+                # Open the image using PIL
+                if self.data_backend.exists(full_filename):
+                    logger.debug(
+                        f"Skipping processing for {filepath} as cached file {full_filename} already exists."
+                    )
+                    continue
                 try:
+                    logger.debug(f"Loading image: {filepath}")
+                    image = self.data_backend.read_image(filepath)
+                    # Apply RGB conversion and EXIF-based rotation correction
+                    image = MultiaspectImage.prepare_image(image, self.resolution)
+                except Exception as e:
+                    logger.error(f"Encountered error opening image: {e}")
+                    try:
+                        if self.delete_problematic_images:
+                            self.data_backend.delete(filepath)
+                    except Exception as e:
+                        logger.error(
+                            f"Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}"
+                        )
+                    continue
+
+                # Convert the image to a tensor
+                try:
+                    pixel_values = transform(image).to(
+                        self.accelerator.device, dtype=self.vae.dtype
+                    )
+                except OSError as e:
+                    logger.error(f"Encountered error converting image to tensor: {e}")
+                    continue
+
+                # Process the image with the VAE.
+                try:
+                    latents = self.encode_image(pixel_values, filepath)
+                except Exception as e:
+                    logger.error(f"Encountered error encoding image: {e}")
                     if self.delete_problematic_images:
                         self.data_backend.delete(filepath)
-                except Exception as e:
-                    logger.error(
-                        f"Could not delete file: {filepath} via {type(self.data_backend)}. Error: {e}"
-                    )
-                continue
+                    else:
+                        raise e
+                logger.debug(f"Processed image {filepath}")
 
-            # Convert the image to a tensor
-            try:
-                pixel_values = transform(image).to(
-                    self.accelerator.device, dtype=self.vae.dtype
-                )
-            except OSError as e:
-                logger.error(f"Encountered error converting image to tensor: {e}")
-                continue
+                # Instead of directly saving, append to batches
+                batch_filepaths.append(full_filename)
+                batch_data.append(latents.squeeze())
 
-            # Process the image with the VAE.
-            try:
-                latents = self.encode_image(pixel_values, filepath)
-            except Exception as e:
-                logger.error(f"Encountered error encoding image: {e}")
-                if self.delete_problematic_images:
-                    self.data_backend.delete(filepath)
-                else:
-                    raise e
-            logger.debug(f"Processed image {filepath}")
+                if len(batch_filepaths) >= self.write_batch_size:
+                    self.data_backend.write_batch(batch_filepaths, batch_data)
+                    batch_filepaths.clear()
+                    batch_data.clear()
 
-            # Instead of directly saving, append to batches
-            batch_filepaths.append(full_filename)
-            batch_data.append(latents.squeeze())
-
-            if len(batch_filepaths) >= self.write_batch_size:
+            if batch_data:  # If there are any remaining items in batch_data
                 self.data_backend.write_batch(batch_filepaths, batch_data)
-                batch_filepaths.clear()
-                batch_data.clear()
-
-        if batch_data:  # If there are any remaining items in batch_data
-            self.data_backend.write_batch(batch_filepaths, batch_data)
