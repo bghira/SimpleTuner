@@ -1,5 +1,6 @@
 import os, torch, logging
 from tqdm import tqdm
+from pathlib import Path
 from PIL import Image
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.multiaspect.sampler import MultiAspectSampler
@@ -201,8 +202,12 @@ class VAECache:
                     filepath = raw_filepath
                 elif len(raw_filepath) == 2:
                     idx, filepath = raw_filepath
+                elif type(raw_filepath) == Path:
+                    filepath = str(raw_filepath)
                 else:
-                    raise ValueError(f"Received unknown filepath value: {raw_filepath}")
+                    raise ValueError(
+                        f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
+                    )
 
                 try:
                     image = self.data_backend.read_image(filepath)
