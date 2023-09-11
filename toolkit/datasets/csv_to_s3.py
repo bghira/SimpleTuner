@@ -67,6 +67,9 @@ def fetch_image(info, args):
             if width < args.minimum_resolution or height < args.minimum_resolution:
                 os.remove(current_file_path)
                 return
+            if args.only_exif_images and not valid_exif_data(current_file_path):
+                os.remove(current_file_path)
+                return
             image = resize_for_condition_image(image, args.condition_image_size)
             image.save(current_file_path, format="PNG")
             image.close()
@@ -170,6 +173,11 @@ def parse_args():
         default=1024,
         help="This option will by default, resize the smaller edge of an image to 1024px.",
     )
+    parser.add_argument(
+        "--only_exif_images",
+        action="store_true",
+        help="If set, only images with EXIF data will be included.",
+    )
 
     return parser.parse_args()
 
@@ -259,6 +267,10 @@ def valid_exif_data(image_path):
         for tag, value in image._getexif().items():
             if tag in ExifTags.TAGS and ExifTags.TAGS[tag] in ["Make", "Model"]:
                 return True
+        # Alternative check:
+        if image._getexif() and 271 in image._getexif():
+            return True
+
     except:
         pass
     return False
