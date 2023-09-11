@@ -453,6 +453,8 @@ def main():
                 data_backend=data_backend,
                 resolution=args.resolution,
                 delete_problematic_images=args.delete_problematic_images,
+                vae_batch_size=args.vae_batch_size,
+                write_batch_size=args.write_batch_size,
             )
 
         pixel_values = []
@@ -829,6 +831,8 @@ def main():
         data_backend=data_backend,
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
+        vae_batch_size=args.vae_batch_size,
+        write_batch_size=args.write_batch_size,
     )
     vaecache.split_cache_between_processes()
     vaecache.process_buckets(bucket_manager=bucket_manager)

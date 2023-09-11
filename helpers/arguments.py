@@ -75,6 +75,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--vae_batch_size",
+        type=int,
+        default=4,
+        help=(
+            "When pre-caching latent vectors, this is the batch size to use. Decreasing this may help with VRAM issues,"
+            " but if you are at that point of contention, it's possible that your GPU has too little RAM. Default: 4."
+        ),
+    )
+    parser.add_argument(
         "--keep_vae_loaded",
         action="store_true",
         default=False,
@@ -117,6 +126,16 @@ def parse_args(input_args=None):
         help=(
             "The data backend to use. Choose between ['local', 'aws']. Default: local."
             " If using AWS, you must set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+        ),
+    )
+    parser.add_argument(
+        "--write_batch_size",
+        type=int,
+        default=64,
+        help=(
+            "When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching."
+            " In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written."
+            " This mostly applies to S3, but some shared server filesystems may benefit as well, eg. Ceph. Default: 64."
         ),
     )
     parser.add_argument(
