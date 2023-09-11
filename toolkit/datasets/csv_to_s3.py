@@ -261,18 +261,34 @@ def content_to_filename(content):
 
 
 def valid_exif_data(image_path):
-    """Check if the image contains EXIF data for camera make/model."""
+    """Check if the image contains EXIF data typically associated with real cameras."""
     try:
         image = Image.open(image_path)
-        for tag, value in image._getexif().items():
-            if tag in ExifTags.TAGS and ExifTags.TAGS[tag] in ["Make", "Model"]:
-                return True
-        # Alternative check:
-        if image._getexif() and 271 in image._getexif():
-            return True
+        exif_data = image._getexif()
 
-    except:
+        # If no EXIF data, return False
+        if not exif_data:
+            return False
+
+        # List of tags to check for real camera evidence
+        tags_to_check = ["Make", "Model", "DateTimeOriginal", "LensModel", "GPSInfo"]
+
+        # Check if any of the relevant tags exist in the EXIF data
+        for tag, value in exif_data.items():
+            tagname = ExifTags.TAGS.get(tag, tag)
+            if tagname in tags_to_check:
+                return True
+
+        # If "Software" tag exists, it might be edited or generated, but this is not a surefire method
+        if "Software" in exif_data:
+            software_name = exif_data["Software"].lower()
+            if "photoshop" in software_name or "gimp" in software_name:
+                return False
+
+    except Exception as e:
+        print(f"Error processing {image_path}: {e}")
         pass
+
     return False
 
 
