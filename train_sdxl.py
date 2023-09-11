@@ -228,7 +228,6 @@ def main():
         revision=args.revision,
         force_upcast=False,
     )
-    vae.enable_slicing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -1278,7 +1277,9 @@ def main():
                     if vae is None:
                         vae = AutoencoderKL.from_pretrained(
                             vae_path,
-                            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+                            subfolder="vae"
+                            if args.pretrained_vae_model_name_or_path is None
+                            else None,
                             revision=args.revision,
                             force_upcast=False,
                         )

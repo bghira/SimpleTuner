@@ -25,7 +25,6 @@ class VAECache:
     ):
         self.data_backend = data_backend
         self.vae = vae
-        self.vae.enable_slicing()
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         self.resolution = resolution
