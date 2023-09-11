@@ -254,6 +254,13 @@ def content_to_filename(content):
         if "/" in filename:
             # Remove commas
             filename = filename.replace("/", "")
+        # Remove > < | . characters:
+        filename = filename.replace(">", "")
+        filename = filename.replace("<", "")
+        filename = filename.replace("|", "")
+        filename = filename.replace(".", "")
+        # Remove leading and trailing underscores
+        filename = filename.strip("_")
 
         # Strip multiple whitespaces, replace with single whitespace
         filename = re.sub(r"\s+", " ", filename)
