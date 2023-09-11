@@ -31,7 +31,7 @@ def parse_args(input_args=None):
         default="epsilon",
         choices=["epsilon", "v_prediction", "sample"],
         help=(
-            "The type of prediction to use for the VAE. Choose between ['epsilon', 'v_prediction', 'sample']."
+            "The type of prediction to use for the u-net. Choose between ['epsilon', 'v_prediction', 'sample']."
             " For SD 2.1-v, this is v_prediction. For 2.1-base, it is epsilon. SDXL is generally epsilon."
             " SD 1.5 is epsilon."
         ),
@@ -73,6 +73,12 @@ def parse_args(input_args=None):
             "The dtype of the VAE model. Choose between ['default', 'fp16', 'fp32', 'bf16']."
             "The default VAE dtype is float32, due to NaN issues in SDXL 1.0."
         ),
+    )
+    parser.add_argument(
+        "--keep_vae_loaded",
+        action="store_true",
+        default=False,
+        help="If set, will keep the VAE loaded in memory. This can reduce disk churn, but consumes VRAM during the forward pass.",
     )
     parser.add_argument(
         "--revision",

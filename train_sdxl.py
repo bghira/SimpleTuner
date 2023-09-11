@@ -879,6 +879,21 @@ def main():
             },
         )
 
+    if not args.keep_vae_loaded:
+        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        import gc
+
+        del vae
+        vae = None
+        vaecache.vae = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        memory_saved = memory_after_unload - memory_before_unload
+        logger.info(
+            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+            " This number might be massively understated, because of how CUDA memory management works."
+        )
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -1260,7 +1275,13 @@ def main():
                         # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                         ema_unet.store(unet.parameters())
                         ema_unet.copy_to(unet.parameters())
-
+                    if vae is None:
+                        vae = AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+                            revision=args.revision,
+                            force_upcast=False,
+                        )
                     # The models need unwrapping because for compatibility in distributed training mode.
                     pipeline = StableDiffusionXLPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
@@ -1369,7 +1390,8 @@ def main():
                     if args.use_ema:
                         # Switch back to the original UNet parameters.
                         ema_unet.restore(unet.parameters())
-
+                    if not args.keep_vae_loaded:
+                        del vae
                     del pipeline
                     torch.cuda.empty_cache()
                 ### END: Perform validation every `validation_epochs` steps
