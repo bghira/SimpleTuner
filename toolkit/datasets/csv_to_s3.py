@@ -248,6 +248,10 @@ def content_to_filename(content):
         if "," in filename:
             # Remove commas
             filename = filename.replace(",", "")
+        if "/" in filename:
+            # Remove commas
+            filename = filename.replace("/", "")
+
         # Strip multiple whitespaces, replace with single whitespace
         filename = re.sub(r"\s+", " ", filename)
         # Strip surrounding whitespace
