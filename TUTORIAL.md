@@ -2,7 +2,7 @@
 
 ## Introduction
 
-To set up your training environment and run the model, you'll need to configure several environment variables.
+You'll need to set up a Python environment and create an "env" file for SimpleTuner before it can be run.
 
 This document aims to get you set up and running with a basic training environment, including example data to use if you do not currently have any.
 
@@ -26,7 +26,13 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
 
 ## Hardware Requirements
 
-- Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with ample VRAM are generally recommended.
+Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended.
+
+Although SimpleTuner has an option to `--fully_unload_text_encoder` and by default will unload the VAE during training, the base SDXL u-net consumes 12.5GB at idle. When the first forward pass runs, a 24G GPU will hit an Out of Memory condition, *even* with 128x128 training data.
+
+This occurs with Adafactor, AdamW8Bit, Prodigy, and D-adaptation.
+
+40G GPUs can meaningfully train SDXL.
 
 ## Dependencies
 
