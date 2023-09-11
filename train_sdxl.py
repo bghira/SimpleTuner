@@ -1397,6 +1397,7 @@ def main():
                         ema_unet.restore(unet.parameters())
                     if not args.keep_vae_loaded:
                         del vae
+                        vae = None
                     del pipeline
                     torch.cuda.empty_cache()
                 ### END: Perform validation every `validation_epochs` steps
