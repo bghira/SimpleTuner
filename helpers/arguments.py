@@ -39,12 +39,11 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--training_scheduler_timestep_spacing",
         type=str,
-        default="leading",
+        default="trailing",
         choices=["leading", "linspace", "trailing"],
         help=(
             "Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights."
-            " For all training, including terminal SNR, it would seem that 'leading' is the right choice."
-            " However, for inference in terminal SNR models, 'trailing' is the correct choice."
+            " For all training, including epsilon, it would seem that 'trailing' is the right choice."
         ),
     )
     parser.add_argument(
