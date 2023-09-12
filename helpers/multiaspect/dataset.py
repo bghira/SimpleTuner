@@ -88,13 +88,15 @@ class MultiAspectDataset(Dataset):
 
     def __getitem__(self, image_path):
         if image_path is False:
-            logger.debug(f'Received {image_path} instead of image path, we are assuming this is the end of an epoch, and passing it up the chain.')
+            logger.debug(
+                f"Received {image_path} instead of image path, we are assuming this is the end of an epoch, and passing it up the chain."
+            )
             return image_path
-        logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
         example = {"instance_images_path": image_path}
         if not StateTracker.status_training():
             # Return None when not training yet.
             return None
+        logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
         if self.print_names:
             logger.info(f"Open image: {image_path}")
 
