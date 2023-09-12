@@ -2,6 +2,7 @@ import os, torch, logging
 from tqdm import tqdm
 from pathlib import Path
 from PIL import Image
+from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.multiaspect.bucket import BucketManager
@@ -204,6 +205,8 @@ class VAECache:
                     idx, filepath = raw_filepath
                 elif type(raw_filepath) == Path:
                     filepath = str(raw_filepath)
+                elif type(raw_filepath) == numpy_str:
+                    filepath = raw_filepath.decode("utf-8")
                 else:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
