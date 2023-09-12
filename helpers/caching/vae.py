@@ -213,15 +213,15 @@ class VAECache:
                     )
 
                 try:
-                    aspect_ratio = bucket
+                    aspect_ratio = float(bucket)
                     image = self.data_backend.read_image(filepath)
-                    image_aspect = round(image.width / image.height, 2)
+                    image_aspect = float(round(image.width / image.height, 2))
                     if aspect_ratio != image_aspect:
                         raise ValueError(
                             f"Image {filepath} has aspect ratio {image_aspect} but was found in bucket {aspect_ratio}."
                         )
                     image = MultiaspectImage.prepare_image(image, self.resolution)
-                    image_aspect = round(image.width / image.height, 2)
+                    image_aspect = float(round(image.width / image.height, 2))
                     if aspect_ratio != image_aspect:
                         raise ValueError(
                             f"Image {filepath} has aspect ratio {image_aspect} but was found in bucket {aspect_ratio}. However, this only occurred *after* the image was transformed."
