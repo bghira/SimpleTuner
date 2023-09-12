@@ -1419,7 +1419,15 @@ def main():
         unet = accelerator.unwrap_model(unet)
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
-
+        if vae is None:
+            vae = AutoencoderKL.from_pretrained(
+                vae_path,
+                subfolder="vae"
+                if args.pretrained_vae_model_name_or_path is None
+                else None,
+                revision=args.revision,
+                force_upcast=False,
+            )
         pipeline = StableDiffusionXLPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             text_encoder=text_encoder_1,
