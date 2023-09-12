@@ -215,8 +215,10 @@ class VAECache:
                     image = self.data_backend.read_image(filepath)
                     image_aspect = float(round(image.width / image.height, 2))
                     if aspect_ratio != image_aspect:
-                        raise ValueError(
-                            f"Image {filepath} has aspect ratio {image_aspect} but was found in bucket {aspect_ratio}."
+                        bucket_manager.handle_incorrect_bucket(
+                            image_path=filepath,
+                            bucket=bucket,
+                            actual_bucket=image_aspect,
                         )
                     image = MultiaspectImage.prepare_image(image, self.resolution)
                     image_aspect = float(round(image.width / image.height, 2))
