@@ -959,6 +959,11 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
+            if int(resume_step) == 0:
+                logger.info(
+                    "Marking training as having begun, since we will start on step zero."
+                )
+                StateTracker.start_training()
     else:
         StateTracker.start_training()
 
