@@ -306,6 +306,7 @@ class BucketManager:
         else:
             logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
+        self._save_cache()
 
     def handle_small_image(
         self, image_path: str, bucket: str, delete_unwanted_images: bool
