@@ -231,6 +231,9 @@ class VAECache:
                     )
                     vae_input_images.append(pixel_values)
                     vae_input_filepaths.append(filepath)
+                except ValueError as e:
+                    logger.error(f"Received fatal error: {e}")
+                    raise e
                 except Exception as e:
                     logger.error(f"Error processing image {filepath}: {e}")
                     if self.delete_problematic_images:
