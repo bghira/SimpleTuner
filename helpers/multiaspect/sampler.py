@@ -355,7 +355,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         # Break out of the while loop:
                         break
 
-                    logger.debug(f"Updating available image list after yielding batch")
+                    logger.debug(
+                        f"Updating available image list for bucket {bucket} after yielding batch"
+                    )
                     # Update available images after yielding
                     available_images = self._get_unseen_images(bucket)
                     logger.debug(
