@@ -121,7 +121,10 @@ if [ -z "${TRAINER_EXTRA_ARGS}" ]; then
 	printf "TRAINER_EXTRA_ARGS not set, defaulting to empty.\n"
 	TRAINER_EXTRA_ARGS=""
 fi
-
+if [ -z "$MINIMUM_RESOLUTION" ]; then
+	printf "MINIMUM_RESOLUTION not set, defaulting to RESOLUTION.\n"
+	export MINIMUM_RESOLUTION=$RESOLUTION
+fi
 if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
   # We had no value for protecting the folders, so we nuke them!
   echo "Deleting Jupyter notebook folders in 5 seconds if you do not cancel out."
@@ -152,7 +155,7 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
 	${DEBUG_EXTRA_ARGS}	--mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
 	--train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
 	--validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 \
-	--resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
+	--minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
 	--checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
 	--validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
 	--validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}"
