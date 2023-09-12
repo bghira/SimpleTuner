@@ -1260,8 +1260,13 @@ def main():
                     and global_step % args.validation_steps == 0
                     and global_step > 1
                 ):
+                    logging.debug(
+                        f"We might want to process validations, because we have {len(validation_prompts)} validation prompts,"
+                        f" and we are on step {global_step} which meshes with our specified interval of {args.validation_steps} steps."
+                    )
                     if (
-                        args.validation_prompt is None
+                        validation_prompts is None
+                        or validation_prompts == []
                         or args.num_validation_images is None
                         or args.num_validation_images <= 0
                     ):
@@ -1269,11 +1274,17 @@ def main():
                             f"Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!"
                         )
                         continue
+                    logging.debug(
+                        f"We have valid prompts to process, this is looking better for our decision tree.."
+                    )
                     if (
                         args.gradient_accumulation_steps > 0
                         and step % args.gradient_accumulation_steps != 0
                     ):
                         # We do not want to perform validation on a partial batch.
+                        logging.debug(
+                            f"Not producing a validation batch for {args.gradient_accumulation_steps} gradient accumulation steps vs {step} step count. We are at a partial batch."
+                        )
                         continue
                     logger.info(
                         f"Running validation... \n Generating {len(validation_prompts)} images."
