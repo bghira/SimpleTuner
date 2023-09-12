@@ -220,6 +220,7 @@ class VAECache:
                             bucket=bucket,
                             actual_bucket=image_aspect,
                         )
+                        continue
                     image = MultiaspectImage.prepare_image(image, self.resolution)
                     image_aspect = float(round(image.width / image.height, 2))
                     if aspect_ratio != image_aspect:
