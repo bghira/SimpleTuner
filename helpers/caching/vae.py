@@ -240,6 +240,9 @@ class VAECache:
 
                 # If VAE input batch is ready
                 if len(vae_input_images) >= self.vae_batch_size:
+                    logger.debug(
+                        f"Reached a VAE batch size of {self.vae_batch_size} pixel groups, so we will now encode them into latents."
+                    )
                     latents_batch = self.encode_images(
                         vae_input_images, vae_input_filepaths
                     )
@@ -251,6 +254,9 @@ class VAECache:
 
                 # If write batch is ready
                 if len(batch_filepaths) >= self.write_batch_size:
+                    logging.debug(
+                        f"We have accumulated {self.write_batch_size} latents, so we will now write them to disk."
+                    )
                     self.data_backend.write_batch(batch_filepaths, batch_data)
                     batch_filepaths.clear()
                     batch_data.clear()
