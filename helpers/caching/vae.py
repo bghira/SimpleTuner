@@ -203,10 +203,8 @@ class VAECache:
                     filepath = raw_filepath
                 elif len(raw_filepath) == 2:
                     idx, filepath = raw_filepath
-                elif type(raw_filepath) == Path:
+                elif type(raw_filepath) == Path or type(raw_filepath) == numpy_str:
                     filepath = str(raw_filepath)
-                elif type(raw_filepath) == numpy_str:
-                    filepath = raw_filepath.decode("utf-8")
                 else:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
