@@ -38,7 +38,11 @@ class BucketManager:
 
     def __len__(self):
         return sum(
-            [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
+            [
+                (len(bucket) // self.batch_size) * self.batch_size
+                for bucket in self.aspect_ratio_bucket_indices.values()
+                if len(bucket) >= self.batch_size
+            ]
         )
 
     def _discover_new_files(self):
