@@ -19,6 +19,8 @@ pil_logger.setLevel(logging.WARNING)
 
 
 class MultiAspectSampler(torch.utils.data.Sampler):
+    current_epoch = 1
+
     def __init__(
         self,
         bucket_manager: BucketManager,

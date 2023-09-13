@@ -939,7 +939,6 @@ def main():
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             args.resume_from_checkpoint = None
-            StateTracker.start_training()
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
@@ -964,24 +963,28 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
-            if int(resume_step) == 0:
-                logger.info(
-                    "Marking training as having begun, since we will start on step zero."
-                )
-                StateTracker.start_training()
-    else:
-        StateTracker.start_training()
+    StateTracker.start_training()
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
-        range(global_step, args.max_train_steps),
+        range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
     )
     progress_bar.set_description("Steps")
-    current_epoch = 0
+    progress_bar.update(global_step)
+    if (
+        custom_balanced_sampler.current_epoch > 0
+        and custom_balanced_sampler is not None
+    ):
+        # We store the number of dataset resets that have occurred inside the checkpoint.
+        first_epoch = custom_balanced_sampler.current_epoch
+    current_epoch = first_epoch
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
-            logger.info("Reached the end of our training run.")
+            # This might immediately end training, but that's useful for simply exporting the model.
+            logger.info(
+                f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs)."
+            )
             break
         logger.debug(
             f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
@@ -995,29 +998,16 @@ def main():
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
             # If we receive a False from the enumerator, we know we reached the next epoch.
-            if batch is False:
+            if batch is False or batch is None:
                 logger.info(f"Reached the end of epoch {epoch}")
                 break
-            # Skip steps until we reach the resumed step
-            if (
-                args.resume_from_checkpoint
-                and epoch == first_epoch
-                and step < resume_step
-            ):
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
-                if step + 2 == resume_step:
-                    # We want to trigger the batch to be properly generated when we start.
-                    if not StateTracker.status_training():
-                        logging.info(
-                            f"Starting training, as resume_step has been reached."
-                        )
-                        StateTracker.start_training()
-                continue
 
             if batch is None:
-                logging.debug(f"Burning a None size batch.")
-                continue
+                import traceback
+
+                raise ValueError(
+                    f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
+                )
 
             # Add the current batch of training data's avg luminance to a list.
             training_luminance_values.append(batch["luminance"])
