@@ -1,4 +1,5 @@
 import os
+import random
 import argparse
 import logging
 import boto3
@@ -29,6 +30,16 @@ http.mount("http://", adapter)
 http.mount("https://", adapter)
 
 
+def shuffle_words_in_filename(filename):
+    """Shuffle the words in a filename while keeping the file extension unchanged."""
+    name, ext = os.path.splitext(filename)
+    words = name.split(
+        "_"
+    )  # Assuming words in the filename are separated by underscores
+    random.shuffle(words)
+    return "_".join(words) + ext
+
+
 def resize_for_condition_image(input_image: Image, resolution: int):
     input_image = input_image.convert("RGB")
     W, H = input_image.size
@@ -47,6 +58,15 @@ def resize_for_condition_image(input_image: Image, resolution: int):
     logger.debug(msg)
     img = input_image.resize((W, H), resample=Image.BICUBIC)
     return img
+
+
+def object_exists_in_s3(s3_client, bucket_name, object_name):
+    """Check if a specific object exists in the S3 bucket."""
+    try:
+        s3_client.head_object(Bucket=bucket_name, Key=object_name)
+        return True
+    except s3_client.exceptions.NoSuchKey:
+        return False
 
 
 def fetch_image(info, args):
@@ -319,7 +339,7 @@ def list_all_s3_objects(s3_client, bucket_name):
 
 
 def upload_to_s3(filename, args, s3_client):
-    """Upload the specified file to the S3 bucket."""
+    """Upload the specified file to the S3 bucket with filename shuffling if needed."""
     filename = os.path.join(args.temporary_folder, filename)
     object_name = os.path.basename(filename)
 
@@ -327,12 +347,16 @@ def upload_to_s3(filename, args, s3_client):
     if not os.path.exists(filename):
         return
 
+    # Shuffle filename if it already exists in the S3 bucket
+    while object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
+        object_name = shuffle_words_in_filename(object_name)
+
     try:
         s3_client.upload_file(filename, args.aws_bucket_name, object_name)
         # Delete the local file after successful upload
         os.remove(filename)
     except Exception as e:
-        logger.error("Error uploading {} to S3: {}".format(object_name, e))
+        logger.error(f"Error uploading {object_name} to S3: {e}")
 
 
 def fetch_and_upload_image(info, args, s3_client):
