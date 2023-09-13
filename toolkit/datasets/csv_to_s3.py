@@ -198,6 +198,11 @@ def parse_args():
         action="store_true",
         help="If set, only images with EXIF data will be included.",
     )
+    parser.add_argument(
+        "--print_nonfatal_errors",
+        action="store_true",
+        help="If set, non-fatal errors will be printed. Remove this from the commandline to make output more streamlined/quieter.",
+    )
 
     return parser.parse_args()
 
@@ -241,7 +246,7 @@ def initialize_s3_client(args):
     return s3_client
 
 
-def content_to_filename(content):
+def content_to_filename(content, args):
     """
     Function to convert content to filename by stripping everything after '--',
     replacing non-alphanumeric characters and spaces, converting to lowercase,
@@ -291,7 +296,8 @@ def content_to_filename(content):
         logger.debug(f"-> Resulting filename: {filename}")
         return filename
     except Exception as e:
-        logger.error(f"Encountered error processing filename: {e}")
+        if args.print_nonfatal_errors:
+            logger.error(f"Encountered error processing filename: {e}")
 
 
 def valid_exif_data(image_path):
@@ -375,7 +381,7 @@ def fetch_data(s3_client, data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
     to_fetch = {}
     for row in data:
-        new_filename = content_to_filename(row[args.caption_field])
+        new_filename = content_to_filename(row[args.caption_field], args)
         if (
             hasattr(args, "midjourney_data_checks")
             and args.midjourney_data_checks
@@ -453,7 +459,7 @@ def main():
     for i, file in enumerate(
         tqdm(all_files, desc=f"Processing {total_files} Parquet files")
     ):
-        if content_to_filename(file.name) in existing_files:
+        if content_to_filename(file.name, args) in existing_files:
             logger.info(f"Skipping already processed file: {file}")
             continue
         logger.info(f"Loading file: {file}")
