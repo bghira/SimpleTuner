@@ -335,7 +335,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # If not in training mode, yield a random image immediately
             early_yield = self._yield_random_image_if_not_training()
             if early_yield:
-                yield early_yield
+                yield (early_yield)
                 continue
 
             all_buckets_exhausted = True  # Initial assumption
@@ -360,9 +360,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         logger.debug(
                             f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
                         )
-                        for example in self.batch_accumulator:
-                            logger.debug(f"Yielding example: {example}")
-                            yield example
+                        # Yield self.batch_accumulator as a tuple for the Dataloader:
+                        yield tuple(self.batch_accumulator)
                         # Change bucket after a full batch is yielded
                         logger.debug(
                             f"Clearing batch accumulator while changing buckets."
@@ -398,7 +397,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 )
                 self._reset_buckets()
                 # Exit with a False so that the loop knows we are done this epoch.
-                return False
+                raise StopIteration("This epoch has completed.")
 
     def __len__(self):
         return sum(
