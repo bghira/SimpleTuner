@@ -1,4 +1,5 @@
 import boto3, os, time
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
