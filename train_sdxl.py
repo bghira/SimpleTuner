@@ -1467,7 +1467,9 @@ def main():
                 validation_generator = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.seed or 0)
-                for validation_prompt in validation_prompts:
+                for validation_prompt in tqdm(
+                    validation_prompts, desc="Generating validation images"
+                ):
                     # Each validation prompt needs its own embed.
                     (
                         current_validation_prompt_embeds,
