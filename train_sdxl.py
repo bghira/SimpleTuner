@@ -432,7 +432,12 @@ def main():
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
 
-    def collate_fn(examples):
+    def collate_fn(batch):
+        if len(batch) != 1:
+            raise ValueError(
+                "This trainer is not designed to handle multiple batches in a single collate."
+            )
+        examples = batch[0]
         if not StateTracker.status_training():
             if len(examples) > 0:
                 for example in examples:
