@@ -65,7 +65,7 @@ def object_exists_in_s3(s3_client, bucket_name, object_name):
     try:
         s3_client.head_object(Bucket=bucket_name, Key=object_name)
         return True
-    except s3_client.exceptions.NoSuchKey:
+    except:
         return False
 
 
