@@ -347,9 +347,12 @@ def upload_to_s3(filename, args, s3_client):
     if not os.path.exists(filename):
         return
 
-    # Shuffle filename if it already exists in the S3 bucket
-    while object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
-        object_name = shuffle_words_in_filename(object_name)
+    if object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
+        try:
+            os.remove(filename)
+        except:
+            pass
+        return
 
     try:
         s3_client.upload_file(filename, args.aws_bucket_name, object_name)
