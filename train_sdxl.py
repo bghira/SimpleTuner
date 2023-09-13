@@ -474,7 +474,7 @@ def main():
         latents = [
             vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
         ]
-        pixel_values = torch.stack(latents)
+        latent_batch = torch.stack(latents)
 
         # Extract the captions from the examples.
         captions = [example["instance_prompt_text"] for example in examples]
@@ -490,7 +490,7 @@ def main():
         )
 
         return {
-            "pixel_values": pixel_values,
+            "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
             "add_time_ids": compute_time_ids(width, height),
@@ -1019,9 +1019,8 @@ def main():
 
             with accelerator.accumulate(unet):
                 training_logger.debug(f"Beginning another step.")
-                pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
+                latents = batch["latent_batch"].to(dtype=weight_dtype)
                 training_logger.debug("Moved pixels to accelerator.")
-                latents = pixel_values
                 # Sample noise that we'll add to the latents
                 training_logger.debug(f"Sampling random noise")
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
@@ -1084,13 +1083,6 @@ def main():
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
                 training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
-                # Get the additional image embedding for conditioning.
-                # Instead of getting a diagonal Gaussian here, we simply take the mode.
-                if args.pretrained_vae_model_name_or_path is not None:
-                    pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
-                else:
-                    pixel_values = batch["pixel_values"]
-
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
