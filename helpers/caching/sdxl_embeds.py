@@ -38,7 +38,10 @@ class TextEmbeddingCache:
             max_length=tokenizer.model_max_length,
             return_tensors="pt",
         ).input_ids
-        return text_encoder(input_tokens)[0]
+        output = text_encoder(input_tokens)[0]
+        logger.debug(f'Legacy prompt shape: {output.shape}')
+        logger.debug(f'Legacy prompt encoded: {output}')
+        return output
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
     def encode_sdxl_prompt(self, text_encoders, tokenizers, prompt):
