@@ -81,6 +81,7 @@ def log_validations(
     validation_prompts,
     global_step,
     resume_global_step,
+    step,
     progress_bar,
     text_encoder_1,
     tokenizer,

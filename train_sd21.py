@@ -884,6 +884,7 @@ def main(args):
                 validation_prompts,
                 global_step,
                 resume_global_step,
+                step,
                 progress_bar,
                 text_encoder,
                 tokenizer,
