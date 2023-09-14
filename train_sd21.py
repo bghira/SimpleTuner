@@ -458,6 +458,7 @@ def main(args):
 
         # Compute the embeddings using the captions.
         prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
+        logging.debug(f'prompt_embeds_all: {prompt_embeds_all}')
         prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
 
         return {
