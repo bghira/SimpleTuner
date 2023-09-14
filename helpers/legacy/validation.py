@@ -96,6 +96,7 @@ def log_validations(
     weight_dtype,
     embed_cache,
     validation_negative_pooled_embeds,
+    validation_negative_prompt_embeds,
     text_encoder_2=None,
     tokenizer_2=None,
     ema_unet=None,
