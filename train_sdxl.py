@@ -1240,6 +1240,7 @@ def main():
             unet=unet,
             revision=args.revision,
         )
+        pipeline.set_progress_bar_config(disable=True)
         pipeline.scheduler = DDIMScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
