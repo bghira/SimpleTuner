@@ -101,6 +101,8 @@ connection_logger.setLevel("WARNING")
 
 from torchvision.transforms import ToTensor
 
+to_tensor = ToTensor()
+
 
 def compute_ids(prompt: str):
     global tokenizer
