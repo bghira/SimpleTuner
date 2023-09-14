@@ -734,6 +734,7 @@ def main(args):
             scheduler_kwargs["epoch"] = epoch
 
         unet.train()
+        train_loss = 0.0
         if args.train_text_encoder:
             logging.debug(f"Bumping text encoder.")
             text_encoder.train()
