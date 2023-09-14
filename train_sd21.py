@@ -706,6 +706,19 @@ def main(args):
     progress_bar.set_description("Steps")
     current_percent_completion = 0
     for epoch in range(first_epoch, args.num_train_epochs):
+        if current_epoch >= args.num_train_epochs:
+            # This might immediately end training, but that's useful for simply exporting the model.
+            logger.info(
+                f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs)."
+            )
+            break
+        logger.debug(
+            f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
+        )
+        current_epoch = epoch
+        if args.lr_scheduler == "cosine_annealing_warm_restarts":
+            scheduler_kwargs["epoch"] = epoch
+
         unet.train()
         if args.train_text_encoder:
             logging.debug(f"Bumping text encoder.")
