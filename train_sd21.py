@@ -22,6 +22,7 @@ from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
+from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
 from helpers.legacy.sd_files import (
     import_model_class_from_model_name_or_path,
@@ -484,6 +485,16 @@ def main(args):
         accelerator=accelerator,
         model_type="legacy",
     )
+
+    logger.info(f"Pre-computing text embeds / updating cache.")
+    with accelerator.main_process_first():
+        all_captions = PromptHandler.get_all_captions(
+            data_backend=data_backend,
+            instance_data_root=args.instance_data_dir,
+            prepend_instance_prompt=args.prepend_instance_prompt or False,
+            use_captions=not args.only_instance_prompt,
+        )
+        embed_cache.precompute_embeddings_for_legacy_prompts(all_captions)
 
     logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
