@@ -495,6 +495,11 @@ def main(args):
             use_captions=not args.only_instance_prompt,
         )
         embed_cache.compute_embeddings_for_legacy_prompts(all_captions)
+    (
+        validation_prompts,
+        validation_shortnames,
+        validation_negative_prompt_embeds,
+    ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
 
     logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
