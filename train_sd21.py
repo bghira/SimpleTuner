@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 from helpers import log_format
 
-import hashlib, random, itertools, logging, math, time, os
+os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
+
+import hashlib, random, itertools, logging, math, time, os, json, copy
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
@@ -27,7 +29,7 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.legacy.validation import log_validation
+from helpers.legacy.validation import log_validation, log_validations
 from helpers.legacy.metadata import save_model_card
 from helpers.training.custom_schedule import (
     enforce_zero_terminal_snr,
@@ -84,23 +86,59 @@ def compute_ids(prompt: str):
     ).input_ids
 
 
-def collate_fn(examples):
-    if not StateTracker.status_training():
-        logging.debug("collate_fn: not training, returning examples.")
-        return examples
-    logging.debug(f"collate_fn: training, returning batch: {examples}")
-    input_ids = [compute_ids(example["instance_prompt_text"]) for example in examples]
-    pixel_values = [example["instance_tensor"] for example in examples]
-    pixel_values = torch.stack(pixel_values)
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
+def collate_fn(batch):
+    if len(batch) != 1:
+        raise ValueError(
+            "This trainer is not designed to handle multiple batches in a single collate."
+        )
+    examples = batch[0]
+    training_logger.debug(f"Examples: {examples}")
+    training_logger.debug(f"Computing luminance for input batch")
+    batch_luminance = calculate_batch_luminance(
+        [example["instance_images"] for example in examples]
+    )
 
-    input_ids = torch.cat(input_ids, dim=0)
+    # Initialize the VAE Cache if it doesn't exist
+    global vaecache
+    if "vaecache" not in globals():
+        vaecache = VAECache(
+            vae=vae,
+            accelerator=accelerator,
+            data_backend=data_backend,
+            resolution=args.resolution,
+            delete_problematic_images=args.delete_problematic_images,
+            vae_batch_size=args.vae_batch_size,
+            write_batch_size=args.write_batch_size,
+        )
 
-    batch = {
-        "input_ids": input_ids,
-        "pixel_values": pixel_values,
+    pixel_values = []
+    filepaths = []  # we will store the file paths here
+    for example in examples:
+        image_data = example["instance_images"]
+        # SDXL would grab the width/height here, but it's not needed for SD 2.x
+        pixel_values.append(
+            to_tensor(image_data).to(
+                memory_format=torch.contiguous_format, dtype=vae_dtype
+            )
+        )
+        filepaths.append(example["instance_images_path"])  # store the file path
+
+    # Compute the VAE embeddings for individual images
+    latents = [vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)]
+    latent_batch = torch.stack(latents)
+
+    # Extract the captions from the examples.
+    captions = [example["instance_prompt_text"] for example in examples]
+
+    # Compute the embeddings using the captions.
+    prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
+    prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+
+    return {
+        "latent_batch": latent_batch,
+        "prompt_embeds": prompt_embeds_all,
+        "luminance": batch_luminance,
     }
-    return batch
 
 
 def main(args):
@@ -400,12 +438,21 @@ def main(args):
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.train_batch_size,
+        batch_size=1,  # The sampler handles batching
         shuffle=False,  # The sampler handles shuffling
         sampler=custom_balanced_sampler,
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
+
+    logger.info("Initialise text embedding cache")
+    embed_cache = TextEmbeddingCache(
+        text_encoders=text_encoders,
+        tokenizers=tokenizers,
+        accelerator=accelerator,
+        model_type="legacy",
+    )
+
     logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -482,7 +529,7 @@ def main(args):
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
         # Copy args into public_args:
-        import copy
+        import copy, json
 
         public_args = copy.deepcopy(args)
         # Remove the args that we don't want to track:
@@ -493,15 +540,18 @@ def main(args):
         del public_args.aws_endpoint_url
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
-        # Add allow_val_change to public_args:
-        public_args_dict = vars(public_args)
+        public_args_hash = hashlib.md5(
+            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        project_name = args.tracker_project_name or "simpletuner-training"
+        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         accelerator.init_trackers(
             project_name,
             config=vars(public_args),
             init_kwargs={
                 "wandb": {
                     "name": tracker_run_name,
-                    "id": f"{project_name},{tracker_run_name}",
+                    "id": f"{public_args_hash}",
                     "resume": "allow",
                     "allow_val_change": True,
                 }
@@ -516,7 +566,7 @@ def main(args):
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num batches each epoch = {len(train_dataloader)}")
+    logger.info(f"  Num batches each epoch = {len(train_dataset) / total_batch_size}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(
@@ -543,30 +593,25 @@ def main(args):
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             args.resume_from_checkpoint = None
-            StateTracker.start_training()
         else:
             logging.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             custom_balanced_sampler.load_states(
                 state_path=os.path.join(args.output_dir, path, "training_state.json"),
             )
+            first_epoch = custom_balanced_sampler.current_epoch
             global_step = int(path.split("-")[1])
-
-            resume_global_step = global_step * args.gradient_accumulation_steps
-            first_epoch = global_step // num_update_steps_per_epoch
-            resume_step = resume_global_step % (
-                num_update_steps_per_epoch * args.gradient_accumulation_steps
-            )
-    else:
-        StateTracker.start_training()
+            resume_global_step = global_step
+    StateTracker.start_training()
 
     import time
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
-        range(global_step, args.max_train_steps),
+        range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
     )
+    progress_bar.update(global_step)
     progress_bar.set_description("Steps")
     current_percent_completion = 0
     for epoch in range(first_epoch, args.num_train_epochs):
@@ -575,48 +620,14 @@ def main(args):
             logging.debug(f"Bumping text encoder.")
             text_encoder.train()
         for step, batch in enumerate(train_dataloader):
-            # Skip steps until we reach the resumed step
-            if (
-                args.resume_from_checkpoint
-                and epoch == first_epoch
-                and step < resume_step
-            ):
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
-                if step + 1 == resume_step:
-                    # We want to trigger the batch to be properly generated when we start.
-                    if not StateTracker.status_training():
-                        logging.info(
-                            f"Starting training, as resume_step has been reached."
-                        )
-                        StateTracker.start_training()
-                continue
-            if type(batch) is list:
-                logging.warning("Burning a step due to dummy data.")
-                time.sleep(10)
+            if batch is None:
+                raise ValueError(
+                    f"Trainer received invalid value for training examples"
+                )
 
-                continue
-            logging.debug(f"Accumulating...")
             with accelerator.accumulate(unet):
-                logging.debug(f"Convert to latent space")
-                # Convert images to latent space. This could run out of VRAM, so we'll try again.
-                attempts = 5
-                current_attempt = 0
-                while current_attempt < attempts:
-                    try:
-                        latents = vae.encode(
-                            batch["pixel_values"].to(dtype=weight_dtype)
-                        ).latent_dist.sample()
-                        break
-                    except Exception as e:
-                        import traceback
-
-                        logging.error(
-                            f"Error: {e}, traceback: {traceback.format_exc()}"
-                        )
-                        torch.clear_autocast_cache()
-                        time.sleep(5)
-                latents = latents * vae.config.scaling_factor
+                logger.debug(f"Sending latent batch to device")
+                latents = batch["latent_batch"].to(dtype=weight_dtype)
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = None
@@ -630,7 +641,9 @@ def main(args):
                     new_noise = noise + args.input_pertubation * torch.randn_like(noise)
                 elif noise is None:
                     noise = torch.randn_like(latents)
+
                 bsz = latents.shape[0]
+                logger.debug(f"Working on batch size: {bsz}")
                 # Sample a random timestep for each image
                 timesteps = torch.randint(
                     0,
@@ -650,15 +663,27 @@ def main(args):
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = text_encoder(batch["input_ids"])[0]
-                logging.debug(f"Calculate target for loss")
+                encoder_hidden_states = batch["prompt_embeds"]
+                training_logger.debug(
+                    f"Encoder hidden states: {encoder_hidden_states.shape}"
+                )
+                if (
+                    args.caption_dropout_probability is not None
+                    and args.caption_dropout_probability > 0
+                ):
+                    # When using caption dropout, we will use the null embed instead of prompt embeds.
+                    # The chance of this happening is dictated by the caption_dropout_probability.
+                    if random.random() < args.caption_dropout_probability:
+                        training_logger.debug(f"Caption dropout triggered.")
+                        batch[
+                            "prompt_embeds_all"
+                        ] = embed_cache.compute_embeddings_for_legacy_prompts([""])
+
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
-                    logging.debug(f"Using Epsilon target.")
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    logging.debug(f"Using v-prediction target.")
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
@@ -672,7 +697,7 @@ def main(args):
                 ).sample
 
                 if args.snr_gamma is None:
-                    logging.debug(f"Calculating loss")
+                    training_logger.debug(f"Calculating loss")
                     loss = F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
@@ -680,13 +705,16 @@ def main(args):
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
+                    training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
 
                     if torch.any(torch.isnan(snr)):
-                        print("snr contains NaN values")
+                        training_logger.error("snr contains NaN values")
                     if torch.any(snr == 0):
-                        print("snr contains zero values")
-
+                        training_logger.error("snr contains zero values")
+                    training_logger.debug(
+                        f"Calculating MSE loss weights using SNR as divisor"
+                    )
                     mse_loss_weights = (
                         torch.stack(
                             [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
@@ -698,18 +726,28 @@ def main(args):
                     #  prevent the explosion of gradients or NaNs due to the presence of very small numbers.
                     mse_loss_weights[snr == 0] = 1.0
                     if torch.any(torch.isnan(mse_loss_weights)):
-                        print("mse_loss_weights contains NaN values")
+                        training_logger.error("mse_loss_weights contains NaN values")
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
+                    training_logger.debug(
+                        f"Calculating original MSE loss without reduction"
+                    )
                     loss = F.mse_loss(
                         model_pred.float(), target.float(), reduction="none"
                     )
+                    training_logger.debug(f"Calculating SNR-weighted MSE loss")
                     loss = (
                         loss.mean(dim=list(range(1, len(loss.shape))))
                         * mse_loss_weights
                     )
+                    training_logger.debug(f"Reducing loss via mean")
                     loss = loss.mean()
+
+                # Gather the losses across all processes for logging (if we use distributed training).
+                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
+                train_loss += avg_loss.item() / args.gradient_accumulation_steps
+
                 logging.debug(f"Backwards pass.")
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
@@ -718,19 +756,40 @@ def main(args):
                         if args.train_text_encoder
                         else unet.parameters()
                     )
-                    logging.debug(f"Syncing gradients")
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
+                training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
                 lr_scheduler.step()
-                logging.debug(f"Stepped")
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
-                logging.debug(f"Optimizer set grads.")
+
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
+                if args.use_ema:
+                    training_logger.debug(f"Stepping EMA unet forward")
+                    ema_unet.step(unet.parameters())
                 progress_bar.update(1)
+                global_step += 1
+                current_epoch_step += 1
                 current_percent_completion = int(
                     progress_bar.n / progress_bar.total * 100
                 )
+                # Average out the luminance values of each batch, so that we can store that in this step.
+                avg_training_data_luminance = sum(training_luminance_values) / len(
+                    training_luminance_values
+                )
+                logs = {
+                    "train_luminance": avg_training_data_luminance,
+                    "train_loss": train_loss,
+                    "learning_rate": lr_scheduler.get_last_lr()[0],
+                }
+                accelerator.log(
+                    **logs,
+                    step=global_step,
+                )
+                # Reset some values for the next go.
+                training_luminance_values = []
+                train_loss = 0.0
+
                 if (
                     args.freeze_encoder
                     and current_percent_completion > args.text_encoder_limit
@@ -744,11 +803,38 @@ def main(args):
                     args.freeze_encoder = False
                     args.train_text_encoder = False
 
-                global_step += 1
+                if global_step % args.checkpointing_steps == 0:
+                    if accelerator.is_main_process:
+                        # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
+                        if args.checkpoints_total_limit is not None:
+                            checkpoints = os.listdir(args.output_dir)
+                            checkpoints = [
+                                d for d in checkpoints if d.startswith("checkpoint")
+                            ]
+                            checkpoints = sorted(
+                                checkpoints, key=lambda x: int(x.split("-")[1])
+                            )
 
-                if accelerator.is_main_process:
-                    images = []
-                    if global_step % args.checkpointing_steps == 0:
+                            # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
+                            if len(checkpoints) >= args.checkpoints_total_limit:
+                                num_to_remove = (
+                                    len(checkpoints) - args.checkpoints_total_limit + 1
+                                )
+                                removing_checkpoints = checkpoints[0:num_to_remove]
+
+                                logger.info(
+                                    f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
+                                )
+                                logger.info(
+                                    f"removing checkpoints: {', '.join(removing_checkpoints)}"
+                                )
+
+                                for removing_checkpoint in removing_checkpoints:
+                                    removing_checkpoint = os.path.join(
+                                        args.output_dir, removing_checkpoint
+                                    )
+                                    shutil.rmtree(removing_checkpoint)
+
                         save_path = os.path.join(
                             args.output_dir, f"checkpoint-{global_step}"
                         )
@@ -758,43 +844,78 @@ def main(args):
                         )
                         logger.info(f"Saved state to {save_path}")
 
-                    if (
-                        args.validation_prompt is not None
-                        and global_step % args.validation_steps == 0
-                    ):
-                        images = log_validation(
-                            text_encoder,
-                            tokenizer,
-                            unet,
-                            vae,
-                            args,
-                            accelerator,
-                            weight_dtype,
-                            epoch,
-                        )
-            logging.debug(f"Writing logs.")
-            logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {
+                "step_loss": loss.detach().item(),
+                "lr": lr_scheduler.get_last_lr()[0],
+            }
             progress_bar.set_postfix(**logs)
-            accelerator.log(logs, step=global_step)
+            log_validations(
+                logger,
+                accelerator,
+                unet,
+                args,
+                validation_prompts,
+                global_step,
+                resume_global_step,
+                progress_bar,
+                text_encoder,
+                tokenizer,
+                vae_path=args.pretrained_model_name_or_path,
+                weight_dtype=unet.dtype,
+                embed_cache=embed_cache,
+                validation_negative_pooled_embeds=None,
+                text_encoder_2=None,
+                tokenizer_2=None,
+                ema_unet=None,
+                vae=vae,
+            )
 
-            if global_step >= args.max_train_steps:
-                logging.warn(f"Ending iteration, training has completed.")
+            if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
+                logger.info(
+                    f"Training has completed.",
+                    f"\n -> global_step = {global_step}, max_train_steps = {args.max_train_steps}, epoch = {epoch}, num_train_epochs = {args.num_train_epochs}",
+                )
                 break
-        if global_step >= args.max_train_steps:
-            logging.warn(f"Reached stopping point. Beginning to unwind.")
+        if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
+            logger.info(
+                f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {global_step}"
+            )
             break
 
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        unet = accelerator.unwrap_model(unet)
+        if args.train_text_encoder:
+            text_encoder = accelerator.unwrap_model(text_encoder)
+        if args.use_ema:
+            ema_unet.copy_to(unet.parameters())
+        if vae is None:
+            vae = AutoencoderKL.from_pretrained(
+                vae_path,
+                subfolder="vae"
+                if args.pretrained_vae_model_name_or_path is None
+                else None,
+                revision=args.revision,
+                force_upcast=False,
+            )
         pipeline = DiffusionPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
-            unet=accelerator.unwrap_model(unet),
-            text_encoder=accelerator.unwrap_model(text_encoder),
+            text_encoder=text_encoder,
+            vae=vae,
+            unet=unet,
             revision=args.revision,
         )
+        pipeline.scheduler = DDIMScheduler.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="scheduler",
+            prediction_type=args.prediction_type,
+            timestep_spacing=args.training_scheduler_timestep_spacing,
+            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+        )
         pipeline.save_pretrained(
-            os.path.join(args.output_dir, args.hub_model_id or "pipeline")
+            os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
+            safe_serialization=True,
         )
 
         if args.push_to_hub:
@@ -817,6 +938,56 @@ def main(args):
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
+
+        if validation_prompts:
+            validation_images = []
+            pipeline = pipeline.to(accelerator.device)
+            with torch.autocast(str(accelerator.device).replace(":0", "")):
+                validation_generator = torch.Generator(
+                    device=accelerator.device
+                ).manual_seed(args.seed or 0)
+                for validation_prompt in tqdm(
+                    validation_prompts, desc="Generating validation images"
+                ):
+                    # Each validation prompt needs its own embed.
+                    current_validation_prompt_embeds = (
+                        embed_cache.compute_embeddings_for_legacy_prompts(
+                            [validation_prompt]
+                        )
+                    )
+                    validation_images.extend(
+                        pipeline(
+                            prompt_embeds=current_validation_prompt_embeds,
+                            negative_prompt_embeds=validation_negative_prompt_embeds,
+                            num_images_per_prompt=args.num_validation_images,
+                            num_inference_steps=30,
+                            guidance_scale=args.validation_guidance,
+                            guidance_rescale=args.validation_guidance_rescale,
+                            generator=validation_generator,
+                            height=args.validation_resolution,
+                            width=args.validation_resolution,
+                        ).images
+                    )
+
+                for tracker in accelerator.trackers:
+                    if tracker.name == "wandb":
+                        validation_document = {}
+                        validation_luminance = []
+                        for idx, validation_image in enumerate(validation_images):
+                            # Create a WandB entry containing each image.
+                            validation_document[
+                                validation_shortnames[idx]
+                            ] = wandb.Image(validation_image)
+                            validation_luminance.append(
+                                calculate_luminance(validation_image)
+                            )
+                        # Compute the mean luminance across all samples:
+                        validation_luminance = torch.tensor(validation_luminance)
+                        validation_document[
+                            "validation_luminance"
+                        ] = validation_luminance.mean()
+                        del validation_luminance
+                        tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
 
