@@ -942,7 +942,7 @@ def main():
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
             progress_bar.set_description(
-                f"Epoch {current_epoch}/{args.num_training_epochs}, Steps"
+                f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
             )
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
@@ -1185,6 +1185,7 @@ def main():
                 validation_prompts,
                 global_step,
                 resume_global_step,
+                step,
                 progress_bar,
                 text_encoder_1,
                 tokenizer=None,
