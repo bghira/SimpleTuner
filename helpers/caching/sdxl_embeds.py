@@ -6,11 +6,19 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class TextEmbeddingCache:
-    def __init__(self, text_encoders, tokenizers, accelerator, cache_dir="cache"):
+    def __init__(
+        self,
+        text_encoders,
+        tokenizers,
+        accelerator,
+        cache_dir: str = "cache",
+        model_type: str = "sdxl",
+    ):
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        self.model_type = model_type
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def create_hash(self, caption):
@@ -22,8 +30,21 @@ class TextEmbeddingCache:
     def load_from_cache(self, filename):
         return torch.load(filename)
 
-    # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-    def encode_prompt(self, text_encoders, tokenizers, prompt):
+    def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
+        input_tokens = tokenizer(
+            prompt,
+            truncation=True,
+            padding="max_length",
+            max_length=tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids
+        output = text_encoder(input_tokens)[0]
+        logger.debug(f'Legacy prompt shape: {output.shape}')
+        logger.debug(f'Legacy prompt encoded: {output}')
+        return output
+
+    # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
+    def encode_sdxl_prompt(self, text_encoders, tokenizers, prompt):
         prompt_embeds_list = []
 
         for tokenizer, text_encoder in zip(tokenizers, text_encoders):
@@ -67,12 +88,12 @@ class TextEmbeddingCache:
         return prompt_embeds, pooled_prompt_embeds
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
-    def encode_prompts(self, text_encoders, tokenizers, prompts):
+    def encode_sdxl_prompts(self, text_encoders, tokenizers, prompts):
         prompt_embeds_all = []
         pooled_prompt_embeds_all = []
 
         for prompt in prompts:
-            prompt_embeds, pooled_prompt_embeds = self.encode_prompt(
+            prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompt(
                 text_encoders, tokenizers, prompt
             )
             prompt_embeds_all.append(prompt_embeds)
@@ -82,7 +103,25 @@ class TextEmbeddingCache:
             pooled_prompt_embeds_all
         ).squeeze(dim=1)
 
+    def encode_prompt(self, prompt: str):
+        if self.model_type == "sdxl":
+            return self.encode_sdxl_prompt(self.text_encoders, self.tokenizers, prompt)
+        else:
+            return self.encode_legacy_prompt(
+                self.text_encoders[0], self.tokenizers[0], prompt
+            )
+
     def compute_embeddings_for_prompts(self, prompts, return_concat: bool = True):
+        if self.model_type == "sdxl":
+            return self.compute_embeddings_for_sdxl_prompts(
+                prompts, return_concat=return_concat
+            )
+        elif self.model_type == "legacy":
+            return self.compute_embeddings_for_legacy_prompts(
+                prompts, return_concat=return_concat
+            )
+
+    def compute_embeddings_for_sdxl_prompts(self, prompts, return_concat: bool = True):
         prompt_embeds_all = []
         add_text_embeds_all = []
 
@@ -100,7 +139,7 @@ class TextEmbeddingCache:
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
                     logger.debug(f"Encoding prompt: {prompt}")
-                    prompt_embeds, pooled_prompt_embeds = self.encode_prompts(
+                    prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
                         self.text_encoders, self.tokenizers, [prompt]
                     )
                     add_text_embeds = pooled_prompt_embeds
@@ -124,10 +163,46 @@ class TextEmbeddingCache:
 
         return prompt_embeds_all, add_text_embeds_all
 
-    def precompute_embeddings_for_prompts(self, prompts):
+    def precompute_embeddings_for_sdxl_prompts(self, prompts):
         """This is the same function as compute_embeddings_for_prompts, but it specifically runs with the Accelerate context manager.
 
         Args:
             prompts (list[str]): All of the prompts.
         """
-        self.compute_embeddings_for_prompts(prompts, return_concat=False)
+        self.compute_embeddings_for_sdxl_prompts(prompts, return_concat=False)
+
+    def compute_embeddings_for_legacy_prompts(
+        self, prompts, return_concat: bool = True
+    ):
+        prompt_embeds_all = []
+
+        with torch.no_grad():
+            for prompt in tqdm(
+                prompts, desc="Processing prompts", disable=return_concat
+            ):
+                filename = os.path.join(
+                    self.cache_dir, self.create_hash(prompt) + ".pt"
+                )
+                if os.path.exists(filename) and not return_concat:
+                    continue
+                if os.path.exists(filename):
+                    logger.debug(f"Loading from cache: {filename}")
+                    prompt_embeds = self.load_from_cache(filename)
+                else:
+                    logger.debug(f"Encoding prompt: {prompt}")
+                    prompt_embeds = self.encode_legacy_prompt(
+                        self.text_encoders[0], self.tokenizers[0], [prompt]
+                    )
+                    prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                    self.save_to_cache(filename, prompt_embeds)
+
+                prompt_embeds_all.append(prompt_embeds)
+
+            if not return_concat:
+                logger.info(
+                    "Not returning embeds, since we just concatenated a whackload of them."
+                )
+                del prompt_embeds_all
+                return
+
+        return prompt_embeds_all
