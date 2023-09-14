@@ -21,7 +21,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     validation_prompts = []
     validation_shortnames = []
     if not hasattr(embed_cache, "model_type"):
-        return ValueError(
+        raise ValueError(
             f"Embed cache engine did not contain a model_type. Cannot continue."
         )
     model_type = embed_cache.model_type
