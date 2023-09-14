@@ -494,7 +494,7 @@ def main(args):
             prepend_instance_prompt=args.prepend_instance_prompt or False,
             use_captions=not args.only_instance_prompt,
         )
-        embed_cache.precompute_embeddings_for_legacy_prompts(all_captions)
+        embed_cache.compute_embeddings_for_legacy_prompts(all_captions)
 
     logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
