@@ -755,6 +755,8 @@ def main(args):
                 raise ValueError(
                     f"Trainer received invalid value for training examples"
                 )
+            # Add the current batch of training data's avg luminance to a list.
+            training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
                 logger.debug(f"Sending latent batch to device")
@@ -905,9 +907,9 @@ def main(args):
                     progress_bar.n / progress_bar.total * 100
                 )
                 # Average out the luminance values of each batch, so that we can store that in this step.
-                avg_training_data_luminance = sum(training_luminance_values) / min(1, len(
+                avg_training_data_luminance = sum(training_luminance_values) / len(
                     training_luminance_values
-                ))
+                )
                 logs = {
                     "train_luminance": avg_training_data_luminance,
                     "train_loss": train_loss,
