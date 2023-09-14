@@ -910,6 +910,14 @@ def main():
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
     StateTracker.start_training()
+    # We store the number of dataset resets that have occurred inside the checkpoint.
+    first_epoch = custom_balanced_sampler.current_epoch
+    current_epoch = first_epoch
+    if current_epoch >= args.num_train_epochs:
+        logger.info(
+            f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
+        )
+        args.max_train_steps = 0
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
@@ -918,12 +926,7 @@ def main():
     )
     progress_bar.set_description("Steps")
     progress_bar.update(global_step)
-    # We store the number of dataset resets that have occurred inside the checkpoint.
-    first_epoch = custom_balanced_sampler.current_epoch
-    current_epoch = first_epoch
-    logger.debug(
-        f"Beginning training between epochs {first_epoch} to {args.num_train_epochs}"
-    )
+
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
             # This might immediately end training, but that's useful for simply exporting the model.
