@@ -458,7 +458,7 @@ def main(args):
 
         # Compute the embeddings using the captions.
         prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
-        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+        prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
 
         return {
             "latent_batch": latent_batch,
