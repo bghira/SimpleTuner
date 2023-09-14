@@ -113,61 +113,6 @@ def compute_ids(prompt: str):
     ).input_ids
 
 
-def collate_fn(batch):
-    if len(batch) != 1:
-        raise ValueError(
-            "This trainer is not designed to handle multiple batches in a single collate."
-        )
-    examples = batch[0]
-    training_logger.debug(f"Examples: {examples}")
-    training_logger.debug(f"Computing luminance for input batch")
-    batch_luminance = calculate_batch_luminance(
-        [example["instance_images"] for example in examples]
-    )
-
-    # Initialize the VAE Cache if it doesn't exist
-    global vaecache
-    if "vaecache" not in globals():
-        vaecache = VAECache(
-            vae=vae,
-            accelerator=accelerator,
-            data_backend=data_backend,
-            resolution=args.resolution,
-            delete_problematic_images=args.delete_problematic_images,
-            vae_batch_size=args.vae_batch_size,
-            write_batch_size=args.write_batch_size,
-        )
-
-    pixel_values = []
-    filepaths = []  # we will store the file paths here
-    for example in examples:
-        image_data = example["instance_images"]
-        # SDXL would grab the width/height here, but it's not needed for SD 2.x
-        pixel_values.append(
-            to_tensor(image_data).to(
-                memory_format=torch.contiguous_format, dtype=vae_dtype
-            )
-        )
-        filepaths.append(example["instance_images_path"])  # store the file path
-
-    # Compute the VAE embeddings for individual images
-    latents = [vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)]
-    latent_batch = torch.stack(latents)
-
-    # Extract the captions from the examples.
-    captions = [example["instance_prompt_text"] for example in examples]
-
-    # Compute the embeddings using the captions.
-    prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
-    prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
-
-    return {
-        "latent_batch": latent_batch,
-        "prompt_embeds": prompt_embeds_all,
-        "luminance": batch_luminance,
-    }
-
-
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
 
@@ -462,6 +407,63 @@ def main(args):
         minimum_image_size=args.minimum_image_size,
         resolution=args.resolution,
     )
+
+    def collate_fn(batch):
+        if len(batch) != 1:
+            raise ValueError(
+                "This trainer is not designed to handle multiple batches in a single collate."
+            )
+        examples = batch[0]
+        training_logger.debug(f"Examples: {examples}")
+        training_logger.debug(f"Computing luminance for input batch")
+        batch_luminance = calculate_batch_luminance(
+            [example["instance_images"] for example in examples]
+        )
+
+        # Initialize the VAE Cache if it doesn't exist
+        global vaecache
+        if "vaecache" not in globals():
+            vaecache = VAECache(
+                vae=vae,
+                accelerator=accelerator,
+                data_backend=data_backend,
+                resolution=args.resolution,
+                delete_problematic_images=args.delete_problematic_images,
+                vae_batch_size=args.vae_batch_size,
+                write_batch_size=args.write_batch_size,
+            )
+
+        pixel_values = []
+        filepaths = []  # we will store the file paths here
+        for example in examples:
+            image_data = example["instance_images"]
+            # SDXL would grab the width/height here, but it's not needed for SD 2.x
+            pixel_values.append(
+                to_tensor(image_data).to(
+                    memory_format=torch.contiguous_format, dtype=vae_dtype
+                )
+            )
+            filepaths.append(example["instance_images_path"])  # store the file path
+
+        # Compute the VAE embeddings for individual images
+        latents = [
+            vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
+        ]
+        latent_batch = torch.stack(latents)
+
+        # Extract the captions from the examples.
+        captions = [example["instance_prompt_text"] for example in examples]
+
+        # Compute the embeddings using the captions.
+        prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
+        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+
+        return {
+            "latent_batch": latent_batch,
+            "prompt_embeds": prompt_embeds_all,
+            "luminance": batch_luminance,
+        }
+
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
