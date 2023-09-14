@@ -647,6 +647,11 @@ def main(args):
             logging.debug(f"Bumping text encoder.")
             text_encoder.train()
         for step, batch in enumerate(train_dataloader):
+            if accelerator.is_main_process:
+                progress_bar.set_description(
+                    f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
+                )
+
             if batch is None:
                 raise ValueError(
                     f"Trainer received invalid value for training examples"
