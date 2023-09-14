@@ -103,6 +103,12 @@ def log_validations(
 ):
     ### BEGIN: Perform validation every `validation_epochs` steps
     if accelerator.is_main_process:
+        logger.debug(
+            f"Performing validation every {args.validation_steps} steps."
+            f" We are on step {global_step} and have {len(validation_prompts)} validation prompts."
+            f" We have {progress_bar.n} steps of progress done and are resuming from {resume_global_step}."
+            f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
+        )
         if (
             validation_prompts
             and global_step % args.validation_steps == 0
