@@ -30,7 +30,7 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.legacy.validation import log_validation, log_validations
+from helpers.legacy.validation import log_validations
 from helpers.legacy.metadata import save_model_card
 from helpers.training.custom_schedule import (
     enforce_zero_terminal_snr,
