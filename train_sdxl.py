@@ -889,6 +889,7 @@ def main():
     global_step = 0
     first_epoch = 0
     resume_step = 0
+    resume_global_step = 0
     scheduler_kwargs = {}
 
     # Potentially load in the weights and states from a previous save
