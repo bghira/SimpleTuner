@@ -14,9 +14,10 @@
 # See the License for the specific language governing permissions and
 from helpers import log_format
 
+import hashlib, random, itertools, logging, math, time, os, json, copy
+
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
-import hashlib, random, itertools, logging, math, time, os, json, copy
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
