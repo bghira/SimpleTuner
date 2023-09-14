@@ -459,7 +459,7 @@ def main(args):
 
         # Compute the embeddings using the captions.
         prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
-        logger.debug(f'{len(prompt_embeds_all)} prompt_embeds_all: {prompt_embeds_all}')
+        logger.debug(f"{len(prompt_embeds_all)} prompt_embeds_all: {prompt_embeds_all}")
         prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
 
         return {
@@ -1109,9 +1109,12 @@ def main(args):
                         validation_luminance = []
                         for idx, validation_image in enumerate(validation_images):
                             # Create a WandB entry containing each image.
-                            validation_document[
-                                validation_shortnames[idx]
-                            ] = wandb.Image(validation_image)
+                            shortname = f"no_shortname-{idx}"
+                            if idx in validation_shortnames:
+                                shortname = f"{validation_shortnames[idx]}-{idx}"
+                            validation_document[shortname] = wandb.Image(
+                                validation_image
+                            )
                             validation_luminance.append(
                                 calculate_luminance(validation_image)
                             )

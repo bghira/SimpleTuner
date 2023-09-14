@@ -1286,9 +1286,12 @@ def main():
                         validation_luminance = []
                         for idx, validation_image in enumerate(validation_images):
                             # Create a WandB entry containing each image.
-                            validation_document[
-                                validation_shortnames[idx]
-                            ] = wandb.Image(validation_image)
+                            shortname = f"no_shortname-{idx}"
+                            if idx in validation_shortnames:
+                                shortname = f"{validation_shortnames[idx]}-{idx}"
+                            validation_document[shortname] = wandb.Image(
+                                validation_image
+                            )
                             validation_luminance.append(
                                 calculate_luminance(validation_image)
                             )
