@@ -21,6 +21,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
+from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.training.multi_process import rank_info
 from helpers.legacy.sd_files import (
     import_model_class_from_model_name_or_path,
