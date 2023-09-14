@@ -699,6 +699,7 @@ def main(args):
             first_epoch = custom_balanced_sampler.current_epoch
             resume_global_step = global_step = int(path.split("-")[1])
     StateTracker.start_training()
+    final_progress_step = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
     if first_epoch > 1:
@@ -706,21 +707,30 @@ def main(args):
             f"Resuming from epoch {first_epoch}, which is not the first epoch. This is a bit weird."
         )
         steps_to_remove = first_epoch * num_update_steps_per_epoch
-        args.max_train_steps -= steps_to_remove
+        final_progress_step -= steps_to_remove
 
     current_epoch = first_epoch
     if current_epoch >= args.num_train_epochs:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
-
-    import time
+    logger.info("***** Running training *****")
+    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
+    logger.info(
+        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    )
+    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
+    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(f"  Total optimization steps remaining = {final_progress_step}")
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
     )
+    progress_bar.set_description("Steps")
     progress_bar.update(global_step)
     progress_bar.set_description("Steps")
     current_percent_completion = 0
