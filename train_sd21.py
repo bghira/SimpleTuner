@@ -52,6 +52,10 @@ from packaging import version
 from PIL import Image
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
+from helpers.image_manipulation.brightness import (
+    calculate_luminance,
+    calculate_batch_luminance,
+)
 
 import diffusers
 from diffusers import (
