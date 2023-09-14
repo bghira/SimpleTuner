@@ -88,7 +88,7 @@ Optimizations from the SDXL trainer could be ported to the legacy trainer (text 
 
 * `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance.
 * `train_sdxl.sh` - This is where the magic happens.
-* `training.sh` - This is the legacy Stable Diffusion 1.x / 2.x trainer. The last stable version was before SDXL support was introduced. 😞
+* `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
 * `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
 * `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
 

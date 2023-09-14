@@ -19,6 +19,8 @@ pil_logger.setLevel(logging.WARNING)
 
 
 class MultiAspectSampler(torch.utils.data.Sampler):
+    current_epoch = 1
+
     def __init__(
         self,
         bucket_manager: BucketManager,
@@ -268,7 +270,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         bucket=bucket,
                         delete_unwanted_images=self.delete_unwanted_images,
                     )
+                    logging.debug(
+                        f"_process_single_image discovered image was too small, returning None"
+                    )
                     return None
+                else:
+                    logging.debug(
+                        f"Image meets our minimum size status: {image.width}x{image.height}"
+                    )
 
                 image = exif_transpose(image)
                 aspect_ratio = round(image.width / image.height, 2)
@@ -277,8 +286,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self.bucket_manager.handle_incorrect_bucket(
                     image_path, bucket, actual_bucket
                 )
+                logging.debug(
+                    f"_process_single_image discovered image was incorrectly bucketed, returning None"
+                )
                 return None
-
+            else:
+                logging.debug(
+                    f"Image was correctly bucketed: {actual_bucket} vs {bucket}"
+                )
+            logging.debug(
+                f"_process_single_image ran into no issues, we are returning the path {image_path}"
+            )
             return image_path
         except:
             logger.warning(f"Image was bad or in-progress: {image_path}")
@@ -290,11 +308,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         to_yield = []
         for image_path in samples:
+            logging.debug(
+                f"Before analysing sample, we have {len(to_yield)} images to yield."
+            )
             processed_image_path = self._process_single_image(image_path, bucket)
-            if processed_image_path:
+            if processed_image_path is not None:
+                logging.debug(f"Image {processed_image_path} is considered valid.")
                 to_yield.append(processed_image_path)
                 if StateTracker.status_training():
                     self.bucket_manager.mark_as_seen(processed_image_path)
+            else:
+                logging.debug(f"Image {image_path} is considered invalid.")
+            logging.debug(
+                f"After analysing sample, we have {len(to_yield)} images to yield."
+            )
+
         return to_yield
 
     def _clear_batch_accumulator(self):
@@ -309,7 +337,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # If not in training mode, yield a random image immediately
             early_yield = self._yield_random_image_if_not_training()
             if early_yield:
-                yield early_yield
+                yield (early_yield)
                 continue
 
             all_buckets_exhausted = True  # Initial assumption
@@ -317,31 +345,50 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self._clear_batch_accumulator()
                 available_images = self._get_unseen_images(bucket)
                 while len(available_images) >= self.batch_size:
+                    logger.debug(
+                        f"Bucket {bucket} has {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
+                    )
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     samples = random.sample(available_images, k=self.batch_size)
                     to_yield = self._validate_and_yield_images_from_samples(
                         samples, bucket
                     )
-
+                    logger.debug(
+                        f"After validating and yielding, we have {len(to_yield)} images to yield."
+                    )
                     self.batch_accumulator.extend(to_yield)
                     # If the batch is full, yield it
                     if len(self.batch_accumulator) >= self.batch_size:
-                        for example in self.batch_accumulator:
-                            yield example
+                        logger.debug(
+                            f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
+                        )
+                        # Yield self.batch_accumulator as a tuple for the Dataloader:
+                        yield tuple(self.batch_accumulator)
                         # Change bucket after a full batch is yielded
+                        logger.debug(
+                            f"Clearing batch accumulator while changing buckets."
+                        )
                         self.change_bucket()
                         # Break out of the while loop:
                         break
 
-                    logger.debug(f"Updating available image list after yielding batch")
+                    logger.debug(
+                        f"Updating available image list for bucket {bucket} after yielding batch"
+                    )
                     # Update available images after yielding
                     available_images = self._get_unseen_images(bucket)
+                    logger.debug(
+                        f"Bucket {bucket} now has {len(available_images)} available images after yielding."
+                    )
 
                 # Handle exhausted bucket
                 if (
                     len(available_images) < self.batch_size
                     and idx == len(self.buckets) - 1
                 ):
+                    logger.debug(
+                        f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
+                    )
                     self.move_to_exhausted()
                     self.change_bucket()
 
@@ -351,8 +398,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
                 self._reset_buckets()
-                # Exit with a False so that the loop knows we are done this epoch.
-                return False
+                # Exit with nothing, and the epoch is over. Magic.
+                return
 
     def __len__(self):
         return sum(

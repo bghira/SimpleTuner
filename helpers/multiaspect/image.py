@@ -46,19 +46,26 @@ class MultiaspectImage:
 
     @staticmethod
     def prepare_image(image: Image, resolution: int):
-        if not hasattr(image, 'convert'):
-            raise Exception(f'Unknown data received instead of PIL.Image object: {type(image)}')
+        if not hasattr(image, "convert"):
+            raise Exception(
+                f"Unknown data received instead of PIL.Image object: {type(image)}"
+            )
         # Strip transparency
         image = image.convert("RGB")
         # Rotate, maybe.
+        logger.debug(f"Processing image filename: {image}")
+        logger.debug(f"Image size before EXIF transform: {image.size}")
         image = exif_transpose(image)
+        logger.debug(f"Image size after EXIF transform: {image.size}")
         image = MultiaspectImage.resize_for_condition_image(image, resolution)
         return image
 
     @staticmethod
     def resize_for_condition_image(input_image: Image, resolution: int):
-        if not hasattr(input_image, 'convert'):
-            raise Exception(f'Unknown data received instead of PIL.Image object: {type(input_image)}')
+        if not hasattr(input_image, "convert"):
+            raise Exception(
+                f"Unknown data received instead of PIL.Image object: {type(input_image)}"
+            )
         input_image = input_image.convert("RGB")
         W, H = input_image.size
         aspect_ratio = round(W / H, 2)

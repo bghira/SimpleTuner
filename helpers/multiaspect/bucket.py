@@ -38,7 +38,11 @@ class BucketManager:
 
     def __len__(self):
         return sum(
-            [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
+            [
+                (len(bucket) // self.batch_size) * self.batch_size
+                for bucket in self.aspect_ratio_bucket_indices.values()
+                if len(bucket) >= self.batch_size
+            ]
         )
 
     def _discover_new_files(self):
@@ -306,6 +310,7 @@ class BucketManager:
         else:
             logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
+        self._save_cache()
 
     def handle_small_image(
         self, image_path: str, bucket: str, delete_unwanted_images: bool
@@ -333,3 +338,9 @@ class BucketManager:
                 f"Image {image_path} too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
             )
         self.remove_image(image_path, bucket)
+
+    def read_cache(self):
+        """
+        Read the entire bucket cache.
+        """
+        return self.aspect_ratio_bucket_indices

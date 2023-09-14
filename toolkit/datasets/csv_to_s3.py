@@ -1,4 +1,5 @@
 import os
+import random
 import argparse
 import logging
 import boto3
@@ -25,23 +26,18 @@ logger = logging.getLogger(__name__)
 
 http = requests.Session()
 adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
-http.mount('http://', adapter)
-http.mount('https://', adapter)
+http.mount("http://", adapter)
+http.mount("https://", adapter)
 
-def content_to_filename(content):
-    """
-    Function to convert content to filename by stripping everything after '--',
-    replacing non-alphanumeric characters and spaces, converting to lowercase,
-    removing leading/trailing underscores, and limiting filename length to 128.
-    """
-    # Split on '--' and take the first part
-    content = content.split("--", 1)[0]
-    # Split on 'Upscaled by' and take the first part
-    content = content.split(" - Upscaled by", 1)[0]
-    # Remove URLs
-    cleaned_content = re.sub(r"https*://\S*", "", content)
-    
-    return cleaned_content
+
+def shuffle_words_in_filename(filename):
+    """Shuffle the words in a filename while keeping the file extension unchanged."""
+    name, ext = os.path.splitext(filename)
+    words = name.split(
+        "_"
+    )  # Assuming words in the filename are separated by underscores
+    random.shuffle(words)
+    return "_".join(words) + ext
 
 
 def resize_for_condition_image(input_image: Image, resolution: int):
@@ -64,6 +60,15 @@ def resize_for_condition_image(input_image: Image, resolution: int):
     return img
 
 
+def object_exists_in_s3(s3_client, bucket_name, object_name):
+    """Check if a specific object exists in the S3 bucket."""
+    try:
+        s3_client.head_object(Bucket=bucket_name, Key=object_name)
+        return True
+    except:
+        return False
+
+
 def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
@@ -82,13 +87,16 @@ def fetch_image(info, args):
             if width < args.minimum_resolution or height < args.minimum_resolution:
                 os.remove(current_file_path)
                 return
+            if args.only_exif_images and not valid_exif_data(current_file_path):
+                os.remove(current_file_path)
+                return
             image = resize_for_condition_image(image, args.condition_image_size)
             image.save(current_file_path, format="PNG")
             image.close()
         else:
             pass
     except Exception as e:
-        pass
+        raise e
 
 
 def parse_args():
@@ -117,12 +125,8 @@ def parse_args():
     parser.add_argument(
         "--parquet_folder", type=str, help="Location of the Parquet files."
     )
-    parser.add_argument(
-        "--csv_folder", type=str, help="Location of the CSV files."
-    )
-    parser.add_argument(
-        "--git_lfs_repo", type=str, help="The Git LFS repository URL."
-    )
+    parser.add_argument("--csv_folder", type=str, help="Location of the CSV files.")
+    parser.add_argument("--git_lfs_repo", type=str, help="The Git LFS repository URL.")
     parser.add_argument(
         "--temporary_folder",
         type=str,
@@ -189,6 +193,16 @@ def parse_args():
         default=1024,
         help="This option will by default, resize the smaller edge of an image to 1024px.",
     )
+    parser.add_argument(
+        "--only_exif_images",
+        action="store_true",
+        help="If set, only images with EXIF data will be included.",
+    )
+    parser.add_argument(
+        "--print_nonfatal_errors",
+        action="store_true",
+        help="If set, non-fatal errors will be printed. Remove this from the commandline to make output more streamlined/quieter.",
+    )
 
     return parser.parse_args()
 
@@ -227,35 +241,96 @@ def initialize_s3_client(args):
         region_name=args.aws_region_name,
         aws_access_key_id=args.aws_access_key_id,
         aws_secret_access_key=args.aws_secret_access_key,
-        config=s3_config
+        config=s3_config,
     )
     return s3_client
 
 
-def content_to_filename(content):
-    """Convert content to a suitable filename."""
+def content_to_filename(content, args):
+    """
+    Function to convert content to filename by stripping everything after '--',
+    replacing non-alphanumeric characters and spaces, converting to lowercase,
+    removing leading/trailing underscores, and limiting filename length to 128.
+    """
     # Remove URLs
     logger.debug(f"Converting content to filename: {content}")
-    cleaned_content = str(content)
-    if 'https' in cleaned_content:
-        cleaned_content = re.sub(r"https?://\S*", "", cleaned_content)
-    # Replace non-alphanumeric characters with underscore
-    filename = re.sub(r"[^a-zA-Z0-9]", "_", cleaned_content)
-    # Convert to lowercase and trim to 128 characters
-    filename = filename.lower()[:128] + ".png"
-    return filename
+    filename = str(content)
+    try:
+        if "https" in filename:
+            filename = re.sub(r"https?://\S*", "", filename)
+        if "_" in filename:
+            # Replace non-alphanumeric characters with underscore
+            filename = re.sub(r"[^a-zA-Z0-9]", "_", filename)
+        if "*" in filename:
+            # Remove any '*' character:
+            filename = filename.replace("*", "")
+        # Remove anything after ' - Upscaled by'
+        if "Upscaled" in filename:
+            filename = filename.split(" - Upscaled by", 1)[0]
+        if "--" in filename:
+            # Remove anything after '--'
+            filename = filename.split("--", 1)[0]
+        if "," in filename:
+            # Remove commas
+            filename = filename.replace(",", "")
+        if '"' in filename:
+            # Remove commas
+            filename = filename.replace('"', "")
+        if "/" in filename:
+            # Remove commas
+            filename = filename.replace("/", "")
+        # Remove > < | . characters:
+        filename = filename.replace(">", "")
+        filename = filename.replace("<", "")
+        filename = filename.replace("|", "")
+        filename = filename.replace(".", "")
+        # Remove leading and trailing underscores
+        filename = filename.strip("_")
+
+        # Strip multiple whitespaces, replace with single whitespace
+        filename = re.sub(r"\s+", " ", filename)
+        # Strip surrounding whitespace
+        filename = filename.strip()
+        # Convert to lowercase and trim to 251 characters
+        filename = filename.lower()[:251] + ".png"
+        logger.debug(f"-> Resulting filename: {filename}")
+        return filename
+    except Exception as e:
+        if args.print_nonfatal_errors:
+            logger.error(f"Encountered error processing filename: {e}")
 
 
 def valid_exif_data(image_path):
-    """Check if the image contains EXIF data for camera make/model."""
+    """Check if the image contains EXIF data typically associated with real cameras."""
     try:
         image = Image.open(image_path)
-        for tag, value in image._getexif().items():
-            if tag in ExifTags.TAGS and ExifTags.TAGS[tag] in ["Make", "Model"]:
+        exif_data = image._getexif()
+
+        # If no EXIF data, return False
+        if not exif_data:
+            return False
+
+        # List of tags to check for real camera evidence
+        tags_to_check = ["Make", "Model", "DateTimeOriginal", "LensModel", "GPSInfo"]
+
+        # Check if any of the relevant tags exist in the EXIF data
+        for tag, value in exif_data.items():
+            tagname = ExifTags.TAGS.get(tag, tag)
+            if tagname in tags_to_check:
                 return True
-    except:
+
+        # If "Software" tag exists, it might be edited or generated, but this is not a surefire method
+        if "Software" in exif_data:
+            software_name = exif_data["Software"].lower()
+            if "photoshop" in software_name or "gimp" in software_name:
+                return False
+
+    except Exception as e:
+        print(f"Error processing {image_path}: {e}")
         pass
+
     return False
+
 
 def list_all_s3_objects(s3_client, bucket_name):
     paginator = s3_client.get_paginator("list_objects_v2")
@@ -268,8 +343,9 @@ def list_all_s3_objects(s3_client, bucket_name):
 
     return existing_files
 
+
 def upload_to_s3(filename, args, s3_client):
-    """Upload the specified file to the S3 bucket."""
+    """Upload the specified file to the S3 bucket with filename shuffling if needed."""
     filename = os.path.join(args.temporary_folder, filename)
     object_name = os.path.basename(filename)
 
@@ -277,12 +353,19 @@ def upload_to_s3(filename, args, s3_client):
     if not os.path.exists(filename):
         return
 
+    if object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
+        try:
+            os.remove(filename)
+        except:
+            pass
+        return
+
     try:
         s3_client.upload_file(filename, args.aws_bucket_name, object_name)
         # Delete the local file after successful upload
         os.remove(filename)
     except Exception as e:
-        logger.error("Error uploading {} to S3: {}".format(object_name, e))
+        logger.error(f"Error uploading {object_name} to S3: {e}")
 
 
 def fetch_and_upload_image(info, args, s3_client):
@@ -290,7 +373,7 @@ def fetch_and_upload_image(info, args, s3_client):
     try:
         fetch_image(info, args)
     except Exception as e:
-        pass
+        logger.error(f"Encountered error fetching file: {e}")
     upload_to_s3(info["filename"], args, s3_client)
 
 
@@ -298,7 +381,7 @@ def fetch_data(s3_client, data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
     to_fetch = {}
     for row in data:
-        new_filename = content_to_filename(row[args.caption_field])
+        new_filename = content_to_filename(row[args.caption_field], args)
         if (
             hasattr(args, "midjourney_data_checks")
             and args.midjourney_data_checks
@@ -321,7 +404,7 @@ def fetch_data(s3_client, data, args, uri_column):
         [args] * len(to_fetch),
         [s3_client] * len(to_fetch),
         desc="Fetching & Uploading Images",
-        max_workers=args.num_workers
+        max_workers=args.num_workers,
     )
 
 
@@ -341,7 +424,9 @@ def main():
             logger.info(f"Cloning Git LFS repo to {repo_path}")
             os.system(f"git lfs clone {args.git_lfs_repo} {repo_path}")
         else:
-            logger.info(f"Git LFS repo already exists at {repo_path}. Using existing files.")
+            logger.info(
+                f"Git LFS repo already exists at {repo_path}. Using existing files."
+            )
         # Do we have *.parquet files in the dir, or .csv files?
         parquet_file_list = [f for f in Path(repo_path).glob("*.parquet")]
         csv_file_list = [f for f in Path(repo_path).glob("*.csv")]
@@ -371,8 +456,10 @@ def main():
     logger.info(f"Discovered catalogues: {all_files}")
 
     total_files = len(all_files)
-    for i, file in enumerate(tqdm(all_files, desc=f"Processing {total_files} Parquet files")):
-        if content_to_filename(file.name) in existing_files:
+    for i, file in enumerate(
+        tqdm(all_files, desc=f"Processing {total_files} Parquet files")
+    ):
+        if content_to_filename(file.name, args) in existing_files:
             logger.info(f"Skipping already processed file: {file}")
             continue
         logger.info(f"Loading file: {file}")
@@ -430,7 +517,9 @@ def main():
                 f"Applying unsafe filter with threshold {args.unsafe_threshold}"
             )
             if args.invert_unsafe_threshold:
-                logger.info("Inverting unsafe threshold, so that more harmful content is included, rather than excluded.")
+                logger.info(
+                    "Inverting unsafe threshold, so that more harmful content is included, rather than excluded."
+                )
                 df = df[df["punsafe"] >= args.unsafe_threshold]
             else:
                 df = df[df["punsafe"] <= args.unsafe_threshold]

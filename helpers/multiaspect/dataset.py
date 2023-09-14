@@ -86,41 +86,41 @@ class MultiAspectDataset(Dataset):
     def __len__(self):
         return len(self.bucket_manager)
 
-    def __getitem__(self, image_path):
-        if image_path is False:
-            logger.debug(f'Received {image_path} instead of image path, we are assuming this is the end of an epoch, and passing it up the chain.')
-            return image_path
-        logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
-        example = {"instance_images_path": image_path}
+    def __getitem__(self, image_tuple):
         if not StateTracker.status_training():
             # Return None when not training yet.
             return None
-        if self.print_names:
-            logger.info(f"Open image: {image_path}")
+        examples = []
+        for image_path in image_tuple:
+            example = {"instance_images_path": image_path}
+            logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
+            if self.print_names:
+                logger.info(f"Open image: {image_path}")
 
-        # Images might fail to load. If so, it is better to just be the bearer of bad news.
-        try:
-            image_data = self.data_backend.read(image_path)
-            instance_image = Image.open(BytesIO(image_data))
-        except Exception as e:
-            logger.error(f"Encountered error opening image: {e}")
-            raise e
+            # Images might fail to load. If so, it is better to just be the bearer of bad news.
+            try:
+                image_data = self.data_backend.read(image_path)
+                instance_image = Image.open(BytesIO(image_data))
+            except Exception as e:
+                logger.error(f"Encountered error opening image: {e}")
+                raise e
 
-        # Apply EXIF and colour channel modifications.
-        instance_image = MultiaspectImage.prepare_image(instance_image, self.size)
+            # Apply EXIF and colour channel modifications.
+            instance_image = MultiaspectImage.prepare_image(instance_image, self.size)
 
-        # We return the actual Image object, so that the collate function can encode it, if needed.
-        # It also makes it easier to discover the image width/height. And, I am lazy.
-        example["instance_images"] = instance_image
-        if self.return_tensor:
-            example["instance_tensor"] = self.image_transforms(instance_image)
-        # Use the magic prompt handler to retrieve the captions.
-        example["instance_prompt_text"] = PromptHandler.magic_prompt(
-            data_backend=self.data_backend,
-            image_path=image_path,
-            caption_strategy=self.caption_strategy,
-            use_captions=self.use_captions,
-            prepend_instance_prompt=self.prepend_instance_prompt,
-        )
+            # We return the actual Image object, so that the collate function can encode it, if needed.
+            # It also makes it easier to discover the image width/height. And, I am lazy.
+            example["instance_images"] = instance_image
+            if self.return_tensor:
+                example["instance_tensor"] = self.image_transforms(instance_image)
+            # Use the magic prompt handler to retrieve the captions.
+            example["instance_prompt_text"] = PromptHandler.magic_prompt(
+                data_backend=self.data_backend,
+                image_path=image_path,
+                caption_strategy=self.caption_strategy,
+                use_captions=self.use_captions,
+                prepend_instance_prompt=self.prepend_instance_prompt,
+            )
+            examples.append(example)
 
-        return example
+        return examples

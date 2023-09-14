@@ -45,6 +45,7 @@ export OUTPUT_DIR="${BASE_DIR}/models"
 # By default, images will be resized so their SMALLER EDGE is 1024 pixels, maintaining aspect ratio.
 # Setting this value to 768px might result in more reasonable training data sizes for SDXL.
 export RESOLUTION=1024
+export MINIMUM_RESOLUTION=$RESOLUTION
 export VALIDATION_RESOLUTION=$RESOLUTION
 # Adjust this for your GPU memory size. This, and resolution, are the biggest VRAM killers.
 export TRAIN_BATCH_SIZE=10

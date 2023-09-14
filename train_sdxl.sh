@@ -121,11 +121,16 @@ if [ -z "${TRAINER_EXTRA_ARGS}" ]; then
 	printf "TRAINER_EXTRA_ARGS not set, defaulting to empty.\n"
 	TRAINER_EXTRA_ARGS=""
 fi
-
+if [ -z "$MINIMUM_RESOLUTION" ]; then
+	printf "MINIMUM_RESOLUTION not set, defaulting to RESOLUTION.\n"
+	export MINIMUM_RESOLUTION=$RESOLUTION
+fi
 if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
   # We had no value for protecting the folders, so we nuke them!
   echo "Deleting Jupyter notebook folders in 5 seconds if you do not cancel out."
   echo "These folders are generally useless, and will cause problems if they remain."
+  echo "Use 'export PROTECT_JUPYTER_FOLDERS=1' to prevent this behaviour, before starting the script."
+  echo "Alternatively, place this value in your env file."
   export seconds
   seconds=4
   for ((i=seconds;i>0;i--)); do
@@ -134,7 +139,9 @@ if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
   done
   echo "." # Newline
   echo "YOUR TIME HAS COME."
-  find . -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+  find "${INSTANCE_DIR}" -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+  find "${OUTPUT_DIR}" -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+  find "." -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
 fi
 
 # Run the training script.
@@ -142,13 +149,13 @@ fi
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train_sdxl.py \
 	--pretrained_model_name_or_path="${MODEL_NAME}" \
 	--resume_from_checkpoint="${RESUME_CHECKPOINT}" \
-	--num_train_epochs="${NUM_EPOCHS}" \
+	--num_train_epochs=${NUM_EPOCHS} --max_train_steps=${MAX_NUM_STEPS} \
 	--learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" \
 	--instance_data_dir="${INSTANCE_DIR}" --seen_state_path="${SEEN_STATE_PATH}" --state_path="${STATE_PATH}" --output_dir="${OUTPUT_DIR}" \
 	${DEBUG_EXTRA_ARGS}	--mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
 	--train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
 	--validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 \
-	--resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
+	--minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
 	--checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
 	--validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
 	--validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}"

@@ -19,7 +19,7 @@ import os
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-import shutil
+import shutil, hashlib, json
 import random
 from pathlib import Path
 from helpers import log_format
@@ -114,7 +114,7 @@ to_tensor = ToTensor()
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.20.0.dev0")
 
-logger = get_logger(__name__, log_level="DEBUG")
+logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
@@ -228,7 +228,6 @@ def main():
         revision=args.revision,
         force_upcast=False,
     )
-    vae.enable_slicing()
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -433,7 +432,12 @@ def main():
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
         return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
 
-    def collate_fn(examples):
+    def collate_fn(batch):
+        if len(batch) != 1:
+            raise ValueError(
+                "This trainer is not designed to handle multiple batches in a single collate."
+            )
+        examples = batch[0]
         if not StateTracker.status_training():
             if len(examples) > 0:
                 for example in examples:
@@ -454,6 +458,8 @@ def main():
                 data_backend=data_backend,
                 resolution=args.resolution,
                 delete_problematic_images=args.delete_problematic_images,
+                vae_batch_size=args.vae_batch_size,
+                write_batch_size=args.write_batch_size,
             )
 
         pixel_values = []
@@ -473,7 +479,7 @@ def main():
         latents = [
             vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
         ]
-        pixel_values = torch.stack(latents)
+        latent_batch = torch.stack(latents)
 
         # Extract the captions from the examples.
         captions = [example["instance_prompt_text"] for example in examples]
@@ -489,7 +495,7 @@ def main():
         )
 
         return {
-            "pixel_values": pixel_values,
+            "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
             "add_time_ids": compute_time_ids(width, height),
@@ -529,7 +535,7 @@ def main():
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=args.train_batch_size,
+        batch_size=1,  # The sample handles batching
         shuffle=False,  # The sampler handles shuffling
         sampler=custom_balanced_sampler,
         collate_fn=lambda examples: collate_fn(examples),
@@ -619,8 +625,8 @@ def main():
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            "This number might be massively understated, because of how CUDA memory management works."
-            "The real memories were the friends we trained a model on along the way."
+            " This number might be massively understated, because of how CUDA memory management works."
+            " The real memories were the friends we trained a model on along the way."
         )
 
     # Scheduler and math around the number of training steps.
@@ -830,9 +836,11 @@ def main():
         data_backend=data_backend,
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
+        vae_batch_size=args.vae_batch_size,
+        write_batch_size=args.write_batch_size,
     )
     vaecache.split_cache_between_processes()
-    vaecache.process_directory(args.instance_data_dir)
+    vaecache.process_buckets(bucket_manager=bucket_manager)
     accelerator.wait_for_everyone()
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
@@ -860,8 +868,10 @@ def main():
         del public_args.aws_bucket_name
         del public_args.aws_region_name
         del public_args.aws_endpoint_url
-        # Add allow_val_change to public_args:
-        public_args.allow_val_change = True
+        # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
+        public_args_hash = hashlib.md5(
+            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
+        ).hexdigest()
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         accelerator.init_trackers(
@@ -870,13 +880,28 @@ def main():
             init_kwargs={
                 "wandb": {
                     "name": tracker_run_name,
-                    "id": f"{project_name},{tracker_run_name}",
+                    "id": f"{public_args_hash}",
                     "resume": "allow",
                     "allow_val_change": True,
                 }
             },
         )
 
+    if not args.keep_vae_loaded:
+        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        import gc
+
+        del vae
+        vae = None
+        vaecache.vae = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        memory_saved = memory_after_unload - memory_before_unload
+        logger.info(
+            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+            " This number might be massively understated, because of how CUDA memory management works."
+        )
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -896,6 +921,7 @@ def main():
     global_step = 0
     first_epoch = 0
     resume_step = 0
+    resume_global_step = 0
     scheduler_kwargs = {}
 
     # Potentially load in the weights and states from a previous save
@@ -914,7 +940,6 @@ def main():
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             args.resume_from_checkpoint = None
-            StateTracker.start_training()
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
@@ -939,19 +964,28 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
-    else:
-        StateTracker.start_training()
+    StateTracker.start_training()
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
-        range(global_step, args.max_train_steps),
+        range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
     )
     progress_bar.set_description("Steps")
-    current_epoch = 0
+    progress_bar.update(global_step)
+    if (
+        custom_balanced_sampler.current_epoch > 0
+        and custom_balanced_sampler is not None
+    ):
+        # We store the number of dataset resets that have occurred inside the checkpoint.
+        first_epoch = custom_balanced_sampler.current_epoch
+    current_epoch = first_epoch
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
-            logger.info("Reached the end of our training run.")
+            # This might immediately end training, but that's useful for simply exporting the model.
+            logger.info(
+                f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs)."
+            )
             break
         logger.debug(
             f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
@@ -965,38 +999,24 @@ def main():
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
             # If we receive a False from the enumerator, we know we reached the next epoch.
-            if batch is False:
-                logger.info(f'Reached the end of epoch {epoch}')
+            if batch is False or batch is None:
+                logger.info(f"Reached the end of epoch {epoch}")
                 break
-            # Skip steps until we reach the resumed step
-            if (
-                args.resume_from_checkpoint
-                and epoch == first_epoch
-                and step < resume_step
-            ):
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
-                if step + 2 == resume_step:
-                    # We want to trigger the batch to be properly generated when we start.
-                    if not StateTracker.status_training():
-                        logging.info(
-                            f"Starting training, as resume_step has been reached."
-                        )
-                        StateTracker.start_training()
-                continue
 
             if batch is None:
-                logging.debug(f"Burning a None size batch.")
-                continue
+                import traceback
+
+                raise ValueError(
+                    f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
+                )
 
             # Add the current batch of training data's avg luminance to a list.
             training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
                 training_logger.debug(f"Beginning another step.")
-                pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
+                latents = batch["latent_batch"].to(dtype=weight_dtype)
                 training_logger.debug("Moved pixels to accelerator.")
-                latents = pixel_values
                 # Sample noise that we'll add to the latents
                 training_logger.debug(f"Sampling random noise")
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
@@ -1059,13 +1079,6 @@ def main():
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
                 training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
-                # Get the additional image embedding for conditioning.
-                # Instead of getting a diagonal Gaussian here, we simply take the mode.
-                if args.pretrained_vae_model_name_or_path is not None:
-                    pixel_values = batch["pixel_values"].to(dtype=weight_dtype)
-                else:
-                    pixel_values = batch["pixel_values"]
-
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -1217,7 +1230,9 @@ def main():
                         )
                         logger.info(f"Saved state to {save_path}")
                 if current_epoch_step > num_update_steps_per_epoch:
-                    logger.info('Epoch {epoch} is now completed, as we have observed {current_epoch_step}/{num_update_steps_per_epoch} steps per epoch.')
+                    logger.info(
+                        "Epoch {epoch} is now completed, as we have observed {current_epoch_step}/{num_update_steps_per_epoch} steps per epoch."
+                    )
                     break
 
             logs = {
@@ -1231,10 +1246,15 @@ def main():
                 if (
                     validation_prompts
                     and global_step % args.validation_steps == 0
-                    and global_step > 1
+                    and progress_bar.n > resume_global_step
                 ):
+                    logging.debug(
+                        f"We might want to process validations, because we have {len(validation_prompts)} validation prompts,"
+                        f" and we are on step {global_step} which meshes with our specified interval of {args.validation_steps} steps."
+                    )
                     if (
-                        args.validation_prompt is None
+                        validation_prompts is None
+                        or validation_prompts == []
                         or args.num_validation_images is None
                         or args.num_validation_images <= 0
                     ):
@@ -1242,11 +1262,17 @@ def main():
                             f"Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!"
                         )
                         continue
+                    logging.debug(
+                        f"We have valid prompts to process, this is looking better for our decision tree.."
+                    )
                     if (
                         args.gradient_accumulation_steps > 0
                         and step % args.gradient_accumulation_steps != 0
                     ):
                         # We do not want to perform validation on a partial batch.
+                        logging.debug(
+                            f"Not producing a validation batch for {args.gradient_accumulation_steps} gradient accumulation steps vs {step} step count. We are at a partial batch."
+                        )
                         continue
                     logger.info(
                         f"Running validation... \n Generating {len(validation_prompts)} images."
@@ -1256,7 +1282,15 @@ def main():
                         # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                         ema_unet.store(unet.parameters())
                         ema_unet.copy_to(unet.parameters())
-
+                    if vae is None:
+                        vae = AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder="vae"
+                            if args.pretrained_vae_model_name_or_path is None
+                            else None,
+                            revision=args.revision,
+                            force_upcast=False,
+                        )
                     # The models need unwrapping because for compatibility in distributed training mode.
                     pipeline = StableDiffusionXLPipeline.from_pretrained(
                         args.pretrained_model_name_or_path,
@@ -1365,7 +1399,9 @@ def main():
                     if args.use_ema:
                         # Switch back to the original UNet parameters.
                         ema_unet.restore(unet.parameters())
-
+                    if not args.keep_vae_loaded:
+                        del vae
+                        vae = None
                     del pipeline
                     torch.cuda.empty_cache()
                 ### END: Perform validation every `validation_epochs` steps
@@ -1387,7 +1423,15 @@ def main():
         unet = accelerator.unwrap_model(unet)
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
-
+        if vae is None:
+            vae = AutoencoderKL.from_pretrained(
+                vae_path,
+                subfolder="vae"
+                if args.pretrained_vae_model_name_or_path is None
+                else None,
+                revision=args.revision,
+                force_upcast=False,
+            )
         pipeline = StableDiffusionXLPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             text_encoder=text_encoder_1,
@@ -1424,7 +1468,9 @@ def main():
                 validation_generator = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.seed or 0)
-                for validation_prompt in validation_prompts:
+                for validation_prompt in tqdm(
+                    validation_prompts, desc="Generating validation images"
+                ):
                     # Each validation prompt needs its own embed.
                     (
                         current_validation_prompt_embeds,

@@ -1,4 +1,5 @@
 import boto3, os, time
+from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
@@ -32,7 +33,11 @@ boto_logger.setLevel(os.environ.get("SIMPLETUNER_AWS_LOG_LEVEL", "ERROR"))
 logger = logging.getLogger("S3DataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
+
 class S3DataBackend(BaseDataBackend):
+    # Storing the list_files output in a local dict.
+    _list_cache = {}
+
     def __init__(
         self,
         bucket_name,
@@ -44,7 +49,6 @@ class S3DataBackend(BaseDataBackend):
         write_retry_limit: int = 5,
         read_retry_interval: int = 5,
         write_retry_interval: int = 5,
-    
     ):
         self.bucket_name = bucket_name
         self.read_retry_limit = read_retry_limit
@@ -87,6 +91,8 @@ class S3DataBackend(BaseDataBackend):
                     Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
                 )
                 return response["Body"].read()
+            except (NoCredentialsError, PartialCredentialsError) as e:
+                raise e  # Raise credential errors to the caller
             except Exception as e:
                 logger.error(f'Error reading S3 bucket key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
@@ -146,9 +152,11 @@ class S3DataBackend(BaseDataBackend):
         """List all files under a specific path (prefix) in the S3 bucket."""
         response = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
         bucket_prefix = f"{self.bucket_name}/"
-        
+
         return [
-            item["Key"][len(bucket_prefix):] if item["Key"].startswith(bucket_prefix) else item["Key"]
+            item["Key"][len(bucket_prefix) :]
+            if item["Key"].startswith(bucket_prefix)
+            else item["Key"]
             for item in response.get("Contents", [])
         ]
 
@@ -217,7 +225,7 @@ class S3DataBackend(BaseDataBackend):
 
     def create_directory(self, directory_path):
         # Since S3 doesn't have a traditional directory structure, this is just a pass-through
-        logger.debug(f'Not creating directory {directory_path} on S3 backend.')
+        logger.debug(f"Not creating directory {directory_path} on S3 backend.")
         pass
 
     def torch_load(self, s3_key):
@@ -229,12 +237,17 @@ class S3DataBackend(BaseDataBackend):
     def torch_save(self, data, s3_key):
         import torch
         from io import BytesIO
+
         try:
             buffer = BytesIO()
+            if hasattr(data, "shape"):
+                logger.debug(
+                    f"Saving tensor of shape {data.shape} to {s3_key}. With a scale factor of 8, that would be {data.shape[0] * 8}x{data.shape[1] * 8}"
+                )
             torch.save(data, buffer)
             return self.write(s3_key, buffer.getvalue())
         except Exception as e:
-            logger.error(f'Could not torch save to backend: {e}')
+            logger.error(f"Could not torch save to backend: {e}")
 
     def write_batch(self, s3_keys, data_list):
         """Write a batch of files to the specified S3 keys concurrently."""
