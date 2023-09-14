@@ -73,6 +73,8 @@ torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
 
+logger = logging.getLogger("SimpleTuner")
+
 filelock_logger = logging.getLogger("filelock")
 connection_logger = logging.getLogger("urllib3.connectionpool")
 training_logger = logging.getLogger("training-loop")
