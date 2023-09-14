@@ -61,6 +61,7 @@ from diffusers import (
     UNet2DConditionModel,
 )
 
+from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
@@ -484,22 +485,45 @@ def main(args):
             power=args.lr_power,
             last_epoch=-1,
         )
+
+    # Create EMA for the unet.
+    ema_unet = None
+    if args.use_ema:
+        logger.info("Using EMA. Creating EMAModel.")
+        ema_unet = EMAModel(
+            unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
+        )
+        logger.info("EMA model creation complete.")
+
     logger.info("Preparing accelerator..")
     # Prepare everything with our `accelerator`.
+    prepare_dict = {
+        "unet": unet,
+        "optimizer": optimizer,
+        "train_dataloader": train_dataloader,
+        "lr_scheduler": lr_scheduler,
+    }
     if args.train_text_encoder:
+        prepare_dict["text_encoder"] = text_encoder
+    if args.use_ema:
+        prepare_dict["ema_model"] = ema_model
+    prepared_objs = accelerator.prepare(**prepare_dict)
+    # Unpack the returned tuple accordingly.
+    if args.train_text_encoder and args.use_ema:
         (
             unet,
             text_encoder,
             optimizer,
             train_dataloader,
             lr_scheduler,
-        ) = accelerator.prepare(
-            unet, text_encoder, optimizer, train_dataloader, lr_scheduler
-        )
+            ema_model,
+        ) = prepared_objs
+    elif args.train_text_encoder:
+        unet, text_encoder, optimizer, train_dataloader, lr_scheduler = prepared_objs
+    elif args.use_ema:
+        unet, optimizer, train_dataloader, lr_scheduler, ema_model = prepared_objs
     else:
-        unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            unet, optimizer, train_dataloader, lr_scheduler
-        )
+        unet, optimizer, train_dataloader, lr_scheduler = prepared_objs
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -514,6 +538,9 @@ def main(args):
     if not args.train_text_encoder:
         logging.info("Moving text encoder to GPU..")
         text_encoder.to(accelerator.device, dtype=weight_dtype)
+    if args.use_ema:
+        logger.info("Moving EMA model weights to accelerator...")
+        ema_unet.to(accelerator.device)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     logging.info("Recalculating max step count.")
@@ -866,7 +893,7 @@ def main(args):
                 validation_negative_pooled_embeds=None,
                 text_encoder_2=None,
                 tokenizer_2=None,
-                ema_unet=None,
+                ema_unet=ema_unet,
                 vae=vae,
             )
 
