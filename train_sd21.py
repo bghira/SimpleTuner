@@ -557,6 +557,43 @@ def main(args):
         logger.info("Moving EMA model weights to accelerator...")
         ema_unet.to(accelerator.device)
 
+    # Move vae, unet and text_encoder to device and cast to weight_dtype
+    # The VAE is in float32 to avoid NaN losses.
+    vae_dtype = torch.float32
+    if hasattr(args, "vae_dtype"):
+        logger.info(
+            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
+        )
+        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+        if args.vae_dtype == "bf16":
+            vae_dtype = torch.bfloat16
+        elif args.vae_dtype == "fp16":
+            vae_dtype = torch.float16
+        elif args.vae_dtype == "fp32":
+            vae_dtype = torch.float32
+        elif args.vae_dtype == "none" or args.vae_dtype == "default":
+            vae_dtype = torch.float32
+    if args.pretrained_vae_model_name_or_path is not None:
+        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    else:
+        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    logger.info(f"Loaded VAE into VRAM.")
+    logger.info(f"Pre-computing VAE latent space.")
+    vaecache = VAECache(
+        vae=vae,
+        accelerator=accelerator,
+        data_backend=data_backend,
+        delete_problematic_images=args.delete_problematic_images,
+        resolution=args.resolution,
+        vae_batch_size=args.vae_batch_size,
+        write_batch_size=args.write_batch_size,
+    )
+    vaecache.split_cache_between_processes()
+    vaecache.process_buckets(bucket_manager=bucket_manager)
+    accelerator.wait_for_everyone()
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     logging.info("Recalculating max step count.")
     num_update_steps_per_epoch = math.ceil(
