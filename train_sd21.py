@@ -498,34 +498,19 @@ def main(args):
         logger.info("EMA model creation complete.")
 
     logger.info("Preparing accelerator..")
-    # Prepare everything with our `accelerator`.
-    prepare_dict = {
-        "unet": unet,
-        "optimizer": optimizer,
-        "train_dataloader": train_dataloader,
-        "lr_scheduler": lr_scheduler,
-    }
+
+    # Base components to prepare
+    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_dataloader, lr_scheduler
+    )
+
+    # Conditionally prepare the text_encoder if required
     if args.train_text_encoder:
-        prepare_dict["text_encoder"] = text_encoder
+        text_encoder = accelerator.prepare(text_encoder)
+
+    # Conditionally prepare the EMA model if required
     if args.use_ema:
-        prepare_dict["ema_model"] = ema_model
-    prepared_objs = accelerator.prepare(*prepare_dict)
-    # Unpack the returned tuple accordingly.
-    if args.train_text_encoder and args.use_ema:
-        (
-            unet,
-            text_encoder,
-            optimizer,
-            train_dataloader,
-            lr_scheduler,
-            ema_model,
-        ) = prepared_objs
-    elif args.train_text_encoder:
-        unet, text_encoder, optimizer, train_dataloader, lr_scheduler = prepared_objs
-    elif args.use_ema:
-        unet, optimizer, train_dataloader, lr_scheduler, ema_model = prepared_objs
-    else:
-        unet, optimizer, train_dataloader, lr_scheduler = prepared_objs
+        ema_model = accelerator.prepare(ema_model)
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
