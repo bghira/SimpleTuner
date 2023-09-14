@@ -941,6 +941,10 @@ def main():
         training_luminance_values = []
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
+            progress_bar.set_description(
+                f"Epoch {current_epoch}/{args.num_training_epochs}, Steps"
+            )
+
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False or batch is None:
                 logger.info(f"Reached the end of epoch {epoch}")
