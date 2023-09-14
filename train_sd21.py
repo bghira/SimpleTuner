@@ -450,8 +450,8 @@ def main(args):
 
     logger.info("Initialise text embedding cache")
     embed_cache = TextEmbeddingCache(
-        text_encoders=text_encoders,
-        tokenizers=tokenizers,
+        text_encoders=[text_encoder, None],
+        tokenizers=[tokenizer, None],
         accelerator=accelerator,
         model_type="legacy",
     )
