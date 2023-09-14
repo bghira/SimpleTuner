@@ -912,12 +912,18 @@ def main():
     StateTracker.start_training()
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
+    if first_epoch > 1:
+        logger.info(
+            f"Resuming from epoch {first_epoch}, which is not the first epoch. This is a bit weird."
+        )
+        steps_to_remove = first_epoch * num_update_steps_per_epoch
+        args.max_train_steps -= steps_to_remove
+
     current_epoch = first_epoch
     if current_epoch >= args.num_train_epochs:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
-        args.max_train_steps = 0
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
