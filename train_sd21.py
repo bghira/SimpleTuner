@@ -671,6 +671,7 @@ def main(args):
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
+    resume_global_step = 0
     first_epoch = 0
 
     # Potentially load in the weights and states from a previous save
@@ -696,8 +697,7 @@ def main(args):
                 state_path=os.path.join(args.output_dir, path, "training_state.json"),
             )
             first_epoch = custom_balanced_sampler.current_epoch
-            global_step = int(path.split("-")[1])
-            resume_global_step = global_step
+            resume_global_step = global_step = int(path.split("-")[1])
     StateTracker.start_training()
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
