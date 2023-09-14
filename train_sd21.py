@@ -73,7 +73,24 @@ torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.17.0.dev0")
 
-logger = get_logger("root")
+filelock_logger = logging.getLogger("filelock")
+connection_logger = logging.getLogger("urllib3.connectionpool")
+training_logger = logging.getLogger("training-loop")
+
+# More important logs.
+target_level = "INFO"
+# Is env var set?
+if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
+    target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
+logger.setLevel(target_level)
+training_logger_level = "WARNING"
+if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
+    training_logger_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
+training_logger.setLevel(training_logger_level)
+
+# Less important logs.
+filelock_logger.setLevel("WARNING")
+connection_logger.setLevel("WARNING")
 
 from torchvision.transforms import ToTensor
 
