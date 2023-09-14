@@ -905,9 +905,9 @@ def main(args):
                     progress_bar.n / progress_bar.total * 100
                 )
                 # Average out the luminance values of each batch, so that we can store that in this step.
-                avg_training_data_luminance = sum(training_luminance_values) / len(
+                avg_training_data_luminance = sum(training_luminance_values) / min(1, len(
                     training_luminance_values
-                )
+                ))
                 logs = {
                     "train_luminance": avg_training_data_luminance,
                     "train_loss": train_loss,
