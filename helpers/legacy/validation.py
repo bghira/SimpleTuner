@@ -173,7 +173,7 @@ def validation_logs(
                 logger.warning(
                     f"Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!"
                 )
-                continue
+                return
             logger.debug(
                 f"We have valid prompts to process, this is looking better for our decision tree.."
             )
@@ -185,7 +185,7 @@ def validation_logs(
                 logger.debug(
                     f"Not producing a validation batch for {args.gradient_accumulation_steps} gradient accumulation steps vs {step} step count. We are at a partial batch."
                 )
-                continue
+                return
             logger.info(
                 f"Running validation... \n Generating {len(validation_prompts)} images."
             )
