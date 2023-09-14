@@ -18,7 +18,7 @@ from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
-    validation_prompts = []
+    validation_prompts = [""]
     validation_shortnames = []
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
