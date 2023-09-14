@@ -509,7 +509,7 @@ def main(args):
         prepare_dict["text_encoder"] = text_encoder
     if args.use_ema:
         prepare_dict["ema_model"] = ema_model
-    prepared_objs = accelerator.prepare(**prepare_dict)
+    prepared_objs = accelerator.prepare(*prepare_dict)
     # Unpack the returned tuple accordingly.
     if args.train_text_encoder and args.use_ema:
         (
