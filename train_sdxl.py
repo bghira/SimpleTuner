@@ -38,11 +38,13 @@ from helpers.training.custom_schedule import get_polynomial_decay_schedule_with_
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.multi_process import rank_info
 from helpers.prompts import PromptHandler
+from accelerate.logging import get_logger
 
-logger = logging.getLogger()
-filelock_logger = logging.getLogger("filelock")
-connection_logger = logging.getLogger("urllib3.connectionpool")
-training_logger = logging.getLogger("training-loop")
+logger = get_logger("SimpleTuner")
+
+filelock_logger = get_logger("filelock")
+connection_logger = get_logger("urllib3.connectionpool")
+training_logger = get_logger("training-loop")
 
 # More important logs.
 target_level = "INFO"
