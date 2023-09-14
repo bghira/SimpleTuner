@@ -921,6 +921,9 @@ def main():
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
     current_epoch = first_epoch
+    logger.debug(
+        f"Beginning training between epochs {first_epoch} to {args.num_train_epochs}"
+    )
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
             # This might immediately end training, but that's useful for simply exporting the model.
