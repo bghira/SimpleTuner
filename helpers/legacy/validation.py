@@ -75,8 +75,8 @@ def prepare_validation_prompt_list(args, embed_cache):
 
             return (
                 validation_prompts,
-                validation_negative_prompt_embeds,
                 validation_shortnames,
+                validation_negative_prompt_embeds,
             )
 
 
