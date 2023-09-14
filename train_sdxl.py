@@ -586,7 +586,6 @@ def main():
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            " This number might be massively understated, because of how CUDA memory management works."
             " The real memories were the friends we trained a model on along the way."
         )
 
@@ -858,8 +857,7 @@ def main():
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
-            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            " This number might be massively understated, because of how CUDA memory management works."
+            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
     # Train!
     total_batch_size = (
@@ -941,9 +939,10 @@ def main():
         training_luminance_values = []
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
-            progress_bar.set_description(
-                f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
-            )
+            if accelerator.is_main_process:
+                progress_bar.set_description(
+                    f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
+                )
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False or batch is None:
