@@ -16,7 +16,6 @@ The features implemented will eventually be shared between SD 2.1 and SDXL as mu
 - [Design Philosophy](#design-philosophy)
 - [Tutorial](#tutorial)
 - [Features](#features)
-  - [Stable Diffusion 2.0/2.1](#stable-diffusion-20-21)
 - [Hardware Requirements](#hardware-requirements)
   - [SDXL](#sdxl)
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-2x)
