@@ -1008,6 +1008,7 @@ def main(args):
                 weight_dtype=unet.dtype,
                 embed_cache=embed_cache,
                 validation_negative_pooled_embeds=None,
+                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
                 text_encoder_2=None,
                 tokenizer_2=None,
                 ema_unet=ema_unet,

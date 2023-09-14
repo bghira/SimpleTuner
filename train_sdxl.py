@@ -1187,6 +1187,7 @@ def main():
                 weight_dtype=weight_dtype,
                 embed_cache=embed_cache,
                 validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
                 text_encoder_2=text_encoder_2,
                 tokenizer_2=None,
                 ema_unet=ema_unet,
