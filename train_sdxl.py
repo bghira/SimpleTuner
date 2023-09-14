@@ -1129,7 +1129,7 @@ def main():
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
                 accelerator.log(
-                    **logs,
+                    logs,
                     step=global_step,
                 )
                 # Reset some values for the next go.
