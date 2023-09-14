@@ -19,7 +19,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
     validation_prompts = [""]
-    validation_shortnames = []
+    validation_shortnames = ["unconditional"]
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"Embed cache engine did not contain a model_type. Cannot continue."
