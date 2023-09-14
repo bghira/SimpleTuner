@@ -202,6 +202,9 @@ class TextEmbeddingCache:
                 del prompt_embeds_all
                 return
 
+            logger.debug(
+                f"Concatenating {len(prompt_embeds_all)} prompt embeds: {prompt_embeds_all}"
+            )
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
 
         return prompt_embeds_all
