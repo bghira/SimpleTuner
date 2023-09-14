@@ -1,10 +1,8 @@
 # SimpleTuner 💹
 
-This repository contains a set of experimental scripts that could damage your training data. Keep backups!
+> ⚠️ **Warning**: The scripts in this repository have the potential to damage your training data. Always maintain backups before proceeding.
 
-This project's code intended to be simple and easy to read. Parts of it are difficult to follow, though it's hoped they'll improve over time.
-
-This code is a shared academic exercise. Please feel free to contribute improvements, or open issue reports.
+**SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions to its improvement are welcome.
 
 The features implemented will eventually be shared between SD 2.1 and SDXL as much as possible.
 
@@ -13,95 +11,81 @@ The features implemented will eventually be shared between SD 2.1 and SDXL as mu
 * SDXL trainer caches the VAE latents and text embeddings to save on VRAM during training
 * Full featured fine-tuning support for SDXL and SD 2.x
 
+## Table of Contents
+
+- [Design Philosophy](#design-philosophy)
+- [Features](#features)
+  - [SDXL Training Features](#sdxl-training-features)
+  - [Stable Diffusion 2.0/2.1](#stable-diffusion-20-21)
+- [Hardware Requirements](#hardware-requirements)
+- [Scripts](#scripts)
+- [Toolkit](#toolkit)
+- [Setup](#setup)
+- [Troubleshooting](#troubleshooting)
+
+## Design Philosophy
+
+- **Simplicity**: Just add captioned images to a directory, and the script handles the rest.
+- **Versatility**: Designed to handle a wide range of image quantities - from small datasets to extensive collections.
+- **Cutting-Edge Features**: Only incorporates features that have proven efficacy, avoiding the addition of untested options.
+
 ## Tutorial
 
 Please fully explore this README before embarking on [the tutorial](/TUTORIAL.md), as it contains vital information that you might need to know first.
 
-## General design philosophy
+## Features
 
-* Just throw captioned images into a dir and the script does the rest.
-* The more images, the merrier - though small datasets are supported, too.
-* Not supporting cutting edge features just for the sake of it - they must be proven first.
+- Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during the forward pass.
+- Precomputed captions are run through the text encoder(s) and saved to storage to save on VRAM.
+- Trainable on a 40G GPU at lower base resolutions. **Note: SDXL's full U-net is incompatible with 24G GPUs.**
+- Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
+- Support for a variety of image sizes, not limited to 768x768 squares, for improved generalization across aspect ratios.
+- Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
 
-## SDXL Training Features
+### Stable Diffusion 2.0/2.1
 
-* VAE (latents) outputs are precomputed before training and saved to storage, so that we do not need to invoke the VAE during the forward pass.
-* Since SDXL has two text encoders, we precompute all of the captions into embeds and then store those as well.
-* **Train on a 40G GPU** when using lower base resolutions. Sorry, but it's just not doable to train SDXL's full U-net on 24G, even with Adafactor.
-* EMA (Exponential moving average) weight network as an optional way to reduce model over-cooking.
+Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn't have to be the case. Related features in StableTuner include:
 
-## Stable Diffusion 2.0 / 2.1
+- Training only the text encoder's later layers
+- Enforced zero SNR on the terminal timestep instead of offset noise for clearer images.
+- The use of EMA (exponential moving average) during training to ensure we do not "fry" the model.
 
-Stable Diffusion 2.1 is notoriously difficult to fine-tune. Many of the default scripts are not making the smartest choices, and result in poor-quality outputs:
-
-* Training OpenCLIP concurrently to the U-net. They must be trained in sequence, with the text encoder being tuned first.
-* Not using enforced zero SNR on the terminal timestep, using offset noise instead. This results in a more noisy image.
-* Training on only square, 768x768 images, that will result in the model losing the ability to (or at the very least, simply not improving) generalise across aspect ratios.
-
+Some of these features exist in other trainers, but EMA seems to be unique here.
 ## Hardware Requirements
 
-All testing of this script has been done using:
+EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Without it, training can still be done, but more care must be taken not to drastically change the model leading to "catastrophic forgetting".
 
-* A100-80G
-* A6000 48G
-* 4090 24G
+### SDXL
 
-Multi-GPU training is tested on:
+* A100-80G (EMA, large batches)
+* A6000 48G (EMA@768px, no EMA@1024px)
+* A100 40G (no EMA@1024px, no EMA@768px, EMA@512px)
 
 ### Stable Diffusion 2.x
 
-* 2x 3090
-* 2x A6000
+* NVIDIA RTX 3090 or better (24G, no EMA)
+* A100-40, A40, or A6000 (EMA)
 
 More optimisation work can be done to bring the memory requirements of SD 2.1 down to about 16G.
-
-### SDXL 1.0
-
-* 2x A40 or A100-40 at 512x512 (bsz 4)
-* 2x A6000 at 768x768, batch size 2 (bsz 4)
-* 10x A6000 at 512x512, batch size 8 (bsz 80)
-* 8x A100-80G at batch size 8 (bsz 64)
-
-Despite optimisations, SDXL training **will not work on a 24G GPU**, though SD 2.1 training works fantastically well there.
-
-### SDXL 1.0
-
-At 1024x1024 batch size 10, we can nearly saturate a single 80G A100's entire VRAM pool!
-
-At 1024x1024 batch size 4, we can begin to make use of a 48G A6000 GPU, which substantially reduces the cost of multi-GPU training!
-
-With a resolution reduction down to 768 pixels, you can shift requirements down to an A100-40G.
-
-For further reductions, when training at a resolution of `256x256` the model can still generalise training data quite well, in addition to supporting a much higher batch size around 15 if the VRAM is present.
-
-### Stable Diffusion 2.x
-
-Generally, a batch size of 4-8 for aspect bucketed data at 768px base was achievable within 24G of VRAM.
-
-On an A100-80G, a batch size of 15 could be reached with nearly all of the VRAM in use
-
-For 1024px training, the VRAM requirement goes up substantially, but it is still doable in roughly an equivalent footprint to an _optimised_ SDXL setup.
-
-Optimizations from the SDXL trainer could be ported to the legacy trainer (text embed cache, precomputed latents) to bring this down, substantially, and make 1024px training more viable on consumer kit.
 
 ## Scripts
 
 * `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance.
-* `train_sdxl.sh` - This is where the magic happens.
+* `train_sdxl.sh` - The main training script for SDXL.
 * `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
 * `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
 * `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
 
 ## Toolkit
 
-For information on the associated toolkit distributed with SimpleTuner, see [this page](/toolkit/README.md).
+For more information about the associated toolkit distributed with SimpleTuner, refer to [the toolkit documentation](/toolkit/README.md).
 
 ## Setup
 
-For setup information, see the [install documentation](/INSTALL.md).
+Detailed setup information is available in the [installation documentation](/INSTALL.md).
 
 ## Troubleshooting
 
-* To enable debug logs (caution, this is extremely noisy) add `export SIMPLETUNER_LOG_LEVEL=DEBUG` to your env file.
+Enable debug logs for a more detailed insight by adding `export SIMPLETUNER_LOG_LEVEL=DEBUG` to your environment file.
 
-For a web version of the options available for the SDXL trainer, see [this document](/OPTIONS.md)
+For a comprehensive list of options available for the SDXL trainer, consult [this documentation](/OPTIONS.md).
