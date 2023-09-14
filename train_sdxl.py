@@ -60,30 +60,14 @@ training_logger.setLevel(training_logger_level)
 # Less important logs.
 filelock_logger.setLevel("WARNING")
 connection_logger.setLevel("WARNING")
-
-logger.info("Import accelerate")
 import accelerate
-
-logger.info("Import datasets")
 import datasets
-
-logger.info("Import numpy")
 import numpy as np
 import PIL
-
-logger.info("Import pytorch")
 import torch
-
-logger.info("Import torch.nn")
 import torch.nn as nn
-
-logger.info("Import torch.nn.functional")
 import torch.nn.functional as F
-
-logger.info("Import torch.utils.checkpoint")
 import torch.utils.checkpoint
-
-logger.info("Import transformers")
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -94,11 +78,7 @@ from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
-
-logger.info("Import diffusers")
 import diffusers
-
-logger.info("Import pooplines.")
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, DDIMScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
@@ -111,7 +91,6 @@ from torchvision.transforms import ToTensor
 
 # Convert PIL Image to PyTorch Tensor
 to_tensor = ToTensor()
-
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.20.0.dev0")
