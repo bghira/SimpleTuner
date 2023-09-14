@@ -482,7 +482,7 @@ def main():
         (
             prompt_embeds_all,
             add_text_embeds_all,
-        ) = embed_cache.compute_embeddings_for_prompts(captions)
+        ) = embed_cache.compute_embeddings_for_sdxl_prompts(captions)
         prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
         add_text_embeds_all = torch.concat(
             [add_text_embeds_all for _ in range(1)], dim=0
@@ -548,7 +548,7 @@ def main():
     ):
         logger.info("Pre-computing null embedding for caption dropout")
         with accelerator.main_process_first():
-            embed_cache.precompute_embeddings_for_prompts([""])
+            embed_cache.precompute_embeddings_for_sdxl_prompts([""])
     else:
         logger.warning(
             f"Not using caption dropout will potentially lead to overfitting on captions."
@@ -564,7 +564,7 @@ def main():
             prepend_instance_prompt=args.prepend_instance_prompt or False,
             use_captions=not args.only_instance_prompt,
         )
-        embed_cache.precompute_embeddings_for_prompts(all_captions)
+        embed_cache.precompute_embeddings_for_sdxl_prompts(all_captions)
 
     (
         validation_prompts,
@@ -1017,7 +1017,7 @@ def main():
                         (
                             batch["prompt_embeds_all"],
                             batch["add_text_embeds_all"],
-                        ) = embed_cache.compute_embeddings_for_prompts([""])
+                        ) = embed_cache.compute_embeddings_for_sdxl_prompts([""])
 
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
@@ -1271,7 +1271,9 @@ def main():
                     (
                         current_validation_prompt_embeds,
                         current_validation_pooled_embeds,
-                    ) = embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                    ) = embed_cache.compute_embeddings_for_sdxl_prompts(
+                        [validation_prompt]
+                    )
                     validation_images.extend(
                         pipeline(
                             prompt_embeds=current_validation_prompt_embeds,

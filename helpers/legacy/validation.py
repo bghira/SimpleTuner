@@ -46,19 +46,31 @@ def prepare_validation_prompt_list(args, embed_cache):
 
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
-        (
-            validation_negative_prompt_embeds,
-            validation_negative_pooled_embeds,
-        ) = embed_cache.compute_embeddings_for_prompts(["blurry, cropped, ugly"])
-    if model_type == "sdxl":
-        return (
-            validation_prompts,
-            validation_shortnames,
-            validation_negative_prompt_embeds,
-            validation_negative_pooled_embeds,
-        )
-    elif model_type == "legacy":
-        return (validation_prompts, validation_shortnames)
+        if model_type == "sdxl":
+            (
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            ) = embed_cache.compute_embeddings_for_sdxl_prompts(
+                ["blurry, cropped, ugly"]
+            )
+            return (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            )
+        elif model_type == "legacy":
+            validation_negative_prompt_embeds = (
+                embed_cache.compute_embeddings_for_legacy_prompts(
+                    ["blurry, cropped, ugly"]
+                )
+            )
+
+            return (
+                validation_prompts,
+                validation_negative_prompt_embeds,
+                validation_shortnames,
+            )
 
 
 def log_validations(

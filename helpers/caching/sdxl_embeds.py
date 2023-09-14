@@ -108,6 +108,16 @@ class TextEmbeddingCache:
                 self.text_encoders[0], self.tokenizers[0], prompt
             )
 
+    def compute_embeddings_for_prompts(self, prompts, return_concat: bool = True):
+        if self.model_type == "sdxl":
+            return self.compute_embeddings_for_sdxl_prompts(
+                prompts, return_concat=return_concat
+            )
+        elif self.model_type == "legacy":
+            return self.compute_embeddings_for_legacy_prompts(
+                prompts, return_concat=return_concat
+            )
+
     def compute_embeddings_for_sdxl_prompts(self, prompts, return_concat: bool = True):
         prompt_embeds_all = []
         add_text_embeds_all = []
