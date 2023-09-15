@@ -998,6 +998,7 @@ def main(args):
                 unet,
                 args,
                 validation_prompts,
+                validation_shortnames,
                 global_step,
                 resume_global_step,
                 step,
