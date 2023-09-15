@@ -115,6 +115,7 @@ def log_validations(
         if (
             validation_prompts
             and step % args.validation_steps == 0
+            and step % args.gradient_accumulation_steps == 0
             and progress_bar.n > resume_global_step
         ):
             logger.debug(
