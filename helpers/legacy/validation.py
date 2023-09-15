@@ -132,15 +132,7 @@ def log_validations(
             logger.debug(
                 f"We have valid prompts to process, this is looking better for our decision tree.."
             )
-            if (
-                args.gradient_accumulation_steps > 0
-                and step % args.gradient_accumulation_steps != 0
-            ):
-                # We do not want to perform validation on a partial batch.
-                logger.debug(
-                    f"Not producing a validation batch for {args.gradient_accumulation_steps} gradient accumulation steps vs {step} step count. We are at a partial batch."
-                )
-                return
+
             logger.info(
                 f"Running validation... \n Generating {len(validation_prompts)} images."
             )
