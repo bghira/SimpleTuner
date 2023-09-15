@@ -47,3 +47,6 @@ work
 
 sd21-env.sh
 sdxl-env.sh
+wandb/
+cache/
+vae_cache/

@@ -72,6 +72,11 @@ def object_exists_in_s3(s3_client, bucket_name, object_name):
 def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
+    # Constants
+    conn_timeout = args.connection_timeout
+    read_timeout = args.read_timeout
+    timeouts = (conn_timeout, read_timeout)
+
     current_file_path = os.path.join(args.temporary_folder, filename)
     if os.path.exists(current_file_path):
         return
@@ -120,13 +125,29 @@ def parse_args():
     parser.add_argument(
         "--aws_secret_access_key", type=str, help="AWS secret access key."
     )
-
+    parser.add_argument(
+        "--connection_timeout",
+        type=int,
+        default=3,
+        help="Connection timeout in seconds.",
+    )
+    parser.add_argument(
+        "--read_timeout",
+        type=int,
+        default=30,
+        help="Read timeout in seconds.",
+    )
     # Script-specific arguments
     parser.add_argument(
         "--parquet_folder", type=str, help="Location of the Parquet files."
     )
     parser.add_argument("--csv_folder", type=str, help="Location of the CSV files.")
     parser.add_argument("--git_lfs_repo", type=str, help="The Git LFS repository URL.")
+    parser.add_argument(
+        "--delete_after_processing",
+        action="store_true",
+        help="Delete original CSV/Parquet file after processing.",
+    )
     parser.add_argument(
         "--temporary_folder",
         type=str,
@@ -453,6 +474,7 @@ def main():
         # Read Parquet file as DataFrame
         csv_files = [f for f in Path(args.csv_folder).glob("*.csv")]
     all_files = parquet_files + csv_files
+    random.shuffle(all_files)
     logger.info(f"Discovered catalogues: {all_files}")
 
     total_files = len(all_files)
@@ -531,6 +553,13 @@ def main():
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
         fetch_data(s3_client, to_fetch, args, uri_column)
+
+        # Remove source file if argument is provided
+        if args.delete_after_processing:
+            try:
+                os.remove(file)
+            except:
+                pass
 
 
 if __name__ == "__main__":
