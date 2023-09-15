@@ -454,6 +454,7 @@ def main():
         # Read Parquet file as DataFrame
         csv_files = [f for f in Path(args.csv_folder).glob("*.csv")]
     all_files = parquet_files + csv_files
+    random.shuffle(all_files)
     logger.info(f"Discovered catalogues: {all_files}")
 
     total_files = len(all_files)
