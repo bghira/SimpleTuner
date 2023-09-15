@@ -37,6 +37,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--snr_weight",
+        type=float,
+        default=1.0,
+        help=(
+            "When training a model using `--prediction_type=sample`, one can supply an SNR weight value to augment the loss with."
+            " If a value of 0.5 is provided here, the loss is taken half from the SNR and half from the MSE."
+        ),
+    )
+    parser.add_argument(
         "--training_scheduler_timestep_spacing",
         type=str,
         default="trailing",

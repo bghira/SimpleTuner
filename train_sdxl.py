@@ -1020,6 +1020,8 @@ def main():
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                elif noise_scheduler.config.prediction_type == "sample":
+                    pass
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
@@ -1041,9 +1043,18 @@ def main():
 
                 if args.snr_gamma is None:
                     training_logger.debug(f"Calculating loss")
-                    loss = F.mse_loss(
-                        model_pred.float(), target.float(), reduction="mean"
-                    )
+                    if (
+                        noise_scheduler.config.prediction_type == "epsilon"
+                        or noise_scheduler.config.prediction_type == "v_prediction"
+                    ):
+                        loss = F.mse_loss(
+                            model_pred.float(), target.float(), reduction="mean"
+                        )
+                    elif noise_scheduler.config.prediction_type == "sample":
+                        loss = args.snr_weight * F.mse_loss(
+                            model_pred, latents, reduction="none"
+                        )
+                        loss = loss.mean()
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -1058,18 +1069,38 @@ def main():
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
                     )
-                    mse_loss_weights = (
-                        torch.stack(
-                            [snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1
-                        ).min(dim=1)[0]
-                        / snr
-                    )
-                    # An experimental strategy for fixing min-SNR with zero terminal SNR is to set loss weighting to 1 when
-                    #  any positional tensors have an SNR of zero. This is to preserve their loss values and also to hopefully
-                    #  prevent the explosion of gradients or NaNs due to the presence of very small numbers.
+                    if noise_scheduler.config.prediction_type == "epsilon":
+                        mse_loss_weights = (
+                            torch.stack(
+                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
+                                dim=1,
+                            ).min(dim=1)[0]
+                            / snr
+                        )
+                    elif noise_scheduler.config.prediction_type == "v_prediction":
+                        mse_loss_weights = (
+                            torch.stack(
+                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
+                                dim=1,
+                            ).min(dim=1)[0]
+                            / snr
+                            + 1
+                        )
+                    elif noise_scheduler.config.prediction_type == "sample":
+                        # min{snr, k}
+                        mse_loss_weights = (
+                            torch.stack(
+                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
+                                dim=1,
+                            ).min(dim=1)[0]
+                            / snr
+                        )
+
+                    # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
+                    # When we run this, the MSE loss weights for the zero-sigma timestep are set unconditionally to 1.
+                    # We want this sample to be fully considered.
                     mse_loss_weights[snr == 0] = 1.0
-                    if torch.any(torch.isnan(mse_loss_weights)):
-                        training_logger.error("mse_loss_weights contains NaN values")
+
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
