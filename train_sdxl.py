@@ -1021,7 +1021,7 @@ def main():
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 elif noise_scheduler.config.prediction_type == "sample":
-                    pass
+                    target = latents
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
@@ -1052,7 +1052,7 @@ def main():
                         )
                     elif noise_scheduler.config.prediction_type == "sample":
                         loss = args.snr_weight * F.mse_loss(
-                            model_pred, latents, reduction="none"
+                            model_pred.float(), target.float(), reduction="none"
                         )
                         loss = loss.mean()
                 else:
