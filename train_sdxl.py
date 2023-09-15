@@ -1047,7 +1047,7 @@ def main():
                         noise_scheduler.config.prediction_type == "epsilon"
                         or noise_scheduler.config.prediction_type == "v_prediction"
                     ):
-                        loss = F.mse_loss(
+                        loss = args.snr_weight * F.mse_loss(
                             model_pred.float(), target.float(), reduction="mean"
                         )
                     elif noise_scheduler.config.prediction_type == "sample":
