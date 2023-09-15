@@ -127,6 +127,7 @@ def parse_args():
     )
     parser.add_argument("--csv_folder", type=str, help="Location of the CSV files.")
     parser.add_argument("--git_lfs_repo", type=str, help="The Git LFS repository URL.")
+    parser.add_argument("--delete_after_processing", action="store_true", help="Delete original CSV/Parquet file after processing.")
     parser.add_argument(
         "--temporary_folder",
         type=str,
@@ -531,6 +532,13 @@ def main():
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
         fetch_data(s3_client, to_fetch, args, uri_column)
+        
+        # Remove source file if argument is provided
+        if args.delete_after_processing:
+            try:
+                os.remove(file)
+            except:
+                pass
 
 
 if __name__ == "__main__":
