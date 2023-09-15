@@ -1021,6 +1021,8 @@ def main():
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 elif noise_scheduler.config.prediction_type == "sample":
+                    # We set the target to latents here, but the model_pred will return the noise sample prediction.
+                    # We will have to subtract the noise residual from the prediction to get the target sample.
                     target = latents
                 else:
                     raise ValueError(
@@ -1041,6 +1043,10 @@ def main():
                     added_cond_kwargs=added_cond_kwargs,
                 ).sample
 
+                # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
+                if noise_scheduler.config.prediction_type == "sample":
+                    model_pred = model_pred - noise
+
                 if args.snr_gamma is None:
                     training_logger.debug(f"Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
@@ -1060,7 +1066,10 @@ def main():
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
                     )
-                    if noise_scheduler.config.prediction_type == "epsilon":
+                    if (
+                        noise_scheduler.config.prediction_type == "epsilon"
+                        or noise_scheduler.config.prediction_type == "sample"
+                    ):
                         mse_loss_weights = (
                             torch.stack(
                                 [snr, args.snr_gamma * torch.ones_like(timesteps)],
@@ -1076,15 +1085,6 @@ def main():
                             ).min(dim=1)[0]
                             / snr
                             + 1
-                        )
-                    elif noise_scheduler.config.prediction_type == "sample":
-                        # min{snr, k}
-                        mse_loss_weights = (
-                            torch.stack(
-                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
-                                dim=1,
-                            ).min(dim=1)[0]
-                            / snr
                         )
 
                     # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
