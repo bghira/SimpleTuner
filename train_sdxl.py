@@ -1043,18 +1043,9 @@ def main():
 
                 if args.snr_gamma is None:
                     training_logger.debug(f"Calculating loss")
-                    if (
-                        noise_scheduler.config.prediction_type == "epsilon"
-                        or noise_scheduler.config.prediction_type == "v_prediction"
-                    ):
-                        loss = args.snr_weight * F.mse_loss(
-                            model_pred.float(), target.float(), reduction="mean"
-                        )
-                    elif noise_scheduler.config.prediction_type == "sample":
-                        loss = args.snr_weight * F.mse_loss(
-                            model_pred.float(), target.float(), reduction="none"
-                        )
-                        loss = loss.mean()
+                    loss = args.snr_weight * F.mse_loss(
+                        model_pred.float(), target.float(), reduction="mean"
+                    )
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
