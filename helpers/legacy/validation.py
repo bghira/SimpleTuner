@@ -110,10 +110,12 @@ def log_validations(
             f" We are on step {global_step} and have {len(validation_prompts)} validation prompts."
             f" We have {progress_bar.n} steps of progress done and are resuming from {resume_global_step}."
             f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
+            f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
         )
         if (
             validation_prompts
-            and global_step % args.validation_steps == 0
+            and step % args.validation_steps == 0
+            and step % args.gradient_accumulation_steps == 0
             and progress_bar.n > resume_global_step
         ):
             logger.debug(
