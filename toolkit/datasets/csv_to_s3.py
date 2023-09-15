@@ -224,7 +224,6 @@ def parse_args():
         action="store_true",
         help="If set, non-fatal errors will be printed. Remove this from the commandline to make output more streamlined/quieter.",
     )
-
     return parser.parse_args()
 
 
@@ -394,7 +393,8 @@ def fetch_and_upload_image(info, args, s3_client):
     try:
         fetch_image(info, args)
     except Exception as e:
-        logger.error(f"Encountered error fetching file: {e}")
+        if args.print_nonfatal_errors:
+            logger.error(f"Encountered error fetching file: {e}")
     upload_to_s3(info["filename"], args, s3_client)
 
 
