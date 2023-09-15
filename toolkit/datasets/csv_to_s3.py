@@ -23,7 +23,8 @@ timeouts = (conn_timeout, read_timeout)
 # Set up logging
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-
+connection_logger = logging.getLogger("urllib3.connectionpool")
+connection_logger.setLevel(logging.ERROR)
 http = requests.Session()
 adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
 http.mount("http://", adapter)
