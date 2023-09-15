@@ -69,13 +69,10 @@ def object_exists_in_s3(s3_client, bucket_name, object_name):
         return False
 
 
-def fetch_image(info, args, error_list):
+def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
     current_file_path = os.path.join(args.temporary_folder, filename)
-    # Skip download if the file is in the error list
-    if url in error_list:
-        return
     if os.path.exists(current_file_path):
         return
     try:
@@ -100,12 +97,6 @@ def fetch_image(info, args, error_list):
             pass
     except Exception as e:
         raise e
-
-def load_error_list(error_file):
-    if os.path.exists(error_file):
-        with open(error_file, "r") as f:
-            return set(f.readlines())
-    return set()
 
 
 def parse_args():
@@ -212,13 +203,6 @@ def parse_args():
         action="store_true",
         help="If set, non-fatal errors will be printed. Remove this from the commandline to make output more streamlined/quieter.",
     )
-    parser.add_argument(
-        "--error_file_list",
-        type=str,
-        default="errors.txt",
-        help="File to log download errors and skip the corresponding files in future runs.",
-    )
-
 
     return parser.parse_args()
 
@@ -384,10 +368,10 @@ def upload_to_s3(filename, args, s3_client):
         logger.error(f"Error uploading {object_name} to S3: {e}")
 
 
-def fetch_and_upload_image(info, args, s3_client, error_list):
+def fetch_and_upload_image(info, args, s3_client):
     """Fetch the image, process it, and upload it to S3."""
     try:
-        fetch_image(info, args, error_list)
+        fetch_image(info, args)
     except Exception as e:
         logger.error(f"Encountered error fetching file: {e}")
     upload_to_s3(info["filename"], args, s3_client)
@@ -419,22 +403,10 @@ def fetch_data(s3_client, data, args, uri_column):
         to_fetch.values(),
         [args] * len(to_fetch),
         [s3_client] * len(to_fetch),
-        load_error_list(args.error_file_list),
         desc="Fetching & Uploading Images",
         max_workers=args.num_workers,
     )
 
-BATCH_SIZE = 1000  # or any other value that suits your memory constraints
-
-def process_batch(batch, existing_files, s3_client, args, uri_column):
-    # Convert content to filenames for the current batch
-    batch_filenames = [content_to_filename(item[args.caption_field], args) for item in batch]
-
-    # Filter out files that already exist in the S3 bucket
-    to_process = [item for idx, item in enumerate(batch) if batch_filenames[idx] not in existing_files]
-
-    # Fetch and upload the filtered files
-    fetch_data(s3_client, to_process, args, uri_column)
 
 def main():
     args = parse_args()
@@ -558,14 +530,7 @@ def main():
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
-        # Split data into batches and process each batch
-        num_batches = len(to_fetch) // BATCH_SIZE + (len(to_fetch) % BATCH_SIZE != 0)
-        
-        for i in range(num_batches):
-            start_idx = i * BATCH_SIZE
-            end_idx = start_idx + BATCH_SIZE
-            batch = to_fetch[start_idx:end_idx]
-            process_batch(batch, existing_files, s3_client, args, uri_column)
+        fetch_data(s3_client, to_fetch, args, uri_column)
 
 
 if __name__ == "__main__":
