@@ -558,7 +558,14 @@ def main():
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
-        fetch_data(s3_client, to_fetch, args, uri_column)
+        # Split data into batches and process each batch
+        num_batches = len(to_fetch) // BATCH_SIZE + (len(to_fetch) % BATCH_SIZE != 0)
+        
+        for i in range(num_batches):
+            start_idx = i * BATCH_SIZE
+            end_idx = start_idx + BATCH_SIZE
+            batch = to_fetch[start_idx:end_idx]
+            process_batch(batch, existing_files, s3_client, args, uri_column)
 
 
 if __name__ == "__main__":
