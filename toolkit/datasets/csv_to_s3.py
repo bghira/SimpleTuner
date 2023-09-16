@@ -72,6 +72,20 @@ def object_exists_in_s3(s3_client, bucket_name, object_name):
         return False
 
 
+def calculate_luminance(image: Image):
+    """Calculate the luminance of an image."""
+    grayscale = image.convert("L")
+    histogram = grayscale.histogram()
+    pixels = sum(histogram)
+    brightness = scale = len(histogram)
+
+    for index in range(0, scale):
+        ratio = histogram[index] / pixels
+        brightness += ratio * (-scale + index)
+
+    return 1 if brightness == 255 else brightness / scale
+
+
 def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
@@ -98,6 +112,14 @@ def fetch_image(info, args):
             if args.only_exif_images and not valid_exif_data(current_file_path):
                 os.remove(current_file_path)
                 return
+            if args.min_luminance is not None or args.max_luminance is not None:
+                image_luminance = calculate_luminance(image)
+                if args.min_luminance and image_luminance < args.min_luminance:
+                    os.remove(current_file_path)
+                    return
+                if args.max_luminance and image_luminance > args.max_luminance:
+                    os.remove(current_file_path)
+                    return
             image = resize_for_condition_image(image, args.condition_image_size)
             image.save(current_file_path, format="PNG")
             image.close()
@@ -185,6 +207,18 @@ def parse_args():
         "--invert_unsafe_threshold",
         action="store_true",
         help="If set, images with a probability of harmful content higher than --unsafe_threshold will be included. This may be useful for training eg. NSFW classifiers.",
+    )
+    parser.add_argument(
+        "--min_luminance",
+        type=float,
+        default=None,
+        help="Minimum luminance threshold for images. If not provided, no lower cap is applied.",
+    )
+    parser.add_argument(
+        "--max_luminance",
+        type=float,
+        default=None,
+        help="Maximum luminance threshold for images. If not provided, only capping is applied.",
     )
     parser.add_argument(
         "--caption_field",
