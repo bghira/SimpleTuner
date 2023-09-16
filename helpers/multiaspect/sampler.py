@@ -359,14 +359,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     logger.debug(
                         f"After validating and yielding, we have {len(to_yield)} images to yield."
                     )
-                    self.batch_accumulator.extend(to_yield)
+                    if len(self.batch_accumulator) < self.batch_size:
+                        remaining_entries_needed = self.batch_size - len(
+                            self.batch_accumulator
+                        )
+                        # Now we'll add only remaining_entries_needed amount to the accumulator:
+                        self.batch_accumulator.extend(
+                            to_yield[:remaining_entries_needed]
+                        )
                     # If the batch is full, yield it
                     if len(self.batch_accumulator) >= self.batch_size:
                         logger.debug(
                             f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
                         )
                         # Yield self.batch_accumulator as a tuple for the Dataloader:
-                        yield tuple(self.batch_accumulator)
+                        yield tuple(self.batch_accumulator[:self.batch_size])
                         # Change bucket after a full batch is yielded
                         logger.debug(
                             f"Clearing batch accumulator while changing buckets."
