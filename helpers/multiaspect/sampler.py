@@ -83,6 +83,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             previous_state = self.state_manager.load_state()
         except Exception as e:
             raise e
+        logging.debug(f"Previous training states loaded: {previous_state.keys()}")
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.exhausted_buckets = previous_state["exhausted_buckets"]
