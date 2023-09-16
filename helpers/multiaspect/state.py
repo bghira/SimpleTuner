@@ -49,5 +49,5 @@ class BucketStateManager:
             with open(self.state_path, "r") as f:
                 return json.load(f)
         else:
-            logger.debug(f"load_state found no file.")
+            logger.debug(f"load_state found no file: {self.state_path}")
             return {}
