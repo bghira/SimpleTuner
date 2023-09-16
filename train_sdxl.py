@@ -231,6 +231,7 @@ def main():
 
         data_backend = S3DataBackend(
             bucket_name=args.aws_bucket_name,
+            accelerator=accelerator,
             region_name=args.aws_region_name,
             endpoint_url=args.aws_endpoint_url,
             aws_access_key_id=args.aws_access_key_id,
@@ -544,7 +545,7 @@ def main():
         validation_negative_prompt_embeds,
         validation_negative_pooled_embeds,
     ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
-
+    accelerator.wait_for_everyone()
     # Grab GPU memory used:
     if accelerator.is_main_process:
         logger.info(
@@ -865,12 +866,12 @@ def main():
             path = dirs[-1] if len(dirs) > 0 else None
 
         if path is None:
-            accelerator.print(
+            logger.info(
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             args.resume_from_checkpoint = None
         else:
-            accelerator.print(f"Resuming from checkpoint {path}")
+            logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             custom_balanced_sampler.load_states(
                 state_path=os.path.join(args.output_dir, path, "training_state.json"),
@@ -881,17 +882,17 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
+    custom_balanced_sampler.log_state()
     StateTracker.start_training()
-    final_progress_step = args.max_train_steps
+    total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
     if first_epoch > 1:
-        logger.info(
-            f"Resuming from epoch {first_epoch}, which is not the first epoch. This is a bit weird."
-        )
         steps_to_remove = first_epoch * num_update_steps_per_epoch
-        final_progress_step -= steps_to_remove
-
+        total_steps_remaining_at_start -= steps_to_remove
+        logger.debug(
+            f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
+        )
     current_epoch = first_epoch
     if current_epoch >= args.num_train_epochs:
         logger.info(
@@ -900,13 +901,16 @@ def main():
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Current Epoch = {first_epoch}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(
         f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
     )
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
-    logger.info(f"  Total optimization steps remaining = {final_progress_step}")
+    logger.info(
+        f"  Total optimization steps remaining = {total_steps_remaining_at_start}"
+    )
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(

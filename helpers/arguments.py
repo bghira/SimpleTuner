@@ -1,4 +1,4 @@
-import argparse, os, random, time
+import argparse, os, random, time, json
 
 
 def parse_args(input_args=None):
@@ -154,6 +154,15 @@ def parse_args(input_args=None):
             "If set, will apply padding to the dataset to ensure that the number of images is divisible by the batch."
             " This has some side-effects (especially on smaller datasets) of over-sampling and overly repeating images."
         ),
+    )
+    parser.add_argument(
+        "--aws_config_file",
+        type=str,
+        default=None,
+        help=(
+            "Path to the AWS configuration file in JSON format."
+            " Config key names are the same as SimpleTuner option counterparts."
+        )
     )
     parser.add_argument(
         "--aws_bucket_name",
@@ -827,5 +836,28 @@ def parse_args(input_args=None):
     # default to using the same revision for the non-ema model if not specified
     if args.non_ema_revision is None:
         args.non_ema_revision = args.revision
+
+    if args.aws_config_file is not None:
+        try:
+            with open(args.aws_config_file, 'r') as f:
+                aws_config = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Could not load AWS config file: {e}")
+        if not isinstance(aws_config, dict):
+            raise ValueError("AWS config file must be a JSON object.")
+        args.aws_bucket_name = aws_config.get('aws_bucket_name', args.aws_bucket_name)
+        args.aws_endpoint_url = aws_config.get('aws_endpoint_url', args.aws_endpoint_url)
+        args.aws_region_name = aws_config.get('aws_region_name', args.aws_region_name)
+        args.aws_access_key_id = aws_config.get('aws_access_key_id', args.aws_access_key_id)
+        args.aws_secret_access_key = aws_config.get('aws_secret_access_key', args.aws_secret_access_key)
+    if args.data_backend == 'aws':
+        if args.aws_bucket_name is None:
+            raise ValueError("Must specify an AWS bucket name.")
+        if args.aws_endpoint_url is None and args.aws_region_name is None:
+            raise ValueError("Must specify an AWS endpoint URL or region name.")
+        if args.aws_access_key_id is None:
+            raise ValueError("Must specify an AWS access key ID.")
+        if args.aws_secret_access_key is None:
+            raise ValueError("Must specify an AWS secret access key.")
 
     return args

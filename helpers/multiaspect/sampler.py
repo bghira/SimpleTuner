@@ -83,13 +83,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             previous_state = self.state_manager.load_state()
         except Exception as e:
             raise e
+        logging.debug(f"Previous training states loaded: {previous_state}")
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.exhausted_buckets = previous_state["exhausted_buckets"]
         self.current_epoch = 1
         if "current_epoch" in previous_state:
             self.current_epoch = previous_state["current_epoch"]
-        self.log_state()
+        # Merge seen_images into self.state_manager.seen_images Manager.dict:
+        if "seen_images" in previous_state:
+            self.bucket_manager.seen_images = previous_state["seen_images"]
 
     def load_buckets(self):
         return list(
@@ -356,14 +359,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     logger.debug(
                         f"After validating and yielding, we have {len(to_yield)} images to yield."
                     )
-                    self.batch_accumulator.extend(to_yield)
+                    if len(self.batch_accumulator) < self.batch_size:
+                        remaining_entries_needed = self.batch_size - len(
+                            self.batch_accumulator
+                        )
+                        # Now we'll add only remaining_entries_needed amount to the accumulator:
+                        self.batch_accumulator.extend(
+                            to_yield[:remaining_entries_needed]
+                        )
                     # If the batch is full, yield it
                     if len(self.batch_accumulator) >= self.batch_size:
                         logger.debug(
                             f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
                         )
                         # Yield self.batch_accumulator as a tuple for the Dataloader:
-                        yield tuple(self.batch_accumulator)
+                        yield tuple(self.batch_accumulator[:self.batch_size])
                         # Change bucket after a full batch is yielded
                         logger.debug(
                             f"Clearing batch accumulator while changing buckets."

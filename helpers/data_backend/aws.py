@@ -41,6 +41,7 @@ class S3DataBackend(BaseDataBackend):
     def __init__(
         self,
         bucket_name,
+        accelerator,
         region_name="us-east-1",
         endpoint_url: str = None,
         aws_access_key_id: str = None,
@@ -50,6 +51,7 @@ class S3DataBackend(BaseDataBackend):
         read_retry_interval: int = 5,
         write_retry_interval: int = 5,
     ):
+        self.accelerator = accelerator
         self.bucket_name = bucket_name
         self.read_retry_limit = read_retry_limit
         self.read_retry_interval = read_retry_interval
@@ -232,7 +234,9 @@ class S3DataBackend(BaseDataBackend):
         import torch
         from io import BytesIO
 
-        return torch.load(BytesIO(self.read(s3_key)))
+        return torch.load(
+            BytesIO(self.read(s3_key)), map_location=self.accelerator.device
+        )
 
     def torch_save(self, data, s3_key):
         import torch

@@ -1,4 +1,5 @@
 from PIL import Image
+import multiprocessing
 
 
 def calculate_luminance(img: Image):
@@ -15,8 +16,17 @@ def calculate_luminance(img: Image):
     return avg_luminance
 
 
+def worker_batch_luminance(imgs: list):
+    return [calculate_luminance(img) for img in imgs]
+
+
 def calculate_batch_luminance(imgs: list):
-    luminance_values = []
-    for img in imgs:
-        luminance_values.append(calculate_luminance(img))
-    return sum(luminance_values) / len(luminance_values)
+    num_processes = multiprocessing.cpu_count()
+    with multiprocessing.Pool(num_processes) as pool:
+        # Splitting images into batches for each process
+        img_batches = [imgs[i::num_processes] for i in range(num_processes)]
+        results = pool.map(worker_batch_luminance, img_batches)
+
+    # Flatten the results and calculate average luminance
+    all_luminance_values = [lum for sublist in results for lum in sublist]
+    return sum(all_luminance_values) / len(all_luminance_values)

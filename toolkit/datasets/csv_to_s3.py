@@ -23,7 +23,10 @@ timeouts = (conn_timeout, read_timeout)
 # Set up logging
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-
+connection_logger = logging.getLogger("urllib3.connectionpool")
+connection_logger.setLevel(logging.ERROR)
+connection_logger = logging.getLogger("urllib3.connection")
+connection_logger.setLevel(logging.ERROR)
 http = requests.Session()
 adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
 http.mount("http://", adapter)
@@ -69,6 +72,20 @@ def object_exists_in_s3(s3_client, bucket_name, object_name):
         return False
 
 
+def calculate_luminance(image: Image):
+    """Calculate the luminance of an image."""
+    grayscale = image.convert("L")
+    histogram = grayscale.histogram()
+    pixels = sum(histogram)
+    brightness = scale = len(histogram)
+
+    for index in range(0, scale):
+        ratio = histogram[index] / pixels
+        brightness += ratio * (-scale + index)
+
+    return 1 if brightness == 255 else brightness / scale
+
+
 def fetch_image(info, args):
     filename = info["filename"]
     url = info["url"]
@@ -95,6 +112,14 @@ def fetch_image(info, args):
             if args.only_exif_images and not valid_exif_data(current_file_path):
                 os.remove(current_file_path)
                 return
+            if args.min_luminance is not None or args.max_luminance is not None:
+                image_luminance = calculate_luminance(image)
+                if args.min_luminance and image_luminance < args.min_luminance:
+                    os.remove(current_file_path)
+                    return
+                if args.max_luminance and image_luminance > args.max_luminance:
+                    os.remove(current_file_path)
+                    return
             image = resize_for_condition_image(image, args.condition_image_size)
             image.save(current_file_path, format="PNG")
             image.close()
@@ -184,6 +209,18 @@ def parse_args():
         help="If set, images with a probability of harmful content higher than --unsafe_threshold will be included. This may be useful for training eg. NSFW classifiers.",
     )
     parser.add_argument(
+        "--min_luminance",
+        type=float,
+        default=None,
+        help="Minimum luminance threshold for images. If not provided, no lower cap is applied.",
+    )
+    parser.add_argument(
+        "--max_luminance",
+        type=float,
+        default=None,
+        help="Maximum luminance threshold for images. If not provided, only capping is applied.",
+    )
+    parser.add_argument(
         "--caption_field",
         type=str,
         default=None,
@@ -224,7 +261,6 @@ def parse_args():
         action="store_true",
         help="If set, non-fatal errors will be printed. Remove this from the commandline to make output more streamlined/quieter.",
     )
-
     return parser.parse_args()
 
 
@@ -394,7 +430,8 @@ def fetch_and_upload_image(info, args, s3_client):
     try:
         fetch_image(info, args)
     except Exception as e:
-        logger.error(f"Encountered error fetching file: {e}")
+        if args.print_nonfatal_errors:
+            logger.error(f"Encountered error fetching file: {e}")
     upload_to_s3(info["filename"], args, s3_client)
 
 
