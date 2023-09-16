@@ -841,7 +841,7 @@ def parse_args(input_args=None):
         try:
             with open(args.aws_config_file, 'r') as f:
                 aws_config = json.load(f)
-        catch Exception as e:
+        except Exception as e:
             raise ValueError(f"Could not load AWS config file: {e}")
         if not isinstance(aws_config, dict):
             raise ValueError("AWS config file must be a JSON object.")
