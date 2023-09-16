@@ -1,20 +1,13 @@
 from PIL import Image
 import multiprocessing
-
+import numpy as np
 
 def calculate_luminance(img: Image):
-    pixels = list(img.getdata())
-
-    luminance_values = []
-    for pixel in pixels:
-        r, g, b = pixel[:3]  # Assuming the image is RGB or RGBA
-        luminance = 0.299 * r + 0.587 * g + 0.114 * b
-        luminance_values.append(luminance)
-
-    # Return average luminance for the entire image
-    avg_luminance = sum(luminance_values) / len(luminance_values)
+    np_img = np.array(img)
+    r, g, b = np_img[:, :, 0], np_img[:, :, 1], np_img[:, :, 2]
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    avg_luminance = np.mean(luminance)
     return avg_luminance
-
 
 def worker_batch_luminance(imgs: list):
     return [calculate_luminance(img) for img in imgs]
