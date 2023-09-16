@@ -231,6 +231,7 @@ def main():
 
         data_backend = S3DataBackend(
             bucket_name=args.aws_bucket_name,
+            accelerator=accelerator,
             region_name=args.aws_region_name,
             endpoint_url=args.aws_endpoint_url,
             aws_access_key_id=args.aws_access_key_id,
