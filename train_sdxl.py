@@ -80,6 +80,11 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, DDIMScheduler
+from diffusers import (
+    EulerDiscreteScheduler,
+    EulerAncestralDiscreteScheduler,
+    UniPCMultistepScheduler,
+)
 from diffusers.optimization import get_scheduler
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
     StableDiffusionXLPipeline,
@@ -101,7 +106,15 @@ DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
 WANDB_TABLE_COL_NAMES = ["step", "image", "text"]
+SCHEDULER_NAME_MAP = {
+    "euler": EulerDiscreteScheduler,
+    "euler-a": EulerAncestralDiscreteScheduler,
+    "unipc": UniPCMultistepScheduler,
+    "ddim": DDIMScheduler,
+    "ddpm": DDPMScheduler,
+}
 CALCULATE_LUMINANCE = False
+
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
@@ -1151,7 +1164,7 @@ def main():
                     avg_training_data_luminance = sum(training_luminance_values) / len(
                         training_luminance_values
                     )
-                    logs["train_luminance"]: avg_training_data_luminance,
+                    logs["train_luminance"] = avg_training_data_luminance
                 accelerator.log(
                     logs,
                     step=global_step,
@@ -1228,6 +1241,7 @@ def main():
                 tokenizer_2=None,
                 ema_unet=ema_unet,
                 vae=vae,
+                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
             )
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
@@ -1267,7 +1281,9 @@ def main():
             revision=args.revision,
         )
         pipeline.set_progress_bar_config(disable=True)
-        pipeline.scheduler = DDIMScheduler.from_pretrained(
+        pipeline.scheduler = SCHEDULER_NAME_MAP[
+            args.validation_noise_scheduler
+        ].from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
             prediction_type=args.prediction_type,
