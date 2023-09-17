@@ -125,30 +125,33 @@ This guide provides a user-friendly breakdown of the command-line options availa
 This is a basic overview meant to help you get started. For a complete list of options and more detailed explanations, please refer to the full specification:
 
 ```
-usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH] [--prediction_type {epsilon,v_prediction,sample}]
-                     [--training_scheduler_timestep_spacing {leading,linspace,trailing}] [--inference_scheduler_timestep_spacing {leading,linspace,trailing}] [--rescale_betas_zero_snr] [--vae_dtype VAE_DTYPE] [--vae_batch_size VAE_BATCH_SIZE]
-                     [--keep_vae_loaded] [--revision REVISION] [--tokenizer_name TOKENIZER_NAME] --instance_data_dir INSTANCE_DATA_DIR [--data_backend {local,aws}] [--write_batch_size WRITE_BATCH_SIZE] [--apply_dataset_padding]
-                     [--aws_bucket_name AWS_BUCKET_NAME] [--aws_endpoint_url AWS_ENDPOINT_URL] [--aws_region_name AWS_REGION_NAME] [--aws_access_key_id AWS_ACCESS_KEY_ID] [--aws_secret_access_key AWS_SECRET_ACCESS_KEY] [--cache_dir CACHE_DIR]
-                     [--dataset_name DATASET_NAME] [--dataset_config_name DATASET_CONFIG_NAME] [--image_column IMAGE_COLUMN] [--image_prompt_column IMAGE_PROMPT_COLUMN] [--seen_state_path SEEN_STATE_PATH] [--state_path STATE_PATH]
-                     [--caption_strategy {filename,textfile,instance_prompt}] [--instance_prompt INSTANCE_PROMPT] [--output_dir OUTPUT_DIR] [--seed SEED] [--seed_for_each_device] [--resolution RESOLUTION]
-                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crops_coords_top_left_h CROPS_COORDS_TOP_LEFT_H] [--crops_coords_top_left_w CROPS_COORDS_TOP_LEFT_W] [--center_crop] [--random_flip] [--train_text_encoder]
-                     [--train_batch_size TRAIN_BATCH_SIZE] [--num_train_epochs NUM_TRAIN_EPOCHS] [--max_train_samples MAX_TRAIN_SAMPLES] [--max_train_steps MAX_TRAIN_STEPS] [--checkpointing_steps CHECKPOINTING_STEPS]
-                     [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT] [--resume_from_checkpoint RESUME_FROM_CHECKPOINT] [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS] [--gradient_checkpointing] [--learning_rate LEARNING_RATE]
-                     [--scale_lr] [--lr_scheduler LR_SCHEDULER] [--lr_warmup_steps LR_WARMUP_STEPS] [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER] [--use_ema] [--non_ema_revision NON_EMA_REVISION] [--use_8bit_adam]
-                     [--use_adafactor_optimizer] [--use_dadapt_optimizer] [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE] [--dataloader_num_workers DATALOADER_NUM_WORKERS] [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2]
-                     [--adam_weight_decay ADAM_WEIGHT_DECAY] [--adam_epsilon ADAM_EPSILON] [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub] [--hub_token HUB_TOKEN] [--hub_model_id HUB_MODEL_ID] [--logging_dir LOGGING_DIR] [--allow_tf32]
-                     [--report_to REPORT_TO] [--tracker_run_name TRACKER_RUN_NAME] [--tracker_project_name TRACKER_PROJECT_NAME] [--validation_prompt VALIDATION_PROMPT] [--validation_prompt_library] [--user_prompt_library USER_PROMPT_LIBRARY]
-                     [--num_validation_images NUM_VALIDATION_IMAGES] [--validation_steps VALIDATION_STEPS] [--validation_resolution VALIDATION_RESOLUTION] [--mixed_precision {no,fp16,bf16}] [--local_rank LOCAL_RANK]
+usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
+                     [--prediction_type {epsilon,v_prediction,sample}] [--snr_weight SNR_WEIGHT] [--training_scheduler_timestep_spacing {leading,linspace,trailing}]
+                     [--inference_scheduler_timestep_spacing {leading,linspace,trailing}] [--rescale_betas_zero_snr] [--vae_dtype VAE_DTYPE] [--vae_batch_size VAE_BATCH_SIZE] [--keep_vae_loaded] [--revision REVISION]
+                     [--tokenizer_name TOKENIZER_NAME] --instance_data_dir INSTANCE_DATA_DIR [--data_backend {local,aws}] [--write_batch_size WRITE_BATCH_SIZE] [--apply_dataset_padding] [--aws_config_file AWS_CONFIG_FILE]
+                     [--aws_bucket_name AWS_BUCKET_NAME] [--aws_endpoint_url AWS_ENDPOINT_URL] [--aws_region_name AWS_REGION_NAME] [--aws_access_key_id AWS_ACCESS_KEY_ID] [--aws_secret_access_key AWS_SECRET_ACCESS_KEY]
+                     [--cache_dir CACHE_DIR] [--dataset_name DATASET_NAME] [--dataset_config_name DATASET_CONFIG_NAME] [--image_column IMAGE_COLUMN] [--image_prompt_column IMAGE_PROMPT_COLUMN]
+                     [--seen_state_path SEEN_STATE_PATH] [--state_path STATE_PATH] [--caption_strategy {filename,textfile,instance_prompt}] [--instance_prompt INSTANCE_PROMPT] [--output_dir OUTPUT_DIR] [--seed SEED]
+                     [--seed_for_each_device] [--resolution RESOLUTION] [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crops_coords_top_left_h CROPS_COORDS_TOP_LEFT_H] [--crops_coords_top_left_w CROPS_COORDS_TOP_LEFT_W]
+                     [--center_crop] [--random_flip] [--train_text_encoder] [--train_batch_size TRAIN_BATCH_SIZE] [--num_train_epochs NUM_TRAIN_EPOCHS] [--max_train_samples MAX_TRAIN_SAMPLES]
+                     [--max_train_steps MAX_TRAIN_STEPS] [--checkpointing_steps CHECKPOINTING_STEPS] [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT] [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
+                     [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS] [--gradient_checkpointing] [--learning_rate LEARNING_RATE] [--scale_lr] [--lr_scheduler LR_SCHEDULER] [--lr_warmup_steps LR_WARMUP_STEPS]
+                     [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER] [--use_ema] [--non_ema_revision NON_EMA_REVISION] [--use_8bit_adam] [--use_adafactor_optimizer] [--use_dadapt_optimizer]
+                     [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE] [--dataloader_num_workers DATALOADER_NUM_WORKERS] [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2] [--adam_weight_decay ADAM_WEIGHT_DECAY]
+                     [--adam_epsilon ADAM_EPSILON] [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub] [--hub_token HUB_TOKEN] [--hub_model_id HUB_MODEL_ID] [--logging_dir LOGGING_DIR] [--allow_tf32] [--report_to REPORT_TO]
+                     [--track_luminance] [--tracker_run_name TRACKER_RUN_NAME] [--tracker_project_name TRACKER_PROJECT_NAME] [--validation_prompt VALIDATION_PROMPT] [--validation_prompt_library]
+                     [--user_prompt_library USER_PROMPT_LIBRARY] [--num_validation_images NUM_VALIDATION_IMAGES] [--validation_steps VALIDATION_STEPS] [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
+                     [--validation_resolution VALIDATION_RESOLUTION] [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}] [--mixed_precision {no,fp16,bf16}] [--local_rank LOCAL_RANK]
                      [--enable_xformers_memory_efficient_attention] [--set_grads_to_none] [--noise_offset NOISE_OFFSET] [--validation_epochs VALIDATION_EPOCHS] [--validation_guidance VALIDATION_GUIDANCE]
                      [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE] [--validation_randomize] [--validation_seed VALIDATION_SEED] [--fully_unload_text_encoder] [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                      [--freeze_encoder_after FREEZE_ENCODER_AFTER] [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY] [--print_filenames] [--debug_aspect_buckets] [--debug_dataset_loader] [--freeze_encoder]
-                     [--text_encoder_limit TEXT_ENCODER_LIMIT] [--prepend_instance_prompt] [--only_instance_prompt] [--caption_dropout_interval CAPTION_DROPOUT_INTERVAL] [--conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY]
-                     [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY] [--input_pertubation INPUT_PERTUBATION] [--use_original_images USE_ORIGINAL_IMAGES] [--delete_unwanted_images] [--delete_problematic_images] [--offset_noise]
-                     [--learning_rate_end LEARNING_RATE_END]
+                     [--text_encoder_limit TEXT_ENCODER_LIMIT] [--prepend_instance_prompt] [--only_instance_prompt] [--caption_dropout_interval CAPTION_DROPOUT_INTERVAL]
+                     [--conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY] [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY] [--input_pertubation INPUT_PERTUBATION]
+                     [--use_original_images USE_ORIGINAL_IMAGES] [--delete_unwanted_images] [--delete_problematic_images] [--offset_noise] [--learning_rate_end LEARNING_RATE_END]
 
 The following SimpleTuner command-line options are available:
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --snr_gamma SNR_GAMMA
                         SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. More details here: https://arxiv.org/abs/2303.09556.
@@ -157,32 +160,40 @@ optional arguments:
   --pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH
                         Path to an improved VAE to stabilize training. For more details check out: https://github.com/huggingface/diffusers/pull/4038.
   --prediction_type {epsilon,v_prediction,sample}
-                        The type of prediction to use for the u-net. Choose between ['epsilon', 'v_prediction', 'sample']. For SD 2.1-v, this is v_prediction. For 2.1-base, it is epsilon. SDXL is generally epsilon. SD 1.5 is epsilon.
+                        The type of prediction to use for the u-net. Choose between ['epsilon', 'v_prediction', 'sample']. For SD 2.1-v, this is v_prediction. For 2.1-base, it is epsilon. SDXL is generally epsilon. SD 1.5 is
+                        epsilon.
+  --snr_weight SNR_WEIGHT
+                        When training a model using `--prediction_type=sample`, one can supply an SNR weight value to augment the loss with. If a value of 0.5 is provided here, the loss is taken half from the SNR and half
+                        from the MSE.
   --training_scheduler_timestep_spacing {leading,linspace,trailing}
-                        Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights. For all training, including terminal SNR, it would seem that 'trailing' is the right choice.
+                        Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights. For all training, including epsilon, it would seem that 'trailing' is the right choice.
   --inference_scheduler_timestep_spacing {leading,linspace,trailing}
                         The Bytedance paper on zero terminal SNR recommends inference using 'trailing'.
   --rescale_betas_zero_snr
-                        If set, will rescale the betas to zero terminal SNR. This is recommended for training with v_prediction. For epsilon, this might help with fine details, but contrast details could be limited. Experimentation is a good idea.
+                        If set, will rescale the betas to zero terminal SNR. This is recommended for training with v_prediction. For epsilon, this might help with fine details, but will not result in contrast improvements.
   --vae_dtype VAE_DTYPE
                         The dtype of the VAE model. Choose between ['default', 'fp16', 'fp32', 'bf16'].The default VAE dtype is float32, due to NaN issues in SDXL 1.0.
   --vae_batch_size VAE_BATCH_SIZE
-                        When pre-caching latent vectors, this is the batch size to use. Decreasing this may help with VRAM issues, but if you are at that point of contention, it's possible that your GPU has too little RAM. Default: 4.
+                        When pre-caching latent vectors, this is the batch size to use. Decreasing this may help with VRAM issues, but if you are at that point of contention, it's possible that your GPU has too little RAM.
+                        Default: 4.
   --keep_vae_loaded     If set, will keep the VAE loaded in memory. This can reduce disk churn, but consumes VRAM during the forward pass.
   --revision REVISION   Revision of pretrained model identifier from huggingface.co/models. Trainable model components should be float32 precision.
   --tokenizer_name TOKENIZER_NAME
                         Pretrained tokenizer name or path if not the same as model_name
   --instance_data_dir INSTANCE_DATA_DIR
                         A folder containing the training data. Folder contents must either follow the structure described in the SimpleTuner documentation (https://github.com/bghira/SimpleTuner), or the structure described in
-                        https://huggingface.co/docs/datasets/image_dataset#imagefolder. For 🤗 Datasets in particular, a `metadata.jsonl` file must exist to provide the captions for the images. For SimpleTuner layout, the images can be in
-                        subfolders. No particular config is required. Ignored if `dataset_name` is specified.
+                        https://huggingface.co/docs/datasets/image_dataset#imagefolder. For 🤗 Datasets in particular, a `metadata.jsonl` file must exist to provide the captions for the images. For SimpleTuner layout, the
+                        images can be in subfolders. No particular config is required. Ignored if `dataset_name` is specified.
   --data_backend {local,aws}
                         The data backend to use. Choose between ['local', 'aws']. Default: local. If using AWS, you must set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables.
   --write_batch_size WRITE_BATCH_SIZE
-                        When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching. In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written.
-                        This mostly applies to S3, but some shared server filesystems may benefit as well, eg. Ceph. Default: 64.
+                        When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching. In SimpleTuner, write batching is currently applied during VAE caching, when many small
+                        objects are written. This mostly applies to S3, but some shared server filesystems may benefit as well, eg. Ceph. Default: 64.
   --apply_dataset_padding
-                        If set, will apply padding to the dataset to ensure that the number of images is divisible by the batch. This has some side-effects (especially on smaller datasets) of over-sampling and overly repeating images.
+                        If set, will apply padding to the dataset to ensure that the number of images is divisible by the batch. This has some side-effects (especially on smaller datasets) of over-sampling and overly
+                        repeating images.
+  --aws_config_file AWS_CONFIG_FILE
+                        Path to the AWS configuration file in JSON format. Config key names are the same as SimpleTuner option counterparts.
   --aws_bucket_name AWS_BUCKET_NAME
                         The AWS bucket name to use.
   --aws_endpoint_url AWS_ENDPOINT_URL
@@ -196,8 +207,8 @@ optional arguments:
   --cache_dir CACHE_DIR
                         The directory where the downloaded models and datasets will be stored.
   --dataset_name DATASET_NAME
-                        The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private, dataset). It can also be a path pointing to a local copy of a dataset in your filesystem, or to a folder containing
-                        files that 🤗 Datasets can understand.
+                        The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private, dataset). It can also be a path pointing to a local copy of a dataset in your filesystem, or to a
+                        folder containing files that 🤗 Datasets can understand.
   --dataset_config_name DATASET_CONFIG_NAME
                         The config of the Dataset, leave as None if there's only one config.
   --image_column IMAGE_COLUMN
@@ -209,8 +220,8 @@ optional arguments:
   --state_path STATE_PATH
                         A JSON document containing the current state of training, will be placed here.
   --caption_strategy {filename,textfile,instance_prompt}
-                        The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores.The 'textfile' strategy will use the contents of a text file with the same name as the
-                        image.
+                        The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores.The 'textfile' strategy will use the contents of a text file with the
+                        same name as the image.
   --instance_prompt INSTANCE_PROMPT
                         This is unused. Filenames will be the captions instead.
   --output_dir OUTPUT_DIR
@@ -237,8 +248,8 @@ optional arguments:
   --max_train_steps MAX_TRAIN_STEPS
                         Total number of training steps to perform. If provided, overrides num_train_epochs.
   --checkpointing_steps CHECKPOINTING_STEPS
-                        Save a checkpoint of the training state every X updates. Checkpoints can be used for resuming training via `--resume_from_checkpoint`. In the case that the checkpoint is better than the final trained model, the
-                        checkpoint can also be used for inference.Using a checkpoint for inference requires separate loading of the original pipeline and the individual checkpointed model components.See
+                        Save a checkpoint of the training state every X updates. Checkpoints can be used for resuming training via `--resume_from_checkpoint`. In the case that the checkpoint is better than the final trained
+                        model, the checkpoint can also be used for inference.Using a checkpoint for inference requires separate loading of the original pipeline and the individual checkpointed model components.See
                         https://huggingface.co/docs/diffusers/main/en/training/dreambooth#performing-inference-using-a-saved-checkpoint for step by stepinstructions.
   --checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT
                         Max number of checkpoints to store.
@@ -290,6 +301,8 @@ optional arguments:
   --allow_tf32          Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
   --report_to REPORT_TO
                         The integration to report the results and logs to. Supported platforms are `"tensorboard"` (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.
+  --track_luminance     When provided, the luminance of the images will be tracked during training. This has a pretty substantial compute cost for higher resolution images, though it is easily justified when training with
+                        offset noise or some other noise modification technique that could bias the model toward very-dark images.
   --tracker_run_name TRACKER_RUN_NAME
                         The name of the run to track with the tracker.
   --tracker_project_name TRACKER_PROJECT_NAME
@@ -304,11 +317,17 @@ optional arguments:
                         Number of images that should be generated during validation with `validation_prompt`.
   --validation_steps VALIDATION_STEPS
                         Run validation every X steps. Validation consists of running the prompt `args.validation_prompt` multiple times: `args.num_validation_images` and logging the images.
+  --validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS
+                        The default scheduler, DDIM, benefits from more steps. UniPC can do well with just 10-15. For more speed during validations, reduce this value. For better quality, increase it. For model distilation,
+                        you will likely want to keep this low.
   --validation_resolution VALIDATION_RESOLUTION
                         Square resolution images will be output at this resolution (256x256).
+  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}
+                        When validating the model at inference time, a different scheduler may be chosen. UniPC can offer better speed, and Euler A can put up with instabilities a bit better. For zero-terminal SNR models,
+                        DDIM is the best choice. Choices: ['ddim', 'ddpm', 'euler', 'euler-a', 'unipc'], Default: ddim
   --mixed_precision {no,fp16,bf16}
-                        Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10.and an Nvidia Ampere GPU. Default to the value of accelerate config of the current system or the flag passed with the
-                        `accelerate.launch` command. Use this argument to override the accelerate config.
+                        Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10.and an Nvidia Ampere GPU. Default to the value of accelerate config of the current system or the
+                        flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config.
   --local_rank LOCAL_RANK
                         For distributed training: local_rank
   --enable_xformers_memory_efficient_attention
@@ -328,14 +347,15 @@ optional arguments:
   --validation_seed VALIDATION_SEED
                         If not supplied, the value for --seed will be used. If neither those nor --validation_randomize are supplied, a seed of zero is used.
   --fully_unload_text_encoder
-                        If set, will fully unload the text_encoder from memory when not in use. This currently has the side effect of crashing validations, but it is useful for initiating VAE caching on GPUs that would otherwise be too small.
+                        If set, will fully unload the text_encoder from memory when not in use. This currently has the side effect of crashing validations, but it is useful for initiating VAE caching on GPUs that would
+                        otherwise be too small.
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers earlier than this.
   --freeze_encoder_after FREEZE_ENCODER_AFTER
                         When using 'after' strategy, we will freeze layers later than this.
   --freeze_encoder_strategy FREEZE_ENCODER_STRATEGY
-                        When freezing the text_encoder, we can use the 'before', 'between', or 'after' strategy. The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen. The default strategy is to
-                        freeze all layers from 17 up. This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style.
+                        When freezing the text_encoder, we can use the 'before', 'between', or 'after' strategy. The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen. The
+                        default strategy is to freeze all layers from 17 up. This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style.
   --print_filenames     If any image files are stopping the process eg. due to corruption or truncation, this will help identify which is at fault.
   --debug_aspect_buckets
                         If set, will print excessive debugging for aspect bucket operations.
@@ -349,8 +369,8 @@ optional arguments:
   --only_instance_prompt
                         Use the instance prompt instead of the caption from filename.
   --caption_dropout_interval CAPTION_DROPOUT_INTERVAL
-                        Every X steps, we will drop the caption from the input to assist in classifier-free guidance training. When StabilityAI trained Stable Diffusion, a value of 10 was used. Very high values might be useful to do some sort
-                        of enforced style training. Default value is zero, maximum value is 100.
+                        Every X steps, we will drop the caption from the input to assist in classifier-free guidance training. When StabilityAI trained Stable Diffusion, a value of 10 was used. Very high values might be
+                        useful to do some sort of enforced style training. Default value is zero, maximum value is 100.
   --conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY
                         Conditioning dropout probability. Experimental. See section 3.2.1 in the paper: https://arxiv.org/abs/2211.09800.
   --caption_dropout_probability CAPTION_DROPOUT_PROBABILITY
