@@ -115,9 +115,6 @@ SCHEDULER_NAME_MAP = {
     "ddpm": DDPMScheduler,
 }
 
-CALCULATE_LUMINANCE = False
-
-
 def compute_ids(prompt: str):
     global tokenizer
     return tokenizer(
@@ -432,7 +429,7 @@ def main(args):
             )
         examples = batch[0]
         training_logger.debug(f"Examples: {examples}")
-        if CALCULATE_LUMINANCE:
+        if StateTracker.calculate_luminance():
             training_logger.debug(f"Computing luminance for input batch")
             batch_luminance = calculate_batch_luminance(
                 [example["instance_images"] for example in examples]
@@ -481,7 +478,7 @@ def main(args):
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
         }
-        if CALCULATE_LUMINANCE:
+        if StateTracker.calculate_luminance():
             result["luminance"] = batch_luminance
         return result
 
@@ -783,7 +780,7 @@ def main(args):
                 raise ValueError(
                     f"Trainer received invalid value for training examples"
                 )
-            if CALCULATE_LUMINANCE:
+            if StateTracker.calculate_luminance():
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["luminance"])
 
@@ -939,7 +936,7 @@ def main(args):
                     "train_loss": train_loss,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
-                if CALCULATE_LUMINANCE:
+                if StateTracker.calculate_luminance():
                     # Average out the luminance values of each batch, so that we can store that in this step.
                     avg_training_data_luminance = sum(training_luminance_values) / len(
                         training_luminance_values
@@ -1159,11 +1156,11 @@ def main(args):
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            if CALCULATE_LUMINANCE:
+                            if StateTracker.calculate_luminance():
                                 validation_luminance.append(
                                     calculate_luminance(validation_image)
                                 )
-                        if CALCULATE_LUMINANCE:
+                        if StateTracker.calculate_luminance():
                             # Compute the mean luminance across all samples:
                             validation_luminance = torch.tensor(validation_luminance)
                             validation_document[

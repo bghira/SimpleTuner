@@ -3,6 +3,7 @@ from tqdm import tqdm
 from diffusers.utils import is_wandb_available
 from helpers.image_manipulation.brightness import calculate_luminance
 from helpers.training.state_tracker import StateTracker
+from helpers.prompts import PromptHandler
 from diffusers import (
     AutoencoderKL,
     StableDiffusionXLPipeline,
