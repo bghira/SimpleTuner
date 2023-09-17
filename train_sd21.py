@@ -104,6 +104,7 @@ from torchvision.transforms import ToTensor
 
 to_tensor = ToTensor()
 
+CALCULATE_LUMINANCE = False
 
 def compute_ids(prompt: str):
     global tokenizer
@@ -419,10 +420,11 @@ def main(args):
             )
         examples = batch[0]
         training_logger.debug(f"Examples: {examples}")
-        training_logger.debug(f"Computing luminance for input batch")
-        batch_luminance = calculate_batch_luminance(
-            [example["instance_images"] for example in examples]
-        )
+        if CALCULATE_LUMINANCE:
+            training_logger.debug(f"Computing luminance for input batch")
+            batch_luminance = calculate_batch_luminance(
+                [example["instance_images"] for example in examples]
+            )
 
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
@@ -463,11 +465,13 @@ def main(args):
         logger.debug(f"{len(prompt_embeds_all)} prompt_embeds_all: {prompt_embeds_all}")
         prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
 
-        return {
+        result = {
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
-            "luminance": batch_luminance,
         }
+        if CALCULATE_LUMINANCE:
+            result["luminance"] = batch_luminance,
+        return result
 
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -735,6 +739,7 @@ def main(args):
     progress_bar.update(global_step)
     progress_bar.set_description("Steps")
     current_percent_completion = 0
+    scheduler_kwargs = {}
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
             # This might immediately end training, but that's useful for simply exporting the model.
@@ -766,8 +771,9 @@ def main(args):
                 raise ValueError(
                     f"Trainer received invalid value for training examples"
                 )
-            # Add the current batch of training data's avg luminance to a list.
-            training_luminance_values.append(batch["luminance"])
+            if CALCULATE_LUMINANCE:
+                # Add the current batch of training data's avg luminance to a list.
+                training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
                 logger.debug(f"Sending latent batch to device")
@@ -903,7 +909,7 @@ def main(args):
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
-                lr_scheduler.step()
+                lr_scheduler.step(**scheduler_kwargs)
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
@@ -917,15 +923,16 @@ def main(args):
                 current_percent_completion = int(
                     progress_bar.n / progress_bar.total * 100
                 )
-                # Average out the luminance values of each batch, so that we can store that in this step.
-                avg_training_data_luminance = sum(training_luminance_values) / len(
-                    training_luminance_values
-                )
                 logs = {
-                    "train_luminance": avg_training_data_luminance,
                     "train_loss": train_loss,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
+                if CALCULATE_LUMINANCE:
+                    # Average out the luminance values of each batch, so that we can store that in this step.
+                    avg_training_data_luminance = sum(training_luminance_values) / len(
+                        training_luminance_values
+                    )
+                    logs["train_luminance"] avg_training_data_luminance,
                 accelerator.log(
                     logs,
                     step=global_step,
@@ -1128,15 +1135,17 @@ def main(args):
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            validation_luminance.append(
-                                calculate_luminance(validation_image)
-                            )
-                        # Compute the mean luminance across all samples:
-                        validation_luminance = torch.tensor(validation_luminance)
-                        validation_document[
-                            "validation_luminance"
-                        ] = validation_luminance.mean()
-                        del validation_luminance
+                            if CALCULATE_LUMINANCE:
+                                validation_luminance.append(
+                                    calculate_luminance(validation_image)
+                                )
+                        if CALCULATE_LUMINANCE:
+                            # Compute the mean luminance across all samples:
+                            validation_luminance = torch.tensor(validation_luminance)
+                            validation_document[
+                                "validation_luminance"
+                            ] = validation_luminance.mean()
+                            del validation_luminance
                         tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
