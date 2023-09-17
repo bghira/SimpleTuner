@@ -189,6 +189,7 @@ def main():
 
     # If we have args.track_luminance, we need to set that now.
     if args.track_luminance:
+        global CALCULATE_LUMINANCE
         CALCULATE_LUMINANCE = True
 
     # If passed along, set the training seed now.
@@ -436,7 +437,7 @@ def main():
                 [example["instance_images"] for example in examples]
             )
         # Initialize the VAE Cache if it doesn't exist
-        global vaecache
+        global vaecache, CALCULATE_LUMINANCE
         if "vaecache" not in globals():
             vaecache = VAECache(
                 vae=vae,
