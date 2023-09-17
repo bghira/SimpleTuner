@@ -113,6 +113,7 @@ SCHEDULER_NAME_MAP = {
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
 }
+global CALCULATE_LUMINANCE
 CALCULATE_LUMINANCE = False
 
 
