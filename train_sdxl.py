@@ -101,7 +101,7 @@ DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
 WANDB_TABLE_COL_NAMES = ["step", "image", "text"]
-
+CALCULATE_LUMINANCE = False
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
@@ -172,6 +172,10 @@ def main():
                 "Make sure to install wandb if you want to use it for logging during training."
             )
         import wandb
+
+    # If we have args.track_luminance, we need to set that now.
+    if args.track_luminance:
+        CALCULATE_LUMINANCE = True
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -412,10 +416,11 @@ def main():
             )
         examples = batch[0]
         training_logger.debug(f"Examples: {examples}")
-        training_logger.debug(f"Computing luminance for input batch")
-        batch_luminance = calculate_batch_luminance(
-            [example["instance_images"] for example in examples]
-        )
+        if CALCULATE_LUMINANCE:
+            training_logger.debug(f"Computing luminance for input batch")
+            batch_luminance = calculate_batch_luminance(
+                [example["instance_images"] for example in examples]
+            )
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
         if "vaecache" not in globals():
@@ -461,13 +466,15 @@ def main():
             [add_text_embeds_all for _ in range(1)], dim=0
         )
 
-        return {
+        result = {
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
             "add_time_ids": compute_time_ids(width, height),
-            "luminance": batch_luminance,
         }
+        if CALCULATE_LUMINANCE:
+            result["luminance"] = batch_luminance
+        return result
 
     # Data loader
     logger.info("Creating dataset iterator object")
@@ -956,7 +963,8 @@ def main():
                 )
 
             # Add the current batch of training data's avg luminance to a list.
-            training_luminance_values.append(batch["luminance"])
+            if "luminance" in batch:
+                training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
                 training_logger.debug(f"Beginning another step.")
@@ -1134,15 +1142,16 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
-                # Average out the luminance values of each batch, so that we can store that in this step.
-                avg_training_data_luminance = sum(training_luminance_values) / len(
-                    training_luminance_values
-                )
                 logs = {
-                    "train_luminance": avg_training_data_luminance,
                     "train_loss": train_loss,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
+                if CALCULATE_LUMINANCE:
+                    # Average out the luminance values of each batch, so that we can store that in this step.
+                    avg_training_data_luminance = sum(training_luminance_values) / len(
+                        training_luminance_values
+                    )
+                    logs["train_luminance"]: avg_training_data_luminance,
                 accelerator.log(
                     logs,
                     step=global_step,
@@ -1322,15 +1331,17 @@ def main():
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            validation_luminance.append(
-                                calculate_luminance(validation_image)
-                            )
-                        # Compute the mean luminance across all samples:
-                        validation_luminance = torch.tensor(validation_luminance)
-                        validation_document[
-                            "validation_luminance"
-                        ] = validation_luminance.mean()
-                        del validation_luminance
+                            if CALCULATE_LUMINANCE:
+                                validation_luminance.append(
+                                    calculate_luminance(validation_image)
+                                )
+                        if CALCULATE_LUMINANCE:
+                            # Compute the mean luminance across all samples:
+                            validation_luminance = torch.tensor(validation_luminance)
+                            validation_document[
+                                "validation_luminance"
+                            ] = validation_luminance.mean()
+                            del validation_luminance
                         tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
