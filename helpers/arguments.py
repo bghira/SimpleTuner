@@ -603,6 +603,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_num_inference_steps",
+        type=int,
+        default=30,
+        help=(
+            "The default scheduler, DDIM, benefits from more steps. UniPC can do well with just 10-15."
+            " For more speed during validations, reduce this value. For better quality, increase it."
+            " For model distilation, you will likely want to keep this low."
+        ),
+    )
+    parser.add_argument(
         "--validation_resolution",
         type=int,
         default=256,
