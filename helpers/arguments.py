@@ -547,6 +547,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--track_luminance",
+        action="store_true",
+        help=(
+            "When provided, the luminance of the images will be tracked during training."
+            " This has a pretty substantial compute cost for higher resolution images,"
+            " though it is easily justified when training with offset noise or some other"
+            " noise modification technique that could bias the model toward very-dark images."
+        )
+    )
+    parser.add_argument(
         "--tracker_run_name",
         type=str,
         default="simpletuner-testing",
