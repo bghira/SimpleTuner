@@ -482,7 +482,7 @@ def main(args):
             "prompt_embeds": prompt_embeds_all,
         }
         if CALCULATE_LUMINANCE:
-            result["luminance"] = (batch_luminance,)
+            result["luminance"] = batch_luminance
         return result
 
     logger.info("Plugging sampler into dataloader")
