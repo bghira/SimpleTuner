@@ -1138,7 +1138,7 @@ def main(args):
                             prompt_embeds=current_validation_prompt_embeds,
                             negative_prompt_embeds=validation_negative_prompt_embeds,
                             num_images_per_prompt=args.num_validation_images,
-                            num_inference_steps=30,
+                            num_inference_steps=args.validation_num_inference_steps,
                             guidance_scale=args.validation_guidance,
                             guidance_rescale=args.validation_guidance_rescale,
                             generator=validation_generator,
