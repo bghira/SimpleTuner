@@ -162,7 +162,7 @@ def parse_args(input_args=None):
         help=(
             "Path to the AWS configuration file in JSON format."
             " Config key names are the same as SimpleTuner option counterparts."
-        )
+        ),
     )
     parser.add_argument(
         "--aws_bucket_name",
@@ -554,7 +554,7 @@ def parse_args(input_args=None):
             " This has a pretty substantial compute cost for higher resolution images,"
             " though it is easily justified when training with offset noise or some other"
             " noise modification technique that could bias the model toward very-dark images."
-        )
+        ),
     )
     parser.add_argument(
         "--tracker_run_name",
@@ -607,6 +607,18 @@ def parse_args(input_args=None):
         type=int,
         default=256,
         help="Square resolution images will be output at this resolution (256x256).",
+    )
+    parser.add_argument(
+        "--validation_noise_scheduler",
+        type=str,
+        choices=["ddim", "ddpm", "euler", "euler-a", "unipc"],
+        default="ddim",
+        help=(
+            "When validating the model at inference time, a different scheduler may be chosen."
+            " UniPC can offer better speed, and Euler A can put up with instabilities a bit better."
+            " For zero-terminal SNR models, DDIM is the best choice. Choices: ['ddim', 'ddpm', 'euler', 'euler-a', 'unipc'],"
+            " Default: ddim"
+        ),
     )
     parser.add_argument(
         "--mixed_precision",
@@ -849,18 +861,24 @@ def parse_args(input_args=None):
 
     if args.aws_config_file is not None:
         try:
-            with open(args.aws_config_file, 'r') as f:
+            with open(args.aws_config_file, "r") as f:
                 aws_config = json.load(f)
         except Exception as e:
             raise ValueError(f"Could not load AWS config file: {e}")
         if not isinstance(aws_config, dict):
             raise ValueError("AWS config file must be a JSON object.")
-        args.aws_bucket_name = aws_config.get('aws_bucket_name', args.aws_bucket_name)
-        args.aws_endpoint_url = aws_config.get('aws_endpoint_url', args.aws_endpoint_url)
-        args.aws_region_name = aws_config.get('aws_region_name', args.aws_region_name)
-        args.aws_access_key_id = aws_config.get('aws_access_key_id', args.aws_access_key_id)
-        args.aws_secret_access_key = aws_config.get('aws_secret_access_key', args.aws_secret_access_key)
-    if args.data_backend == 'aws':
+        args.aws_bucket_name = aws_config.get("aws_bucket_name", args.aws_bucket_name)
+        args.aws_endpoint_url = aws_config.get(
+            "aws_endpoint_url", args.aws_endpoint_url
+        )
+        args.aws_region_name = aws_config.get("aws_region_name", args.aws_region_name)
+        args.aws_access_key_id = aws_config.get(
+            "aws_access_key_id", args.aws_access_key_id
+        )
+        args.aws_secret_access_key = aws_config.get(
+            "aws_secret_access_key", args.aws_secret_access_key
+        )
+    if args.data_backend == "aws":
         if args.aws_bucket_name is None:
             raise ValueError("Must specify an AWS bucket name.")
         if args.aws_endpoint_url is None and args.aws_region_name is None:

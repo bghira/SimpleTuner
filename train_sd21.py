@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 from helpers import log_format
 
-import hashlib, random, itertools, logging, math, time, os, json, copy
+import shutil, hashlib, random, itertools, logging, math, time, os, json, copy
 
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
@@ -67,6 +67,9 @@ from diffusers import (
     DiffusionPipeline,
     DPMSolverMultistepScheduler,
     UNet2DConditionModel,
+    EulerDiscreteScheduler,
+    EulerAncestralDiscreteScheduler,
+    UniPCMultistepScheduler,
 )
 
 from diffusers.training_utils import EMAModel
@@ -104,7 +107,16 @@ from torchvision.transforms import ToTensor
 
 to_tensor = ToTensor()
 
+SCHEDULER_NAME_MAP = {
+    "euler": EulerDiscreteScheduler,
+    "euler-a": EulerAncestralDiscreteScheduler,
+    "unipc": UniPCMultistepScheduler,
+    "ddim": DDIMScheduler,
+    "ddpm": DDPMScheduler,
+}
+
 CALCULATE_LUMINANCE = False
+
 
 def compute_ids(prompt: str):
     global tokenizer
@@ -470,7 +482,7 @@ def main(args):
             "prompt_embeds": prompt_embeds_all,
         }
         if CALCULATE_LUMINANCE:
-            result["luminance"] = batch_luminance,
+            result["luminance"] = batch_luminance
         return result
 
     logger.info("Plugging sampler into dataloader")
@@ -932,7 +944,7 @@ def main(args):
                     avg_training_data_luminance = sum(training_luminance_values) / len(
                         training_luminance_values
                     )
-                    logs["train_luminance"] avg_training_data_luminance,
+                    logs["train_luminance"] = avg_training_data_luminance
                 accelerator.log(
                     logs,
                     step=global_step,
@@ -1022,6 +1034,7 @@ def main(args):
                 tokenizer_2=None,
                 ema_unet=ema_unet,
                 vae=vae,
+                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
             )
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
@@ -1046,7 +1059,7 @@ def main(args):
             ema_unet.copy_to(unet.parameters())
         if vae is None:
             vae = AutoencoderKL.from_pretrained(
-                vae_path,
+                args.pretrained_model_name_or_path,
                 subfolder="vae"
                 if args.pretrained_vae_model_name_or_path is None
                 else None,
@@ -1060,7 +1073,9 @@ def main(args):
             unet=unet,
             revision=args.revision,
         )
-        pipeline.scheduler = DDIMScheduler.from_pretrained(
+        pipeline.scheduler = SCHEDULER_NAME_MAP[
+            args.validation_noise_scheduler
+        ].from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
             prediction_type=args.prediction_type,
@@ -1096,6 +1111,15 @@ def main(args):
         if validation_prompts:
             validation_images = []
             pipeline = pipeline.to(accelerator.device)
+            pipeline.scheduler = SCHEDULER_NAME_MAP[
+                args.validation_noise_scheduler
+            ].from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="scheduler",
+                prediction_type=args.prediction_type,
+                timestep_spacing=args.inference_scheduler_timestep_spacing,
+                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+            )
             with torch.autocast(str(accelerator.device).replace(":0", "")):
                 validation_generator = torch.Generator(
                     device=accelerator.device

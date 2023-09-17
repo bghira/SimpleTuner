@@ -102,6 +102,7 @@ def log_validations(
     tokenizer_2=None,
     ema_unet=None,
     vae=None,
+    SCHEDULER_NAME_MAP: dict = {},
 ):
     ### BEGIN: Perform validation every `validation_epochs` steps
     if accelerator.is_main_process:
@@ -165,7 +166,9 @@ def log_validations(
                 revision=args.revision,
                 torch_dtype=weight_dtype,
             )
-            pipeline.scheduler = DDIMScheduler.from_pretrained(
+            pipeline.scheduler = SCHEDULER_NAME_MAP[
+                args.validation_noise_scheduler
+            ].from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="scheduler",
                 prediction_type=args.prediction_type,
