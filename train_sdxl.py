@@ -113,9 +113,6 @@ SCHEDULER_NAME_MAP = {
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
 }
-global CALCULATE_LUMINANCE
-CALCULATE_LUMINANCE = False
-
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
@@ -189,8 +186,7 @@ def main():
 
     # If we have args.track_luminance, we need to set that now.
     if args.track_luminance:
-        global CALCULATE_LUMINANCE
-        CALCULATE_LUMINANCE = True
+        StateTracker.enable_luminance()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
@@ -431,13 +427,13 @@ def main():
             )
         examples = batch[0]
         training_logger.debug(f"Examples: {examples}")
-        if CALCULATE_LUMINANCE:
+        if StateTracker.tracking_luminance():
             training_logger.debug(f"Computing luminance for input batch")
             batch_luminance = calculate_batch_luminance(
                 [example["instance_images"] for example in examples]
             )
         # Initialize the VAE Cache if it doesn't exist
-        global vaecache, CALCULATE_LUMINANCE
+        global vaecache
         if "vaecache" not in globals():
             vaecache = VAECache(
                 vae=vae,
@@ -487,7 +483,7 @@ def main():
             "add_text_embeds": add_text_embeds_all,
             "add_time_ids": compute_time_ids(width, height),
         }
-        if CALCULATE_LUMINANCE:
+        if StateTracker.tracking_luminance():
             result["luminance"] = batch_luminance
         return result
 
@@ -1161,7 +1157,7 @@ def main():
                     "train_loss": train_loss,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
-                if CALCULATE_LUMINANCE:
+                if StateTracker.tracking_luminance():
                     # Average out the luminance values of each batch, so that we can store that in this step.
                     avg_training_data_luminance = sum(training_luminance_values) / len(
                         training_luminance_values
@@ -1349,11 +1345,11 @@ def main():
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            if CALCULATE_LUMINANCE:
+                            if StateTracker.tracking_luminance():
                                 validation_luminance.append(
                                     calculate_luminance(validation_image)
                                 )
-                        if CALCULATE_LUMINANCE:
+                        if StateTracker.tracking_luminance():
                             # Compute the mean luminance across all samples:
                             validation_luminance = torch.tensor(validation_luminance)
                             validation_document[
