@@ -78,3 +78,11 @@ export TRAINING_NUM_MACHINES=1
 
 # For S3-based training.
 export DATA_BACKEND="local"
+
+## You may benefit from directing training toward a specific weighted subset of timesteps.
+# In this example, we train the final 25% of the timestep schedule with a 3x bias.
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --timestep_bias_strategy=later --timestep_bias_portion=0.25 --timestep_bias_multiplier=3"
+# In this example, we train the earliest 25% of the timestep schedule with a 5x bias.
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --timestep_bias_strategy=earlier --timestep_bias_portion=0.25 --timestep_bias_multiplier=5"
+# Here, we designate that specifically, timesteps 200 to 500 should be prioritised.
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --timestep_bias_strategy=range --timestep_bias_begin=200 --timestep_bias_end=500 --timestep_bias_multiplier=3"
