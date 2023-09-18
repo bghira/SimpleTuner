@@ -65,7 +65,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--timestep_bias",
+        "--timestep_bias_strategy",
         type=str,
         default="none",
         choices=["earlier", "later", "none"],
@@ -77,7 +77,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--bias_multiplier",
+        "--timestep_bias_multiplier",
         type=float,
         default=1.0,
         help=(
@@ -86,7 +86,25 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--bias_portion",
+        "--timestep_bias_begin",
+        type=int,
+        default=0,
+        help=(
+            "When using `--timestep_bias_strategy=range`, the beginning timestep to bias."
+            " Defaults to zero, which equates to having no specific bias."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_bias_end",
+        type=int,
+        default=1000,
+        help=(
+            "When using `--timestep_bias_strategy=range`, the final timestep to bias."
+            " Defaults to 1000, which is the number of timesteps that SDXL Base and SD 2.x were trained on."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_bias_portion",
         type=float,
         default=0.25,
         range=[0.0, 1.0],
