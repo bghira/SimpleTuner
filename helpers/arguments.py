@@ -107,10 +107,9 @@ def parse_args(input_args=None):
         "--timestep_bias_portion",
         type=float,
         default=0.25,
-        range=[0.0, 1.0],
         help=(
             "The portion of timesteps to bias. Defaults to 0.25, which 25% of timesteps will be biased."
-            " A value of 0.5 will bias one half of the timesteps. The value provided for `--timestep_bias` determines"
+            " A value of 0.5 will bias one half of the timesteps. The value provided for `--timestep_bias_strategy` determines"
             " whether the biased portions are in the earlier or later timesteps."
         ),
     )
@@ -947,5 +946,8 @@ def parse_args(input_args=None):
             raise ValueError("Must specify an AWS access key ID.")
         if args.aws_secret_access_key is None:
             raise ValueError("Must specify an AWS secret access key.")
+
+    if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
+        raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 
     return args
