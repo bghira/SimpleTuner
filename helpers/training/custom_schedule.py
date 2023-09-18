@@ -1,6 +1,27 @@
 from torch.optim.lr_scheduler import LambdaLR
 import torch
 
+def generate_timestep_weights(args, num_timesteps):
+    weights = torch.ones(num_timesteps)
+    
+    # Determine the indices to bias
+    num_to_bias = int(args.bias_portion * num_timesteps)
+    
+    if args.timestep_bias == 'later':
+        bias_indices = slice(-num_to_bias, None)
+    elif args.timestep_bias == 'earlier':
+        bias_indices = slice(0, num_to_bias)
+    else:  # 'none' or any other string
+        return weights
+    
+    # Apply the bias
+    weights[bias_indices] *= args.bias_multiplier
+    
+    # Normalize
+    weights /= weights.sum()
+    
+    return weights
+
 
 def get_polynomial_decay_schedule_with_warmup(
     optimizer,

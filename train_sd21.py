@@ -35,7 +35,7 @@ from helpers.training.min_snr_gamma import compute_snr
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
 from helpers.legacy.metadata import save_model_card
 from helpers.training.custom_schedule import (
-    enforce_zero_terminal_snr,
+    generate_timestep_weights,
     get_polynomial_decay_schedule_with_warmup,
 )
 from helpers.training.model_freeze import freeze_entire_component, freeze_text_encoder
@@ -803,14 +803,10 @@ def main(args):
 
                 bsz = latents.shape[0]
                 logger.debug(f"Working on batch size: {bsz}")
-                # Sample a random timestep for each image
-                timesteps = torch.randint(
-                    0,
-                    noise_scheduler.config.num_train_timesteps,
-                    (bsz,),
-                    device=latents.device,
-                )
-                timesteps = timesteps.long()
+                # Sample a random timestep for each image, potentially biased by the timestep weights.
+                # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
+                weights = generate_timestep_weights(args, noise_scheduler.config.num_train_timesteps).to(accelerator.device)
+                timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
