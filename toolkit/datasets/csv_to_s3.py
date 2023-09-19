@@ -403,26 +403,61 @@ def list_all_s3_objects(s3_client, bucket_name):
 
 def upload_to_s3(filename, args, s3_client):
     """Upload the specified file to the S3 bucket with filename shuffling if needed."""
-    filename = os.path.join(args.temporary_folder, filename)
+    local_path = os.path.join(args.temporary_folder, filename)
+    # Just use the base filename without any directory prefix for S3
     object_name = os.path.basename(filename)
 
     # Check if the file exists just before uploading
-    if not os.path.exists(filename):
+    if not os.path.exists(local_path):
         return
 
     if object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
         try:
-            os.remove(filename)
+            os.remove(local_path)
         except:
             pass
         return
 
     try:
-        s3_client.upload_file(filename, args.aws_bucket_name, object_name)
+        s3_client.upload_file(local_path, args.aws_bucket_name, object_name)
         # Delete the local file after successful upload
-        os.remove(filename)
+        os.remove(local_path)
     except Exception as e:
         logger.error(f"Error uploading {object_name} to S3: {e}")
+
+
+def upload_local_image_to_s3(image_path, args, s3_client):
+    """Upload local image directly to the S3 bucket."""
+    object_name = os.path.basename(image_path)
+
+    # Check if the file exists just before uploading
+    if not os.path.exists(image_path):
+        return
+
+    if object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
+        try:
+            os.remove(image_path)
+        except:
+            pass
+        return
+
+    try:
+        s3_client.upload_file(image_path, args.aws_bucket_name, object_name)
+        # Optionally, delete the local file after successful upload
+        if args.delete_after_processing:
+            os.remove(image_path)
+    except Exception as e:
+        logger.error(f"Error uploading {object_name} to S3: {e}")
+
+
+def process_git_lfs_images(args, s3_client):
+    """Scan the git-lfs-repo directory for image files and upload them."""
+    repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
+    image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
+
+    for ext in image_exts:
+        for image_path in Path(repo_path).rglob(f"*{ext}"):
+            upload_local_image_to_s3(image_path, args, s3_client)
 
 
 def fetch_and_upload_image(info, args, s3_client):
@@ -494,6 +529,8 @@ def main():
         if len(csv_file_list) > 0:
             args.csv_folder = repo_path
             logger.info(f"Using CSV files from {args.csv_folder}")
+        # Process and upload images from the git-lfs-repo
+        process_git_lfs_images(args, s3_client)
 
     # Check if input folder exists
     parquet_files = []

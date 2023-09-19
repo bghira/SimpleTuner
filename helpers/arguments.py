@@ -65,6 +65,55 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--timestep_bias_strategy",
+        type=str,
+        default="none",
+        choices=["earlier", "later", "none"],
+        help=(
+            "The timestep bias strategy, which may help direct the model toward learning low or frequency details."
+            " Choices: ['earlier', 'later', 'none']."
+            " The default is 'none', which means no bias is applied, and training proceeds normally."
+            " The value of 'later' will prefer to generate samples for later timesteps."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_bias_multiplier",
+        type=float,
+        default=1.0,
+        help=(
+            "The multiplier for the bias. Defaults to 1.0, which means no bias is applied."
+            " A value of 2.0 will double the weight of the bias, and a value of 0.5 will halve it."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_bias_begin",
+        type=int,
+        default=0,
+        help=(
+            "When using `--timestep_bias_strategy=range`, the beginning timestep to bias."
+            " Defaults to zero, which equates to having no specific bias."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_bias_end",
+        type=int,
+        default=1000,
+        help=(
+            "When using `--timestep_bias_strategy=range`, the final timestep to bias."
+            " Defaults to 1000, which is the number of timesteps that SDXL Base and SD 2.x were trained on."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_bias_portion",
+        type=float,
+        default=0.25,
+        help=(
+            "The portion of timesteps to bias. Defaults to 0.25, which 25% of timesteps will be biased."
+            " A value of 0.5 will bias one half of the timesteps. The value provided for `--timestep_bias_strategy` determines"
+            " whether the biased portions are in the earlier or later timesteps."
+        ),
+    )
+    parser.add_argument(
         "--rescale_betas_zero_snr",
         action="store_true",
         help=(
@@ -897,5 +946,8 @@ def parse_args(input_args=None):
             raise ValueError("Must specify an AWS access key ID.")
         if args.aws_secret_access_key is None:
             raise ValueError("Must specify an AWS secret access key.")
+
+    if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
+        raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 
     return args

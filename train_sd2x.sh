@@ -22,6 +22,10 @@ if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
   find "." -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
 fi
 
+if [ -z "$TRAINER_EXTRA_ARGS" ]; then
+  export TRAINER_EXTRA_ARGS=""
+fi
+
 accelerate launch  \
   --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --mixed_precision="${MIXED_PRECISION}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" \
   train_sd21.py \
@@ -50,7 +54,7 @@ accelerate launch  \
   --state_path="${STATE_PATH}" \
   --caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}" \
   --caption_strategy="${CAPTION_STRATEGY}" \
-  --data_backend="${DATA_BACKEND}"
+  --data_backend="${DATA_BACKEND}" ${TRAINER_EXTRA_ARGS}
 
 
   #--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \

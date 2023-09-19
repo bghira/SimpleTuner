@@ -34,7 +34,10 @@ from helpers.image_manipulation.brightness import (
     calculate_batch_luminance,
 )
 from helpers.arguments import parse_args
-from helpers.training.custom_schedule import get_polynomial_decay_schedule_with_warmup
+from helpers.training.custom_schedule import (
+    get_polynomial_decay_schedule_with_warmup,
+    generate_timestep_weights
+)
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.multi_process import rank_info
 from helpers.prompts import PromptHandler
@@ -996,14 +999,10 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                # Sample a random timestep for each image
-                timesteps = torch.randint(
-                    0,
-                    noise_scheduler.config.num_train_timesteps,
-                    (bsz,),
-                    device=latents.device,
-                )
-                timesteps = timesteps.long()
+                # Sample a random timestep for each image, potentially biased by the timestep weights.
+                # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
+                weights = generate_timestep_weights(args, noise_scheduler.config.num_train_timesteps).to(accelerator.device)
+                timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
