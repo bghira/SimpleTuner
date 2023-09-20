@@ -7,6 +7,7 @@ from multiprocessing import Manager
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
+from math import floor
 
 logger = logging.getLogger("BucketManager")
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
@@ -37,12 +38,19 @@ class BucketManager:
         self._load_cache()
 
     def __len__(self):
-        return sum(
-            [
-                (len(bucket) // self.batch_size) * self.batch_size
-                for bucket in self.aspect_ratio_bucket_indices.values()
-                if len(bucket) >= self.batch_size
-            ]
+        """
+        Returns:
+            int: The number of batches in the dataset, rounded down to account for likely-discarded images.
+        """
+        return floor(
+            sum(
+                [
+                    (len(bucket) // self.batch_size) * self.batch_size
+                    for bucket in self.aspect_ratio_bucket_indices.values()
+                    if len(bucket) >= self.batch_size
+                ]
+            )
+            / self.batch_size
         )
 
     def _discover_new_files(self):
