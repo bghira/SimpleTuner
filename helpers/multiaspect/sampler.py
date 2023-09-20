@@ -399,6 +399,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         f"Our only bucket {self.current_bucket} is exhausted, so we reset."
                     )
                     self._reset_buckets()
+                    return
 
             if all_buckets_exhausted:
                 # If all buckets are exhausted, reset the seen images and refresh buckets
