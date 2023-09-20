@@ -34,7 +34,7 @@ def delete_object(s3_client, bucket_name, object_key):
         logger.error(f"Error deleting {object_key} in bucket {bucket_name}: {e}")
 
 
-def clear_s3_bucket(s3_client, bucket_name, max_workers=10):
+def clear_s3_bucket(s3_client, bucket_name, num_workers=10, search_pattern: str = None):
     try:
         logger.info(f"Clearing out bucket {bucket_name}")
 
@@ -44,17 +44,21 @@ def clear_s3_bucket(s3_client, bucket_name, max_workers=10):
         # Create a PageIterator from the Paginator
         page_iterator = paginator.paginate(Bucket=bucket_name)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
             for page in page_iterator:
                 if "Contents" not in page:
                     logger.info(f"No more items in bucket {bucket_name}")
                     break
-
-                keys_to_delete = [
-                    s3_object["Key"]
-                    for s3_object in page["Contents"]
-                    if ".pt" in s3_object["Key"]
-                ]
+                if search_pattern is not None:
+                    keys_to_delete = [
+                        s3_object["Key"]
+                        for s3_object in page["Contents"]
+                        if search_pattern in s3_object["Key"]
+                    ]
+                else:
+                    keys_to_delete = [
+                        s3_object["Key"] for s3_object in page["Contents"]
+                    ]
 
                 executor.map(
                     delete_object,
@@ -78,6 +82,18 @@ def parse_args():
         help="The AWS bucket name to clear.",
     )
     parser.add_argument("--aws_endpoint_url", type=str, help="The AWS server to use.")
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        help="Number of workers to use for clearing.",
+        default=10,
+    )
+    parser.add_argument(
+        "--search_pattern",
+        type=str,
+        help="If provided, files with this in their Content key will be removed only.",
+        default=None,
+    )
     parser.add_argument("--aws_region_name", type=str, help="The AWS region to use.")
     parser.add_argument("--aws_access_key_id", type=str, help="AWS access key ID.")
     parser.add_argument(
@@ -89,7 +105,12 @@ def parse_args():
 def main():
     args = parse_args()
     s3_client = initialize_s3_client(args)
-    clear_s3_bucket(s3_client, args.aws_bucket_name)
+    clear_s3_bucket(
+        s3_client,
+        args.aws_bucket_name,
+        num_workers=args.num_workers,
+        search_pattern=args.search_pattern,
+    )
 
 
 if __name__ == "__main__":
