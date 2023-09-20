@@ -36,7 +36,7 @@ from helpers.image_manipulation.brightness import (
 from helpers.arguments import parse_args
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
-    generate_timestep_weights
+    generate_timestep_weights,
 )
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.training.multi_process import rank_info
@@ -116,6 +116,7 @@ SCHEDULER_NAME_MAP = {
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
 }
+
 
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
@@ -920,7 +921,9 @@ def main():
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(
+        f"  Num batches = {len(train_dataset)} ({len(train_dataset) * args.train_batch_size} samples)"
+    )
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Current Epoch = {first_epoch}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -1001,7 +1004,9 @@ def main():
                 training_logger.debug(f"Working on batch size: {bsz}")
                 # Sample a random timestep for each image, potentially biased by the timestep weights.
                 # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
-                weights = generate_timestep_weights(args, noise_scheduler.config.num_train_timesteps).to(accelerator.device)
+                weights = generate_timestep_weights(
+                    args, noise_scheduler.config.num_train_timesteps
+                ).to(accelerator.device)
                 timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
@@ -1049,7 +1054,7 @@ def main():
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
-                        "Supported types are 'epsilon' and 'v_prediction'."
+                        "Supported types are 'epsilon', `sample`, and 'v_prediction'."
                     )
 
                 # Predict the noise residual and compute loss
