@@ -27,13 +27,14 @@ class MultiaspectImage:
         resolution_type: str,
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 2,
-
     ):
         try:
             image_data = data_backend.read(image_path_str)
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
-                image = MultiaspectImage.prepare_image(image, resolution, resolution_type)
+                image = MultiaspectImage.prepare_image(
+                    image, resolution, resolution_type
+                )
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
                 logger.debug(
@@ -49,7 +50,7 @@ class MultiaspectImage:
         return aspect_ratio_bucket_indices
 
     @staticmethod
-    def prepare_image(image: Image, resolution: int, resolution_type: str = "pixel"):
+    def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel"):
         """Prepare an image for training.
 
         Args:
@@ -97,9 +98,9 @@ class MultiaspectImage:
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(input_image)}"
             )
-        logger.debug(f'Received image for processing: {input_image}')
+        logger.debug(f"Received image for processing: {input_image}")
         input_image = input_image.convert("RGB")
-        logger.debug(f'Converted image to RGB for processing: {input_image}')
+        logger.debug(f"Converted image to RGB for processing: {input_image}")
         if (target_width, target_height) == input_image.size:
             return input_image
         msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
@@ -107,7 +108,7 @@ class MultiaspectImage:
         return input_image.resize((target_width, target_height), resample=Image.BICUBIC)
 
     @staticmethod
-    def resize_by_pixel_edge(input_image: Image, resolution: int) -> Image:
+    def resize_by_pixel_edge(input_image: Image, resolution: float) -> Image:
         W, H = input_image.size
         aspect_ratio = W / H
         if W < H:
@@ -129,12 +130,12 @@ class MultiaspectImage:
         W, H = input_image.size
         aspect_ratio = W / H
         total_pixels = megapixels * 1e6  # Convert megapixels to pixels
-        
+
         W_new = int(round(sqrt(total_pixels * aspect_ratio)))
         H_new = int(round(sqrt(total_pixels / aspect_ratio)))
-        
+
         # Ensure they are divisible by 8
         W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 64)
         H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 64)
-        
+
         return MultiaspectImage._resize_image(input_image, W_new, H_new)

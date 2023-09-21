@@ -18,7 +18,7 @@ class VAECache:
         accelerator,
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
-        resolution: int = 1024,
+        resolution: float = 1024,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         vae_batch_size: int = 4,
