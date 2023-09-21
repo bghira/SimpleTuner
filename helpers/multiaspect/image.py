@@ -93,7 +93,9 @@ class MultiaspectImage:
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(input_image)}"
             )
+        logger.debug(f'Received image for processing: {input_image}')
         input_image = input_image.convert("RGB")
+        logger.debug(f'Converted image to RGB for processing: {input_image}')
         if (target_width, target_height) == input_image.size:
             return input_image
         msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
