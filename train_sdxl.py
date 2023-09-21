@@ -412,19 +412,24 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
-    def compute_time_ids(width=None, height=None):
-        if width is None:
-            width = args.resolution
-        if height is None:
-            height = args.resolution
+    def compute_time_ids(original_size: tuple, target_size: tuple):
+        if original_size is None or target_size is None:
+            raise Exception(
+                f"Cannot continue, the original_size or target_size were not provided: {original_size}, {target_size}"
+            )
+        original_width = original_size[0]
+        original_height = original_size[1]
+        if original_width is None:
+            raise ValueError("Original width must be specified.")
+        if original_height is None:
+            original_height = args.resolution
         crops_coords_top_left = (
             args.crops_coords_top_left_h,
             args.crops_coords_top_left_w,
         )
-        original_size = target_size = (width, height)
         add_time_ids = list(original_size + crops_coords_top_left + target_size)
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
-        return add_time_ids.to(accelerator.device).repeat(args.train_batch_size, 1)
+        return add_time_ids
 
     def collate_fn(batch):
         if len(batch) != 1:
@@ -484,11 +489,24 @@ def main():
             [add_text_embeds_all for _ in range(1)], dim=0
         )
 
+        # We gather the conditional size features.
+        # The target_size needs to have the current latent shape divided by vae.config.scaling_factor.
+        batch_time_ids_list = [
+            compute_time_ids(
+                original_size=example.size,
+                target_size=latents[idx].shape[
+                    2:
+                ],  # Using the spatial dimensions of the latent tensor
+            )
+            for idx, example in enumerate(examples)
+        ]
+        batch_time_ids = torch.stack(batch_time_ids_list, dim=0)
+
         result = {
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
             "add_text_embeds": add_text_embeds_all,
-            "add_time_ids": compute_time_ids(width, height),
+            "batch_time_ids": batch_time_ids,
         }
         if StateTracker.tracking_luminance():
             result["luminance"] = batch_luminance
@@ -1066,7 +1084,7 @@ def main():
                 # Predict the noise residual and compute loss
                 added_cond_kwargs = {
                     "text_embeds": add_text_embeds,
-                    "time_ids": batch["add_time_ids"],
+                    "time_ids": batch["batch_time_ids"],
                 }
                 training_logger.debug("Predicting noise residual.")
                 model_pred = unet(
@@ -1287,7 +1305,7 @@ def main():
             vae=vae,
             unet=unet,
             revision=args.revision,
-            add_watermarker=args.enable_watermark
+            add_watermarker=args.enable_watermark,
         )
         pipeline.set_progress_bar_config(disable=True)
         pipeline.scheduler = SCHEDULER_NAME_MAP[
