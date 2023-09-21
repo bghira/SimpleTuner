@@ -56,12 +56,14 @@ class MultiAspectDataset(Dataset):
         debug_dataset_loader: bool = False,
         caption_strategy: str = "filename",
         return_tensor: bool = False,
+        size_type: str = "pixel",
     ):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.bucket_manager = bucket_manager
         self.data_backend = data_backend
         self.use_captions = use_captions
         self.size = size
+        self.size_type = size_type
         self.center_crop = center_crop
         self.tokenizer = tokenizer
         self.print_names = print_names
@@ -106,7 +108,9 @@ class MultiAspectDataset(Dataset):
                 raise e
 
             # Apply EXIF and colour channel modifications.
-            instance_image = MultiaspectImage.prepare_image(instance_image, self.size)
+            instance_image = MultiaspectImage.prepare_image(
+                instance_image, self.size, self.size_type
+            )
 
             # We return the actual Image object, so that the collate function can encode it, if needed.
             # It also makes it easier to discover the image width/height. And, I am lazy.

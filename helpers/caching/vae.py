@@ -24,12 +24,14 @@ class VAECache:
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         vae_batch_size: int = 4,
+        resolution_type: str = "pixel",
     ):
         self.data_backend = data_backend
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         self.resolution = resolution
+        self.resolution_type = resolution_type
         self.data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
@@ -151,7 +153,9 @@ class VAECache:
 
         try:
             image = self.data_backend.read_image(filepath)
-            image = MultiaspectImage.prepare_image(image, self.resolution)
+            image = MultiaspectImage.prepare_image(
+                image, self.resolution, self.resolution_type
+            )
             pixel_values = self.transform(image).to(
                 self.accelerator.device, dtype=self.vae.dtype
             )
@@ -221,7 +225,9 @@ class VAECache:
                             actual_bucket=image_aspect,
                         )
                         continue
-                    image = MultiaspectImage.prepare_image(image, self.resolution)
+                    image = MultiaspectImage.prepare_image(
+                        image, self.resolution, self.resolution_type
+                    )
                     image_aspect = float(round(image.width / image.height, 2))
                     if aspect_ratio != image_aspect:
                         raise ValueError(
