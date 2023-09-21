@@ -692,7 +692,6 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--enable_watermark",
-        type=bool,
         default=False,
         action="store_true",
         help=(
