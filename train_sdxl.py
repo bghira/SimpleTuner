@@ -444,6 +444,7 @@ def main():
                 accelerator=accelerator,
                 data_backend=data_backend,
                 resolution=args.resolution,
+                resolution_type=args.resolution_type,
                 delete_problematic_images=args.delete_problematic_images,
                 vae_batch_size=args.vae_batch_size,
                 write_batch_size=args.write_batch_size,
@@ -499,6 +500,7 @@ def main():
         instance_data_root=args.instance_data_dir,
         accelerator=accelerator,
         size=args.resolution,
+        size_type=args.resolution_type,
         center_crop=args.center_crop,
         print_names=args.print_filenames or False,
         use_original_images=bool(args.use_original_images),
@@ -520,6 +522,7 @@ def main():
         delete_unwanted_images=args.delete_unwanted_images,
         minimum_image_size=args.minimum_image_size,
         resolution=args.resolution,
+        resolution_type=args.resolution_type,
     )
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(

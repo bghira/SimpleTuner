@@ -32,6 +32,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         delete_unwanted_images: bool = False,
         minimum_image_size: int = None,
         resolution: int = 1024,
+        resolution_type: str = "pixel",
     ):
         """
         Initializes the sampler with provided settings.
@@ -55,6 +56,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.delete_unwanted_images = delete_unwanted_images
         self.minimum_image_size = minimum_image_size
         self.resolution = resolution
+        self.resolution_type = resolution_type
         self.load_states(
             state_path=state_path,
         )
