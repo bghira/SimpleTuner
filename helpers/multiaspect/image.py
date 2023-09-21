@@ -82,7 +82,8 @@ class MultiaspectImage:
     @staticmethod
     def _round_to_nearest_multiple(value, multiple):
         """Round a value to the nearest multiple."""
-        return round(value / multiple) * multiple
+        rounded = round(value / multiple) * multiple
+        return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
     @staticmethod
     def _resize_image(
