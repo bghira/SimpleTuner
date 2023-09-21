@@ -110,15 +110,15 @@ class MultiaspectImage:
         if W < H:
             W = resolution
             H = MultiaspectImage._round_to_nearest_multiple(
-                resolution / aspect_ratio, 8
+                resolution / aspect_ratio, 64
             )
         elif H < W:
             H = resolution
             W = MultiaspectImage._round_to_nearest_multiple(
-                resolution * aspect_ratio, 8
+                resolution * aspect_ratio, 64
             )
         else:
-            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 8)
+            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
         return MultiaspectImage._resize_image(input_image, W, H)
 
     @staticmethod
@@ -131,7 +131,7 @@ class MultiaspectImage:
         H_new = int(round(sqrt(total_pixels / aspect_ratio)))
         
         # Ensure they are divisible by 8
-        W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 8)
-        H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 8)
+        W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 64)
+        H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 64)
         
         return MultiaspectImage._resize_image(input_image, W_new, H_new)
