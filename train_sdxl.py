@@ -803,6 +803,7 @@ def main():
         data_backend=data_backend,
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
+        resolution_type=args.resolution_type,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
     )
