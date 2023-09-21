@@ -122,9 +122,16 @@ class MultiaspectImage:
         return MultiaspectImage._resize_image(input_image, W, H)
 
     @staticmethod
-    def resize_by_pixel_area(input_image: Image, area: float) -> Image:
+    def resize_by_pixel_area(input_image: Image, megapixels: float) -> Image:
         W, H = input_image.size
         aspect_ratio = W / H
-        W = MultiaspectImage._round_to_nearest_multiple(sqrt(area * aspect_ratio), 8)
-        H = MultiaspectImage._round_to_nearest_multiple(sqrt(area / aspect_ratio), 8)
-        return MultiaspectImage._resize_image(input_image, W, H)
+        total_pixels = megapixels * 1e6  # Convert megapixels to pixels
+        
+        W_new = int(round(sqrt(total_pixels * aspect_ratio)))
+        H_new = int(round(sqrt(total_pixels / aspect_ratio)))
+        
+        # Ensure they are divisible by 8
+        W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 8)
+        H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 8)
+        
+        return MultiaspectImage._resize_image(input_image, W_new, H_new)
