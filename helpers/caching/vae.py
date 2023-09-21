@@ -191,7 +191,11 @@ class VAECache:
         )
 
         aspect_bucket_cache = bucket_manager.read_cache().copy()
-        shuffle(aspect_bucket_cache)
+
+        # Extract and shuffle the keys of the dictionary
+        shuffled_keys = list(aspect_bucket_cache.keys())
+        shuffle(shuffled_keys)
+
         for bucket in aspect_bucket_cache:
             relevant_files = [
                 f
