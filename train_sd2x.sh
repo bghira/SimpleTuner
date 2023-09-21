@@ -34,6 +34,8 @@ accelerate launch  \
   --output_dir="${OUTPUT_DIR}" \
   --resolution="${RESOLUTION}" \
   --minimum_image_size="${MINIMUM_RESOLUTION}" \
+  --validation_resolution="${VALIDATION_RESOLUTION}" \
+  --resolution_type="${RESOLUTION_TYPE}" \
   --train_batch_size="${TRAIN_BATCH_SIZE}" \
   --seed "${TRAINING_SEED}" \
   --learning_rate="${LEARNING_RATE}" \

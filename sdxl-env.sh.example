@@ -45,8 +45,14 @@ export OUTPUT_DIR="${BASE_DIR}/models"
 # By default, images will be resized so their SMALLER EDGE is 1024 pixels, maintaining aspect ratio.
 # Setting this value to 768px might result in more reasonable training data sizes for SDXL.
 export RESOLUTION=1024
+# Minimum resolution and validation resolution are measured in pixels, as it represents the image edge length.
 export MINIMUM_RESOLUTION=$RESOLUTION
 export VALIDATION_RESOLUTION=$RESOLUTION
+# If you want to have the training data resized by pixel area (Megapixels) rather than edge length,
+#  set this value to "area" instead of "pixel", and uncomment the next RESOLUTION declaration.
+export RESOLUTION_TYPE="pixel"
+#export RESOLUTION=1.0          # 1.0 Megapixel training sizes
+
 # Adjust this for your GPU memory size. This, and resolution, are the biggest VRAM killers.
 export TRAIN_BATCH_SIZE=10
 # Accumulate your update gradient over many steps, to save VRAM while still having higher effective batch size:

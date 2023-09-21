@@ -334,11 +334,22 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--resolution",
-        type=int,
+        type=float,
         default=1024,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
-            " resolution"
+            " resolution. If using --resolution_type=area, this float value represents megapixels."
+        ),
+    )
+    parser.add_argument(
+        "--resolution_type",
+        type=str,
+        default="pixel",
+        choices=["pixel", "area"],
+        help=(
+            "Resizing images maintains aspect ratio. This defines the resizing strategy."
+            " If 'pixel', the images will be resized to the resolution by pixel edge."
+            " If 'area', the images will be resized so the pixel area is this many megapixels."
         ),
     )
     parser.add_argument(
@@ -946,6 +957,12 @@ def parse_args(input_args=None):
             raise ValueError("Must specify an AWS access key ID.")
         if args.aws_secret_access_key is None:
             raise ValueError("Must specify an AWS secret access key.")
+
+    if args.validation_resolution < 128:
+        raise ValueError(
+            "It seems that the value for --validation_resolution is less than 128 pixels, which is invalid."
+            f" You might have accidentally set it in megapixels: {args.validation_resolution}"
+        )
 
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")

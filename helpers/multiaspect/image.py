@@ -3,6 +3,7 @@ from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 import logging, os
+from math import sqrt
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
@@ -45,7 +46,20 @@ class MultiaspectImage:
         return aspect_ratio_bucket_indices
 
     @staticmethod
-    def prepare_image(image: Image, resolution: int):
+    def prepare_image(image: Image, resolution: int, resolution_type: str = "pixel"):
+        """Prepare an image for training.
+
+        Args:
+            image (Image): A Pillow image.
+            resolution (int): An integer for the image size.
+            resolution_type (str, optional): Whether to use the size as pixel edge or area. If area, the image will be resized overall area. Defaults to "pixel".
+
+        Raises:
+            Exception: _description_
+
+        Returns:
+            _type_: _description_
+        """
         if not hasattr(image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(image)}"
@@ -57,31 +71,47 @@ class MultiaspectImage:
         logger.debug(f"Image size before EXIF transform: {image.size}")
         image = exif_transpose(image)
         logger.debug(f"Image size after EXIF transform: {image.size}")
-        image = MultiaspectImage.resize_for_condition_image(image, resolution)
+        if resolution_type == "pixel":
+            image = MultiaspectImage.resize_by_pixel_edge(image, resolution)
+        elif resolution_type == "area":
+            image = MultiaspectImage.resize_by_pixel_area(image, resolution)
+        else:
+            raise ValueError(f"Unknown resolution type: {resolution_type}")
         return image
 
     @staticmethod
-    def resize_for_condition_image(input_image: Image, resolution: int):
+    def _resize_image(
+        input_image: Image, target_width: int, target_height: int
+    ) -> Image:
+        """Resize the input image to the target width and height."""
         if not hasattr(input_image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(input_image)}"
             )
         input_image = input_image.convert("RGB")
+        if (target_width, target_height) == input_image.size:
+            return input_image
+        msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
+        logger.debug(msg)
+        return input_image.resize((target_width, target_height), resample=Image.BICUBIC)
+
+    @staticmethod
+    def resize_by_pixel_edge(input_image: Image, resolution: int) -> Image:
         W, H = input_image.size
-        aspect_ratio = round(W / H, 2)
-        msg = f"Resizing image of aspect {aspect_ratio} and size {W}x{H} to its new size: "
+        aspect_ratio = W / H
         if W < H:
             W = resolution
-            H = int(resolution / aspect_ratio)  # Calculate the new height
+            H = int(resolution / aspect_ratio)
         elif H < W:
             H = resolution
-            W = int(resolution * aspect_ratio)  # Calculate the new width
-        if W == H:
-            W = resolution
-            H = resolution
-        if (W, H) == input_image.size:
-            return input_image
-        msg = f"{msg} {W}x{H}."
-        logger.debug(msg)
-        img = input_image.resize((W, H), resample=Image.BICUBIC)
-        return img
+            W = int(resolution * aspect_ratio)
+        else:
+            W = H = resolution
+        return MultiaspectImage._resize_image(input_image, W, H)
+
+    @staticmethod
+    def resize_by_pixel_area(input_image: Image, area: float) -> Image:
+        W, H = input_image.size
+        aspect_ratio = W / H
+        W = int(sqrt(area * aspect_ratio))
+        H = int(sqrt(area / aspect_ratio))
