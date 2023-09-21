@@ -23,14 +23,17 @@ class MultiaspectImage:
     def process_for_bucket(
         data_backend,
         image_path_str,
+        resolution: float,
+        resolution_type: str,
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 2,
+
     ):
         try:
             image_data = data_backend.read(image_path_str)
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
-                image = exif_transpose(image)
+                image = MultiaspectImage.prepare_image(image, resolution, resolution_type)
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
                 logger.debug(

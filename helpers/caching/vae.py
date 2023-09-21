@@ -1,13 +1,11 @@
 import os, torch, logging
+from random import shuffle
 from tqdm import tqdm
 from pathlib import Path
 from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
-from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.multiaspect.bucket import BucketManager
 from helpers.data_backend.base import BaseDataBackend
-from helpers.data_backend.aws import S3DataBackend
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -191,7 +189,11 @@ class VAECache:
 
         aspect_bucket_cache = bucket_manager.read_cache().copy()
 
-        for bucket in aspect_bucket_cache:
+        # Extract and shuffle the keys of the dictionary
+        shuffled_keys = list(aspect_bucket_cache.keys())
+        shuffle(shuffled_keys)
+
+        for bucket in shuffled_keys:
             relevant_files = [
                 f
                 for f in aspect_bucket_cache[bucket]
@@ -217,14 +219,6 @@ class VAECache:
                 try:
                     aspect_ratio = float(bucket)
                     image = self.data_backend.read_image(filepath)
-                    image_aspect = float(round(image.width / image.height, 2))
-                    if aspect_ratio != image_aspect:
-                        bucket_manager.handle_incorrect_bucket(
-                            image_path=filepath,
-                            bucket=bucket,
-                            actual_bucket=image_aspect,
-                        )
-                        continue
                     image = MultiaspectImage.prepare_image(
                         image, self.resolution, self.resolution_type
                     )

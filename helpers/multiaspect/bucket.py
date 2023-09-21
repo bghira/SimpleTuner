@@ -22,6 +22,8 @@ class BucketManager:
         data_backend: BaseDataBackend,
         accelerator: accelerate.Accelerator,
         batch_size: int,
+        resolution: float,
+        resolution_type: str,
         apply_dataset_padding: bool = False,
     ):
         self.accelerator = accelerator
@@ -36,6 +38,8 @@ class BucketManager:
         manager = Manager()
         self.seen_images = manager.dict()
         self._load_cache()
+        self.resolution = resolution
+        self.resolution_type = resolution_type
 
     def __len__(self):
         """
@@ -143,7 +147,7 @@ class BucketManager:
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    data_backend, file, local_aspect_ratio_bucket_indices
+                    data_backend, file, self.resolution, self.resolution_type, local_aspect_ratio_bucket_indices
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)

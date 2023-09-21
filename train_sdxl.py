@@ -269,6 +269,8 @@ def main():
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
         accelerator=accelerator,
+        resolution=args.resolution,
+        resolution_type=args.resolution_type,
         batch_size=args.train_batch_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
