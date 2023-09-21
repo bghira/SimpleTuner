@@ -1,4 +1,5 @@
 import os, torch, logging
+from random import shuffle
 from tqdm import tqdm
 from pathlib import Path
 from PIL import Image
@@ -190,7 +191,7 @@ class VAECache:
         )
 
         aspect_bucket_cache = bucket_manager.read_cache().copy()
-
+        shuffle(aspect_bucket_cache)
         for bucket in aspect_bucket_cache:
             relevant_files = [
                 f
