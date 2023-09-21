@@ -80,6 +80,11 @@ class MultiaspectImage:
         return image
 
     @staticmethod
+    def _round_to_nearest_multiple(value, multiple):
+        """Round a value to the nearest multiple."""
+        return round(value / multiple) * multiple
+
+    @staticmethod
     def _resize_image(
         input_image: Image, target_width: int, target_height: int
     ) -> Image:
@@ -101,17 +106,22 @@ class MultiaspectImage:
         aspect_ratio = W / H
         if W < H:
             W = resolution
-            H = int(resolution / aspect_ratio)
+            H = MultiaspectImage._round_to_nearest_multiple(
+                resolution / aspect_ratio, 8
+            )
         elif H < W:
             H = resolution
-            W = int(resolution * aspect_ratio)
+            W = MultiaspectImage._round_to_nearest_multiple(
+                resolution * aspect_ratio, 8
+            )
         else:
-            W = H = resolution
+            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 8)
         return MultiaspectImage._resize_image(input_image, W, H)
 
     @staticmethod
     def resize_by_pixel_area(input_image: Image, area: float) -> Image:
         W, H = input_image.size
         aspect_ratio = W / H
-        W = int(sqrt(area * aspect_ratio))
-        H = int(sqrt(area / aspect_ratio))
+        W = MultiaspectImage._round_to_nearest_multiple(sqrt(area * aspect_ratio), 8)
+        H = MultiaspectImage._round_to_nearest_multiple(sqrt(area / aspect_ratio), 8)
+        return MultiaspectImage._resize_image(input_image, W, H)
