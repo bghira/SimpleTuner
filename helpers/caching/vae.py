@@ -196,7 +196,7 @@ class VAECache:
         shuffled_keys = list(aspect_bucket_cache.keys())
         shuffle(shuffled_keys)
 
-        for bucket in aspect_bucket_cache:
+        for bucket in shuffled_keys:
             relevant_files = [
                 f
                 for f in aspect_bucket_cache[bucket]
