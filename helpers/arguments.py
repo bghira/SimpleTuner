@@ -691,6 +691,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--enable_watermark",
+        type=bool,
+        default=False,
+        action="store_true",
+        help=(
+            "The SDXL 0.9 and 1.0 licenses both require a watermark be used to identify any images created to be shared."
+            " Since the images created during validation typically are not shared, and we want the most accurate results,"
+            " this watermarker is disabled by default. If you are sharing the validation images, it is up to you"
+            " to ensure that you are complying with the license, whether that is through this watermarker, or another."
+        )
+    )
+    parser.add_argument(
         "--mixed_precision",
         type=str,
         default=None,

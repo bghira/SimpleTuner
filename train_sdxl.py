@@ -1285,6 +1285,7 @@ def main():
             vae=vae,
             unet=unet,
             revision=args.revision,
+            add_watermarker=args.enable_watermark
         )
         pipeline.set_progress_bar_config(disable=True)
         pipeline.scheduler = SCHEDULER_NAME_MAP[

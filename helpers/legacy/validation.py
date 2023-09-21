@@ -167,6 +167,7 @@ def log_validations(
                 vae=vae,
                 revision=args.revision,
                 torch_dtype=weight_dtype,
+                add_watermarker=args.enable_watermark
             )
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler
