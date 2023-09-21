@@ -26,7 +26,11 @@ class TestMultiaspectImage(unittest.TestCase):
             mock_image_open.return_value.__enter__.return_value = mock_image
 
             result = MultiaspectImage.process_for_bucket(
-                self.data_backend, self.image_path_str, self.aspect_ratio_bucket_indices
+                self.data_backend,
+                self.image_path_str,
+                self.resolution,
+                "pixel",
+                self.aspect_ratio_bucket_indices,
             )
             self.assertEqual(result, {"2.0": ["dummy_image_path"]})
 
@@ -34,7 +38,11 @@ class TestMultiaspectImage(unittest.TestCase):
         # Test with an invalid image (e.g., backend read fails)
         with self.assertLogs("MultiaspectImage", level="ERROR") as cm:
             MultiaspectImage.process_for_bucket(
-                None, self.image_path_str, self.aspect_ratio_bucket_indices
+                None,
+                self.image_path_str,
+                self.resolution,
+                "pixel",
+                self.aspect_ratio_bucket_indices,
             )
 
     def test_prepare_image_valid(self):
