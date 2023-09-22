@@ -9,8 +9,10 @@ def parse_args(input_args=None):
         "--snr_gamma",
         type=float,
         default=None,
-        help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
-        "More details here: https://arxiv.org/abs/2303.09556.",
+        help=(
+            "SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0."
+            " More details here: https://arxiv.org/abs/2303.09556."
+        ),
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",
@@ -108,7 +110,7 @@ def parse_args(input_args=None):
         type=float,
         default=0.25,
         help=(
-            "The portion of timesteps to bias. Defaults to 0.25, which 25% of timesteps will be biased."
+            "The portion of timesteps to bias. Defaults to 0.25, which 25 percent of timesteps will be biased."
             " A value of 0.5 will bias one half of the timesteps. The value provided for `--timestep_bias_strategy` determines"
             " whether the biased portions are in the earlier or later timesteps."
         ),
@@ -699,7 +701,7 @@ def parse_args(input_args=None):
             " Since the images created during validation typically are not shared, and we want the most accurate results,"
             " this watermarker is disabled by default. If you are sharing the validation images, it is up to you"
             " to ensure that you are complying with the license, whether that is through this watermarker, or another."
-        )
+        ),
     )
     parser.add_argument(
         "--mixed_precision",
