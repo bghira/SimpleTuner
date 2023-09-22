@@ -105,6 +105,7 @@ check_min_version("0.20.0.dev0")
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
+VAE_SCALING_FACTOR = 8
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
@@ -417,8 +418,20 @@ def main():
             raise Exception(
                 f"Cannot continue, the original_size or target_size were not provided: {original_size}, {target_size}"
             )
+        logger.debug(
+            f"Computing time ids for:"
+            f"\n-> original_size = {original_size}"
+            f"\n-> target_size = {target_size}"
+        )
+        # The dimensions of tensors are "transposed", as:
+        # (batch_size, height, width)
+        # An image would look like:
+        # (width, height)
         original_width = original_size[0]
         original_height = original_size[1]
+        target_width = int(target_size[2] * VAE_SCALING_FACTOR)
+        target_height = int(target_size[1] * VAE_SCALING_FACTOR)
+        final_target_size = (target_width, target_height)
         if original_width is None:
             raise ValueError("Original width must be specified.")
         if original_height is None:
@@ -427,8 +440,11 @@ def main():
             args.crops_coords_top_left_h,
             args.crops_coords_top_left_w,
         )
-        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+        add_time_ids = list(original_size + crops_coords_top_left + final_target_size)
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
+        logger.debug(
+            f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
+        )
         return add_time_ids
 
     def collate_fn(batch):
@@ -494,13 +510,14 @@ def main():
         batch_time_ids_list = [
             compute_time_ids(
                 original_size=example["instance_images"].size,
-                target_size=latents[idx].shape[
-                    2:
-                ],  # Using the spatial dimensions of the latent tensor
+                target_size=latents[
+                    idx
+                ].shape,  # Using the spatial dimensions of the latent tensor
             )
             for idx, example in enumerate(examples)
         ]
         batch_time_ids = torch.stack(batch_time_ids_list, dim=0)
+        logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
         result = {
             "latent_batch": latent_batch,
