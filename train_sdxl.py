@@ -493,7 +493,7 @@ def main():
         # The target_size needs to have the current latent shape divided by vae.config.scaling_factor.
         batch_time_ids_list = [
             compute_time_ids(
-                original_size=example.size,
+                original_size=example["instance_images"].size,
                 target_size=latents[idx].shape[
                     2:
                 ],  # Using the spatial dimensions of the latent tensor
