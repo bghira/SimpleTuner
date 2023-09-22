@@ -126,7 +126,7 @@ class MultiaspectImage:
             )
         else:
             W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
-        return MultiaspectImage._resize_image(input_image, W, H)
+        return MultiaspectImage._resize_image(input_image, int(W), int(H))
 
     @staticmethod
     def resize_by_pixel_area(input_image: Image, megapixels: float) -> Image:
