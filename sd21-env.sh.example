@@ -62,8 +62,15 @@ export TRAIN_BATCH_SIZE=15
 
 # Leave these alone unless you know what you are doing.
 export RESOLUTION=768
-# Ignore images under this size.
-export MINIMUM_RESOLUTION=768
+# Minimum resolution and validation resolution are measured in pixels, as it represents the image edge length.
+export MINIMUM_RESOLUTION=$RESOLUTION
+export VALIDATION_RESOLUTION=$RESOLUTION
+# If you want to have the training data resized by pixel area (Megapixels) rather than edge length,
+#  set this value to "area" instead of "pixel", and uncomment the next RESOLUTION declaration.
+export RESOLUTION_TYPE="pixel"
+#export RESOLUTION=1.0          # 1.0 Megapixel training sizes
+
+# Training schedule options
 export GRADIENT_ACCUMULATION_STEPS=10        # Yes, it slows training down. No, you don't want to change this.
 export TEXT_ENCODER_LIMIT=101                # Train the text encoder for % of the process. Buggy.
 export TEXT_ENCODER_FREEZE_STRATEGY='before' # before, after, between.

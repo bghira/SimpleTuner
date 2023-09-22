@@ -409,6 +409,7 @@ def main():
 
     # Freeze vae and text_encoders
     vae.requires_grad_(False)
+    VAE_SCALING_FACTOR = vae.config.scaling_factor
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
@@ -428,8 +429,8 @@ def main():
         # (width, height)
         original_width = original_size[0]
         original_height = original_size[1]
-        target_width = int(target_size[2] / vae.config.scaling_factor)
-        target_height = int(target_size[1] / vae.config.scaling_factor)
+        target_width = int(target_size[2] / VAE_SCALING_FACTOR)
+        target_height = int(target_size[1] / VAE_SCALING_FACTOR)
         final_target_size = (target_width, target_height)
         if original_width is None:
             raise ValueError("Original width must be specified.")
