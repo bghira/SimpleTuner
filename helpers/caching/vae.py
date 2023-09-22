@@ -18,7 +18,7 @@ class VAECache:
         accelerator,
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
-        resolution: int = 1024,
+        resolution: float = 1024,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         vae_batch_size: int = 4,
@@ -160,7 +160,10 @@ class VAECache:
             latents = self.encode_image(pixel_values, filepath)
             return latents
         except Exception as e:
+            import traceback
+
             logger.error(f"Error processing image {filepath}: {e}")
+            logging.debug(f"Error traceback: {traceback.format_exc()}")
             if self.delete_problematic_images:
                 self.data_backend.delete(filepath)
             else:
@@ -236,7 +239,10 @@ class VAECache:
                     logger.error(f"Received fatal error: {e}")
                     raise e
                 except Exception as e:
+                    import traceback
+
                     logger.error(f"Error processing image {filepath}: {e}")
+                    logging.debug(f"Error traceback: {traceback.format_exc()}")
                     if self.delete_problematic_images:
                         self.data_backend.delete(filepath)
                     else:
