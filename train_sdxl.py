@@ -422,8 +422,15 @@ def main():
             f"\n-> original_size = {original_size}"
             f"\n-> target_size = {target_size}"
         )
+        # The dimensions of tensors are "transposed", as:
+        # (batch_size, height, width)
+        # An image would look like:
+        # (width, height)
         original_width = original_size[0]
         original_height = original_size[1]
+        target_width = int(target_size[2] / vae.config.scaling_factor)
+        target_height = int(target_size[1] / vae.config.scaling_factor)
+        final_target_size = (target_width, target_height)
         if original_width is None:
             raise ValueError("Original width must be specified.")
         if original_height is None:
@@ -432,7 +439,7 @@ def main():
             args.crops_coords_top_left_h,
             args.crops_coords_top_left_w,
         )
-        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+        add_time_ids = list(original_size + crops_coords_top_left + final_target_size)
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
         logger.debug(
             f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
