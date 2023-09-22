@@ -45,7 +45,10 @@ class MultiaspectImage:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
             aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
         except Exception as e:
-            logger.error(f"Error processing image {image_path_str}.")
+            import traceback
+
+            logger.error(f"Error processing image: {e}")
+            logging.debug(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
         return aspect_ratio_bucket_indices
 
@@ -55,7 +58,7 @@ class MultiaspectImage:
 
         Args:
             image (Image): A Pillow image.
-            resolution (int): An integer for the image size.
+            resolution (float): A float for the image size.
             resolution_type (str, optional): Whether to use the size as pixel edge or area. If area, the image will be resized overall area. Defaults to "pixel".
 
         Raises:
