@@ -427,11 +427,13 @@ def main():
         # (batch_size, height, width)
         # An image would look like:
         # (width, height)
+        # SDXL conditions are:
+        # [h, w, h, w, h, w]
         original_width = original_size[0]
         original_height = original_size[1]
         target_width = int(target_size[2] * VAE_SCALING_FACTOR)
         target_height = int(target_size[1] * VAE_SCALING_FACTOR)
-        final_target_size = (target_width, target_height)
+        final_target_size = (target_height, target_width)
         if original_width is None:
             raise ValueError("Original width must be specified.")
         if original_height is None:
@@ -440,7 +442,11 @@ def main():
             args.crops_coords_top_left_h,
             args.crops_coords_top_left_w,
         )
-        add_time_ids = list(original_size + crops_coords_top_left + final_target_size)
+        add_time_ids = list(
+            (original_height, original_width)
+            + crops_coords_top_left
+            + final_target_size
+        )
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
         logger.debug(
             f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
