@@ -417,6 +417,11 @@ def main():
             raise Exception(
                 f"Cannot continue, the original_size or target_size were not provided: {original_size}, {target_size}"
             )
+        logger.debug(
+            f"Computing time ids for:"
+            f"\n-> original_size = {original_size}"
+            f"\n-> target_size = {target_size}"
+        )
         original_width = original_size[0]
         original_height = original_size[1]
         if original_width is None:
@@ -497,9 +502,9 @@ def main():
         batch_time_ids_list = [
             compute_time_ids(
                 original_size=example["instance_images"].size,
-                target_size=latents[idx].shape[
-                    2:
-                ],  # Using the spatial dimensions of the latent tensor
+                target_size=latents[
+                    idx
+                ].shape,  # Using the spatial dimensions of the latent tensor
             )
             for idx, example in enumerate(examples)
         ]
