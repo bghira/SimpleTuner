@@ -429,6 +429,9 @@ def main():
         )
         add_time_ids = list(original_size + crops_coords_top_left + target_size)
         add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
+        logger.debug(
+            f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
+        )
         return add_time_ids
 
     def collate_fn(batch):
@@ -501,6 +504,7 @@ def main():
             for idx, example in enumerate(examples)
         ]
         batch_time_ids = torch.stack(batch_time_ids_list, dim=0)
+        logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
         result = {
             "latent_batch": latent_batch,
