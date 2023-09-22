@@ -105,6 +105,7 @@ check_min_version("0.20.0.dev0")
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
+VAE_SCALING_FACTOR = 8
 DATASET_NAME_MAPPING = {
     "lambdalabs/pokemon-blip-captions": ("image", "text"),
 }
@@ -409,7 +410,6 @@ def main():
 
     # Freeze vae and text_encoders
     vae.requires_grad_(False)
-    VAE_SCALING_FACTOR = vae.config.scaling_factor
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
@@ -429,8 +429,8 @@ def main():
         # (width, height)
         original_width = original_size[0]
         original_height = original_size[1]
-        target_width = int(target_size[2] / VAE_SCALING_FACTOR)
-        target_height = int(target_size[1] / VAE_SCALING_FACTOR)
+        target_width = int(target_size[2] * VAE_SCALING_FACTOR)
+        target_height = int(target_size[1] * VAE_SCALING_FACTOR)
         final_target_size = (target_width, target_height)
         if original_width is None:
             raise ValueError("Original width must be specified.")
