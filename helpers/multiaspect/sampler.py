@@ -2,6 +2,7 @@ import torch, logging, json, random, os
 from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
+from helpers.multiaspect.image import MultiaspectImage
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
@@ -280,25 +281,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     logging.debug(
                         f"Image meets our minimum size status: {image.width}x{image.height}"
                     )
-
-                image = exif_transpose(image)
-                aspect_ratio = round(image.width / image.height, 2)
-            actual_bucket = str(aspect_ratio)
-            if actual_bucket != bucket:
-                self.bucket_manager.handle_incorrect_bucket(
-                    image_path, bucket, actual_bucket
-                )
-                logging.debug(
-                    f"_process_single_image discovered image was incorrectly bucketed, returning None"
-                )
-                return None
-            else:
-                logging.debug(
-                    f"Image was correctly bucketed: {actual_bucket} vs {bucket}"
-                )
-            logging.debug(
-                f"_process_single_image ran into no issues, we are returning the path {image_path}"
-            )
             return image_path
         except Exception as e:
             logger.warning(f"Image was bad or in-progress: {image_path}, {e}")

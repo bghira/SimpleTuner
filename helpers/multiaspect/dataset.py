@@ -107,16 +107,12 @@ class MultiAspectDataset(Dataset):
                 logger.error(f"Encountered error opening image: {e}")
                 raise e
 
-            # Apply EXIF and colour channel modifications.
-            instance_image = MultiaspectImage.prepare_image(
-                instance_image, self.size, self.size_type
-            )
-
-            # We return the actual Image object, so that the collate function can encode it, if needed.
-            # It also makes it easier to discover the image width/height. And, I am lazy.
+            # We return the original Image object so that the collate_fn can retrieve the original_size.
             example["instance_images"] = instance_image
+
             if self.return_tensor:
                 example["instance_tensor"] = self.image_transforms(instance_image)
+
             # Use the magic prompt handler to retrieve the captions.
             example["instance_prompt_text"] = PromptHandler.magic_prompt(
                 data_backend=self.data_backend,
