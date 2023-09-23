@@ -15,12 +15,14 @@ class TestBucketManager(unittest.TestCase):
         )
         self.instance_data_root = "/some/fake/path"
         self.cache_file = "/some/fake/cache.json"
+        self.metadata_file = "/some/fake/metadata.json"
         # Overload cache file with json:
         with patch("pathlib.Path.exists", return_value=True):
             with self.assertLogs("BucketManager", level="WARNING"):
                 self.bucket_manager = BucketManager(
                     instance_data_root=self.instance_data_root,
                     cache_file=self.cache_file,
+                    metadata_file=self.metadata_file,
                     batch_size=1,
                     data_backend=self.data_backend,
                     resolution=1,

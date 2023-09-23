@@ -358,6 +358,9 @@ def main(args):
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        metadata_file=os.path.join(
+            args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
+        ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
     if accelerator.is_main_process:

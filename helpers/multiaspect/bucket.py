@@ -19,6 +19,7 @@ class BucketManager:
         self,
         instance_data_root: str,
         cache_file: str,
+        metadata_file: str,
         data_backend: BaseDataBackend,
         accelerator: accelerate.Accelerator,
         batch_size: int,
@@ -32,6 +33,7 @@ class BucketManager:
         self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
+        self.metadata_file = Path(metadata_file)
         self.aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
         self.instance_images_path = set()
@@ -365,22 +367,49 @@ class BucketManager:
         """
         return self.aspect_ratio_bucket_indices
 
-    def set_metadata_by_filepath(self, filepath: str, metadata: dict):
+    def get_metadata_attribute_by_filepath(self, filepath: str, attribute: str):
+        """Use get_metadata_by_filepath to return a specific attribute.
+
+        Args:
+            filepath (str): The complete path from the aspect bucket list.
+            attribute (str): The attribute you are seeking.
+            
+        Returns:
+            any type: The attribute value, or None.
+        """
+        metadata = self.get_metadata_by_filepath(filepath)
+        if metadata:
+            return metadata.get(attribute, None)
+        else:
+            return None
+        
+    def set_metadata_attribute_by_filepath(self, filepath: str, attribute: str, value: any, update_json: bool = True):
+        """Use set_metadata_by_filepath to update the contents of a specific attribute.
+
+        Args:
+            filepath (str): The complete path from the aspect bucket list.
+            attribute (str): The attribute you are updating.
+            value (any type): The value to set.
+        """
+        metadata = self.get_metadata_by_filepath(filepath) or {}
+        metadata[attribute] = value
+        return self.set_metadata_by_filepath(filepath, metadata, update_json)
+
+    def set_metadata_by_filepath(self, filepath: str, metadata: dict, update_json: bool = True):
         """Set metadata for a given image file path.
 
         Args:
-            filepath (str): The path to the image file.
+            filepath (str): The complete path from the aspect bucket list.
         """
-        current_settings = self.image_metadata.get(filepath, None)
-        if not current_settings:
-            self.image_metadata[filepath] = metadata
+        self.image_metadata[filepath] = metadata
+        if update_json:
             self._save_metadata_to_json()
 
     def get_metadata_by_filepath(self, filepath: str):
         """Retrieve metadata for a given image file path.
 
         Args:
-            filepath (str): The path to the image file.
+            filepath (str): The complete path from the aspect bucket list.
 
         Returns:
             dict: Metadata for the image. Returns None if not found.
@@ -389,15 +418,15 @@ class BucketManager:
 
     def _load_metadata_from_json(self):
         """Load image metadata from a JSON file."""
-        if self.cache_file.exists():
-            with open(self.cache_file, "r") as f:
+        if self.metadata_file.exists():
+            with open(self.metadata_file, "r") as f:
                 data = json.load(f)
                 self.image_metadata = data.get("image_metadata", {})
 
     def _save_metadata_to_json(self):
         """Save image metadata to a JSON file."""
-        if self.cache_file.exists():
-            with open(self.cache_file, "r+") as f:
+        if self.metadata_file.exists():
+            with open(self.metadata_file, "r+") as f:
                 data = json.load(f)
                 data["image_metadata"] = self.image_metadata
                 f.seek(0)

@@ -276,6 +276,9 @@ def main():
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        metadata_file=os.path.join(
+            args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
+        ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
     logger.debug(f"{rank_info(accelerator)}Beginning aspect bucket stuff.")
