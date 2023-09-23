@@ -180,6 +180,7 @@ class BucketManager:
 
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
+        self.load_image_metadata()
 
         workers = [
             Process(
@@ -215,8 +216,8 @@ class BucketManager:
             worker.join()
 
         self.instance_images_path.update(new_files)
-        self.load_image_metadata()
         self._save_cache()
+        self.save_image_metadata()
         logger.info("Completed aspect bucket update.")
 
     def split_buckets_between_processes(self):
