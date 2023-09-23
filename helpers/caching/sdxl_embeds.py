@@ -39,8 +39,8 @@ class TextEmbeddingCache:
             return_tensors="pt",
         ).input_ids
         output = text_encoder(input_tokens)[0]
-        logger.debug(f'Legacy prompt shape: {output.shape}')
-        logger.debug(f'Legacy prompt encoded: {output}')
+        logger.debug(f"Legacy prompt shape: {output.shape}")
+        logger.debug(f"Legacy prompt encoded: {output}")
         return output
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
@@ -82,6 +82,9 @@ class TextEmbeddingCache:
             bs_embed, seq_len, _ = prompt_embeds.shape
             prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
             prompt_embeds_list.append(prompt_embeds)
+
+            # Clear out anything we moved to the text encoder device
+            del text_input_ids
 
         prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
         pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
@@ -143,17 +146,15 @@ class TextEmbeddingCache:
                         self.text_encoders, self.tokenizers, [prompt]
                     )
                     add_text_embeds = pooled_prompt_embeds
-                    prompt_embeds = prompt_embeds.to(self.accelerator.device)
-                    add_text_embeds = add_text_embeds.to(self.accelerator.device)
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                        add_text_embeds = add_text_embeds.to(self.accelerator.device)
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
 
                 prompt_embeds_all.append(prompt_embeds)
                 add_text_embeds_all.append(add_text_embeds)
 
             if not return_concat:
-                logger.info(
-                    "Not returning embeds, since we just concatenated a whackload of them."
-                )
                 del prompt_embeds_all
                 del add_text_embeds_all
                 return
