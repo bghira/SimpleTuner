@@ -365,11 +365,6 @@ def main(args):
     )
     if accelerator.is_main_process:
         logger.info(
-            f"{rank_info(accelerator)} is on its way to computing the indicies.",
-            main_process_only=False,
-        )
-        bucket_manager.compute_aspect_ratio_bucket_indices()
-        logger.info(
             f"{rank_info(accelerator)} is now refreshing the buckets..",
             main_process_only=False,
         )
