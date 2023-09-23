@@ -215,7 +215,7 @@ class BucketManager:
             worker.join()
 
         self.instance_images_path.update(new_files)
-        self._load_metadata_from_json()
+        self.load_image_metadata()
         self._save_cache()
         logger.info("Completed aspect bucket update.")
 
@@ -403,7 +403,7 @@ class BucketManager:
         """
         self.image_metadata[filepath] = metadata
         if update_json:
-            self._save_metadata_to_json()
+            self.save_image_metadata()
 
     def get_metadata_by_filepath(self, filepath: str):
         """Retrieve metadata for a given image file path.
@@ -416,19 +416,19 @@ class BucketManager:
         """
         return self.image_metadata.get(filepath, None)
 
-    def _load_metadata_from_json(self):
+    def load_image_metadata(self):
         """Load image metadata from a JSON file."""
         if self.metadata_file.exists():
             with open(self.metadata_file, "r") as f:
                 data = json.load(f)
                 self.image_metadata = data.get("image_metadata", {})
+        return {}
 
-    def _save_metadata_to_json(self):
+    def save_image_metadata(self):
         """Save image metadata to a JSON file."""
-        if self.metadata_file.exists():
-            with open(self.metadata_file, "r+") as f:
-                data = json.load(f)
-                data["image_metadata"] = self.image_metadata
-                f.seek(0)
-                json.dump(data, f)
-                f.truncate()
+        with open(self.metadata_file, "r+") as f:
+            data = json.load(f)
+            data["image_metadata"] = self.image_metadata
+            f.seek(0)
+            json.dump(data, f)
+            f.truncate()
