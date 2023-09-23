@@ -1,3 +1,4 @@
+from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 import accelerate, torch
@@ -71,7 +72,7 @@ class BucketManager:
             instance_data_root=self.instance_data_root,
             str_pattern="*.[jJpP][pPnN][gG]",
         )
-
+        StateTracker.set_image_files(all_image_files_data)
         # Extract only the files from the data
         all_image_files = [
             file for _, _, files in all_image_files_data for file in files
@@ -283,12 +284,7 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        logger.debug(f"{rank} Discovering all image files")
-        all_image_files_data = self.data_backend.list_files(
-            instance_data_root=self.instance_data_root,
-            str_pattern="*.[jJpP][pPnN][gG]",
-        )
-
+        all_image_files_data = StateTracker.get_image_files()
         logger.debug(
             f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
         )

@@ -6,6 +6,7 @@ from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -51,14 +52,7 @@ class VAECache:
 
     def discover_unprocessed_files(self, directory):
         """Identify files that haven't been processed yet."""
-        all_files = {
-            os.path.join(subdir, file)
-            for subdir, _, files in self.data_backend.list_files(
-                "*.[jJpP][pPnN][gG]", directory
-            )
-            for file in files
-            if file.endswith((".png", ".jpg", ".jpeg"))
-        }
+        all_files = StateTracker.get_image_files()
         processed_files = {self._generate_filename(file) for file in all_files}
         unprocessed_files = {
             file
