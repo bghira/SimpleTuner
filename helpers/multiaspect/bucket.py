@@ -431,9 +431,4 @@ class BucketManager:
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
-        with open(self.metadata_file, "r+") as f:
-            data = json.load(f)
-            data["image_metadata"] = self.image_metadata
-            f.seek(0)
-            json.dump(data, f)
-            f.truncate()
+        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
