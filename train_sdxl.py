@@ -279,19 +279,20 @@ def main():
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
     logger.debug(f"{rank_info(accelerator)}Beginning aspect bucket stuff.")
-    with accelerator.main_process_first():
-        logger.debug(
-            f"{rank_info(accelerator)}Computing aspect bucket cache index.",
-        )
-        bucket_manager.compute_aspect_ratio_bucket_indices()
-        logger.debug(
-            f"{rank_info(accelerator)}Refreshing buckets.",
-        )
-        bucket_manager.refresh_buckets(rank_info(accelerator))
-        logger.debug(
-            f"{rank_info(accelerator)}Control is returned to the main training script.",
-        )
-    logger.debug("Refreshed buckets and computed aspect ratios.")
+    if not args.skip_file_discovery:
+        with accelerator.main_process_first():
+            logger.debug(
+                f"{rank_info(accelerator)}Computing aspect bucket cache index.",
+            )
+            bucket_manager.compute_aspect_ratio_bucket_indices()
+            logger.debug(
+                f"{rank_info(accelerator)}Refreshing buckets.",
+            )
+            bucket_manager.refresh_buckets(rank_info(accelerator))
+            logger.debug(
+                f"{rank_info(accelerator)}Control is returned to the main training script.",
+            )
+        logger.debug("Refreshed buckets and computed aspect ratios.")
 
     if len(bucket_manager) == 0:
         raise Exception(
@@ -596,15 +597,16 @@ def main():
 
     # null_conditioning = compute_null_conditioning()
 
-    logger.info(f"Pre-computing text embeds / updating cache.")
-    with accelerator.main_process_first():
-        all_captions = PromptHandler.get_all_captions(
-            data_backend=data_backend,
-            instance_data_root=args.instance_data_dir,
-            prepend_instance_prompt=args.prepend_instance_prompt or False,
-            use_captions=not args.only_instance_prompt,
-        )
-        embed_cache.precompute_embeddings_for_sdxl_prompts(all_captions)
+    if not args.skip_file_discovery:
+        logger.info(f"Pre-computing text embeds / updating cache.")
+        with accelerator.main_process_first():
+            all_captions = PromptHandler.get_all_captions(
+                data_backend=data_backend,
+                instance_data_root=args.instance_data_dir,
+                prepend_instance_prompt=args.prepend_instance_prompt or False,
+                use_captions=not args.only_instance_prompt,
+            )
+            embed_cache.precompute_embeddings_for_sdxl_prompts(all_captions)
 
     (
         validation_prompts,
@@ -849,9 +851,10 @@ def main():
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
     )
-    vaecache.split_cache_between_processes()
-    vaecache.process_buckets(bucket_manager=bucket_manager)
-    accelerator.wait_for_everyone()
+    if not args.skip_file_discovery:
+        vaecache.split_cache_between_processes()
+        vaecache.process_buckets(bucket_manager=bucket_manager)
+        accelerator.wait_for_everyone()
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -1132,38 +1135,18 @@ def main():
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
 
-                    if torch.any(torch.isnan(snr)):
-                        training_logger.error("snr contains NaN values")
-                    if torch.any(snr == 0):
-                        training_logger.error("snr contains zero values")
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
                     )
-                    if (
-                        noise_scheduler.config.prediction_type == "epsilon"
-                        or noise_scheduler.config.prediction_type == "sample"
-                    ):
-                        mse_loss_weights = (
-                            torch.stack(
-                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
-                                dim=1,
-                            ).min(dim=1)[0]
-                            / snr
-                        )
-                    elif noise_scheduler.config.prediction_type == "v_prediction":
-                        mse_loss_weights = (
-                            torch.stack(
-                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
-                                dim=1,
-                            ).min(dim=1)[0]
-                            / snr
-                            + 1
-                        )
-
-                    # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
-                    # When we run this, the MSE loss weights for the zero-sigma timestep are set unconditionally to 1.
-                    # We want this sample to be fully considered.
-                    mse_loss_weights[snr == 0] = 1.0
+                    mse_loss_weights = (
+                        torch.stack(
+                            [snr, args.snr_gamma * torch.ones_like(timesteps)],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr
+                    )
+                    if noise_scheduler.config.prediction_type == "v_prediction":
+                        mse_loss_weights = mse_loss_weights + 1
 
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.

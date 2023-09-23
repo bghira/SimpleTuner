@@ -149,6 +149,15 @@ def parse_args(input_args=None):
         help="If set, will keep the VAE loaded in memory. This can reduce disk churn, but consumes VRAM during the forward pass.",
     )
     parser.add_argument(
+        "--skip_file_discovery",
+        action="store_true",
+        default=False,
+        help=(
+            "If provided, the VAE cache and aspect bucket systems will not do any scanning of file lists at startup."
+            " This can be useful for reducing I/O requirements on underlying storage, if that is a costly operation."
+        ),
+    )
+    parser.add_argument(
         "--revision",
         type=str,
         default=None,

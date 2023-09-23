@@ -33,6 +33,7 @@ class BucketManager:
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
         self.aspect_ratio_bucket_indices = {}
+        self.image_metadata = {}  # Store image metadata
         self.instance_images_path = set()
         # Initialize a multiprocessing.Manager dict for seen_images
         manager = Manager()
@@ -147,7 +148,11 @@ class BucketManager:
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    data_backend, file, self.resolution, self.resolution_type, local_aspect_ratio_bucket_indices
+                    data_backend,
+                    file,
+                    self.resolution,
+                    self.resolution_type,
+                    local_aspect_ratio_bucket_indices,
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
@@ -208,6 +213,7 @@ class BucketManager:
             worker.join()
 
         self.instance_images_path.update(new_files)
+        self._load_metadata_from_json()
         self._save_cache()
         logger.info("Completed aspect bucket update.")
 
@@ -281,7 +287,9 @@ class BucketManager:
             str_pattern="*.[jJpP][pPnN][gG]",
         )
 
-        logger.debug(f"{rank} Discovering existing files")
+        logger.debug(
+            f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
+        )
         existing_files = {
             file for _, _, files in all_image_files_data for file in files
         }
@@ -356,3 +364,42 @@ class BucketManager:
         Read the entire bucket cache.
         """
         return self.aspect_ratio_bucket_indices
+
+    def set_metadata_by_filepath(self, filepath: str, metadata: dict):
+        """Set metadata for a given image file path.
+
+        Args:
+            filepath (str): The path to the image file.
+        """
+        current_settings = self.image_metadata.get(filepath, None)
+        if not current_settings:
+            self.image_metadata[filepath] = metadata
+            self._save_metadata_to_json()
+
+    def get_metadata_by_filepath(self, filepath: str):
+        """Retrieve metadata for a given image file path.
+
+        Args:
+            filepath (str): The path to the image file.
+
+        Returns:
+            dict: Metadata for the image. Returns None if not found.
+        """
+        return self.image_metadata.get(filepath, None)
+
+    def _load_metadata_from_json(self):
+        """Load image metadata from a JSON file."""
+        if self.cache_file.exists():
+            with open(self.cache_file, "r") as f:
+                data = json.load(f)
+                self.image_metadata = data.get("image_metadata", {})
+
+    def _save_metadata_to_json(self):
+        """Save image metadata to a JSON file."""
+        if self.cache_file.exists():
+            with open(self.cache_file, "r+") as f:
+                data = json.load(f)
+                data["image_metadata"] = self.image_metadata
+                f.seek(0)
+                json.dump(data, f)
+                f.truncate()
