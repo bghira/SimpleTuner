@@ -150,7 +150,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--skip_file_discovery",
-        type=str
+        type=str,
         default="",
         help=(
             "Comma-separated values of which stages to skip discovery for. Skipping any stage will speed up resumption,"
