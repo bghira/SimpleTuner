@@ -133,7 +133,6 @@ class BucketManager:
         aspect_ratio_bucket_indices_queue,
         existing_files_set,
         data_backend,
-        bucket_manager,
     ):
         """
         A worker function to bucket a list of files.
