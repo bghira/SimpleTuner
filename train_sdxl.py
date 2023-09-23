@@ -282,7 +282,7 @@ def main():
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
     logger.debug(f"{rank_info(accelerator)}Beginning aspect bucket stuff.")
-    if not args.skip_file_discovery:
+    if 'aspect' not in args.skip_file_discovery:
         with accelerator.main_process_first():
             logger.debug(
                 f"{rank_info(accelerator)}Computing aspect bucket cache index.",
@@ -600,7 +600,7 @@ def main():
 
     # null_conditioning = compute_null_conditioning()
 
-    if not args.skip_file_discovery:
+    if 'text' not in args.skip_file_discovery:
         logger.info(f"Pre-computing text embeds / updating cache.")
         with accelerator.main_process_first():
             all_captions = PromptHandler.get_all_captions(
@@ -854,7 +854,7 @@ def main():
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
     )
-    if not args.skip_file_discovery:
+    if 'vae' not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
         vaecache.process_buckets(bucket_manager=bucket_manager)
         accelerator.wait_for_everyone()

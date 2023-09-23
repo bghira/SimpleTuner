@@ -150,11 +150,13 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--skip_file_discovery",
-        action="store_true",
-        default=False,
+        type=str
+        default="",
         help=(
-            "If provided, the VAE cache and aspect bucket systems will not do any scanning of file lists at startup."
-            " This can be useful for reducing I/O requirements on underlying storage, if that is a costly operation."
+            "Comma-separated values of which stages to skip discovery for. Skipping any stage will speed up resumption,"
+            " but will increase the risk of errors, as missing images or incorrectly bucketed images may not be caught."
+            " 'vae' will skip the VAE cache process, 'aspect' will not build any aspect buckets, and 'text' will avoid text embed management."
+            " Valid options: aspect, vae, text."
         ),
     )
     parser.add_argument(
