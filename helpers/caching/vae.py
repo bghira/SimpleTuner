@@ -218,21 +218,13 @@ class VAECache:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
-                image_metadata = {}
+
                 try:
                     image = self.data_backend.read_image(filepath)
-                    image_metadata["original_size"] = image.size
                     image = MultiaspectImage.prepare_image(
                         image, self.resolution, self.resolution_type
                     )
-                    image_metadata["target_size"] = image.size
                     aspect_ratio = float(round(image.width / image.height, 2))
-                    image_metadata["aspect_ratio"] = aspect_ratio
-                    
-                    # We will add to the list of metadata items to store.
-                    bucket_manager.set_metadata_by_filepath(
-                        filepath, image_metadata, update_json=False
-                    )
                     pixel_values = self.transform(image).to(
                         self.accelerator.device, dtype=self.vae.dtype
                     )
@@ -273,7 +265,6 @@ class VAECache:
                     self.data_backend.write_batch(batch_filepaths, batch_data)
                     batch_filepaths.clear()
                     batch_data.clear()
-                    bucket_manager.save_image_metadata()
 
             # Handle remainders after processing the bucket
             if vae_input_images:  # If there are images left to be encoded
@@ -291,4 +282,3 @@ class VAECache:
                 self.data_backend.write_batch(batch_filepaths, batch_data)
                 batch_filepaths.clear()
                 batch_data.clear()
-                bucket_manager.save_image_metadata()

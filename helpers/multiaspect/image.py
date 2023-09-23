@@ -22,21 +22,24 @@ class MultiaspectImage:
     @staticmethod
     def process_for_bucket(
         data_backend,
+        bucket_manager,
         image_path_str,
-        resolution: float,
-        resolution_type: str,
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 2,
     ):
         try:
+            image_metadata = {}
             image_data = data_backend.read(image_path_str)
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
+                image_metadata["original_size"] = image.size
                 image = MultiaspectImage.prepare_image(
-                    image, resolution, resolution_type
+                    image, bucket_manager.resolution, bucket_manager.resolution_type
                 )
+                image_metadata["target_size"] = image.size
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
+                image_metadata["aspect_ratio"] = aspect_ratio
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
                 )
@@ -44,6 +47,10 @@ class MultiaspectImage:
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
             aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
+            # Write image metadata to list without updating json
+            bucket_manager.set_metadata_by_filepath(
+                filepath=image_path_str, metadata=image_metadata, update_json=False
+            )
         except Exception as e:
             import traceback
 

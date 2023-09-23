@@ -10,6 +10,9 @@ from tests.helpers.data import MockDataBackend
 class TestMultiaspectImage(unittest.TestCase):
     def setUp(self):
         self.data_backend = MockDataBackend()
+        self.bucket_manager = MagicMock()
+        self.bucket_manager.resolution_type = "pixel"
+        self.bucket_manager.resolution = 128
         self.image_path_str = "dummy_image_path"
         self.aspect_ratio_bucket_indices = {}
         self.resolution = 128
@@ -27,9 +30,8 @@ class TestMultiaspectImage(unittest.TestCase):
 
             result = MultiaspectImage.process_for_bucket(
                 self.data_backend,
+                self.bucket_manager,
                 self.image_path_str,
-                self.resolution,
-                "pixel",
                 self.aspect_ratio_bucket_indices,
             )
             self.assertEqual(result, {"2.0": ["dummy_image_path"]})
@@ -39,9 +41,8 @@ class TestMultiaspectImage(unittest.TestCase):
         with self.assertLogs("MultiaspectImage", level="ERROR") as cm:
             MultiaspectImage.process_for_bucket(
                 None,
+                self.bucket_manager,
                 self.image_path_str,
-                self.resolution,
-                "pixel",
                 self.aspect_ratio_bucket_indices,
             )
 

@@ -133,6 +133,7 @@ class BucketManager:
         aspect_ratio_bucket_indices_queue,
         existing_files_set,
         data_backend,
+        bucket_manager,
     ):
         """
         A worker function to bucket a list of files.
@@ -151,9 +152,8 @@ class BucketManager:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
                     data_backend,
+                    self,
                     file,
-                    self.resolution,
-                    self.resolution_type,
                     local_aspect_ratio_bucket_indices,
                 )
             tqdm_queue.put(1)
@@ -373,7 +373,7 @@ class BucketManager:
         Args:
             filepath (str): The complete path from the aspect bucket list.
             attribute (str): The attribute you are seeking.
-            
+
         Returns:
             any type: The attribute value, or None.
         """
@@ -382,8 +382,10 @@ class BucketManager:
             return metadata.get(attribute, None)
         else:
             return None
-        
-    def set_metadata_attribute_by_filepath(self, filepath: str, attribute: str, value: any, update_json: bool = True):
+
+    def set_metadata_attribute_by_filepath(
+        self, filepath: str, attribute: str, value: any, update_json: bool = True
+    ):
         """Use set_metadata_by_filepath to update the contents of a specific attribute.
 
         Args:
@@ -395,7 +397,9 @@ class BucketManager:
         metadata[attribute] = value
         return self.set_metadata_by_filepath(filepath, metadata, update_json)
 
-    def set_metadata_by_filepath(self, filepath: str, metadata: dict, update_json: bool = True):
+    def set_metadata_by_filepath(
+        self, filepath: str, metadata: dict, update_json: bool = True
+    ):
         """Set metadata for a given image file path.
 
         Args:
