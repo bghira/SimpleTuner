@@ -26,7 +26,7 @@ from helpers.legacy.validation import prepare_validation_prompt_list, log_valida
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.training.state_tracker import StateTracker
+from helpers.training.state_tracker import StateTracker, setup_state_tracking
 from helpers.training.collate import (
     extract_pixel_values_and_filepaths,
     compute_latents,
@@ -466,6 +466,7 @@ def main():
         accelerator=accelerator,
         model_type="sdxl",
     )
+    setup_state_tracking()
     StateTracker.set_embedcache(embed_cache)
     if (
         args.caption_dropout_probability is not None
@@ -743,6 +744,7 @@ def main():
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
+    
     if accelerator.is_local_main_process:
         vaecache.discover_all_files()
     accelerator.wait_for_everyone()

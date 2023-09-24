@@ -1,10 +1,17 @@
 from multiprocessing import Manager
 from os import environ
 
-manager = Manager()
-all_image_files = manager.dict()
-all_vae_cache_files = manager.dict()
-all_caption_files = manager.list()
+manager = None
+all_image_files = None
+all_vae_cache_files = None
+all_caption_files = None
+
+def setup_state_tracking():
+    global manager, all_image_files, all_vae_cache_files, all_caption_files
+    manager = Manager()
+    all_image_files = manager.dict()
+    all_vae_cache_files = manager.dict()
+    all_caption_files = manager.list()
 
 import logging
 
