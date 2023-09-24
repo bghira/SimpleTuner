@@ -7,6 +7,7 @@ from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import _get_rank as get_rank
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -203,7 +204,7 @@ class VAECache:
                 continue
 
             for raw_filepath in tqdm(
-                relevant_files, desc=f"Processing bucket {bucket}"
+                relevant_files, desc=f"Processing bucket {bucket}", position=get_rank()
             ):
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
