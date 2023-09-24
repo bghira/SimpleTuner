@@ -605,7 +605,9 @@ def main():
                 prepend_instance_prompt=args.prepend_instance_prompt or False,
                 use_captions=not args.only_instance_prompt,
             )
-            embed_cache.precompute_embeddings_for_sdxl_prompts(all_captions)
+        accelerator.wait_for_everyone()
+        embed_cache.split_cache_between_processes(all_captions)
+        embed_cache.precompute_embeddings_for_sdxl_prompts()
 
     (
         validation_prompts,
