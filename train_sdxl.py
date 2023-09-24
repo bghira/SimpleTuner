@@ -588,7 +588,8 @@ def main():
     ):
         logger.info("Pre-computing null embedding for caption dropout")
         with accelerator.main_process_first():
-            embed_cache.precompute_embeddings_for_sdxl_prompts([""])
+            embed_cache.compute_embeddings_for_sdxl_prompts([""], return_concat=False)
+        accelerator.wait_for_everyone()
     else:
         logger.warning(
             f"Not using caption dropout will potentially lead to overfitting on captions."
@@ -607,7 +608,7 @@ def main():
             )
         accelerator.wait_for_everyone()
         embed_cache.split_cache_between_processes(all_captions)
-        embed_cache.precompute_embeddings_for_sdxl_prompts()
+        embed_cache.compute_embeddings_for_sdxl_prompts()
 
     (
         validation_prompts,

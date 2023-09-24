@@ -170,14 +170,6 @@ class TextEmbeddingCache:
 
         return prompt_embeds_all, add_text_embeds_all
 
-    def precompute_embeddings_for_sdxl_prompts(self, prompts):
-        """This is the same function as compute_embeddings_for_prompts, but it specifically runs with the Accelerate context manager.
-
-        Args:
-            prompts (list[str]): All of the prompts.
-        """
-        self.compute_embeddings_for_sdxl_prompts(prompts, return_concat=False)
-
     def compute_embeddings_for_legacy_prompts(
         self, prompts: list = None, return_concat: bool = True
     ):
