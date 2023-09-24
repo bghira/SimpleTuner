@@ -62,7 +62,7 @@ class VAECache:
                 )
             )
         )
-        StateTracker.set_image_files(all_image_files)
+        logger.debug(f'VAECache discover_all_files found {len(all_image_files)} images')
         return all_image_files
 
     def discover_unprocessed_files(self, directory: str = None):
