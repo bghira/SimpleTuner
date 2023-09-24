@@ -1,10 +1,12 @@
 from multiprocessing import Manager
 from os import environ
-
+from pathlib import Path
+import json
 manager = None
 all_image_files = None
 all_vae_cache_files = None
 all_caption_files = None
+
 
 def setup_state_tracking():
     global manager, all_image_files, all_vae_cache_files, all_caption_files
@@ -12,6 +14,7 @@ def setup_state_tracking():
     all_image_files = manager.dict()
     all_vae_cache_files = manager.dict()
     all_caption_files = manager.list()
+
 
 import logging
 
@@ -50,49 +53,71 @@ class StateTracker:
         return cls.calculate_luminance
 
     @classmethod
+    def _load_from_disk(cls, cache_name):
+        cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+        if cache_path.exists():
+            with cache_path.open("r") as f:
+                return json.load(f)
+        return {}
+
+    @classmethod
+    def _save_to_disk(cls, cache_name, data):
+        cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+        with cache_path.open("w") as f:
+            json.dump(data, f)
+
+    @classmethod
     def set_image_files(cls, raw_file_list):
-        all_image_files.clear()
+        cls.all_image_files.clear()
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
-                all_image_files[image] = False
-        logger.debug(f'set_image_files found {len(all_image_files)} images.')
-        return all_image_files
+                cls.all_image_files[image] = False
+        cls._save_to_disk("all_image_files", cls.all_image_files)
+        logger.debug(f"set_image_files found {len(cls.all_image_files)} images.")
 
     @classmethod
     def get_image_files(cls):
-        return all_image_files
+        if not cls.all_image_files:
+            cls.all_image_files = cls._load_from_disk("all_image_files")
+        return cls.all_image_files
+
+    @classmethod
+    def set_vae_cache_files(cls, raw_file_list):
+        cls.all_vae_cache_files.clear()
+        for subdirectory_list in raw_file_list:
+            _, _, files = subdirectory_list
+            for image in files:
+                cls.all_vae_cache_files[image] = False
+        cls._save_to_disk("all_vae_cache_files", cls.all_vae_cache_files)
+        logger.debug(
+            f"set_vae_cache_files found {len(cls.all_vae_cache_files)} images."
+        )
+
+    @classmethod
+    def get_vae_cache_files(cls):
+        if not cls.all_vae_cache_files:
+            cls.all_vae_cache_files = cls._load_from_disk("all_vae_cache_files")
+        return cls.all_vae_cache_files
+
+    @classmethod
+    def set_caption_files(cls, caption_files):
+        cls.all_caption_files = caption_files
+        cls._save_to_disk("all_caption_files", cls.all_caption_files)
+
+    @classmethod
+    def get_caption_files(cls):
+        if not cls.all_caption_files:
+            cls.all_caption_files = cls._load_from_disk("all_caption_files")
+        return cls.all_caption_files
 
     @classmethod
     def has_image_files_loaded(cls):
         return len(list(all_image_files.keys())) > 0
 
     @classmethod
-    def set_vae_cache_files(cls, raw_file_list):
-        all_vae_cache_files.clear()
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for image in files:
-                all_vae_cache_files[image] = False
-        logger.debug(f'set_vae_cache_files found {len(all_vae_cache_files)} images.')
-        return all_vae_cache_files
-
-    @classmethod
-    def get_vae_cache_files(cls):
-        return all_vae_cache_files
-
-    @classmethod
     def has_vae_cache_files_loaded(cls):
         return len(list(all_vae_cache_files.keys())) > 0
-
-    @classmethod
-    def set_caption_files(cls, caption_files):
-        all_caption_files[:] = caption_files
-        return all_caption_files
-
-    @classmethod
-    def get_caption_files(cls):
-        return cls.all_caption_files
 
     @classmethod
     def has_caption_files_loaded(cls):
