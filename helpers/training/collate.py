@@ -77,11 +77,13 @@ def compute_latents(pixel_values, filepaths):
         for pv, fp in zip(pixel_values, filepaths)
     ]
     test_shape = latents[0].shape
-    for idx, latent in latents:
+    idx = 0
+    for latent in latents:
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
+        idx += 1
     return torch.stack(latents)
 
 

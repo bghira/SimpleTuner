@@ -181,8 +181,6 @@ class S3DataBackend(BaseDataBackend):
         logger.debug(
             f"Listing files in S3 bucket {self.bucket_name} with prefix {pattern}"
         )
-        for item in sorted(self.list_by_prefix(pattern))[:5]:
-            logger.debug(f"Found item: {item}")
 
         # Paginating over the entire bucket objects
         for page in paginator.paginate(Bucket=self.bucket_name):
@@ -244,10 +242,6 @@ class S3DataBackend(BaseDataBackend):
 
         try:
             buffer = BytesIO()
-            if hasattr(data, "shape"):
-                logger.debug(
-                    f"Saving tensor of shape {data.shape} to {s3_key}. With a scale factor of 8, that would be {data.shape[0] * 8}x{data.shape[1] * 8}"
-                )
             torch.save(data, buffer)
             return self.write(s3_key, buffer.getvalue())
         except Exception as e:
