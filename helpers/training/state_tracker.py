@@ -45,9 +45,10 @@ class StateTracker:
     def set_image_files(cls, raw_file_list):
         logger.debug(f"Received raw file list: {raw_file_list}")
         all_image_files.clear()
-        for _, _, files in raw_file_list:
-            for image in files:
-                all_image_files[image] = False
+        for subdirectory_list in raw_file_list:
+            for _, _, files in subdirectory_list:
+                for image in files:
+                    all_image_files[image] = False
         return all_image_files
 
     @classmethod
