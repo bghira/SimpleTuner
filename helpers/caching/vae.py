@@ -56,6 +56,12 @@ class VAECache:
         all_image_files = {
             os.path.join(subdir, file)
             for subdir, _, files in StateTracker.get_image_files()
+            or StateTracker.set_image_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.instance_data_root,
+                    str_pattern="*.[jJpP][pPnN][gG]",
+                )
+            )
             for file in files
             if file.endswith((".png", ".jpg", ".jpeg"))
         }
@@ -65,7 +71,11 @@ class VAECache:
     def discover_unprocessed_files(self, directory):
         """Identify files that haven't been processed yet."""
         all_files = StateTracker.get_image_files()
-        processed_files = {self._generate_filename(file)[1] for subdir, _, files in all_files for file in files}
+        processed_files = {
+            self._generate_filename(file)[1]
+            for subdir, _, files in all_files
+            for file in files
+        }
         unprocessed_files = {
             file
             for _, _, files in all_files
