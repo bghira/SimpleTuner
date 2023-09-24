@@ -51,7 +51,7 @@ class VAECache:
     def load_from_cache(self, filename):
         return self.data_backend.torch_load(filename)
 
-    def discover_all_files(self, directory):
+    def discover_all_files(self, directory: str = None):
         """Identify all files in a directory."""
         all_image_files = (
             StateTracker.get_image_files()
