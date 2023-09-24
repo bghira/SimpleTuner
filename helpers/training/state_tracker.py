@@ -5,7 +5,7 @@ class StateTracker:
 
     # Store the list of images, like a cache.
     all_image_files = {}
-    all_caption_files = {}
+    all_caption_files = []
 
     @classmethod
     def start_training(cls):

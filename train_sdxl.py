@@ -599,16 +599,15 @@ def main():
 
     if "text" not in args.skip_file_discovery:
         logger.info(f"Pre-computing text embeds / updating cache.")
-        if accelerator.is_local_main_process:
-            dataset_captions = PromptHandler.get_all_captions(
+        with accelerator.main_process_first():
+            all_captions = PromptHandler.get_all_captions(
                 data_backend=data_backend,
                 instance_data_root=args.instance_data_dir,
                 prepend_instance_prompt=args.prepend_instance_prompt or False,
                 use_captions=not args.only_instance_prompt,
             )
-            StateTracker.set_caption_files(dataset_captions)
+            StateTracker.set_caption_files(all_captions)
         accelerator.wait_for_everyone()
-        all_captions = StateTracker.get_caption_files()
         logger.info(f"Discovered {len(all_captions)} captions.")
         embed_cache.split_cache_between_processes(all_captions)
         embed_cache.compute_embeddings_for_sdxl_prompts()
