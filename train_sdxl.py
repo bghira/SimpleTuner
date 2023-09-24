@@ -288,7 +288,7 @@ def main():
     )
     logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
     if "aspect" not in args.skip_file_discovery:
-        with accelerator.main_process_first():
+        if accelerator.is_local_main_process:
             logger.debug(
                 f"{rank_info()}Refreshing buckets.",
             )
