@@ -65,9 +65,10 @@ class VAECache:
         StateTracker.set_image_files(all_image_files)
         return all_image_files
 
-    def discover_unprocessed_files(self, directory):
+    def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_files = StateTracker.get_image_files()
+        logger.debug(f'discover_unprocessed_files found {len(all_files)} images')
         processed_files = {
             self._generate_filename(file)[1]
             for file in all_files

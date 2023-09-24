@@ -43,13 +43,12 @@ class StateTracker:
 
     @classmethod
     def set_image_files(cls, raw_file_list):
-        logger.debug(f"Received raw file list: {raw_file_list}")
         all_image_files.clear()
         for subdirectory_list in raw_file_list:
-            logger.debug(f'Processing files in {subdirectory_list}')
             _, _, files = subdirectory_list
             for image in files:
                 all_image_files[image] = False
+        logger.debug(f'set_image_files found {len(all_image_files)} images.')
         return all_image_files
 
     @classmethod
