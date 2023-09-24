@@ -505,14 +505,16 @@ def main(args):
     )
 
     logger.info(f"Pre-computing text embeds / updating cache.")
-    with accelerator.main_process_first():
+    if accelerator.is_local_main_process:
         all_captions = PromptHandler.get_all_captions(
             data_backend=data_backend,
             instance_data_root=args.instance_data_dir,
             prepend_instance_prompt=args.prepend_instance_prompt or False,
             use_captions=not args.only_instance_prompt,
         )
-        embed_cache.compute_embeddings_for_legacy_prompts(all_captions)
+    accelerator.wait_for_everyone()
+    embed_cache.split_cache_between_processes(all_captions)
+    embed_cache.compute_embeddings_for_legacy_prompts()
     (
         validation_prompts,
         validation_shortnames,

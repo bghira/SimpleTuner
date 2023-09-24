@@ -6,6 +6,8 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class TextEmbeddingCache:
+    prompts = None
+
     def __init__(
         self,
         text_encoders,
@@ -124,13 +126,17 @@ class TextEmbeddingCache:
                 prompts, return_concat=return_concat
             )
 
-    def compute_embeddings_for_sdxl_prompts(self, prompts, return_concat: bool = True):
+    def compute_embeddings_for_sdxl_prompts(
+        self, prompts: list = None, return_concat: bool = True
+    ):
         prompt_embeds_all = []
         add_text_embeds_all = []
 
         with torch.no_grad():
             for prompt in tqdm(
-                prompts, desc="Processing prompts", disable=return_concat
+                prompts or self.prompts,
+                desc="Processing prompts",
+                disable=return_concat,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -173,13 +179,15 @@ class TextEmbeddingCache:
         self.compute_embeddings_for_sdxl_prompts(prompts, return_concat=False)
 
     def compute_embeddings_for_legacy_prompts(
-        self, prompts, return_concat: bool = True
+        self, prompts: list = None, return_concat: bool = True
     ):
         prompt_embeds_all = []
 
         with torch.no_grad():
             for prompt in tqdm(
-                prompts, desc="Processing prompts", disable=return_concat
+                prompts or self.prompts,
+                desc="Processing prompts",
+                disable=return_concat,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -207,3 +215,8 @@ class TextEmbeddingCache:
                 return
 
         return prompt_embeds_all
+
+    def split_cache_between_processes(self, prompts: list):
+        # Use the accelerator to split the data
+        with self.accelerator.split_between_processes(prompts) as split_files:
+            self.prompts = split_files
