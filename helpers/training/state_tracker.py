@@ -47,9 +47,9 @@ class StateTracker:
         all_image_files.clear()
         for subdirectory_list in raw_file_list:
             logger.debug(f'Processing files in {subdirectory_list}')
-            for _, _, files in subdirectory_list:
-                for image in files:
-                    all_image_files[image] = False
+            _, _, files = subdirectory_list
+            for image in files:
+                all_image_files[image] = False
         return all_image_files
 
     @classmethod
