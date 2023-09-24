@@ -1,8 +1,14 @@
 from multiprocessing import Manager
+from os import environ
 
 manager = Manager()
 all_image_files = manager.dict()
 all_caption_files = manager.list()
+
+import logging
+
+logger = logging.getLogger("StateTracker")
+logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class StateTracker:
@@ -37,6 +43,7 @@ class StateTracker:
 
     @classmethod
     def set_image_files(cls, raw_file_list):
+        logger.debug(f"Received raw file list: {raw_file_list}")
         all_image_files.clear()
         for _, _, files in raw_file_list:
             for image in files:
