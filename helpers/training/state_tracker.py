@@ -3,6 +3,7 @@ from os import environ
 
 manager = Manager()
 all_image_files = manager.dict()
+all_vae_cache_files = manager.dict()
 all_caption_files = manager.list()
 
 import logging
@@ -58,6 +59,24 @@ class StateTracker:
     @classmethod
     def has_image_files_loaded(cls):
         return len(list(all_image_files.keys())) > 0
+
+    @classmethod
+    def set_vae_cache_files(cls, raw_file_list):
+        all_vae_cache_files.clear()
+        for subdirectory_list in raw_file_list:
+            _, _, files = subdirectory_list
+            for image in files:
+                all_vae_cache_files[image] = False
+        logger.debug(f'set_vae_cache_files found {len(all_vae_cache_files)} images.')
+        return all_vae_cache_files
+
+    @classmethod
+    def get_vae_cache_files(cls):
+        return all_vae_cache_files
+
+    @classmethod
+    def has_vae_cache_files_loaded(cls):
+        return len(list(all_vae_cache_files.keys())) > 0
 
     @classmethod
     def set_caption_files(cls, caption_files):
