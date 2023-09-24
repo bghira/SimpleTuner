@@ -70,7 +70,7 @@ class VAECache:
             file
             for _, _, files in all_files
             for file in files
-            if self._generate_filename(file)[0] not in processed_files
+            if self._generate_filename(file)[1] not in processed_files
         }
         return list(unprocessed_files)
 
@@ -220,16 +220,13 @@ class VAECache:
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
                 elif len(raw_filepath) == 2:
-                    idx, filepath = raw_filepath
+                    basename, filepath = raw_filepath
                 elif type(raw_filepath) == Path or type(raw_filepath) == numpy_str:
                     filepath = str(raw_filepath)
                 else:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
-                if filepath not in self.local_unprocessed_files:
-                    logger.debug(f'Could not find {filepath} in local unprocessed file list')
-                    continue
                 try:
                     image = self.data_backend.read_image(filepath)
                     image = MultiaspectImage.prepare_image(
