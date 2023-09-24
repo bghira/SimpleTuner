@@ -5,6 +5,7 @@ class StateTracker:
 
     # Store the list of images, like a cache.
     all_image_files = {}
+    all_caption_files = {}
 
     @classmethod
     def start_training(cls):
@@ -33,3 +34,15 @@ class StateTracker:
     @classmethod
     def has_image_files_loaded(cls):
         return len(cls.all_image_files) > 0
+
+    @classmethod
+    def set_caption_files(cls, caption_files):
+        cls.all_caption_files = caption_files
+
+    @classmethod
+    def get_caption_files(cls):
+        return cls.all_caption_files
+
+    @classmethod
+    def has_caption_files_loaded(cls):
+        return len(cls.all_caption_files) > 0

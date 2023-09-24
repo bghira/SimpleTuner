@@ -1,5 +1,6 @@
 import os, torch, hashlib, logging
 from tqdm import tqdm
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
