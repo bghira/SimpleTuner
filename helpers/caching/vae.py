@@ -8,7 +8,6 @@ from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
-from collections import defaultdict
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -52,14 +51,20 @@ class VAECache:
     def load_from_cache(self, filename):
         return self.data_backend.torch_load(filename)
 
-    def discover_unprocessed_files(self, directory):
-        """Identify files that haven't been processed yet."""
-        all_files = {
+    def discover_all_files(self, directory):
+        """Identify all files in a directory."""
+        all_image_files = {
             os.path.join(subdir, file)
             for subdir, _, files in StateTracker.get_image_files()
             for file in files
             if file.endswith((".png", ".jpg", ".jpeg"))
         }
+        StateTracker.set_image_files(all_image_files)
+        return all_image_files
+
+    def discover_unprocessed_files(self, directory):
+        """Identify files that haven't been processed yet."""
+        all_files = StateTracker.get_image_files()
         processed_files = {self._generate_filename(file) for file in all_files}
         unprocessed_files = {
             file
@@ -142,19 +147,10 @@ class VAECache:
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
-            return split_files  # Return the split files
-
-    def categorize_files_by_bucket(self, files, bucket_manager):
-        """Categorize files by their respective buckets."""
-        categorized_files = defaultdict(list)
-        
-        aspect_bucket_cache = bucket_manager.read_cache().copy()
-        for bucket, bucket_files in aspect_bucket_cache.items():
-            for file in files:
-                if file in bucket_files:
-                    categorized_files[bucket].append(file)
-        
-        return categorized_files
+        # Print the first 5 as a debug log:
+        logger.debug(
+            f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
+        )
 
     def _process_image(self, filepath):
         full_filename, base_filename = self._generate_filename(filepath)
@@ -194,8 +190,6 @@ class VAECache:
         return batch_data, batch_filepaths
 
     def process_buckets(self, bucket_manager):
-        # First, categorize the local unprocessed files by buckets
-        aspect_bucket_cache = self.categorize_files_by_bucket(self.local_unprocessed_files, bucket_manager)
         processed_images = self._list_cached_images()
         batch_data, batch_filepaths, vae_input_images, vae_input_filepaths = (
             [],
@@ -203,6 +197,8 @@ class VAECache:
             [],
             [],
         )
+
+        aspect_bucket_cache = bucket_manager.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
         shuffled_keys = list(aspect_bucket_cache.keys())
@@ -230,7 +226,9 @@ class VAECache:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
-
+                if filepath not in self.local_unprocessed_files:
+                    logger.debug(f'Could not find {filepath} in local unprocessed file list')
+                    continue
                 try:
                     image = self.data_backend.read_image(filepath)
                     image = MultiaspectImage.prepare_image(
