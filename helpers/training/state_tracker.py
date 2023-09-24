@@ -1,11 +1,14 @@
+from multiprocessing import Manager
+
+manager = Manager()
+all_image_files = manager.dict()
+all_caption_files = manager.list()
+
+
 class StateTracker:
     # Class variables
     has_training_started = False
     calculate_luminance = False
-
-    # Store the list of images, like a cache.
-    all_image_files = {}
-    all_caption_files = []
 
     # Backend entities for retrieval
     data_backend = None
@@ -34,20 +37,23 @@ class StateTracker:
 
     @classmethod
     def set_image_files(cls, image_files):
-        cls.all_image_files = image_files
-        return image_files
+        all_image_files.clear()
+        for image, content in image_files:
+            all_image_files[image] = content
+        return all_image_files
 
     @classmethod
     def get_image_files(cls):
-        return cls.all_image_files
+        return all_image_files
 
     @classmethod
     def has_image_files_loaded(cls):
-        return len(cls.all_image_files) > 0
+        return len(list(all_image_files.keys())) > 0
 
     @classmethod
     def set_caption_files(cls, caption_files):
-        cls.all_caption_files = caption_files
+        all_caption_files[:] = caption_files
+        return all_caption_files
 
     @classmethod
     def get_caption_files(cls):
@@ -55,7 +61,7 @@ class StateTracker:
 
     @classmethod
     def has_caption_files_loaded(cls):
-        return len(cls.all_caption_files) > 0
+        return len(list(all_caption_files.keys())) > 0
 
     @classmethod
     def set_data_backend(cls, data_backend):
