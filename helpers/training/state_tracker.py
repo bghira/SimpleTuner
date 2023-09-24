@@ -35,6 +35,7 @@ class StateTracker:
     @classmethod
     def set_image_files(cls, image_files):
         cls.all_image_files = image_files
+        return image_files
 
     @classmethod
     def get_image_files(cls):
