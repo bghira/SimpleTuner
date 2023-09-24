@@ -743,6 +743,10 @@ def main():
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
+    if accelerator.is_local_main_process:
+        vaecache.discover_all_files()
+    accelerator.wait_for_everyone()
+
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
         vaecache.process_buckets(bucket_manager=bucket_manager)
