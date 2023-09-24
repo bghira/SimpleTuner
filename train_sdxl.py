@@ -170,6 +170,7 @@ def main():
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
+    setup_state_tracking()
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
@@ -185,7 +186,6 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.DEBUG,
     )
-    generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
     if args.report_to == "wandb":
         if not is_wandb_available():
@@ -466,7 +466,6 @@ def main():
         accelerator=accelerator,
         model_type="sdxl",
     )
-    setup_state_tracking()
     StateTracker.set_embedcache(embed_cache)
     if (
         args.caption_dropout_probability is not None
