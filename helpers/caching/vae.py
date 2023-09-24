@@ -78,7 +78,7 @@ class VAECache:
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files()
-        existing_cache_files = StateTracker.get_cache_files()
+        existing_cache_files = StateTracker.get_vae_cache_files()
         logger.debug(f'discover_unprocessed_files found {len(all_image_files)} images from StateTracker')
         logger.debug(f'discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files')
         cache_filenames = {
