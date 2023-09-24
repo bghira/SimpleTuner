@@ -610,7 +610,7 @@ def main():
         accelerator.wait_for_everyone()
         logger.info(f"Discovered {len(all_captions)} captions.")
         embed_cache.split_cache_between_processes(all_captions)
-        embed_cache.compute_embeddings_for_sdxl_prompts()
+        embed_cache.compute_embeddings_for_sdxl_prompts(return_concat=False)
 
     (
         validation_prompts,
