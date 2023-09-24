@@ -53,18 +53,15 @@ class VAECache:
 
     def discover_all_files(self, directory):
         """Identify all files in a directory."""
-        all_image_files = {
-            os.path.join(subdir, file)
-            for subdir, _, files in StateTracker.get_image_files()
+        all_image_files = (
+            StateTracker.get_image_files()
             or StateTracker.set_image_files(
                 self.data_backend.list_files(
                     instance_data_root=self.instance_data_root,
                     str_pattern="*.[jJpP][pPnN][gG]",
                 )
             )
-            for file in files
-            if file.endswith((".png", ".jpg", ".jpeg"))
-        }
+        )
         StateTracker.set_image_files(all_image_files)
         return all_image_files
 
@@ -73,13 +70,11 @@ class VAECache:
         all_files = StateTracker.get_image_files()
         processed_files = {
             self._generate_filename(file)[1]
-            for subdir, _, files in all_files
-            for file in files
+            for file in all_files
         }
         unprocessed_files = {
             file
-            for _, _, files in all_files
-            for file in files
+            for file in all_files
             if self._generate_filename(file)[1] not in processed_files
         }
         return list(unprocessed_files)

@@ -68,10 +68,15 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files = StateTracker.get_image_files() or StateTracker.set_image_files(self.data_backend.list_files(
-            instance_data_root=self.instance_data_root,
-            str_pattern="*.[jJpP][pPnN][gG]",
-        ))
+        all_image_files = (
+            StateTracker.get_image_files()
+            or StateTracker.set_image_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.instance_data_root,
+                    str_pattern="*.[jJpP][pPnN][gG]",
+                )
+            )
+        )
         # Extract only the files from the data
 
         return [
