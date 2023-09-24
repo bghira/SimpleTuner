@@ -79,11 +79,11 @@ def compute_latents(pixel_values, filepaths):
     return torch.stack(latents)
 
 
-def compute_prompt_embeddings(captions, embed_cache):
+def compute_prompt_embeddings(captions):
     (
         prompt_embeds_all,
         add_text_embeds_all,
-    ) = embed_cache.compute_embeddings_for_sdxl_prompts(captions)
+    ) = StateTracker.get_embedcache().compute_embeddings_for_sdxl_prompts(captions)
     prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
     add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
     return prompt_embeds_all, add_text_embeds_all
@@ -123,17 +123,13 @@ def collate_fn(batch):
 
     # Initialize the VAE Cache if it doesn't exist
 
-    pixel_values, filepaths = extract_pixel_values_and_filepaths(
-        examples, StateTracker.get_vae_dtype()
-    )
+    pixel_values, filepaths = extract_pixel_values_and_filepaths(examples)
     latent_batch = compute_latents(pixel_values, filepaths)
     check_latent_shapes(latent_batch, filepaths)
 
     # Extract the captions from the examples.
     captions = [example["instance_prompt_text"] for example in examples]
-    prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
-        captions, StateTracker.get_embedcache()
-    )
+    prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
 
     batch_time_ids = gather_conditional_size_features(examples, latent_batch)
     logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
