@@ -27,6 +27,14 @@ from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.state_tracker import StateTracker
+from helpers.training.collate import (
+    extract_pixel_values_and_filepaths,
+    compute_latents,
+    compute_prompt_embeddings,
+    gather_conditional_size_features,
+    check_latent_shapes,
+    collate_fn,
+)
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.image_manipulation.brightness import (
@@ -95,10 +103,6 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
 from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version, deprecate, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-from torchvision.transforms import ToTensor
-
-# Convert PIL Image to PyTorch Tensor
-to_tensor = ToTensor()
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.20.0.dev0")
@@ -155,6 +159,7 @@ def compute_null_conditioning(
 
 def main():
     args = parse_args()
+    StateTracker.set_args(args)
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=logging_dir
@@ -413,127 +418,6 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
-    def compute_time_ids(original_size: tuple, target_size: tuple):
-        if original_size is None or target_size is None:
-            raise Exception(
-                f"Cannot continue, the original_size or target_size were not provided: {original_size}, {target_size}"
-            )
-        logger.debug(
-            f"Computing time ids for:"
-            f"\n-> original_size = {original_size}"
-            f"\n-> target_size = {target_size}"
-        )
-        # The dimensions of tensors are "transposed", as:
-        # (batch_size, height, width)
-        # An image would look like:
-        # (width, height)
-        # SDXL conditions are:
-        # [h, w, h, w, h, w]
-        original_width = original_size[0]
-        original_height = original_size[1]
-        target_width = int(target_size[2] * VAE_SCALING_FACTOR)
-        target_height = int(target_size[1] * VAE_SCALING_FACTOR)
-        final_target_size = (target_height, target_width)
-        if original_width is None:
-            raise ValueError("Original width must be specified.")
-        if original_height is None:
-            original_height = args.resolution
-        crops_coords_top_left = (
-            args.crops_coords_top_left_h,
-            args.crops_coords_top_left_w,
-        )
-        add_time_ids = list(
-            (original_height, original_width)
-            + crops_coords_top_left
-            + final_target_size
-        )
-        add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
-        logger.debug(
-            f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
-        )
-        return add_time_ids
-
-    def collate_fn(batch):
-        if len(batch) != 1:
-            raise ValueError(
-                "This trainer is not designed to handle multiple batches in a single collate."
-            )
-        examples = batch[0]
-        training_logger.debug(f"Examples: {examples}")
-        if StateTracker.tracking_luminance():
-            training_logger.debug(f"Computing luminance for input batch")
-            batch_luminance = calculate_batch_luminance(
-                [example["instance_images"] for example in examples]
-            )
-        # Initialize the VAE Cache if it doesn't exist
-        global vaecache
-        if "vaecache" not in globals():
-            vaecache = VAECache(
-                vae=vae,
-                accelerator=accelerator,
-                data_backend=data_backend,
-                resolution=args.resolution,
-                resolution_type=args.resolution_type,
-                delete_problematic_images=args.delete_problematic_images,
-                vae_batch_size=args.vae_batch_size,
-                write_batch_size=args.write_batch_size,
-            )
-
-        pixel_values = []
-        filepaths = []  # we will store the file paths here
-        for example in examples:
-            image_data = example["instance_images"]
-            width = image_data.width
-            height = image_data.height
-            pixel_values.append(
-                to_tensor(image_data).to(
-                    memory_format=torch.contiguous_format, dtype=vae_dtype
-                )
-            )
-            filepaths.append(example["instance_images_path"])  # store the file path
-
-        # Compute the VAE embeddings for individual images
-        latents = [
-            vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
-        ]
-        latent_batch = torch.stack(latents)
-
-        # Extract the captions from the examples.
-        captions = [example["instance_prompt_text"] for example in examples]
-
-        # Compute the embeddings using the captions.
-        (
-            prompt_embeds_all,
-            add_text_embeds_all,
-        ) = embed_cache.compute_embeddings_for_sdxl_prompts(captions)
-        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
-        add_text_embeds_all = torch.concat(
-            [add_text_embeds_all for _ in range(1)], dim=0
-        )
-
-        # We gather the conditional size features.
-        batch_time_ids_list = [
-            compute_time_ids(
-                original_size=example["instance_images"].size,
-                target_size=latents[
-                    idx
-                ].shape,  # Using the spatial dimensions of the latent tensor
-            )
-            for idx, example in enumerate(examples)
-        ]
-        batch_time_ids = torch.stack(batch_time_ids_list, dim=0)
-        logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
-
-        result = {
-            "latent_batch": latent_batch,
-            "prompt_embeds": prompt_embeds_all,
-            "add_text_embeds": add_text_embeds_all,
-            "batch_time_ids": batch_time_ids,
-        }
-        if StateTracker.tracking_luminance():
-            result["luminance"] = batch_luminance
-        return result
-
     # Data loader
     logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
@@ -582,6 +466,7 @@ def main():
         accelerator=accelerator,
         model_type="sdxl",
     )
+    StateTracker.set_embedcache(embed_cache)
     if (
         args.caption_dropout_probability is not None
         and args.caption_dropout_probability > 0
@@ -855,6 +740,9 @@ def main():
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
     )
+    StateTracker.set_vaecache(vaecache)
+    StateTracker.set_vae_dtype(vae_dtype)
+    StateTracker.set_vae(vae)
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
         vaecache.process_buckets(bucket_manager=bucket_manager)
@@ -1296,14 +1184,16 @@ def main():
         unet = accelerator.unwrap_model(unet)
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
-        if vae is None:
-            vae = AutoencoderKL.from_pretrained(
-                vae_path,
-                subfolder="vae"
-                if args.pretrained_vae_model_name_or_path is None
-                else None,
-                revision=args.revision,
-                force_upcast=False,
+        if StateTracker.get_vae() is None:
+            StateTracker.set_vae(
+                AutoencoderKL.from_pretrained(
+                    vae_path,
+                    subfolder="vae"
+                    if args.pretrained_vae_model_name_or_path is None
+                    else None,
+                    revision=args.revision,
+                    force_upcast=False,
+                )
             )
         pipeline = StableDiffusionXLPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -1311,7 +1201,7 @@ def main():
             text_encoder_2=text_encoder_2,
             tokenizer=tokenizer_1,
             tokenizer_2=tokenizer_2,
-            vae=vae,
+            vae=StateTracker.get_vae(),
             unet=unet,
             revision=args.revision,
             add_watermarker=args.enable_watermark,

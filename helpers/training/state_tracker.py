@@ -7,6 +7,15 @@ class StateTracker:
     all_image_files = {}
     all_caption_files = []
 
+    # Backend entities for retrieval
+    data_backend = None
+    vaecache = None
+    embedcache = None
+    accelerator = None
+    vae = None
+    vae_dtype = None
+    args = None
+
     @classmethod
     def start_training(cls):
         cls.has_training_started = True
@@ -46,3 +55,59 @@ class StateTracker:
     @classmethod
     def has_caption_files_loaded(cls):
         return len(cls.all_caption_files) > 0
+
+    @classmethod
+    def set_data_backend(cls, data_backend):
+        cls.data_backend = data_backend
+
+    @classmethod
+    def get_data_backend(cls):
+        return cls.data_backend
+
+    @classmethod
+    def set_accelerator(cls, accelerator):
+        cls.accelerator = accelerator
+
+    @classmethod
+    def get_accelerator(cls):
+        return cls.accelerator
+
+    @classmethod
+    def set_vae(cls, vae):
+        cls.vae = vae
+
+    @classmethod
+    def get_vae(cls):
+        return cls.vae
+
+    @classmethod
+    def set_vae_dtype(cls, vae_dtype):
+        cls.vae_dtype = vae_dtype
+
+    @classmethod
+    def get_vae_dtype(cls):
+        return cls.vae_dtype
+
+    @classmethod
+    def set_args(cls, args):
+        cls.args = args
+
+    @classmethod
+    def get_args(cls):
+        return cls.args
+
+    @classmethod
+    def set_vaecache(cls, vaecache):
+        cls.vaecache = vaecache
+
+    @classmethod
+    def get_vaecache(cls):
+        return cls.vaecache
+
+    @classmethod
+    def set_embedcache(cls, embedcache):
+        cls.embedcache = embedcache
+
+    @classmethod
+    def get_embedcache(cls):
+        return cls.embedcache
