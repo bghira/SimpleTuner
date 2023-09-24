@@ -76,6 +76,12 @@ def compute_latents(pixel_values, filepaths):
         StateTracker.get_vaecache().encode_image(pv, fp)
         for pv, fp in zip(pixel_values, filepaths)
     ]
+    test_shape = latents[0].shape
+    for idx, latent in latents:
+        if latent.shape != test_shape:
+            raise ValueError(
+                f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+            )
     return torch.stack(latents)
 
 
@@ -120,8 +126,6 @@ def collate_fn(batch):
         batch_luminance = calculate_batch_luminance(
             [example["instance_images"] for example in examples]
         )
-
-    # Initialize the VAE Cache if it doesn't exist
 
     pixel_values, filepaths = extract_pixel_values_and_filepaths(examples)
     latent_batch = compute_latents(pixel_values, filepaths)
