@@ -283,13 +283,10 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        all_image_files_data = StateTracker.get_image_files()
+        existing_files = StateTracker.get_image_files()
         logger.debug(
             f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
         )
-        existing_files = {
-            file for _, _, files in all_image_files_data for file in files
-        }
 
         # Update bucket indices to remove entries that no longer exist
         logger.debug(f"{rank} Finally, we can update the bucket index")
