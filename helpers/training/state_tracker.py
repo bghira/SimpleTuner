@@ -38,8 +38,8 @@ class StateTracker:
     @classmethod
     def set_image_files(cls, image_files):
         all_image_files.clear()
-        for image, content in image_files:
-            all_image_files[image] = content
+        for image in image_files:
+            all_image_files[image] = False
         return all_image_files
 
     @classmethod
