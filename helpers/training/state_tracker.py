@@ -70,6 +70,7 @@ class StateTracker:
                 cls.all_image_files[image] = False
         cls._save_to_disk("all_image_files", cls.all_image_files)
         logger.debug(f"set_image_files found {len(cls.all_image_files)} images.")
+        return cls.all_image_files
 
     @classmethod
     def get_image_files(cls):
