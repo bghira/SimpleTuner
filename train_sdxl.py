@@ -164,6 +164,7 @@ def main():
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
+    StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
@@ -243,7 +244,7 @@ def main():
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
 
-        data_backend = LocalDataBackend()
+        data_backend = LocalDataBackend(accelerator=accelerator)
     elif args.data_backend == "aws":
         from helpers.data_backend.aws import S3DataBackend
 
@@ -355,7 +356,7 @@ def main():
         logger.warning(
             f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
-
+    StateTracker.set_weight_dtype(weight_dtype)
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,

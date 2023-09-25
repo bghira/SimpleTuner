@@ -17,6 +17,7 @@ def compute_time_ids(
     target_size: tuple,
     weight_dtype,
     vae_downscale_factor: int = 8,
+    crop_coordinates: list = None
 ):
     if original_size is None or target_size is None:
         raise Exception(
@@ -42,12 +43,13 @@ def compute_time_ids(
         raise ValueError("Original width must be specified.")
     if original_height is None:
         raise ValueError("Original height must be specified.")
-    crops_coords_top_left = (
-        StateTracker.get_args().crops_coords_top_left_h,
-        StateTracker.get_args().crops_coords_top_left_w,
-    )
+    if crop_coordinates is None:
+        crop_coordinates = (
+            StateTracker.get_args().crops_coords_top_left_h,
+            StateTracker.get_args().crops_coords_top_left_w,
+        )
     add_time_ids = list(
-        (original_height, original_width) + crops_coords_top_left + final_target_size
+        (original_height, original_width) + tuple(crop_coordinates) + final_target_size
     )
     add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
     logger.debug(
@@ -79,6 +81,7 @@ def compute_latents(pixel_values, filepaths):
     test_shape = latents[0].shape
     idx = 0
     for latent in latents:
+        latent.to("cpu")
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
@@ -97,12 +100,13 @@ def compute_prompt_embeddings(captions):
     return prompt_embeds_all, add_text_embeds_all
 
 
-def gather_conditional_size_features(examples, latents):
+def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = [
         compute_time_ids(
             original_size=example["instance_images"].size,
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
+            weight_dtype=weight_dtype
         )
         for idx, example in enumerate(examples)
     ]
@@ -138,7 +142,7 @@ def collate_fn(batch):
     captions = [example["instance_prompt_text"] for example in examples]
     prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
 
-    batch_time_ids = gather_conditional_size_features(examples, latent_batch)
+    batch_time_ids = gather_conditional_size_features(examples, latent_batch, StateTracker.get_weight_dtype())
     logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
     result = {
