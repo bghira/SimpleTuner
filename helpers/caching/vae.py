@@ -98,14 +98,10 @@ class VAECache:
         Return a set of filenames (without the .pt extension) that have been processed.
         """
         # Extract array of tuple into just, an array of files:
-        pt_files = [
-            f
-            for _, _, files in self.data_backend.list_files("*.pt", self.cache_dir)
-            for f in files
-        ]
+        pt_files = StateTracker.get_vae_cache_files()
         logging.debug(f"Found {len(pt_files)} cached files in {self.cache_dir}")
         # Extract just the base filename without the extension
-        return {os.path.splitext(os.path.basename(f))[0] for f in pt_files}
+        return {os.path.splitext(f)[0] for f in pt_files}
 
     def encode_image(self, image, filepath):
         """
