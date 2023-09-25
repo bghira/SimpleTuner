@@ -94,9 +94,8 @@ class MultiAspectDataset(Dataset):
         for image_path in image_tuple:
             example = {"instance_images_path": image_path}
             logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
-            basename = Path(image_path).name
             crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
-                basename, "crop_coordinates"
+                image_path, "crop_coordinates"
             )
             if crop_coordinates is None and self.use_original_images:
                 logger.debug(f"Image {image_path} has no crop coordinates.")
