@@ -11,9 +11,9 @@ class StateTracker:
     # Class variables
     has_training_started = False
     calculate_luminance = False
-    all_image_files = {}
-    all_vae_cache_files = {}
-    all_caption_files = []
+    all_image_files = None
+    all_vae_cache_files = None
+    all_caption_files = None
 
     # Backend entities for retrieval
     data_backend = None
