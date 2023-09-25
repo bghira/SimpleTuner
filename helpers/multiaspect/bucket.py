@@ -132,6 +132,7 @@ class BucketManager:
         tqdm_queue,
         files,
         aspect_ratio_bucket_indices_queue,
+        metadata_updates_queue,
         existing_files_set,
         data_backend,
     ):
@@ -160,6 +161,7 @@ class BucketManager:
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+        metadata_updates_queue.put(local_metadata_updates)
 
     def compute_aspect_ratio_bucket_indices(self):
         """
