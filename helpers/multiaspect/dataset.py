@@ -46,7 +46,6 @@ class MultiAspectDataset(Dataset):
         tokenizer=None,
         aspect_ratio_buckets=[1.0, 1.5, 0.67, 0.75, 1.78],
         size=1024,
-        center_crop=False,
         print_names=False,
         use_captions=True,
         prepend_instance_prompt=False,
@@ -64,7 +63,6 @@ class MultiAspectDataset(Dataset):
         self.use_captions = use_captions
         self.size = size
         self.size_type = size_type
-        self.center_crop = center_crop
         self.tokenizer = tokenizer
         self.print_names = print_names
         self.debug_dataset_loader = debug_dataset_loader
@@ -96,6 +94,14 @@ class MultiAspectDataset(Dataset):
         for image_path in image_tuple:
             example = {"instance_images_path": image_path}
             logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
+            basename = Path(image_path).name
+            crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
+                basename, "crop_coordinates"
+            )
+            if crop_coordinates is None and self.use_original_images:
+                logger.debug(f"Image {image_path} has no crop coordinates.")
+                crop_coordinates = (0, 0)
+            example["crop_coordinates"] = crop_coordinates
             if self.print_names:
                 logger.info(f"Open image: {image_path}")
 

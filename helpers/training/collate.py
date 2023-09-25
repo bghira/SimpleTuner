@@ -102,6 +102,7 @@ def gather_conditional_size_features(examples, latents):
         compute_time_ids(
             original_size=example["instance_images"].size,
             target_size=latents[idx].shape,
+            crop_coordinates=example["crop_coordinates"],
         )
         for idx, example in enumerate(examples)
     ]
