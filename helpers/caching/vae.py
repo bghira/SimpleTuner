@@ -133,7 +133,7 @@ class VAECache:
         if not uncached_images and load_from_cache:
             # If all images are cached, simply load them
             latents = [self.load_from_cache(filename) for filename in full_filenames]
-        else:
+        elif len(uncached_images) > 0:
             # Only process images not found in cache
             with torch.no_grad():
                 processed_images = torch.stack(uncached_images).to(
@@ -154,7 +154,8 @@ class VAECache:
                 else:
                     latents.append(self.load_from_cache(full_filenames[i]))
                     cached_idx += 1
-
+        else:
+            return None
         return latents
 
     def split_cache_between_processes(self):
@@ -289,10 +290,11 @@ class VAECache:
                     latents_batch = self.encode_images(
                         vae_input_images, vae_input_filepaths, load_from_cache=False
                     )
-                    batch_data.extend(latents_batch)
-                    batch_filepaths.extend(
-                        [self._generate_filename(f)[0] for f in vae_input_filepaths]
-                    )
+                    if latents_batch is not None:
+                        batch_data.extend(latents_batch)
+                        batch_filepaths.extend(
+                            [self._generate_filename(f)[0] for f in vae_input_filepaths]
+                        )
                     vae_input_images, vae_input_filepaths = [], []
 
                 # If write batch is ready
