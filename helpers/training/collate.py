@@ -100,12 +100,13 @@ def compute_prompt_embeddings(captions):
     return prompt_embeds_all, add_text_embeds_all
 
 
-def gather_conditional_size_features(examples, latents):
+def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = [
         compute_time_ids(
             original_size=example["instance_images"].size,
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
+            weight_dtype=weight_dtype
         )
         for idx, example in enumerate(examples)
     ]
@@ -141,7 +142,7 @@ def collate_fn(batch):
     captions = [example["instance_prompt_text"] for example in examples]
     prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
 
-    batch_time_ids = gather_conditional_size_features(examples, latent_batch)
+    batch_time_ids = gather_conditional_size_features(examples, latent_batch, StateTracker.get_weight_dtype())
     logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
     result = {

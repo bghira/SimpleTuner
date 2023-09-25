@@ -22,6 +22,7 @@ class StateTracker:
     accelerator = None
     vae = None
     vae_dtype = None
+    weight_dtype = None
     args = None
 
     @classmethod
@@ -156,6 +157,15 @@ class StateTracker:
     @classmethod
     def get_vae_dtype(cls):
         return cls.vae_dtype
+
+    @classmethod
+    def set_weight_dtype(cls, weight_dtype):
+        cls.weight_dtype = weight_dtype
+
+    @classmethod
+    def get_weight_dtype(cls):
+        return cls.weight_dtype
+
 
     @classmethod
     def set_args(cls, args):

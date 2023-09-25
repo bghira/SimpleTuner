@@ -356,7 +356,7 @@ def main():
         logger.warning(
             f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
-
+    StateTracker.set_weight_dtype(weight_dtype)
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
