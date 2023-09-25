@@ -110,7 +110,7 @@ class VAECache:
         """
         return self.encode_images([image], [filepath])[0]
 
-    def encode_images(self, images, filepaths):
+    def encode_images(self, images, filepaths, load_from_cache=True):
         """
         Encode a batch of input images. Images must be the same dimension.
         """
@@ -130,7 +130,7 @@ class VAECache:
         ]
         uncached_images = [images[i] for i in uncached_image_indices]
 
-        if not uncached_images:
+        if not uncached_images and load_from_cache:
             # If all images are cached, simply load them
             latents = [self.load_from_cache(filename) for filename in full_filenames]
         else:
@@ -287,7 +287,7 @@ class VAECache:
                         f"Reached a VAE batch size of {self.vae_batch_size} pixel groups, so we will now encode them into latents."
                     )
                     latents_batch = self.encode_images(
-                        vae_input_images, vae_input_filepaths
+                        vae_input_images, vae_input_filepaths, load_from_cache=False
                     )
                     batch_data.extend(latents_batch)
                     batch_filepaths.extend(
