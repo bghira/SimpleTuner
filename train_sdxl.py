@@ -27,14 +27,7 @@ from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.state_tracker import StateTracker
-from helpers.training.collate import (
-    extract_pixel_values_and_filepaths,
-    compute_latents,
-    compute_prompt_embeddings,
-    gather_conditional_size_features,
-    check_latent_shapes,
-    collate_fn,
-)
+from helpers.training.collate import collate_fn
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.image_manipulation.brightness import (
@@ -298,6 +291,7 @@ def main():
             )
         logger.debug("Refreshed buckets and computed aspect ratios.")
     accelerator.wait_for_everyone()
+    bucket_manager.reload_cache()
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
@@ -427,7 +421,6 @@ def main():
         accelerator=accelerator,
         size=args.resolution,
         size_type=args.resolution_type,
-        center_crop=args.center_crop,
         print_names=args.print_filenames or False,
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
