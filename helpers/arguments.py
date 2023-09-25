@@ -396,7 +396,8 @@ def parse_args(input_args=None):
         action="store_true",
         help=(
             "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
-            " cropped. The images will be resized to the resolution first before cropping."
+            " cropped. The images will be resized to the resolution first before cropping. If training SDXL,"
+            " the VAE cache and aspect bucket cache will need to be (re)built so they include crop coordinates."
         ),
     )
     parser.add_argument(

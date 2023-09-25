@@ -4,6 +4,7 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 import logging, os
 from math import sqrt
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
@@ -20,6 +21,19 @@ class MultiaspectImage:
         )
 
     @staticmethod
+    def _crop_center(img: Image, target_width: int, target_height: int) -> Image:
+        """
+        Crop img to the target width and height, retaining the center of the img.
+        """
+        width, height = img.size
+        left = (width - target_width) / 2
+        top = (height - target_height) / 2
+        right = (width + target_width) / 2
+        bottom = (height + target_height) / 2
+
+        return img.crop((left, top, right, bottom)), (left, top)
+
+    @staticmethod
     def process_for_bucket(
         data_backend,
         bucket_manager,
@@ -34,9 +48,10 @@ class MultiaspectImage:
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
                 image_metadata["original_size"] = image.size
-                image = MultiaspectImage.prepare_image(
+                image, crop_coordinates = MultiaspectImage.prepare_image(
                     image, bucket_manager.resolution, bucket_manager.resolution_type
                 )
+                image_metadata["crop_coordinates"] = crop_coordinates
                 image_metadata["target_size"] = image.size
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
@@ -72,7 +87,7 @@ class MultiaspectImage:
             Exception: _description_
 
         Returns:
-            _type_: _description_
+            _type_: (Image, (cLeft, cTop))
         """
         if not hasattr(image, "convert"):
             raise Exception(
@@ -85,13 +100,33 @@ class MultiaspectImage:
         logger.debug(f"Image size before EXIF transform: {image.size}")
         image = exif_transpose(image)
         logger.debug(f"Image size after EXIF transform: {image.size}")
+        original_width, original_height = image.size
         if resolution_type == "pixel":
-            image = MultiaspectImage.resize_by_pixel_edge(image, resolution)
+            (
+                target_width,
+                target_height,
+            ) = MultiaspectImage.calculate_new_size_by_pixel_edge(
+                original_width, original_height, resolution
+            )
         elif resolution_type == "area":
-            image = MultiaspectImage.resize_by_pixel_area(image, resolution)
+            (
+                target_width,
+                target_height,
+            ) = MultiaspectImage.calculate_new_size_by_pixel_area(
+                original_width, original_height, resolution
+            )
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
-        return image
+
+        crop_coordinates = (0, 0)
+        if StateTracker.get_args().center_crop:
+            image, crop_coordinates = MultiaspectImage._crop_center(
+                image, target_width, target_height
+            )
+        else:
+            image = MultiaspectImage._resize_image(image, target_width, target_height)
+
+        return image, crop_coordinates
 
     @staticmethod
     def _round_to_nearest_multiple(value, multiple):
@@ -118,8 +153,7 @@ class MultiaspectImage:
         return input_image.resize((target_width, target_height), resample=Image.BICUBIC)
 
     @staticmethod
-    def resize_by_pixel_edge(input_image: Image, resolution: float) -> Image:
-        W, H = input_image.size
+    def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: float):
         aspect_ratio = W / H
         if W < H:
             W = resolution
@@ -133,11 +167,10 @@ class MultiaspectImage:
             )
         else:
             W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
-        return MultiaspectImage._resize_image(input_image, int(W), int(H))
+        return int(W), int(H)
 
     @staticmethod
-    def resize_by_pixel_area(input_image: Image, megapixels: float) -> Image:
-        W, H = input_image.size
+    def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float):
         aspect_ratio = W / H
         total_pixels = megapixels * 1e6  # Convert megapixels to pixels
 
@@ -148,4 +181,4 @@ class MultiaspectImage:
         W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 64)
         H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 64)
 
-        return MultiaspectImage._resize_image(input_image, W_new, H_new)
+        return W_new, H_new
