@@ -86,7 +86,7 @@ class VAECache:
             for file in all_image_files
         }
         unprocessed_files = {
-            file
+            f"{os.splitext(file)[0]}.png"
             for file in cache_filenames
             if file not in existing_cache_files
         }
