@@ -65,6 +65,8 @@ class StateTracker:
     def set_image_files(cls, raw_file_list):
         if cls.all_image_files is not None:
             cls.all_image_files.clear()
+        else:
+            cls.all_image_files = {}
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
@@ -83,6 +85,8 @@ class StateTracker:
     def set_vae_cache_files(cls, raw_file_list):
         if cls.all_vae_cache_files is not None:
             cls.all_vae_cache_files.clear()
+        else:
+            cls.all_vae_cache_files = {}
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
