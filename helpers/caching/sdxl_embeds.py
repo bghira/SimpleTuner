@@ -31,7 +31,7 @@ class TextEmbeddingCache:
         torch.save(embeddings, filename)
 
     def load_from_cache(self, filename):
-        return torch.load(filename)
+        return torch.load(filename, map_location=self.accelerator.device)
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
         input_tokens = tokenizer(
