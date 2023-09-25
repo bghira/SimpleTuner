@@ -164,6 +164,7 @@ def main():
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
+    StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
