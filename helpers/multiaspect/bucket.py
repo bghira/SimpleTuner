@@ -40,7 +40,7 @@ class BucketManager:
         # Initialize a multiprocessing.Manager dict for seen_images
         manager = Manager()
         self.seen_images = manager.dict()
-        self._load_cache()
+        self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
 
@@ -84,7 +84,7 @@ class BucketManager:
             if str(file) not in self.instance_images_path
         ]
 
-    def _load_cache(self):
+    def reload_cache(self):
         """
         Load cache data from file.
 
@@ -132,6 +132,7 @@ class BucketManager:
         tqdm_queue,
         files,
         aspect_ratio_bucket_indices_queue,
+        metadata_updates_queue,
         existing_files_set,
         data_backend,
     ):
@@ -160,6 +161,7 @@ class BucketManager:
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+        metadata_updates_queue.put(local_metadata_updates)
 
     def compute_aspect_ratio_bucket_indices(self):
         """

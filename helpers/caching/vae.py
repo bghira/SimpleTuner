@@ -72,19 +72,20 @@ class VAECache:
                 )
             )
         )
-        logger.debug(f'VAECache discover_all_files found {len(all_image_files)} images')
+        logger.debug(f"VAECache discover_all_files found {len(all_image_files)} images")
         return all_image_files
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files()
         existing_cache_files = StateTracker.get_vae_cache_files()
-        logger.debug(f'discover_unprocessed_files found {len(all_image_files)} images from StateTracker')
-        logger.debug(f'discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files')
-        cache_filenames = {
-            self._generate_filename(file)[1]
-            for file in all_image_files
-        }
+        logger.debug(
+            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker"
+        )
+        logger.debug(
+            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files"
+        )
+        cache_filenames = {self._generate_filename(file)[1] for file in all_image_files}
         unprocessed_files = {
             f"{os.path.splitext(file)[0]}.png"
             for file in cache_filenames
@@ -175,7 +176,7 @@ class VAECache:
 
         try:
             image = self.data_backend.read_image(filepath)
-            image = MultiaspectImage.prepare_image(
+            image, crop_coordinates = MultiaspectImage.prepare_image(
                 image, self.resolution, self.resolution_type
             )
             pixel_values = self.transform(image).to(
@@ -226,7 +227,9 @@ class VAECache:
                 for f in aspect_bucket_cache[bucket]
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
             ]
-            logger.debug(f'Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files')
+            logger.debug(
+                f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
+            )
             if len(relevant_files) == 0:
                 continue
 
@@ -243,14 +246,20 @@ class VAECache:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
-                test_filepath = f"{os.path.splitext(self._generate_filename(filepath)[1])[0]}.png"
+                test_filepath = (
+                    f"{os.path.splitext(self._generate_filename(filepath)[1])[0]}.png"
+                )
                 if test_filepath not in self.local_unprocessed_files:
-                    logger.debug(f'Skipping {test_filepath} because it is not in local unprocessed files')
+                    logger.debug(
+                        f"Skipping {test_filepath} because it is not in local unprocessed files"
+                    )
                     continue
                 try:
-                    logger.debug(f'Processing {filepath} because it is in local unprocessed files')
+                    logger.debug(
+                        f"Processing {filepath} because it is in local unprocessed files"
+                    )
                     image = self.data_backend.read_image(filepath)
-                    image = MultiaspectImage.prepare_image(
+                    image, crop_coordinates = MultiaspectImage.prepare_image(
                         image, self.resolution, self.resolution_type
                     )
                     aspect_ratio = float(round(image.width / image.height, 2))
