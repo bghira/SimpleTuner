@@ -311,10 +311,11 @@ class VAECache:
                 latents_batch = self.encode_images(
                     vae_input_images, vae_input_filepaths, load_from_cache=False
                 )
-                batch_data.extend(latents_batch)
-                batch_filepaths.extend(
-                    [self._generate_filename(f)[0] for f in vae_input_filepaths]
-                )
+                if latents_batch is not None:
+                    batch_data.extend(latents_batch)
+                    batch_filepaths.extend(
+                        [self._generate_filename(f)[0] for f in vae_input_filepaths]
+                    )
                 vae_input_images, vae_input_filepaths = [], []
 
             # Write the remaining batches
