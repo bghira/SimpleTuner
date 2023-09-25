@@ -40,7 +40,7 @@ class BucketManager:
         # Initialize a multiprocessing.Manager dict for seen_images
         manager = Manager()
         self.seen_images = manager.dict()
-        self._load_cache()
+        self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
 
@@ -84,7 +84,7 @@ class BucketManager:
             if str(file) not in self.instance_images_path
         ]
 
-    def _load_cache(self):
+    def reload_cache(self):
         """
         Load cache data from file.
 

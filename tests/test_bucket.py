@@ -69,7 +69,7 @@ class TestBucketManager(unittest.TestCase):
         with patch.object(
             self.data_backend, "read", return_value=json.dumps(valid_cache_data)
         ):
-            self.bucket_manager._load_cache()
+            self.bucket_manager.reload_cache()
         self.assertEqual(
             self.bucket_manager.aspect_ratio_bucket_indices,
             {"1.0": ["image1", "image2"]},
@@ -79,7 +79,7 @@ class TestBucketManager(unittest.TestCase):
         invalid_cache_data = "this is not valid json"
         with patch.object(self.data_backend, "read", return_value=invalid_cache_data):
             with self.assertLogs("BucketManager", level="WARNING"):
-                self.bucket_manager._load_cache()
+                self.bucket_manager.reload_cache()
 
     def test_save_cache(self):
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
