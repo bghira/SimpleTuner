@@ -244,7 +244,7 @@ class VAECache:
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
                 if f"{os.path.splitext(os.path.basename(filepath))[1]}.png" not in self.local_unprocessed_files:
-                    logger.debug(f'Skipping {basename} because it is not in local unprocessed files')
+                    logger.debug(f'Skipping {filepath} because it is not in local unprocessed files')
                     continue
                 try:
                     image = self.data_backend.read_image(filepath)
