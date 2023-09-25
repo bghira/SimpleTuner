@@ -17,6 +17,7 @@ def compute_time_ids(
     target_size: tuple,
     weight_dtype,
     vae_downscale_factor: int = 8,
+    crop_coordinates: list = None
 ):
     if original_size is None or target_size is None:
         raise Exception(
@@ -42,12 +43,13 @@ def compute_time_ids(
         raise ValueError("Original width must be specified.")
     if original_height is None:
         raise ValueError("Original height must be specified.")
-    crops_coords_top_left = (
-        StateTracker.get_args().crops_coords_top_left_h,
-        StateTracker.get_args().crops_coords_top_left_w,
-    )
+    if crop_coordinates is None:
+        crop_coordinates = (
+            StateTracker.get_args().crops_coords_top_left_h,
+            StateTracker.get_args().crops_coords_top_left_w,
+        )
     add_time_ids = list(
-        (original_height, original_width) + crops_coords_top_left + final_target_size
+        (original_height, original_width) + tuple(crop_coordinates) + final_target_size
     )
     add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
     logger.debug(
