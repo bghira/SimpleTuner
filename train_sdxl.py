@@ -244,7 +244,7 @@ def main():
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
 
-        data_backend = LocalDataBackend()
+        data_backend = LocalDataBackend(accelerator=accelerator)
     elif args.data_backend == "aws":
         from helpers.data_backend.aws import S3DataBackend
 
