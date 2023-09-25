@@ -26,6 +26,7 @@ class MultiaspectImage:
         image_path_str,
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 2,
+        metadata_updates=None,
     ):
         try:
             image_metadata = {}
@@ -47,10 +48,9 @@ class MultiaspectImage:
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
             aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
-            # Write image metadata to list without updating json
-            bucket_manager.set_metadata_by_filepath(
-                filepath=image_path_str, metadata=image_metadata, update_json=False
-            )
+            # Instead of directly updating, just fill the provided dictionary
+            if metadata_updates is not None:
+                metadata_updates[image_path_str] = image_metadata
         except Exception as e:
             import traceback
 

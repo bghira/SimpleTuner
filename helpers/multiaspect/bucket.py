@@ -148,6 +148,7 @@ class BucketManager:
             dict: The bucket indices.
         """
         local_aspect_ratio_bucket_indices = {}
+        local_metadata_updates = {}
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
@@ -155,6 +156,7 @@ class BucketManager:
                     self,
                     file,
                     local_aspect_ratio_bucket_indices,
+                    metadata_updates=local_metadata_updates,
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
@@ -178,6 +180,7 @@ class BucketManager:
         num_cpus = 8  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
 
+        metadata_updates_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
@@ -189,6 +192,7 @@ class BucketManager:
                     tqdm_queue,
                     file_shard,
                     aspect_ratio_bucket_indices_queue,
+                    metadata_updates_queue,
                     existing_files_set,
                     self.data_backend,
                 ),
@@ -210,6 +214,13 @@ class BucketManager:
                     for key, value in aspect_ratio_bucket_indices_update.items():
                         self.aspect_ratio_bucket_indices.setdefault(key, []).extend(
                             value
+                        )
+                # Now, pull metadata updates from the queue
+                while not metadata_updates_queue.empty():
+                    metadata_update = metadata_updates_queue.get()
+                    for filepath, meta in metadata_update.items():
+                        self.set_metadata_by_filepath(
+                            filepath=filepath, metadata=meta, update_json=False
                         )
 
         for worker in workers:
