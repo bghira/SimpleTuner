@@ -53,7 +53,7 @@ class StateTracker:
         if cache_path.exists():
             with cache_path.open("r") as f:
                 return json.load(f)
-        return {}
+        return None
 
     @classmethod
     def _save_to_disk(cls, cache_name, data):
