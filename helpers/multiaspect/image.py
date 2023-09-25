@@ -118,12 +118,12 @@ class MultiaspectImage:
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
-        crop_coordinates = (0, 0)
         if StateTracker.get_args().center_crop:
             image, crop_coordinates = MultiaspectImage._crop_center(
                 image, target_width, target_height
             )
         else:
+            crop_coordinates = (0, 0)
             image = MultiaspectImage._resize_image(image, target_width, target_height)
 
         return image, crop_coordinates
