@@ -79,7 +79,7 @@ def compute_latents(pixel_values, filepaths):
     test_shape = latents[0].shape
     idx = 0
     for latent in latents:
-        latent.to(StateTracker.get_accelerator().device)
+        latent.to("cpu")
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
