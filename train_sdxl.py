@@ -1041,6 +1041,11 @@ def main():
                     if noise_scheduler.config.prediction_type == "v_prediction":
                         mse_loss_weights = mse_loss_weights + 1
 
+                    # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
+                    # When we run this, the MSE loss weights for the zero-sigma timestep are set unconditionally to 1.
+                    # We want this sample to be fully considered.
+                    mse_loss_weights[snr == 0] = 1.0
+
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
