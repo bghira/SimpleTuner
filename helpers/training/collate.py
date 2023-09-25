@@ -84,7 +84,7 @@ def compute_latents(pixel_values, filepaths):
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
         idx += 1
-    return torch.stack(latents)
+    return torch.stack(latents.to(StateTracker.get_accelerator().device))
 
 
 def compute_prompt_embeddings(captions):
