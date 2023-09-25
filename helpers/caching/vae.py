@@ -230,6 +230,7 @@ class VAECache:
                 for f in aspect_bucket_cache[bucket]
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
             ]
+            logger.debug(f'Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files')
             if len(relevant_files) == 0:
                 continue
 
