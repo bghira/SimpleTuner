@@ -1042,8 +1042,8 @@ def main():
                         mse_loss_weights = mse_loss_weights + 1
 
                     # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
-                    # When we run this, the MSE loss weights for the zero-sigma timestep are set unconditionally to 1.
-                    # We want this sample to be fully considered.
+                    # When we run this, the MSE loss weights for this timestep is set unconditionally to 1.
+                    # If we do not run this, the loss value will go to NaN almost immediately, usually within one step.
                     mse_loss_weights[snr == 0] = 1.0
 
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
