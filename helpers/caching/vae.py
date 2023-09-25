@@ -309,7 +309,7 @@ class VAECache:
             # Handle remainders after processing the bucket
             if vae_input_images:  # If there are images left to be encoded
                 latents_batch = self.encode_images(
-                    vae_input_images, vae_input_filepaths
+                    vae_input_images, vae_input_filepaths, load_from_cache=False
                 )
                 batch_data.extend(latents_batch)
                 batch_filepaths.extend(
