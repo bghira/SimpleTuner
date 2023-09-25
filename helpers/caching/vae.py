@@ -247,6 +247,7 @@ class VAECache:
                     logger.debug(f'Skipping {filepath} because it is not in local unprocessed files')
                     continue
                 try:
+                    logger.debug(f'Processing {filepath} because it is in local unprocessed files')
                     image = self.data_backend.read_image(filepath)
                     image = MultiaspectImage.prepare_image(
                         image, self.resolution, self.resolution_type
