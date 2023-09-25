@@ -46,7 +46,10 @@ class StateTracker:
         for cache_name in ["all_image_files", "all_vae_cache_files"]:
             cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
             if cache_path.exists():
-                cache_path.unlink()
+                try:
+                    cache_path.unlink()
+                except:
+                    pass
 
     @classmethod
     def _load_from_disk(cls, cache_name):
@@ -165,7 +168,6 @@ class StateTracker:
     @classmethod
     def get_weight_dtype(cls):
         return cls.weight_dtype
-
 
     @classmethod
     def set_args(cls, args):
