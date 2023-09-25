@@ -41,6 +41,13 @@ class StateTracker:
         return cls.calculate_luminance
 
     @classmethod
+    def delete_cache_files(cls):
+        for cache_name in ["all_image_files", "all_vae_cache_files"]:
+            cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+            if cache_path.exists():
+                cache_path.unlink()
+
+    @classmethod
     def _load_from_disk(cls, cache_name):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         if cache_path.exists():
@@ -63,6 +70,7 @@ class StateTracker:
                 cls.all_image_files[image] = False
         cls._save_to_disk("all_image_files", cls.all_image_files)
         logger.debug(f"set_image_files found {len(cls.all_image_files)} images.")
+        return cls.all_image_files
 
     @classmethod
     def get_image_files(cls):

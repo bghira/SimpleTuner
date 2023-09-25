@@ -160,6 +160,7 @@ def compute_null_conditioning(
 def main():
     args = parse_args()
     StateTracker.set_args(args)
+    StateTracker.delete_cache_files()
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=logging_dir
@@ -742,7 +743,7 @@ def main():
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    
+
     if accelerator.is_local_main_process:
         vaecache.discover_all_files()
     accelerator.wait_for_everyone()
