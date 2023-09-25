@@ -7,6 +7,7 @@ from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import _get_rank as get_rank
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -50,20 +51,46 @@ class VAECache:
     def load_from_cache(self, filename):
         return self.data_backend.torch_load(filename)
 
-    def discover_unprocessed_files(self, directory):
+    def discover_all_files(self, directory: str = None):
+        """Identify all files in a directory."""
+        all_image_files = (
+            StateTracker.get_image_files()
+            or StateTracker.set_image_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.instance_data_root,
+                    str_pattern="*.[jJpP][pPnN][gG]",
+                )
+            )
+        )
+        # This isn't returned, because we merely check if it's stored, or, store it.
+        (
+            StateTracker.get_vae_cache_files()
+            or StateTracker.set_vae_cache_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.cache_dir,
+                    str_pattern="*.pt",
+                )
+            )
+        )
+        logger.debug(f'VAECache discover_all_files found {len(all_image_files)} images')
+        return all_image_files
+
+    def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
-        all_files = {
-            os.path.join(subdir, file)
-            for subdir, _, files in StateTracker.get_image_files()
-            for file in files
-            if file.endswith((".png", ".jpg", ".jpeg"))
+        all_image_files = StateTracker.get_image_files()
+        existing_cache_files = StateTracker.get_vae_cache_files()
+        logger.debug(f'discover_unprocessed_files found {len(all_image_files)} images from StateTracker')
+        logger.debug(f'discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files')
+        cache_filenames = {
+            self._generate_filename(file)[1]
+            for file in all_image_files
         }
-        processed_files = {self._generate_filename(file) for file in all_files}
         unprocessed_files = {
-            file
-            for file in all_files
-            if self._generate_filename(file) not in processed_files
+            f"{os.path.splitext(file)[0]}.png"
+            for file in cache_filenames
+            if file not in existing_cache_files
         }
+
         return list(unprocessed_files)
 
     def _list_cached_images(self):
@@ -71,16 +98,10 @@ class VAECache:
         Return a set of filenames (without the .pt extension) that have been processed.
         """
         # Extract array of tuple into just, an array of files:
-        pt_files = [
-            f
-            for _, _, files in self.data_backend.list_files("*.pt", self.cache_dir)
-            for f in files
-        ]
-        logging.debug(
-            f"Found {len(pt_files)} cached files in {self.cache_dir}: {pt_files}"
-        )
+        pt_files = StateTracker.get_vae_cache_files()
+        logging.debug(f"Found {len(pt_files)} cached files in {self.cache_dir}")
         # Extract just the base filename without the extension
-        return {os.path.splitext(os.path.basename(f))[0] for f in pt_files}
+        return {os.path.splitext(f)[0] for f in pt_files}
 
     def encode_image(self, image, filepath):
         """
@@ -142,6 +163,10 @@ class VAECache:
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
+        # Print the first 5 as a debug log:
+        logger.debug(
+            f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
+        )
 
     def _process_image(self, filepath):
         full_filename, base_filename = self._generate_filename(filepath)
@@ -201,24 +226,29 @@ class VAECache:
                 for f in aspect_bucket_cache[bucket]
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
             ]
+            logger.debug(f'Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files')
             if len(relevant_files) == 0:
                 continue
 
             for raw_filepath in tqdm(
-                relevant_files, desc=f"Processing bucket {bucket}"
+                relevant_files, desc=f"Processing bucket {bucket}", position=get_rank()
             ):
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
                 elif len(raw_filepath) == 2:
-                    idx, filepath = raw_filepath
+                    basename, filepath = raw_filepath
                 elif type(raw_filepath) == Path or type(raw_filepath) == numpy_str:
                     filepath = str(raw_filepath)
                 else:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
-
+                test_filepath = f"{os.path.splitext(self._generate_filename(filepath)[1])[0]}.png"
+                if test_filepath not in self.local_unprocessed_files:
+                    logger.debug(f'Skipping {test_filepath} because it is not in local unprocessed files')
+                    continue
                 try:
+                    logger.debug(f'Processing {filepath} because it is in local unprocessed files')
                     image = self.data_backend.read_image(filepath)
                     image = MultiaspectImage.prepare_image(
                         image, self.resolution, self.resolution_type

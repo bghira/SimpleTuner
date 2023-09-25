@@ -1,6 +1,7 @@
 import unittest, json
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from helpers.multiaspect.bucket import BucketManager
+from helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
 
 
@@ -16,8 +17,12 @@ class TestBucketManager(unittest.TestCase):
         self.instance_data_root = "/some/fake/path"
         self.cache_file = "/some/fake/cache.json"
         self.metadata_file = "/some/fake/metadata.json"
+        StateTracker.set_args(MagicMock())
         # Overload cache file with json:
-        with patch("pathlib.Path.exists", return_value=True):
+        with patch(
+            "helpers.training.state_tracker.StateTracker._save_to_disk",
+            return_value=True,
+        ), patch("pathlib.Path.exists", return_value=True):
             with self.assertLogs("BucketManager", level="WARNING"):
                 self.bucket_manager = BucketManager(
                     instance_data_root=self.instance_data_root,
@@ -38,10 +43,20 @@ class TestBucketManager(unittest.TestCase):
         self.assertEqual(len(self.bucket_manager), 3)
 
     def test_discover_new_files(self):
-        with patch.object(
-            self.data_backend,
-            "list_files",
-            return_value=[("root", ["dir"], ["image1.jpg", "image2.png"])],
+        with (
+            patch(
+                "helpers.training.state_tracker.StateTracker.get_image_files",
+                return_value=["image1.jpg", "image2.png"],
+            ),
+            patch(
+                "helpers.training.state_tracker.StateTracker._save_to_disk",
+                return_value=True,
+            ),
+            patch.object(
+                self.data_backend,
+                "list_files",
+                return_value=[("root", ["dir"], ["image1.jpg", "image2.png"])],
+            ),
         ):
             new_files = self.bucket_manager._discover_new_files()
             self.assertEqual(new_files, ["image1.jpg", "image2.png"])

@@ -1,7 +1,6 @@
 from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
-import accelerate, torch
 from pathlib import Path
 import json, logging, os
 from multiprocessing import Manager
@@ -22,7 +21,7 @@ class BucketManager:
         cache_file: str,
         metadata_file: str,
         data_backend: BaseDataBackend,
-        accelerator: accelerate.Accelerator,
+        accelerator,
         batch_size: int,
         resolution: float,
         resolution_type: str,
@@ -68,15 +67,16 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files_data = self.data_backend.list_files(
-            instance_data_root=self.instance_data_root,
-            str_pattern="*.[jJpP][pPnN][gG]",
+        all_image_files = (
+            StateTracker.get_image_files()
+            or StateTracker.set_image_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.instance_data_root,
+                    str_pattern="*.[jJpP][pPnN][gG]",
+                )
+            )
         )
-        StateTracker.set_image_files(all_image_files_data)
         # Extract only the files from the data
-        all_image_files = [
-            file for _, _, files in all_image_files_data for file in files
-        ]
 
         return [
             file
@@ -284,13 +284,10 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        all_image_files_data = StateTracker.get_image_files()
+        existing_files = StateTracker.get_image_files()
         logger.debug(
             f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
         )
-        existing_files = {
-            file for _, _, files in all_image_files_data for file in files
-        }
 
         # Update bucket indices to remove entries that no longer exist
         logger.debug(f"{rank} Finally, we can update the bucket index")
