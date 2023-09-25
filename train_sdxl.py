@@ -820,6 +820,7 @@ def main():
     resume_step = 0
     resume_global_step = 0
     scheduler_kwargs = {}
+    accelerator.wait_for_everyone()
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -888,6 +889,7 @@ def main():
     )
     progress_bar.set_description("Steps")
     progress_bar.update(global_step)
+    accelerator.wait_for_everyone()
 
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
