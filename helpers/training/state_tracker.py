@@ -53,7 +53,7 @@ class StateTracker:
         if cache_path.exists():
             with cache_path.open("r") as f:
                 return json.load(f)
-        return {}
+        return None
 
     @classmethod
     def _save_to_disk(cls, cache_name, data):
@@ -63,7 +63,10 @@ class StateTracker:
 
     @classmethod
     def set_image_files(cls, raw_file_list):
-        cls.all_image_files.clear()
+        if cls.all_image_files is not None:
+            cls.all_image_files.clear()
+        else:
+            cls.all_image_files = {}
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
@@ -80,7 +83,10 @@ class StateTracker:
 
     @classmethod
     def set_vae_cache_files(cls, raw_file_list):
-        cls.all_vae_cache_files.clear()
+        if cls.all_vae_cache_files is not None:
+            cls.all_vae_cache_files.clear()
+        else:
+            cls.all_vae_cache_files = {}
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
@@ -109,15 +115,15 @@ class StateTracker:
 
     @classmethod
     def has_image_files_loaded(cls):
-        return len(list(all_image_files.keys())) > 0
+        return len(list(cls.all_image_files.keys())) > 0
 
     @classmethod
     def has_vae_cache_files_loaded(cls):
-        return len(list(all_vae_cache_files.keys())) > 0
+        return len(list(cls.all_vae_cache_files.keys())) > 0
 
     @classmethod
     def has_caption_files_loaded(cls):
-        return len(list(all_caption_files.keys())) > 0
+        return len(list(cls.all_caption_files.keys())) > 0
 
     @classmethod
     def set_data_backend(cls, data_backend):

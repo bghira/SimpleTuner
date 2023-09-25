@@ -398,6 +398,7 @@ class BucketManager:
         Args:
             filepath (str): The complete path from the aspect bucket list.
         """
+        logger.debug(f"Setting metadata for {filepath} to {metadata}.")
         self.image_metadata[filepath] = metadata
         if update_json:
             self.save_image_metadata()

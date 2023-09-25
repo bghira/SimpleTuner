@@ -297,7 +297,7 @@ def main():
                 f"{rank_info()}Control is returned to the main training script.",
             )
         logger.debug("Refreshed buckets and computed aspect ratios.")
-
+    accelerator.wait_for_everyone()
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
