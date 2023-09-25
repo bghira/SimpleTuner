@@ -1,7 +1,6 @@
 from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
-import accelerate, torch
 from pathlib import Path
 import json, logging, os
 from multiprocessing import Manager
@@ -22,7 +21,7 @@ class BucketManager:
         cache_file: str,
         metadata_file: str,
         data_backend: BaseDataBackend,
-        accelerator: accelerate.Accelerator,
+        accelerator,
         batch_size: int,
         resolution: float,
         resolution_type: str,
