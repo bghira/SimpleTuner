@@ -17,7 +17,7 @@ def compute_time_ids(
     target_size: tuple,
     weight_dtype,
     vae_downscale_factor: int = 8,
-    crop_coordinates: list = None
+    crop_coordinates: list = None,
 ):
     if original_size is None or target_size is None:
         raise Exception(
@@ -81,7 +81,8 @@ def compute_latents(pixel_values, filepaths):
     test_shape = latents[0].shape
     idx = 0
     for latent in latents:
-        latent.to("cpu")
+        # Move to CPU and pin memory if it's not on the GPU
+        latent = latent.to("cpu").pin_memory()
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
@@ -106,7 +107,7 @@ def gather_conditional_size_features(examples, latents, weight_dtype):
             original_size=example["instance_images"].size,
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
-            weight_dtype=weight_dtype
+            weight_dtype=weight_dtype,
         )
         for idx, example in enumerate(examples)
     ]
@@ -142,7 +143,9 @@ def collate_fn(batch):
     captions = [example["instance_prompt_text"] for example in examples]
     prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
 
-    batch_time_ids = gather_conditional_size_features(examples, latent_batch, StateTracker.get_weight_dtype())
+    batch_time_ids = gather_conditional_size_features(
+        examples, latent_batch, StateTracker.get_weight_dtype()
+    )
     logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
     result = {
