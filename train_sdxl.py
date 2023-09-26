@@ -13,27 +13,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
-import math
-import os
+from helpers import log_format
+
+import shutil, hashlib, json, copy, random, logging, math, os
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-import shutil, hashlib, json, copy, random
+
 from pathlib import Path
-from helpers import log_format
+from helpers.arguments import parse_args
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.state_tracker import StateTracker
+from helpers.training.collate import collate_fn
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.image_manipulation.brightness import (
     calculate_luminance,
-    calculate_batch_luminance,
 )
-from helpers.arguments import parse_args
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
@@ -95,10 +94,6 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
 from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version, deprecate, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-from torchvision.transforms import ToTensor
-
-# Convert PIL Image to PyTorch Tensor
-to_tensor = ToTensor()
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.20.0.dev0")
@@ -155,6 +150,9 @@ def compute_null_conditioning(
 
 def main():
     args = parse_args()
+    StateTracker.set_args(args)
+    StateTracker.delete_cache_files()
+
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=logging_dir
@@ -165,6 +163,8 @@ def main():
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
+
+    StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
@@ -178,9 +178,8 @@ def main():
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.DEBUG,
+        level=logging.INFO,
     )
-    generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
     if args.report_to == "wandb":
         if not is_wandb_available():
@@ -195,7 +194,7 @@ def main():
 
     # If passed along, set the training seed now.
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed, args.seed_for_each_device)
 
     # Handle the repository creation
     if accelerator.is_main_process:
@@ -245,7 +244,7 @@ def main():
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
 
-        data_backend = LocalDataBackend()
+        data_backend = LocalDataBackend(accelerator=accelerator)
     elif args.data_backend == "aws":
         from helpers.data_backend.aws import S3DataBackend
 
@@ -265,7 +264,7 @@ def main():
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
     logger.info(f"Loading a bucket manager")
-    logger.debug(f"{rank_info(accelerator)}Beginning bucket manager stuff.")
+    logger.debug(f"{rank_info()}Beginning bucket manager stuff.")
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -276,23 +275,24 @@ def main():
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
+        metadata_file=os.path.join(
+            args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
+        ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
-    logger.debug(f"{rank_info(accelerator)}Beginning aspect bucket stuff.")
-    with accelerator.main_process_first():
-        logger.debug(
-            f"{rank_info(accelerator)}Computing aspect bucket cache index.",
-        )
-        bucket_manager.compute_aspect_ratio_bucket_indices()
-        logger.debug(
-            f"{rank_info(accelerator)}Refreshing buckets.",
-        )
-        bucket_manager.refresh_buckets(rank_info(accelerator))
-        logger.debug(
-            f"{rank_info(accelerator)}Control is returned to the main training script.",
-        )
-    logger.debug("Refreshed buckets and computed aspect ratios.")
-
+    logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
+    if "aspect" not in args.skip_file_discovery:
+        if accelerator.is_local_main_process:
+            logger.debug(
+                f"{rank_info()}Refreshing buckets.",
+            )
+            bucket_manager.refresh_buckets(rank_info())
+            logger.debug(
+                f"{rank_info()}Control is returned to the main training script.",
+            )
+        logger.debug("Refreshed buckets and computed aspect ratios.")
+    accelerator.wait_for_everyone()
+    bucket_manager.reload_cache()
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
@@ -356,7 +356,7 @@ def main():
         logger.warning(
             f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
         )
-
+    StateTracker.set_weight_dtype(weight_dtype)
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -413,127 +413,6 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
-    def compute_time_ids(original_size: tuple, target_size: tuple):
-        if original_size is None or target_size is None:
-            raise Exception(
-                f"Cannot continue, the original_size or target_size were not provided: {original_size}, {target_size}"
-            )
-        logger.debug(
-            f"Computing time ids for:"
-            f"\n-> original_size = {original_size}"
-            f"\n-> target_size = {target_size}"
-        )
-        # The dimensions of tensors are "transposed", as:
-        # (batch_size, height, width)
-        # An image would look like:
-        # (width, height)
-        # SDXL conditions are:
-        # [h, w, h, w, h, w]
-        original_width = original_size[0]
-        original_height = original_size[1]
-        target_width = int(target_size[2] * VAE_SCALING_FACTOR)
-        target_height = int(target_size[1] * VAE_SCALING_FACTOR)
-        final_target_size = (target_height, target_width)
-        if original_width is None:
-            raise ValueError("Original width must be specified.")
-        if original_height is None:
-            original_height = args.resolution
-        crops_coords_top_left = (
-            args.crops_coords_top_left_h,
-            args.crops_coords_top_left_w,
-        )
-        add_time_ids = list(
-            (original_height, original_width)
-            + crops_coords_top_left
-            + final_target_size
-        )
-        add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
-        logger.debug(
-            f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
-        )
-        return add_time_ids
-
-    def collate_fn(batch):
-        if len(batch) != 1:
-            raise ValueError(
-                "This trainer is not designed to handle multiple batches in a single collate."
-            )
-        examples = batch[0]
-        training_logger.debug(f"Examples: {examples}")
-        if StateTracker.tracking_luminance():
-            training_logger.debug(f"Computing luminance for input batch")
-            batch_luminance = calculate_batch_luminance(
-                [example["instance_images"] for example in examples]
-            )
-        # Initialize the VAE Cache if it doesn't exist
-        global vaecache
-        if "vaecache" not in globals():
-            vaecache = VAECache(
-                vae=vae,
-                accelerator=accelerator,
-                data_backend=data_backend,
-                resolution=args.resolution,
-                resolution_type=args.resolution_type,
-                delete_problematic_images=args.delete_problematic_images,
-                vae_batch_size=args.vae_batch_size,
-                write_batch_size=args.write_batch_size,
-            )
-
-        pixel_values = []
-        filepaths = []  # we will store the file paths here
-        for example in examples:
-            image_data = example["instance_images"]
-            width = image_data.width
-            height = image_data.height
-            pixel_values.append(
-                to_tensor(image_data).to(
-                    memory_format=torch.contiguous_format, dtype=vae_dtype
-                )
-            )
-            filepaths.append(example["instance_images_path"])  # store the file path
-
-        # Compute the VAE embeddings for individual images
-        latents = [
-            vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
-        ]
-        latent_batch = torch.stack(latents)
-
-        # Extract the captions from the examples.
-        captions = [example["instance_prompt_text"] for example in examples]
-
-        # Compute the embeddings using the captions.
-        (
-            prompt_embeds_all,
-            add_text_embeds_all,
-        ) = embed_cache.compute_embeddings_for_sdxl_prompts(captions)
-        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
-        add_text_embeds_all = torch.concat(
-            [add_text_embeds_all for _ in range(1)], dim=0
-        )
-
-        # We gather the conditional size features.
-        batch_time_ids_list = [
-            compute_time_ids(
-                original_size=example["instance_images"].size,
-                target_size=latents[
-                    idx
-                ].shape,  # Using the spatial dimensions of the latent tensor
-            )
-            for idx, example in enumerate(examples)
-        ]
-        batch_time_ids = torch.stack(batch_time_ids_list, dim=0)
-        logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
-
-        result = {
-            "latent_batch": latent_batch,
-            "prompt_embeds": prompt_embeds_all,
-            "add_text_embeds": add_text_embeds_all,
-            "batch_time_ids": batch_time_ids,
-        }
-        if StateTracker.tracking_luminance():
-            result["luminance"] = batch_luminance
-        return result
-
     # Data loader
     logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
@@ -543,7 +422,6 @@ def main():
         accelerator=accelerator,
         size=args.resolution,
         size_type=args.resolution_type,
-        center_crop=args.center_crop,
         print_names=args.print_filenames or False,
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
@@ -582,29 +460,36 @@ def main():
         accelerator=accelerator,
         model_type="sdxl",
     )
+    StateTracker.set_embedcache(embed_cache)
     if (
         args.caption_dropout_probability is not None
         and args.caption_dropout_probability > 0
     ):
         logger.info("Pre-computing null embedding for caption dropout")
         with accelerator.main_process_first():
-            embed_cache.precompute_embeddings_for_sdxl_prompts([""])
+            embed_cache.compute_embeddings_for_sdxl_prompts([""], return_concat=False)
+        accelerator.wait_for_everyone()
     else:
         logger.warning(
             f"Not using caption dropout will potentially lead to overfitting on captions."
         )
 
-    # null_conditioning = compute_null_conditioning()
-
-    logger.info(f"Pre-computing text embeds / updating cache.")
-    with accelerator.main_process_first():
-        all_captions = PromptHandler.get_all_captions(
-            data_backend=data_backend,
-            instance_data_root=args.instance_data_dir,
-            prepend_instance_prompt=args.prepend_instance_prompt or False,
-            use_captions=not args.only_instance_prompt,
-        )
-        embed_cache.precompute_embeddings_for_sdxl_prompts(all_captions)
+    if "text" not in args.skip_file_discovery:
+        logger.info(f"Pre-computing text embeds / updating cache.")
+        with accelerator.main_process_first():
+            all_captions = PromptHandler.get_all_captions(
+                data_backend=data_backend,
+                instance_data_root=args.instance_data_dir,
+                prepend_instance_prompt=args.prepend_instance_prompt or False,
+                use_captions=not args.only_instance_prompt,
+            )
+            StateTracker.set_caption_files(all_captions)
+        if accelerator.is_main_process:
+            embed_cache.compute_embeddings_for_sdxl_prompts(
+                all_captions, return_concat=False
+            )
+        accelerator.wait_for_everyone()
+        logger.info(f"Discovered {len(all_captions)} captions.")
 
     (
         validation_prompts,
@@ -673,9 +558,9 @@ def main():
             import xformers
 
             xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
+            if xformers_version == version.parse("0.0.20"):
                 logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
                 )
             unet.enable_xformers_memory_efficient_attention()
         else:
@@ -700,7 +585,7 @@ def main():
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
             )
 
-        optimizer_cls = bnb.optim.AdamW8bit
+        optimizer_class = bnb.optim.AdamW8bit
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["lr"] = args.learning_rate
     elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
@@ -713,7 +598,7 @@ def main():
                 "You can do so by running `pip install dadaptation`"
             )
 
-        optimizer_cls = DAdaptAdam
+        optimizer_class = DAdaptAdam
         if (
             hasattr(args, "dadaptation_learning_rate")
             and args.dadaptation_learning_rate is not None
@@ -729,16 +614,16 @@ def main():
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         from transformers import Adafactor
 
-        optimizer_cls = Adafactor
+        optimizer_class = Adafactor
         extra_optimizer_args["lr"] = args.learning_rate
         extra_optimizer_args["relative_step"] = False
     else:
         logger.info("Using AdamW optimizer.")
-        optimizer_cls = torch.optim.AdamW
+        optimizer_class = torch.optim.AdamW
     logger.info(
         f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
     )
-    optimizer = optimizer_cls(
+    optimizer = optimizer_class(
         unet.parameters(),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
@@ -793,17 +678,15 @@ def main():
         )
         logger.info("EMA model creation complete.")
 
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        from helpers.sdxl.save_hooks import SDXLSaveHook
+    from helpers.sdxl.save_hooks import SDXLSaveHook
 
-        model_hooks = SDXLSaveHook(
-            args=args,
-            ema_unet=ema_unet,
-            accelerator=accelerator,
-        )
-        accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
-        accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
+    model_hooks = SDXLSaveHook(
+        args=args,
+        ema_unet=ema_unet,
+        accelerator=accelerator,
+    )
+    accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
+    accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
@@ -849,9 +732,19 @@ def main():
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
     )
-    vaecache.split_cache_between_processes()
-    vaecache.process_buckets(bucket_manager=bucket_manager)
+    StateTracker.set_vaecache(vaecache)
+    StateTracker.set_vae_dtype(vae_dtype)
+    StateTracker.set_vae(vae)
+
+    if accelerator.is_local_main_process:
+        vaecache.discover_all_files()
     accelerator.wait_for_everyone()
+
+    if "vae" not in args.skip_file_discovery:
+        vaecache.split_cache_between_processes()
+        vaecache.process_buckets(bucket_manager=bucket_manager)
+        accelerator.wait_for_everyone()
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -909,6 +802,7 @@ def main():
         logger.info(
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
+
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -921,6 +815,7 @@ def main():
     resume_step = 0
     resume_global_step = 0
     scheduler_kwargs = {}
+    accelerator.wait_for_everyone()
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -986,9 +881,10 @@ def main():
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
+        initial=global_step,
     )
     progress_bar.set_description("Steps")
-    progress_bar.update(global_step)
+    accelerator.wait_for_everyone()
 
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
@@ -1014,7 +910,7 @@ def main():
                 )
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
-            if batch is False or batch is None:
+            if batch is False:
                 logger.info(f"Reached the end of epoch {epoch}")
                 break
 
@@ -1026,11 +922,13 @@ def main():
                 )
 
             # Add the current batch of training data's avg luminance to a list.
-            if "luminance" in batch:
+            if StateTracker.calculate_luminance() and "luminance" in batch:
                 training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
-                training_logger.debug(f"Beginning another step.")
+                training_logger.debug(
+                    f"Sending latent batch from pinned memory to device."
+                )
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
@@ -1132,37 +1030,22 @@ def main():
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
 
-                    if torch.any(torch.isnan(snr)):
-                        training_logger.error("snr contains NaN values")
-                    if torch.any(snr == 0):
-                        training_logger.error("snr contains zero values")
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
                     )
-                    if (
-                        noise_scheduler.config.prediction_type == "epsilon"
-                        or noise_scheduler.config.prediction_type == "sample"
-                    ):
-                        mse_loss_weights = (
-                            torch.stack(
-                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
-                                dim=1,
-                            ).min(dim=1)[0]
-                            / snr
-                        )
-                    elif noise_scheduler.config.prediction_type == "v_prediction":
-                        mse_loss_weights = (
-                            torch.stack(
-                                [snr, args.snr_gamma * torch.ones_like(timesteps)],
-                                dim=1,
-                            ).min(dim=1)[0]
-                            / snr
-                            + 1
-                        )
+                    mse_loss_weights = (
+                        torch.stack(
+                            [snr, args.snr_gamma * torch.ones_like(timesteps)],
+                            dim=1,
+                        ).min(dim=1)[0]
+                        / snr
+                    )
+                    if noise_scheduler.config.prediction_type == "v_prediction":
+                        mse_loss_weights = mse_loss_weights + 1
 
                     # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
-                    # When we run this, the MSE loss weights for the zero-sigma timestep are set unconditionally to 1.
-                    # We want this sample to be fully considered.
+                    # When we run this, the MSE loss weights for this timestep is set unconditionally to 1.
+                    # If we do not run this, the loss value will go to NaN almost immediately, usually within one step.
                     mse_loss_weights[snr == 0] = 1.0
 
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
@@ -1181,6 +1064,7 @@ def main():
                     )
                     training_logger.debug(f"Reducing loss via mean")
                     loss = loss.mean()
+
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
@@ -1309,14 +1193,16 @@ def main():
         unet = accelerator.unwrap_model(unet)
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
-        if vae is None:
-            vae = AutoencoderKL.from_pretrained(
-                vae_path,
-                subfolder="vae"
-                if args.pretrained_vae_model_name_or_path is None
-                else None,
-                revision=args.revision,
-                force_upcast=False,
+        if StateTracker.get_vae() is None:
+            StateTracker.set_vae(
+                AutoencoderKL.from_pretrained(
+                    vae_path,
+                    subfolder="vae"
+                    if args.pretrained_vae_model_name_or_path is None
+                    else None,
+                    revision=args.revision,
+                    force_upcast=False,
+                )
             )
         pipeline = StableDiffusionXLPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -1324,7 +1210,7 @@ def main():
             text_encoder_2=text_encoder_2,
             tokenizer=tokenizer_1,
             tokenizer_2=tokenizer_2,
-            vae=vae,
+            vae=StateTracker.get_vae(),
             unet=unet,
             revision=args.revision,
             add_watermarker=args.enable_watermark,

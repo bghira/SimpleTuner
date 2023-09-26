@@ -1,11 +1,14 @@
 import os, torch, hashlib, logging
 from tqdm import tqdm
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class TextEmbeddingCache:
+    prompts = None
+
     def __init__(
         self,
         text_encoders,
@@ -28,7 +31,7 @@ class TextEmbeddingCache:
         torch.save(embeddings, filename)
 
     def load_from_cache(self, filename):
-        return torch.load(filename)
+        return torch.load(filename, map_location=self.accelerator.device)
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
         input_tokens = tokenizer(
@@ -39,8 +42,8 @@ class TextEmbeddingCache:
             return_tensors="pt",
         ).input_ids
         output = text_encoder(input_tokens)[0]
-        logger.debug(f'Legacy prompt shape: {output.shape}')
-        logger.debug(f'Legacy prompt encoded: {output}')
+        logger.debug(f"Legacy prompt shape: {output.shape}")
+        logger.debug(f"Legacy prompt encoded: {output}")
         return output
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
@@ -83,6 +86,9 @@ class TextEmbeddingCache:
             prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
             prompt_embeds_list.append(prompt_embeds)
 
+            # Clear out anything we moved to the text encoder device
+            del text_input_ids
+
         prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
         pooled_prompt_embeds = pooled_prompt_embeds.view(bs_embed, -1)
         return prompt_embeds, pooled_prompt_embeds
@@ -121,13 +127,17 @@ class TextEmbeddingCache:
                 prompts, return_concat=return_concat
             )
 
-    def compute_embeddings_for_sdxl_prompts(self, prompts, return_concat: bool = True):
+    def compute_embeddings_for_sdxl_prompts(
+        self, prompts: list = None, return_concat: bool = True
+    ):
         prompt_embeds_all = []
         add_text_embeds_all = []
 
         with torch.no_grad():
             for prompt in tqdm(
-                prompts, desc="Processing prompts", disable=return_concat
+                prompts or self.prompts,
+                desc="Processing prompts",
+                disable=return_concat,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -143,17 +153,15 @@ class TextEmbeddingCache:
                         self.text_encoders, self.tokenizers, [prompt]
                     )
                     add_text_embeds = pooled_prompt_embeds
-                    prompt_embeds = prompt_embeds.to(self.accelerator.device)
-                    add_text_embeds = add_text_embeds.to(self.accelerator.device)
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                        add_text_embeds = add_text_embeds.to(self.accelerator.device)
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
 
                 prompt_embeds_all.append(prompt_embeds)
                 add_text_embeds_all.append(add_text_embeds)
 
             if not return_concat:
-                logger.info(
-                    "Not returning embeds, since we just concatenated a whackload of them."
-                )
                 del prompt_embeds_all
                 del add_text_embeds_all
                 return
@@ -163,22 +171,16 @@ class TextEmbeddingCache:
 
         return prompt_embeds_all, add_text_embeds_all
 
-    def precompute_embeddings_for_sdxl_prompts(self, prompts):
-        """This is the same function as compute_embeddings_for_prompts, but it specifically runs with the Accelerate context manager.
-
-        Args:
-            prompts (list[str]): All of the prompts.
-        """
-        self.compute_embeddings_for_sdxl_prompts(prompts, return_concat=False)
-
     def compute_embeddings_for_legacy_prompts(
-        self, prompts, return_concat: bool = True
+        self, prompts: list = None, return_concat: bool = True
     ):
         prompt_embeds_all = []
 
         with torch.no_grad():
             for prompt in tqdm(
-                prompts, desc="Processing prompts", disable=return_concat
+                prompts or self.prompts,
+                desc="Processing prompts",
+                disable=return_concat,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -206,3 +208,8 @@ class TextEmbeddingCache:
                 return
 
         return prompt_embeds_all
+
+    def split_cache_between_processes(self, prompts: list):
+        # Use the accelerator to split the data
+        with self.accelerator.split_between_processes(prompts) as split_files:
+            self.prompts = split_files

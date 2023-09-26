@@ -22,16 +22,12 @@ class BucketStateManager:
 
     def deep_convert_dict(self, d):
         if isinstance(d, dict):
-            logger.debug(f"Found a dictionary to convert: {d}")
             return {key: self.deep_convert_dict(value) for key, value in d.items()}
         elif isinstance(d, list):
-            logger.debug(f"Found a list to convert: {d}")
             return [self.deep_convert_dict(value) for value in d]
         elif isinstance(d, multiprocessing.managers.DictProxy):
-            logger.debug(f"Found a DictProxy to convert: {d}")
             return self.deep_convert_dict(dict(d))
         else:
-            logger.debug(f"Returning straight-through type {type(d)}")
             return d
 
     def save_state(self, state: dict, state_path: str = None):

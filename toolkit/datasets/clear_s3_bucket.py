@@ -1,6 +1,4 @@
-import boto3, os
-import logging
-import argparse
+import boto3, os, logging, argparse, datetime
 from botocore.config import Config
 
 # Set up logging
@@ -34,9 +32,21 @@ def delete_object(s3_client, bucket_name, object_key):
         logger.error(f"Error deleting {object_key} in bucket {bucket_name}: {e}")
 
 
-def clear_s3_bucket(s3_client, bucket_name, num_workers=10, search_pattern: str = None):
+def clear_s3_bucket(
+    s3_client,
+    bucket_name,
+    num_workers=10,
+    search_pattern: str = None,
+    older_than_date: str = None,
+):
     try:
         logger.info(f"Clearing out bucket {bucket_name}")
+
+        # Convert the date string to a datetime object
+        if older_than_date:
+            target_date = datetime.datetime.strptime(older_than_date, "%Y-%m-%d")
+        else:
+            target_date = None
 
         # Initialize paginator
         paginator = s3_client.get_paginator("list_objects_v2")
@@ -49,15 +59,26 @@ def clear_s3_bucket(s3_client, bucket_name, num_workers=10, search_pattern: str 
                 if "Contents" not in page:
                     logger.info(f"No more items in bucket {bucket_name}")
                     break
+
+                # Filter by the older_than_date if provided
+                if target_date:
+                    filtered_objects = [
+                        s3_object
+                        for s3_object in page["Contents"]
+                        if s3_object["LastModified"].replace(tzinfo=None) < target_date
+                    ]
+                else:
+                    filtered_objects = page["Contents"]
+
                 if search_pattern is not None:
                     keys_to_delete = [
                         s3_object["Key"]
-                        for s3_object in page["Contents"]
+                        for s3_object in filtered_objects
                         if search_pattern in s3_object["Key"]
                     ]
                 else:
                     keys_to_delete = [
-                        s3_object["Key"] for s3_object in page["Contents"]
+                        s3_object["Key"] for s3_object in filtered_objects
                     ]
 
                 executor.map(
@@ -99,6 +120,12 @@ def parse_args():
     parser.add_argument(
         "--aws_secret_access_key", type=str, help="AWS secret access key."
     )
+    parser.add_argument(
+        "--older_than_date",
+        type=str,
+        help="If provided, only files older than this date (format: YYYY-MM-DD) will be cleared.",
+        default=None,
+    )
     return parser.parse_args()
 
 
@@ -110,6 +137,7 @@ def main():
         args.aws_bucket_name,
         num_workers=args.num_workers,
         search_pattern=args.search_pattern,
+        older_than_date=args.older_than_date
     )
 
 

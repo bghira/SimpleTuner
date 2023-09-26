@@ -1,6 +1,6 @@
+from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
-import accelerate, torch
 from pathlib import Path
 import json, logging, os
 from multiprocessing import Manager
@@ -19,8 +19,9 @@ class BucketManager:
         self,
         instance_data_root: str,
         cache_file: str,
+        metadata_file: str,
         data_backend: BaseDataBackend,
-        accelerator: accelerate.Accelerator,
+        accelerator,
         batch_size: int,
         resolution: float,
         resolution_type: str,
@@ -32,12 +33,14 @@ class BucketManager:
         self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
+        self.metadata_file = Path(metadata_file)
         self.aspect_ratio_bucket_indices = {}
+        self.image_metadata = {}  # Store image metadata
         self.instance_images_path = set()
         # Initialize a multiprocessing.Manager dict for seen_images
         manager = Manager()
         self.seen_images = manager.dict()
-        self._load_cache()
+        self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
 
@@ -64,15 +67,16 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files_data = self.data_backend.list_files(
-            instance_data_root=self.instance_data_root,
-            str_pattern="*.[jJpP][pPnN][gG]",
+        all_image_files = (
+            StateTracker.get_image_files()
+            or StateTracker.set_image_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.instance_data_root,
+                    str_pattern="*.[jJpP][pPnN][gG]",
+                )
+            )
         )
-
         # Extract only the files from the data
-        all_image_files = [
-            file for _, _, files in all_image_files_data for file in files
-        ]
 
         return [
             file
@@ -80,7 +84,7 @@ class BucketManager:
             if str(file) not in self.instance_images_path
         ]
 
-    def _load_cache(self):
+    def reload_cache(self):
         """
         Load cache data from file.
 
@@ -128,6 +132,7 @@ class BucketManager:
         tqdm_queue,
         files,
         aspect_ratio_bucket_indices_queue,
+        metadata_updates_queue,
         existing_files_set,
         data_backend,
     ):
@@ -144,13 +149,19 @@ class BucketManager:
             dict: The bucket indices.
         """
         local_aspect_ratio_bucket_indices = {}
+        local_metadata_updates = {}
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    data_backend, file, self.resolution, self.resolution_type, local_aspect_ratio_bucket_indices
+                    data_backend,
+                    self,
+                    file,
+                    local_aspect_ratio_bucket_indices,
+                    metadata_updates=local_metadata_updates,
                 )
             tqdm_queue.put(1)
         aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+        metadata_updates_queue.put(local_metadata_updates)
 
     def compute_aspect_ratio_bucket_indices(self):
         """
@@ -171,8 +182,10 @@ class BucketManager:
         num_cpus = 8  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
 
+        metadata_updates_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
+        self.load_image_metadata()
 
         workers = [
             Process(
@@ -181,6 +194,7 @@ class BucketManager:
                     tqdm_queue,
                     file_shard,
                     aspect_ratio_bucket_indices_queue,
+                    metadata_updates_queue,
                     existing_files_set,
                     self.data_backend,
                 ),
@@ -203,12 +217,20 @@ class BucketManager:
                         self.aspect_ratio_bucket_indices.setdefault(key, []).extend(
                             value
                         )
+                # Now, pull metadata updates from the queue
+                while not metadata_updates_queue.empty():
+                    metadata_update = metadata_updates_queue.get()
+                    for filepath, meta in metadata_update.items():
+                        self.set_metadata_by_filepath(
+                            filepath=filepath, metadata=meta, update_json=False
+                        )
 
         for worker in workers:
             worker.join()
 
         self.instance_images_path.update(new_files)
         self._save_cache()
+        self.save_image_metadata()
         logger.info("Completed aspect bucket update.")
 
     def split_buckets_between_processes(self):
@@ -275,16 +297,10 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        logger.debug(f"{rank} Discovering all image files")
-        all_image_files_data = self.data_backend.list_files(
-            instance_data_root=self.instance_data_root,
-            str_pattern="*.[jJpP][pPnN][gG]",
+        existing_files = StateTracker.get_image_files()
+        logger.debug(
+            f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
         )
-
-        logger.debug(f"{rank} Discovering existing files")
-        existing_files = {
-            file for _, _, files in all_image_files_data for file in files
-        }
 
         # Update bucket indices to remove entries that no longer exist
         logger.debug(f"{rank} Finally, we can update the bucket index")
@@ -356,3 +372,69 @@ class BucketManager:
         Read the entire bucket cache.
         """
         return self.aspect_ratio_bucket_indices
+
+    def get_metadata_attribute_by_filepath(self, filepath: str, attribute: str):
+        """Use get_metadata_by_filepath to return a specific attribute.
+
+        Args:
+            filepath (str): The complete path from the aspect bucket list.
+            attribute (str): The attribute you are seeking.
+
+        Returns:
+            any type: The attribute value, or None.
+        """
+        metadata = self.get_metadata_by_filepath(filepath)
+        if metadata:
+            return metadata.get(attribute, None)
+        else:
+            return None
+
+    def set_metadata_attribute_by_filepath(
+        self, filepath: str, attribute: str, value: any, update_json: bool = True
+    ):
+        """Use set_metadata_by_filepath to update the contents of a specific attribute.
+
+        Args:
+            filepath (str): The complete path from the aspect bucket list.
+            attribute (str): The attribute you are updating.
+            value (any type): The value to set.
+        """
+        metadata = self.get_metadata_by_filepath(filepath) or {}
+        metadata[attribute] = value
+        return self.set_metadata_by_filepath(filepath, metadata, update_json)
+
+    def set_metadata_by_filepath(
+        self, filepath: str, metadata: dict, update_json: bool = True
+    ):
+        """Set metadata for a given image file path.
+
+        Args:
+            filepath (str): The complete path from the aspect bucket list.
+        """
+        logger.debug(f"Setting metadata for {filepath} to {metadata}.")
+        self.image_metadata[filepath] = metadata
+        if update_json:
+            self.save_image_metadata()
+
+    def get_metadata_by_filepath(self, filepath: str):
+        """Retrieve metadata for a given image file path.
+
+        Args:
+            filepath (str): The complete path from the aspect bucket list.
+
+        Returns:
+            dict: Metadata for the image. Returns None if not found.
+        """
+        return self.image_metadata.get(filepath, None)
+
+    def load_image_metadata(self):
+        """Load image metadata from a JSON file."""
+        if self.metadata_file.exists():
+            with open(self.metadata_file, "r") as f:
+                data = json.load(f)
+                self.image_metadata = data.get("image_metadata", {})
+        return {}
+
+    def save_image_metadata(self):
+        """Save image metadata to a JSON file."""
+        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))

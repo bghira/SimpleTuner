@@ -149,6 +149,17 @@ def parse_args(input_args=None):
         help="If set, will keep the VAE loaded in memory. This can reduce disk churn, but consumes VRAM during the forward pass.",
     )
     parser.add_argument(
+        "--skip_file_discovery",
+        type=str,
+        default="",
+        help=(
+            "Comma-separated values of which stages to skip discovery for. Skipping any stage will speed up resumption,"
+            " but will increase the risk of errors, as missing images or incorrectly bucketed images may not be caught."
+            " 'vae' will skip the VAE cache process, 'aspect' will not build any aspect buckets, and 'text' will avoid text embed management."
+            " Valid options: aspect, vae, text."
+        ),
+    )
+    parser.add_argument(
         "--revision",
         type=str,
         default=None,
@@ -385,7 +396,8 @@ def parse_args(input_args=None):
         action="store_true",
         help=(
             "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
-            " cropped. The images will be resized to the resolution first before cropping."
+            " cropped. The images will be resized to the resolution first before cropping. If training SDXL,"
+            " the VAE cache and aspect bucket cache will need to be (re)built so they include crop coordinates."
         ),
     )
     parser.add_argument(
@@ -976,7 +988,18 @@ def parse_args(input_args=None):
             "It seems that the value for --validation_resolution is less than 128 pixels, which is invalid."
             f" You might have accidentally set it in megapixels: {args.validation_resolution}"
         )
-
+    if args.seen_state_path is None:
+        raise ValueError(
+            'Please specify a path to a "seen" state dict via the --seen_state_path parameter.'
+        )
+    if args.state_path is None:
+        raise ValueError(
+            "Please specify a location of your training state status file via the --state_path parameter."
+        )
+    if args.caption_dropout_interval > 100:
+        raise ValueError(
+            "Please specify a caption dropout interval equal to or less than 100 via the --caption_dropout_interval parameter."
+        )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 

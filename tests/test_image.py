@@ -10,6 +10,9 @@ from tests.helpers.data import MockDataBackend
 class TestMultiaspectImage(unittest.TestCase):
     def setUp(self):
         self.data_backend = MockDataBackend()
+        self.bucket_manager = MagicMock()
+        self.bucket_manager.resolution_type = "pixel"
+        self.bucket_manager.resolution = 128
         self.image_path_str = "dummy_image_path"
         self.aspect_ratio_bucket_indices = {}
         self.resolution = 128
@@ -27,9 +30,8 @@ class TestMultiaspectImage(unittest.TestCase):
 
             result = MultiaspectImage.process_for_bucket(
                 self.data_backend,
+                self.bucket_manager,
                 self.image_path_str,
-                self.resolution,
-                "pixel",
                 self.aspect_ratio_bucket_indices,
             )
             self.assertEqual(result, {"2.0": ["dummy_image_path"]})
@@ -39,16 +41,15 @@ class TestMultiaspectImage(unittest.TestCase):
         with self.assertLogs("MultiaspectImage", level="ERROR") as cm:
             MultiaspectImage.process_for_bucket(
                 None,
+                self.bucket_manager,
                 self.image_path_str,
-                self.resolution,
-                "pixel",
                 self.aspect_ratio_bucket_indices,
             )
 
     def test_prepare_image_valid(self):
         # Test with a valid image
         img = Image.new("RGB", (60, 30), color="red")
-        prepared_img = MultiaspectImage.prepare_image(img, self.resolution)
+        prepared_img, coords = MultiaspectImage.prepare_image(img, self.resolution)
         self.assertIsInstance(prepared_img, Image.Image)
 
     def test_prepare_image_invalid(self):
@@ -59,13 +60,15 @@ class TestMultiaspectImage(unittest.TestCase):
     def test_resize_for_condition_image_valid(self):
         # Test with a valid image
         img = Image.new("RGB", (60, 30), color="red")
-        resized_img = MultiaspectImage.resize_by_pixel_edge(img, self.resolution)
+        resized_img = MultiaspectImage._resize_image(
+            img, self.resolution, self.resolution
+        )
         self.assertIsInstance(resized_img, Image.Image)
 
     def test_resize_for_condition_image_invalid(self):
         # Test with an invalid image
         with self.assertRaises(Exception):
-            MultiaspectImage.resize_by_pixel_edge(None, self.resolution)
+            MultiaspectImage._resize_image(None, self.resolution)
 
 
 if __name__ == "__main__":
