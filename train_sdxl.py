@@ -922,7 +922,7 @@ def main():
                 )
 
             # Add the current batch of training data's avg luminance to a list.
-            if StateTracker.calculate_luminance() and "luminance" in batch:
+            if StateTracker.tracking_luminance() and "luminance" in batch:
                 training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
