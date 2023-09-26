@@ -481,7 +481,7 @@ def main(args):
             )
         examples = batch[0]
         training_logger.debug(f"Examples: {examples}")
-        if StateTracker.calculate_luminance():
+        if StateTracker.tracking_luminance():
             training_logger.debug(f"Computing luminance for input batch")
             batch_luminance = calculate_batch_luminance(
                 [example["instance_images"] for example in examples]
@@ -531,7 +531,7 @@ def main(args):
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
         }
-        if StateTracker.calculate_luminance():
+        if StateTracker.tracking_luminance():
             result["luminance"] = batch_luminance
         return result
 
@@ -882,7 +882,7 @@ def main(args):
                     f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
                 )
 
-            if StateTracker.calculate_luminance() and "luminance" in batch:
+            if StateTracker.tracking_luminance() and "luminance" in batch:
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["luminance"])
 
@@ -1262,11 +1262,11 @@ def main(args):
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            if StateTracker.calculate_luminance():
+                            if StateTracker.tracking_luminance():
                                 validation_luminance.append(
                                     calculate_luminance(validation_image)
                                 )
-                        if StateTracker.calculate_luminance():
+                        if StateTracker.tracking_luminance():
                             # Compute the mean luminance across all samples:
                             validation_luminance = torch.tensor(validation_luminance)
                             validation_document[
