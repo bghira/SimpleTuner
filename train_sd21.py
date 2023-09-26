@@ -12,10 +12,12 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
+# limitations under the License.
 from helpers import log_format
 
-import shutil, hashlib, random, itertools, logging, math, time, os, json, copy
+import shutil, hashlib, random, itertools, logging, math, os, json, copy
 
+# Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from pathlib import Path
@@ -128,17 +130,34 @@ def compute_ids(prompt: str):
 
 
 def main(args):
-    logging_dir = Path(args.output_dir, args.logging_dir)
+    args = parse_args()
+    StateTracker.set_args(args)
+    StateTracker.delete_cache_files()
 
+    logging_dir = Path(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=logging_dir
     )
-
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+    )
+    StateTracker.set_accelerator(accelerator)
+
+    # Make one log on every process with the configuration for debugging.
+    logger.info(accelerator.state, main_process_only=False)
+    if accelerator.is_local_main_process:
+        transformers.utils.logging.set_verbosity_warning()
+        diffusers.utils.logging.set_verbosity_info()
+    else:
+        transformers.utils.logging.set_verbosity_error()
+        diffusers.utils.logging.set_verbosity_error()
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        level=logging.INFO,
     )
 
     if args.report_to == "wandb":
@@ -160,17 +179,25 @@ def main(args):
             "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
         )
 
-    logger.info(accelerator.state, main_process_only=False)
-    if accelerator.is_local_main_process:
-        transformers.utils.logging.set_verbosity_warning()
-        diffusers.utils.logging.set_verbosity_info()
-    else:
-        transformers.utils.logging.set_verbosity_error()
-        diffusers.utils.logging.set_verbosity_error()
+    # If we have args.track_luminance, we need to set that now.
+    if args.track_luminance:
+        StateTracker.enable_luminance()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed, args.seed_for_each_device)
+
+    # Handle the repository creation
+    if accelerator.is_main_process:
+        if args.output_dir is not None:
+            os.makedirs(args.output_dir, exist_ok=True)
+
+        if args.push_to_hub:
+            repo_id = create_repo(
+                repo_id=args.hub_model_id or Path(args.output_dir).name,
+                exist_ok=True,
+                token=args.hub_token,
+            ).repo_id
 
     # Load the tokenizer
     global tokenizer
@@ -279,31 +306,53 @@ def main(args):
             * accelerator.num_processes
         )
 
-    # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
+    # Initialize the optimizer
+    extra_optimizer_args = {}
     if args.use_8bit_adam:
+        logger.info("Using 8bit AdamW optimizer.")
         try:
             import bitsandbytes as bnb
         except ImportError:
             raise ImportError(
-                "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
+                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
             )
 
         optimizer_class = bnb.optim.AdamW8bit
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
+    elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
+        logger.info("Using D-Adaptation optimizer.")
+        try:
+            from dadaptation import DAdaptAdam
+        except ImportError:
+            raise ImportError(
+                "Please install the dadaptation library to make use of DaDapt optimizer."
+                "You can do so by running `pip install dadaptation`"
+            )
+
+        optimizer_class = DAdaptAdam
+        if (
+            hasattr(args, "dadaptation_learning_rate")
+            and args.dadaptation_learning_rate is not None
+        ):
+            logger.debug(
+                f"Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer."
+            )
+            args.learning_rate = args.dadaptation_learning_rate
+            extra_optimizer_args["decouple"] = True
+            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+            extra_optimizer_args["lr"] = args.learning_rate
+
+    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
+        from transformers import Adafactor
+
+        optimizer_class = Adafactor
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["relative_step"] = False
     else:
+        logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
 
-    if args.seen_state_path is None:
-        raise ValueError(
-            'Please specify a path to a "seen" state dict via the --seen_state_path parameter.'
-        )
-    if args.state_path is None:
-        raise ValueError(
-            "Please specify a location of your training state status file via the --state_path parameter."
-        )
-    if args.caption_dropout_interval > 100:
-        raise ValueError(
-            "Please specify a caption dropout interval equal to or less than 100 via the --caption_dropout_interval parameter."
-        )
     # Optimizer creation
     params_to_optimize = (
         itertools.chain(unet.parameters(), text_encoder.parameters())
@@ -534,16 +583,25 @@ def main(args):
         )
         overrode_max_train_steps = True
 
-    if args.lr_scheduler != "polynomial":
-        lr_scheduler = get_scheduler(
-            name=args.lr_scheduler,
+    if args.lr_scheduler == "cosine_annealing_warm_restarts":
+        """
+        optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
+
+            T_0 (int) – Number of iterations for the first restart.
+            T_mult (int, optional) – A factor increases Ti after a restart. Default: 1.
+            eta_min (float, optional) – Minimum learning rate. Default: 0.
+
+        """
+        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+        lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps * accelerator.num_processes,
-            num_cycles=args.lr_num_cycles,
-            power=args.lr_power,
+            T_0=args.lr_warmup_steps * accelerator.num_processes,
+            T_mult=args.lr_num_cycles,
+            eta_min=args.learning_rate_end,
+            last_epoch=-1,
         )
-    else:
+    elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
@@ -551,6 +609,15 @@ def main(args):
             lr_end=args.learning_rate_end,
             power=args.lr_power,
             last_epoch=-1,
+        )
+    else:
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power,
         )
 
     # Create EMA for the unet.
@@ -610,12 +677,8 @@ def main(args):
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
             vae_dtype = torch.float32
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
+    logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+    vae.to(accelerator.device, dtype=vae_dtype)
     logger.info(f"Loaded VAE into VRAM.")
     logger.info(f"Pre-computing VAE latent space.")
     vaecache = VAECache(
@@ -628,9 +691,18 @@ def main(args):
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
     )
-    vaecache.split_cache_between_processes()
-    vaecache.process_buckets(bucket_manager=bucket_manager)
+    StateTracker.set_vaecache(vaecache)
+    StateTracker.set_vae_dtype(vae_dtype)
+    StateTracker.set_vae(vae)
+
+    if accelerator.is_local_main_process:
+        vaecache.discover_all_files()
     accelerator.wait_for_everyone()
+
+    if "vae" not in args.skip_file_discovery:
+        vaecache.split_cache_between_processes()
+        vaecache.process_buckets(bucket_manager=bucket_manager)
+        accelerator.wait_for_everyone()
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     logging.info("Recalculating max step count.")
@@ -641,13 +713,15 @@ def main(args):
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+    logger.info(
+        "After all of the heave-ho messing around, we have settled on"
+        f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
+    )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
         # Copy args into public_args:
-        import copy, json
-
         public_args = copy.deepcopy(args)
         # Remove the args that we don't want to track:
         del public_args.aws_access_key_id
@@ -674,6 +748,22 @@ def main(args):
                 }
             },
         )
+
+    if not args.keep_vae_loaded:
+        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        import gc
+
+        del vae
+        vae = None
+        vaecache.vae = None
+        gc.collect()
+        torch.cuda.empty_cache()
+        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        memory_saved = memory_after_unload - memory_before_unload
+        logger.info(
+            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
+        )
+
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -681,19 +771,11 @@ def main(args):
         * args.gradient_accumulation_steps
     )
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num batches each epoch = {len(train_dataset) / total_batch_size}")
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
-    )
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     resume_global_step = 0
     first_epoch = 0
+    current_percent_completion = 0
+    scheduler_kwargs = {}
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -719,43 +801,48 @@ def main(args):
             )
             first_epoch = custom_balanced_sampler.current_epoch
             resume_global_step = global_step = int(path.split("-")[1])
+    custom_balanced_sampler.log_state()
     StateTracker.start_training()
-    final_progress_step = args.max_train_steps
+    total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
     if first_epoch > 1:
-        logger.info(
-            f"Resuming from epoch {first_epoch}, which is not the first epoch. This is a bit weird."
-        )
         steps_to_remove = first_epoch * num_update_steps_per_epoch
-        final_progress_step -= steps_to_remove
-
+        total_steps_remaining_at_start -= steps_to_remove
+        logger.debug(
+            f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
+        )
     current_epoch = first_epoch
     if current_epoch >= args.num_train_epochs:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
+
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
+    logger.info(
+        f"  Num batches = {len(train_dataset)} ({len(train_dataset) * args.train_batch_size} samples)"
+    )
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
+    logger.info(f"  Current Epoch = {first_epoch}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(
         f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
     )
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
-    logger.info(f"  Total optimization steps remaining = {final_progress_step}")
+    logger.info(
+        f"  Total optimization steps remaining = {total_steps_remaining_at_start}"
+    )
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
+        initial=global_step,
     )
     progress_bar.set_description("Steps")
-    progress_bar.update(global_step)
-    progress_bar.set_description("Steps")
-    current_percent_completion = 0
-    scheduler_kwargs = {}
+    accelerator.wait_for_everyone()
+
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
             # This might immediately end training, but that's useful for simply exporting the model.
@@ -783,16 +870,24 @@ def main(args):
                     f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
                 )
 
+            # If we receive a False from the enumerator, we know we reached the next epoch.
+            if batch is False:
+                logger.info(f"Reached the end of epoch {epoch}")
+                break
+
             if batch is None:
+                import traceback
+
                 raise ValueError(
-                    f"Trainer received invalid value for training examples"
+                    f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
                 )
-            if StateTracker.calculate_luminance():
+
+            if StateTracker.calculate_luminance() and "luminance" in batch:
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
-                logger.debug(f"Sending latent batch to device")
+                logger.debug(f"Sending latent batch from pinned memory to device")
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
@@ -848,10 +943,14 @@ def main(args):
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
+                elif noise_scheduler.config.prediction_type == "sample":
+                    # We set the target to latents here, but the model_pred will return the noise sample prediction.
+                    # We will have to subtract the noise residual from the prediction to get the target sample.
+                    target = latents
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
-                        "Supported types are 'epsilon' and 'v_prediction'."
+                        "Supported types are 'epsilon', `sample`, and 'v_prediction'."
                     )
 
                 # Predict the noise residual
@@ -859,6 +958,10 @@ def main(args):
                 model_pred = unet(
                     noisy_latents, timesteps, encoder_hidden_states
                 ).sample
+
+                # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
+                if noise_scheduler.config.prediction_type == "sample":
+                    model_pred = model_pred - noise
 
                 if args.snr_gamma is None:
                     training_logger.debug(f"Calculating loss")
@@ -872,10 +975,6 @@ def main(args):
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
 
-                    if torch.any(torch.isnan(snr)):
-                        training_logger.error("snr contains NaN values")
-                    if torch.any(snr == 0):
-                        training_logger.error("snr contains zero values")
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
                     )
@@ -885,12 +984,14 @@ def main(args):
                         ).min(dim=1)[0]
                         / snr
                     )
-                    # An experimental strategy for fixing min-SNR with zero terminal SNR is to set loss weighting to 1 when
-                    #  any positional tensors have an SNR of zero. This is to preserve their loss values and also to hopefully
-                    #  prevent the explosion of gradients or NaNs due to the presence of very small numbers.
+                    if noise_scheduler.config.prediction_type == "v_prediction":
+                        mse_loss_weights = mse_loss_weights + 1
+
+                    # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
+                    # When we run this, the MSE loss weights for this timestep is set unconditionally to 1.
+                    # If we do not run this, the loss value will go to NaN almost immediately, usually within one step.
                     mse_loss_weights[snr == 0] = 1.0
-                    if torch.any(torch.isnan(mse_loss_weights)):
-                        training_logger.error("mse_loss_weights contains NaN values")
+
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
@@ -1178,5 +1279,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()

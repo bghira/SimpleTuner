@@ -13,15 +13,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
-import math
-import os
+from helpers import log_format
+
+import shutil, hashlib, json, copy, random, logging, math, os
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-import shutil, hashlib, json, copy, random
+
 from pathlib import Path
-from helpers import log_format
+from helpers.arguments import parse_args
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
@@ -32,9 +32,7 @@ from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.image_manipulation.brightness import (
     calculate_luminance,
-    calculate_batch_luminance,
 )
-from helpers.arguments import parse_args
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
@@ -154,6 +152,7 @@ def main():
     args = parse_args()
     StateTracker.set_args(args)
     StateTracker.delete_cache_files()
+
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=logging_dir
@@ -164,6 +163,7 @@ def main():
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
+
     StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
@@ -178,7 +178,7 @@ def main():
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.DEBUG,
+        level=logging.INFO,
     )
 
     if args.report_to == "wandb":
@@ -194,7 +194,7 @@ def main():
 
     # If passed along, set the training seed now.
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed, args.seed_for_each_device)
 
     # Handle the repository creation
     if accelerator.is_main_process:
@@ -558,9 +558,9 @@ def main():
             import xformers
 
             xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.16"):
+            if xformers_version == version.parse("0.0.20"):
                 logger.warn(
-                    "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
                 )
             unet.enable_xformers_memory_efficient_attention()
         else:
@@ -585,7 +585,7 @@ def main():
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
             )
 
-        optimizer_cls = bnb.optim.AdamW8bit
+        optimizer_class = bnb.optim.AdamW8bit
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["lr"] = args.learning_rate
     elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
@@ -598,7 +598,7 @@ def main():
                 "You can do so by running `pip install dadaptation`"
             )
 
-        optimizer_cls = DAdaptAdam
+        optimizer_class = DAdaptAdam
         if (
             hasattr(args, "dadaptation_learning_rate")
             and args.dadaptation_learning_rate is not None
@@ -614,16 +614,16 @@ def main():
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         from transformers import Adafactor
 
-        optimizer_cls = Adafactor
+        optimizer_class = Adafactor
         extra_optimizer_args["lr"] = args.learning_rate
         extra_optimizer_args["relative_step"] = False
     else:
         logger.info("Using AdamW optimizer.")
-        optimizer_cls = torch.optim.AdamW
+        optimizer_class = torch.optim.AdamW
     logger.info(
         f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
     )
-    optimizer = optimizer_cls(
+    optimizer = optimizer_class(
         unet.parameters(),
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
@@ -678,17 +678,15 @@ def main():
         )
         logger.info("EMA model creation complete.")
 
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        from helpers.sdxl.save_hooks import SDXLSaveHook
+    from helpers.sdxl.save_hooks import SDXLSaveHook
 
-        model_hooks = SDXLSaveHook(
-            args=args,
-            ema_unet=ema_unet,
-            accelerator=accelerator,
-        )
-        accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
-        accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
+    model_hooks = SDXLSaveHook(
+        args=args,
+        ema_unet=ema_unet,
+        accelerator=accelerator,
+    )
+    accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
+    accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
@@ -746,6 +744,7 @@ def main():
         vaecache.split_cache_between_processes()
         vaecache.process_buckets(bucket_manager=bucket_manager)
         accelerator.wait_for_everyone()
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -803,6 +802,7 @@ def main():
         logger.info(
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
+
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -881,9 +881,9 @@ def main():
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
+        initial=global_step,
     )
     progress_bar.set_description("Steps")
-    progress_bar.update(global_step)
     accelerator.wait_for_everyone()
 
     for epoch in range(first_epoch, args.num_train_epochs):
@@ -910,7 +910,7 @@ def main():
                 )
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
-            if batch is False or batch is None:
+            if batch is False:
                 logger.info(f"Reached the end of epoch {epoch}")
                 break
 
@@ -922,11 +922,13 @@ def main():
                 )
 
             # Add the current batch of training data's avg luminance to a list.
-            if "luminance" in batch:
+            if StateTracker.calculate_luminance() and "luminance" in batch:
                 training_luminance_values.append(batch["luminance"])
 
             with accelerator.accumulate(unet):
-                training_logger.debug(f"Beginning another step.")
+                training_logger.debug(
+                    f"Sending latent batch from pinned memory to device."
+                )
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
@@ -1062,6 +1064,7 @@ def main():
                     )
                     training_logger.debug(f"Reducing loss via mean")
                     loss = loss.mean()
+
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps

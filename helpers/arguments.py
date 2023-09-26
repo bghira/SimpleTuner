@@ -988,7 +988,18 @@ def parse_args(input_args=None):
             "It seems that the value for --validation_resolution is less than 128 pixels, which is invalid."
             f" You might have accidentally set it in megapixels: {args.validation_resolution}"
         )
-
+    if args.seen_state_path is None:
+        raise ValueError(
+            'Please specify a path to a "seen" state dict via the --seen_state_path parameter.'
+        )
+    if args.state_path is None:
+        raise ValueError(
+            "Please specify a location of your training state status file via the --state_path parameter."
+        )
+    if args.caption_dropout_interval > 100:
+        raise ValueError(
+            "Please specify a caption dropout interval equal to or less than 100 via the --caption_dropout_interval parameter."
+        )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 
