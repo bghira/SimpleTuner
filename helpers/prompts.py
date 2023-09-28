@@ -162,6 +162,7 @@ class PromptHandler:
                     False,  # CLIP-L does not produce pooled embeds.
                     True,  # CLIP-G produces pooled embeds.
                 ],
+                device=accelerator.device,
             )
         elif len(text_encoders) == 2 and text_encoders[0] is None:
             # SDXL Refiner has ONLY the 2nd tokenizer/encoder, which needs to be the only one in Compel.
@@ -174,6 +175,7 @@ class PromptHandler:
                 truncate_long_prompts=False,
                 returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
                 requires_pooled=True,
+                device=accelerator.device,
             )
             self.encoder_style = "sdxl-refiner"
         else:
@@ -188,6 +190,7 @@ class PromptHandler:
                 text_encoder=pipe_text_encoder,
                 truncate_long_prompts=False,
                 returned_embeddings_type=ReturnedEmbeddingsType.LAST_HIDDEN_STATES_NORMALIZED,
+                device=accelerator.device,
             )
             self.encoder_style = "legacy"
 
