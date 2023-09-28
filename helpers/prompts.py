@@ -310,17 +310,17 @@ class PromptHandler:
             logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")
             return {}
 
-    def process_long_prompt(self, positive_prompt: str, num_images_per_prompt: int = 1):
+    def process_long_prompt(self, prompt: str, num_images_per_prompt: int = 1):
         if "sdxl" in self.encoder_style:
             logger.debug(
                 f"Running dual encoder Compel pipeline for batch size {num_images_per_prompt}."
             )
-            # We need to make a list of positive_prompt * num_images_per_prompt count.
-            positive_prompt = [positive_prompt] * num_images_per_prompt
-            conditioning, pooled_embed = self.compel(positive_prompt)
+            # We need to make a list of prompt * num_images_per_prompt count.
+            prompt = [prompt] * num_images_per_prompt
+            conditioning, pooled_embed = self.compel(prompt)
         else:
             logger.debug(f"Running single encoder Compel pipeline.")
-            conditioning = self.compel.build_conditioning_tensor(positive_prompt)
+            conditioning = self.compel.build_conditioning_tensor(prompt)
         [
             conditioning,
         ] = self.compel.pad_conditioning_tensors_to_same_length([conditioning])
