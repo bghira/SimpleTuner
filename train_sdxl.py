@@ -459,7 +459,7 @@ def main():
         text_encoders=[text_encoder_1, text_encoder_2],
         tokenizers=[tokenizer_1, tokenizer_2],
         accelerator=accelerator,
-        model_tyle="sdxl",
+        model_type="sdxl",
     )
     logger.info("Initialise text embedding cache")
     embed_cache = TextEmbeddingCache(
