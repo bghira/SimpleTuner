@@ -325,12 +325,10 @@ class PromptHandler:
             conditioning,
         ] = self.compel.pad_conditioning_tensors_to_same_length([conditioning])
         if "sdxl" in self.encoder_style:
-            logger.debug(
-                f"Returning pooled embeds along with positive/negative conditionings."
-            )
+            logger.debug(f"Returning pooled embeds along with hidden states.")
             return (
                 conditioning,
                 pooled_embed,
             )
-        logger.debug("Returning legacy style text encoding")
+        logger.debug("Returning legacy style hidden states without pooled embeds")
         return conditioning
