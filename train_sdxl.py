@@ -453,11 +453,20 @@ def main():
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
     )
+    logger.info("Initialise prompt handler")
+    prompt_handler = PromptHandler(
+        args=args,
+        text_encoders=[text_encoder_1, text_encoder_2],
+        tokenizers=[tokenizer_1, tokenizer_2],
+        accelerator=accelerator,
+        model_type="sdxl",
+    )
     logger.info("Initialise text embedding cache")
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders,
         tokenizers=tokenizers,
         accelerator=accelerator,
+        prompt_handler=prompt_handler,
         model_type="sdxl",
     )
     StateTracker.set_embedcache(embed_cache)
