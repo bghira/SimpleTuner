@@ -621,11 +621,12 @@ def main():
             extra_optimizer_args["lr"] = args.learning_rate
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        from transformers import Adafactor
+        from transformers import Adafactor, AdafactorSchedule
 
         optimizer_class = Adafactor
-        extra_optimizer_args["lr"] = args.learning_rate
-        extra_optimizer_args["relative_step"] = False
+        extra_optimizer_args["lr"] = None
+        extra_optimizer_args["relative_step"] = True
+        extra_optimizer_args["scale_parameter"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
@@ -639,7 +640,10 @@ def main():
         **extra_optimizer_args,
     )
 
-    if args.lr_scheduler == "cosine_annealing_warm_restarts":
+    if args.use_adafactor_optimizer:
+        # Use the AdafactorScheduler.
+        lr_scheduler = AdafactorSchedule(optimizer)
+    elif args.lr_scheduler == "cosine_annealing_warm_restarts":
         """
         optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
 
