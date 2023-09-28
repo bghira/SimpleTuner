@@ -705,6 +705,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--disable_compel",
+        action="store_true",
+        help=(
+            "If provided, prompts will be handled using the typical prompt encoding strategy."
+            " Otherwise, the default behaviour is to use Compel for prompt embed generation."
+        ),
+    )
+    parser.add_argument(
         "--enable_watermark",
         default=False,
         action="store_true",

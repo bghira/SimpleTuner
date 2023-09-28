@@ -35,7 +35,7 @@ def prepare_validation_prompt_list(args, embed_cache):
         for shortname, prompt in tqdm(
             prompt_library.items(), desc="Precomputing validation prompt embeddings"
         ):
-            embed_cache.compute_embeddings_for_prompts([prompt])
+            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.user_prompt_library is not None:
@@ -44,7 +44,7 @@ def prepare_validation_prompt_list(args, embed_cache):
             user_prompt_library.items(),
             desc="Precomputing user prompt library embeddings",
         ):
-            embed_cache.compute_embeddings_for_prompts([prompt])
+            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.validation_prompt is not None:
@@ -60,7 +60,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
             ) = embed_cache.compute_embeddings_for_sdxl_prompts(
-                ["blurry, cropped, ugly"]
+                ["blurry, cropped, ugly"], is_validation=True
             )
             return (
                 validation_prompts,
@@ -167,7 +167,7 @@ def log_validations(
                 vae=vae,
                 revision=args.revision,
                 torch_dtype=weight_dtype,
-                add_watermarker=args.enable_watermark
+                add_watermarker=args.enable_watermark,
             )
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler

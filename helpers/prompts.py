@@ -133,6 +133,64 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 
 class PromptHandler:
+    def __init__(
+        self,
+        args: dict,
+        text_encoders: list,
+        tokenizers: list,
+        accelerator,
+        model_type: str = "sdxl",
+    ):
+        if args.disable_compel:
+            raise Exception(
+                "--disable_compel was provided, but the Compel engine was still attempted to be initialised."
+            )
+
+        from compel import Compel, ReturnedEmbeddingsType
+
+        self.accelerator = accelerator
+        self.encoder_style = "sdxl"
+        if len(text_encoders) == 2 and text_encoders[0] is not None:
+            # SDXL Refiner and Base can both use the 2nd tokenizer/encoder.
+            logger.debug(f"Initialising Compel prompt manager with dual text encoders.")
+            self.compel = Compel(
+                tokenizer=tokenizers,
+                text_encoder=text_encoders,
+                truncate_long_prompts=False,
+                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                requires_pooled=[
+                    False,  # CLIP-L does not produce pooled embeds.
+                    True,  # CLIP-G produces pooled embeds.
+                ],
+            )
+        elif len(text_encoders) == 2 and text_encoders[0] is None:
+            # SDXL Refiner has ONLY the 2nd tokenizer/encoder, which needs to be the only one in Compel.
+            logger.debug(
+                f"Initialising Compel prompt manager with just the 2nd text encoder."
+            )
+            self.compel = Compel(
+                tokenizer=tokenizers[1],
+                text_encoder=text_encoders[1],
+                truncate_long_prompts=False,
+                returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                requires_pooled=True,
+            )
+            self.encoder_style = "sdxl-refiner"
+        else:
+            # Any other pipeline uses the first tokenizer/encoder.
+            logger.debug(
+                f"Initialising the Compel prompt manager with a single text encoder."
+            )
+            pipe_tokenizer = tokenizers[0]
+            pipe_text_encoder = text_encoders[0]
+            self.compel = Compel(
+                tokenizer=pipe_tokenizer,
+                text_encoder=pipe_text_encoder,
+                truncate_long_prompts=False,
+                returned_embeddings_type=ReturnedEmbeddingsType.LAST_HIDDEN_STATES_NORMALIZED,
+            )
+            self.encoder_style = "legacy"
+
     @staticmethod
     def prepare_instance_prompt(
         image_path: str,
@@ -248,3 +306,28 @@ class PromptHandler:
         except Exception as e:
             logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")
             return {}
+
+    def process_long_prompt(self, positive_prompt: str, num_images_per_prompt: int = 1):
+        if "sdxl" in self.encoder_style:
+            logger.debug(
+                f"Running dual encoder Compel pipeline for batch size {num_images_per_prompt}."
+            )
+            # We need to make a list of positive_prompt * num_images_per_prompt count.
+            positive_prompt = [positive_prompt] * num_images_per_prompt
+            conditioning, pooled_embed = self.compel(positive_prompt)
+        else:
+            logger.debug(f"Running single encoder Compel pipeline.")
+            conditioning = self.compel.build_conditioning_tensor(positive_prompt)
+        [
+            conditioning,
+        ] = self.compel.pad_conditioning_tensors_to_same_length([conditioning])
+        if "sdxl" in self.encoder_style:
+            logger.debug(
+                f"Returning pooled embeds along with positive/negative conditionings."
+            )
+            return (
+                conditioning,
+                pooled_embed,
+            )
+        logger.debug("Returning legacy style text encoding")
+        return conditioning
