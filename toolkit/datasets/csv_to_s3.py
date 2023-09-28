@@ -85,7 +85,9 @@ def calculate_luminance(image: Image):
         ratio = histogram[index] / pixels
         brightness += ratio * (-scale + index)
 
-    return 1 if brightness == 255 else brightness / scale
+    luminance_value = 1 if brightness == 255 else brightness / scale
+    logger.debug(f"Calculated luminance: {luminance_value}")
+    return luminance_value
 
 
 def fetch_image(info, args):
