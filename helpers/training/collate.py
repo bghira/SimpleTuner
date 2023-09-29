@@ -127,8 +127,6 @@ def collate_fn(batch):
             "This trainer is not designed to handle multiple batches in a single collate."
         )
     examples = batch[0]
-    logger.debug(f"Examples: {examples}")
-
     if StateTracker.tracking_luminance():
         logger.debug(f"Computing luminance for input batch")
         batch_luminance = calculate_batch_luminance(
