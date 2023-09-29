@@ -193,7 +193,7 @@ def main():
         StateTracker.enable_luminance()
 
     # If passed along, set the training seed now.
-    if args.seed is not None:
+    if args.seed is not None and args.seed != 0:
         set_seed(args.seed, args.seed_for_each_device)
 
     # Handle the repository creation
@@ -452,6 +452,7 @@ def main():
         sampler=custom_balanced_sampler,
         collate_fn=lambda examples: collate_fn(examples),
         num_workers=args.dataloader_num_workers,
+        persistent_workers=args.dataloader_persistent_workers,
     )
     logger.info("Initialise prompt handler")
     prompt_handler = PromptHandler(
