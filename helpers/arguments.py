@@ -339,7 +339,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--seed_for_each_device",
         action="store_true",
-        default=False,
+        default=True,
         help=(
             "If provided, a unique seed will be used for each GPU."
             " This is done deterministically, so that each GPU will receive the same seed across invocations."
@@ -551,6 +551,15 @@ def parse_args(input_args=None):
         default=0,
         help=(
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
+        ),
+    )
+    parser.add_argument(
+        "--dataloader_persistent_workers",
+        type=bool,
+        default=False,
+        help=(
+            "If set to `True`, the data loader will not shutdown the worker processes after a dataset has been consumed once."
+            " Defaults to `False`."
         ),
     )
     parser.add_argument(
