@@ -519,6 +519,7 @@ def main():
         import gc
 
         del text_encoder_1, text_encoder_2
+        text_encoder_1, text_encoder_2 = None
         gc.collect()
         torch.cuda.empty_cache()
     else:
@@ -621,7 +622,13 @@ def main():
             extra_optimizer_args["lr"] = args.learning_rate
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        from transformers.optimization import Adafactor, AdafactorSchedule
+        try:
+            from transformers.optimization import Adafactor, AdafactorSchedule
+        except ImportError:
+            raise ImportError(
+                "Please install the latest transformers library to make use of Adafactor optimizer."
+                "You can do so by running `pip install transformers`, or, `poetry install` from the SimpleTuner directory."
+            )
 
         optimizer_class = Adafactor
         extra_optimizer_args["lr"] = None
@@ -1042,6 +1049,8 @@ def main():
                     # This is discussed in Section 4.2 of the same paper.
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
+                    if noise_scheduler.config.prediction_type == "v_prediction":
+                        snr = snr + 1
 
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
@@ -1053,8 +1062,6 @@ def main():
                         ).min(dim=1)[0]
                         / snr
                     )
-                    if noise_scheduler.config.prediction_type == "v_prediction":
-                        mse_loss_weights = mse_loss_weights + 1
 
                     # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
                     # When we run this, the MSE loss weights for this timestep is set unconditionally to 1.
