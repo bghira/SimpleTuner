@@ -44,6 +44,8 @@ def shuffle_words_in_filename(filename):
 
 
 def resize_for_condition_image(input_image: Image, resolution: int):
+    if resolution == 0:
+        return input_image
     input_image = input_image.convert("RGB")
     W, H = input_image.size
     aspect_ratio = round(W / H, 2)
@@ -83,7 +85,9 @@ def calculate_luminance(image: Image):
         ratio = histogram[index] / pixels
         brightness += ratio * (-scale + index)
 
-    return 1 if brightness == 255 else brightness / scale
+    luminance_value = 1 if brightness == 255 else brightness / scale
+    logger.debug(f"Calculated luminance: {luminance_value}")
+    return luminance_value
 
 
 def fetch_image(info, args):
@@ -248,7 +252,7 @@ def parse_args():
     parser.add_argument(
         "--condition_image_size",
         type=int,
-        default=1024,
+        default=0,
         help="This option will by default, resize the smaller edge of an image to 1024px.",
     )
     parser.add_argument(

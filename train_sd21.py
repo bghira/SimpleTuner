@@ -974,6 +974,8 @@ def main(args):
                     # This is discussed in Section 4.2 of the same paper.
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
+                    if noise_scheduler.config.prediction_type == "v_prediction":
+                        snr = snr + 1
 
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
@@ -984,8 +986,6 @@ def main(args):
                         ).min(dim=1)[0]
                         / snr
                     )
-                    if noise_scheduler.config.prediction_type == "v_prediction":
-                        mse_loss_weights = mse_loss_weights + 1
 
                     # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
                     # When we run this, the MSE loss weights for this timestep is set unconditionally to 1.
