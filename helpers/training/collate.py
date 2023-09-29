@@ -62,14 +62,14 @@ def extract_pixel_values_and_filepaths(examples):
     pixel_values = []
     filepaths = []
     for example in examples:
-        image_data = example["instance_images"]
+        image_data = example["image_data"]
         pixel_values.append(
             to_tensor(image_data).to(
                 memory_format=torch.contiguous_format,
                 dtype=StateTracker.get_vae_dtype(),
             )
         )
-        filepaths.append(example["instance_images_path"])
+        filepaths.append(example["image_path"])
     return pixel_values, filepaths
 
 
@@ -104,7 +104,7 @@ def compute_prompt_embeddings(captions):
 def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = [
         compute_time_ids(
-            original_size=example["instance_images"].size,
+            original_size=example["image_data"].size,
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
             weight_dtype=weight_dtype,
@@ -132,7 +132,7 @@ def collate_fn(batch):
     if StateTracker.tracking_luminance():
         logger.debug(f"Computing luminance for input batch")
         batch_luminance = calculate_batch_luminance(
-            [example["instance_images"] for example in examples]
+            [example["image_data"] for example in examples]
         )
 
     pixel_values, filepaths = extract_pixel_values_and_filepaths(examples)

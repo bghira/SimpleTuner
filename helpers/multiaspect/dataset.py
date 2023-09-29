@@ -91,8 +91,10 @@ class MultiAspectDataset(Dataset):
             # Return None when not training yet.
             return None
         examples = []
-        for image_path in image_tuple:
-            example = {"instance_images_path": image_path}
+        for sample in image_tuple:
+            image_path = sample["image_path"]
+            image_data = sample["image_data"]
+            example = {"image_path": image_path}
             logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
             crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
                 image_path, "crop_coordinates"
@@ -101,22 +103,13 @@ class MultiAspectDataset(Dataset):
                 logger.debug(f"Image {image_path} has no crop coordinates.")
                 crop_coordinates = (0, 0)
             example["crop_coordinates"] = crop_coordinates
-            if self.print_names:
-                logger.info(f"Open image: {image_path}")
-
-            # Images might fail to load. If so, it is better to just be the bearer of bad news.
-            try:
-                image_data = self.data_backend.read(image_path)
-                instance_image = Image.open(BytesIO(image_data))
-            except Exception as e:
-                logger.error(f"Encountered error opening image: {e}")
-                raise e
-
             # We return the original Image object so that the collate_fn can retrieve the original_size.
-            example["instance_images"] = instance_image
+            example["image_data"] = image_data
+            if self.print_names:
+                logger.info(f"Dataset is now using image: {image_path}")
 
             if self.return_tensor:
-                example["instance_tensor"] = self.image_transforms(instance_image)
+                example["instance_tensor"] = self.image_transforms(image_data)
 
             # Use the magic prompt handler to retrieve the captions.
             example["instance_prompt_text"] = PromptHandler.magic_prompt(

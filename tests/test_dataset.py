@@ -48,16 +48,16 @@ class TestMultiAspectDataset(unittest.TestCase):
             # Create a blank canvas:
             mock_image = Image.new(mode="RGB", size=(16, 8))
             mock_image_open.return_value = mock_image
-            target = tuple([self.image_path])
+            target = tuple([{"image_path": self.image_path, "image_data": mock_image}])
             examples = self.dataset.__getitem__(target)
         # Grab the size of the first image:
         example = examples[0]
-        first_size = example["instance_images"].size
+        first_size = example["image_data"].size
         # Are all sizes the same?
         for example in examples:
             self.assertIsNotNone(example)
-            self.assertEqual(example["instance_images"].size, first_size)
-            self.assertEqual(example["instance_images_path"], self.image_path)
+            self.assertEqual(example["image_data"].size, first_size)
+            self.assertEqual(example["image_path"], self.image_path)
 
     def test_getitem_invalid_image(self):
         self.data_backend.read.side_effect = Exception("Some error")

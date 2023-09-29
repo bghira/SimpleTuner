@@ -275,15 +275,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     logging.debug(
                         f"_process_single_image discovered image was too small, returning None"
                     )
-                    return None
+                    return None, None
                 else:
                     logging.debug(
                         f"Image meets our minimum size status: {image.width}x{image.height}"
                     )
-            return image_path
+            return image_path, image_data
         except Exception as e:
             logger.warning(f"Image was bad or in-progress: {image_path}, {e}")
-            return None
+            return None, None
 
     def _validate_and_yield_images_from_samples(self, samples, bucket):
         """
@@ -294,10 +294,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             logging.debug(
                 f"Before analysing sample, we have {len(to_yield)} images to yield."
             )
-            processed_image_path = self._process_single_image(image_path, bucket)
+            processed_image_path, image_data = self._process_single_image(
+                image_path, bucket
+            )
             if processed_image_path is not None:
                 logging.debug(f"Image {processed_image_path} is considered valid.")
-                to_yield.append(processed_image_path)
+                to_yield.append(
+                    {"image_path": processed_image_path, "image_data": image_data}
+                )
                 if StateTracker.status_training():
                     self.bucket_manager.mark_as_seen(processed_image_path)
             else:
