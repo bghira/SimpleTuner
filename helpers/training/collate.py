@@ -4,6 +4,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.brightness import calculate_batch_luminance
 from accelerate.logging import get_logger
+import concurrent.futures
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -13,8 +14,10 @@ from torchvision.transforms import ToTensor
 # Convert PIL Image to PyTorch Tensor
 to_tensor = ToTensor()
 
+
 def debug_log(msg: str):
     logger.debug(f"{rank_text}{msg}")
+
 
 def compute_time_ids(
     original_size: tuple,
@@ -82,21 +85,30 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def compute_latents(filepaths):
+def fetch_latent(fp):
+    """Worker method to fetch latent for a single image."""
     debug_log(" -> pull latents from cache")
-    latents = [StateTracker.get_vaecache().encode_image(None, fp) for fp in filepaths]
+    latent = StateTracker.get_vaecache().encode_image(None, fp)
 
+    # Move to CPU and pin memory if it's not on the GPU
+    debug_log(" -> push latents to GPU via pinned memory")
+    latent = latent.to("cpu").pin_memory()
+    return latent
+
+
+def compute_latents(filepaths):
+    # Use a thread pool to fetch latents concurrently
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        latents = list(executor.map(fetch_latent, filepaths))
+
+    # Validate shapes
     test_shape = latents[0].shape
-    idx = 0
-    for latent in latents:
-        # Move to CPU and pin memory if it's not on the GPU
-        debug_log(" -> push latents to GPU via pinned memory")
-        latent = latent.to("cpu").pin_memory()
+    for idx, latent in enumerate(latents):
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
-        idx += 1
+
     debug_log(" -> stacking latents")
     return torch.stack(latents)
 
@@ -166,5 +178,5 @@ def collate_fn(batch):
         "prompt_embeds": prompt_embeds_all,
         "add_text_embeds": add_text_embeds_all,
         "batch_time_ids": batch_time_ids,
-        "luminance": batch_luminance
+        "luminance": batch_luminance,
     }
