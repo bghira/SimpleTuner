@@ -113,27 +113,15 @@ def compute_latents(filepaths):
     return torch.stack(latents)
 
 
-def fetch_embedding(caption):
-    """Worker method to fetch embeddings for a single caption."""
+def compute_prompt_embeddings(captions):
     debug_log(" -> get embed from cache")
     (
-        prompt_embed,
-        add_text_embed,
-    ) = StateTracker.get_embedcache().compute_embeddings_for_sdxl_prompts([caption])
-    return prompt_embed[0], add_text_embed[0]  # Assuming results are lists of length 1
-
-
-def compute_prompt_embeddings(captions):
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(fetch_embedding, captions))
-
-    # Unpack results
-    prompt_embeds_all, add_text_embeds_all = zip(*results)
-
+        prompt_embeds_all,
+        add_text_embeds_all,
+    ) = StateTracker.get_embedcache().compute_embeddings_for_sdxl_prompts(captions)
     debug_log(" -> concat embeds")
-    prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
-    add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
-
+    prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+    add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
     return prompt_embeds_all, add_text_embeds_all
 
 
