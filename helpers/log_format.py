@@ -27,7 +27,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 accel_logger = logging.getLogger("DeepSpeed")
 accel_logger.setLevel(logging.WARNING)
 new_handler = logging.StreamHandler()
-new_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
+new_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s"))
 # Remove existing handlers
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)
