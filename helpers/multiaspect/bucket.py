@@ -451,6 +451,9 @@ class BucketManager:
         if self.data_backend.exists(self.metadata_file):
             cache_data_raw = self.data_backend.read(self.metadata_file)
             data = json.loads(cache_data_raw)
+            logger.debug(
+                f"Loaded metadata from {self.metadata_file} (truncated string) {list(data)[:100]}"
+            )
             self.image_metadata = data.get("image_metadata", {})
 
     def save_image_metadata(self):
