@@ -93,7 +93,6 @@ class MultiAspectDataset(Dataset):
         examples = []
         for sample in image_tuple:
             image_path = sample["image_path"]
-            image_data = sample["image_data"]
             example = {"image_path": image_path}
             logger.debug(f"Running __getitem__ for {image_path} inside Dataloader.")
             crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
@@ -103,13 +102,22 @@ class MultiAspectDataset(Dataset):
                 logger.debug(f"Image {image_path} has no crop coordinates.")
                 crop_coordinates = (0, 0)
             example["crop_coordinates"] = crop_coordinates
-            # We return the original Image object so that the collate_fn can retrieve the original_size.
-            example["image_data"] = image_data
+            original_size = self.bucket_manager.get_metadata_attribute_by_filepath(
+                image_path, "original_size"
+            )
+            target_size = self.bucket_manager.get_metadata_attribute_by_filepath(
+                image_path, "target_size"
+            )
+            example["original_size"] = original_size
+            example["target_size"] = target_size
+
+            if original_size is None or target_size is None:
+                raise Exception(
+                    "Metadata was unavailable for image: {image_path}. Ensure that --skip_file_discovery=metadata is not set."
+                )
+
             if self.print_names:
                 logger.info(f"Dataset is now using image: {image_path}")
-
-            if self.return_tensor:
-                example["instance_tensor"] = self.image_transforms(image_data)
 
             # Use the magic prompt handler to retrieve the captions.
             example["instance_prompt_text"] = PromptHandler.magic_prompt(

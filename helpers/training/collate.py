@@ -58,9 +58,8 @@ def compute_time_ids(
     return add_time_ids
 
 
-def extract_pixel_values_and_filepaths(examples):
+def extract_pixel_values(examples):
     pixel_values = []
-    filepaths = []
     for example in examples:
         image_data = example["image_data"]
         pixel_values.append(
@@ -69,8 +68,14 @@ def extract_pixel_values_and_filepaths(examples):
                 dtype=StateTracker.get_vae_dtype(),
             )
         )
+    return pixel_values
+
+
+def extract_filepaths(examples):
+    filepaths = []
+    for example in examples:
         filepaths.append(example["image_path"])
-    return pixel_values, filepaths
+    return filepaths
 
 
 def compute_latents(pixel_values, filepaths):
@@ -104,7 +109,7 @@ def compute_prompt_embeddings(captions):
 def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = [
         compute_time_ids(
-            original_size=example["image_data"].size,
+            original_size=tuple(example["original_size"]),
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
             weight_dtype=weight_dtype,
@@ -127,13 +132,14 @@ def collate_fn(batch):
             "This trainer is not designed to handle multiple batches in a single collate."
         )
     examples = batch[0]
+    pixel_values = None
     if StateTracker.tracking_luminance():
         logger.debug(f"Computing luminance for input batch")
         batch_luminance = calculate_batch_luminance(
             [example["image_data"] for example in examples]
         )
-
-    pixel_values, filepaths = extract_pixel_values_and_filepaths(examples)
+        pixel_values = extract_pixel_values(examples)
+    filepaths = extract_filepaths(examples)
     latent_batch = compute_latents(pixel_values, filepaths)
     check_latent_shapes(latent_batch, filepaths)
 

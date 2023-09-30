@@ -21,6 +21,7 @@ pil_logger.setLevel(logging.WARNING)
 
 class MultiAspectSampler(torch.utils.data.Sampler):
     current_epoch = 1
+    vae_cache = None
 
     def __init__(
         self,
@@ -100,6 +101,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return list(
             self.bucket_manager.aspect_ratio_bucket_indices.keys()
         )  # These keys are a float value, eg. 1.78.
+
+    def retrieve_vae_cache(self):
+        if self.vae_cache is None:
+            self.vae_cache = StateTracker.get_vaecache()
+        return self.vae_cache
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
@@ -248,43 +254,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}\n"
         )
 
-    def _process_single_image(self, image_path, bucket):
-        """
-        Validate and process a single image.
-        Return the image path if valid, otherwise return None.
-        """
-        if not self.data_backend.exists(image_path):
-            logger.warning(f"Image path does not exist: {image_path}")
-            self.bucket_manager.remove_image(image_path, bucket)
-            return None
-
-        try:
-            logger.debug(f"AspectBucket is loading image: {image_path}")
-            image_data = self.data_backend.read(image_path)
-            image = Image.open(BytesIO(image_data))
-            if (
-                int(image.width) < self.minimum_image_size
-                or int(image.height) < self.minimum_image_size
-            ):
-                image.close()
-                self.bucket_manager.handle_small_image(
-                    image_path=image_path,
-                    bucket=bucket,
-                    delete_unwanted_images=self.delete_unwanted_images,
-                )
-                logging.debug(
-                    f"_process_single_image discovered image was too small, returning None"
-                )
-                return None, None
-            else:
-                logging.debug(
-                    f"Image meets our minimum size status: {image.width}x{image.height}"
-                )
-            return image_path, image
-        except Exception as e:
-            logger.warning(f"Image was bad or in-progress: {image_path}, {e}")
-            return None, None
-
     def _validate_and_yield_images_from_samples(self, samples, bucket):
         """
         Validate and yield images from given samples. Return a list of valid image paths.
@@ -294,16 +263,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             logging.debug(
                 f"Before analysing sample, we have {len(to_yield)} images to yield."
             )
-            processed_image_path, image_data = self._process_single_image(
-                image_path, bucket
-            )
-            if processed_image_path is not None:
-                logging.debug(f"Image {processed_image_path} is considered valid.")
-                to_yield.append(
-                    {"image_path": processed_image_path, "image_data": image_data}
-                )
-                if StateTracker.status_training():
-                    self.bucket_manager.mark_as_seen(processed_image_path)
+            vae_cache = self.retrieve_vae_cache()
+            vae_cache_path, basename = vae_cache.generate_vae_cache_filename(image_path)
+            if self.data_backend.exists(vae_cache_path):
+                logging.debug(f"Image {image_path} is considered valid.")
+                to_yield.append({"image_path": image_path})
+                self.bucket_manager.mark_as_seen(image_path)
             else:
                 logging.debug(f"Image {image_path} is considered invalid.")
             logging.debug(
