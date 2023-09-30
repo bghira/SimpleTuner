@@ -368,11 +368,13 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--seed_for_each_device",
-        action="store_true",
+        type=bool,
         default=True,
         help=(
-            "If provided, a unique seed will be used for each GPU."
+            "By default, a unique seed will be used for each GPU."
             " This is done deterministically, so that each GPU will receive the same seed across invocations."
+            " If --seed_for_each_device=false is provided, then we will use the same seed across all GPUs,"
+            " which will almost certainly result in the over-sampling of inputs on larger datasets."
         ),
     )
     parser.add_argument(
