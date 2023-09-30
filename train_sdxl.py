@@ -227,7 +227,7 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
     else:
-        logging.warning(
+        logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
 
@@ -339,7 +339,7 @@ def main():
                     f"--image_prompt_column' value '{args.image_prompt_column}' needs to be one of: {', '.join(column_names)}"
                 )
     else:
-        logging.info(
+        logger.info(
             "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
         )
 
