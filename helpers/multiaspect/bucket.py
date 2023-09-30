@@ -444,7 +444,7 @@ class BucketManager:
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
-    def update_metadata(self):
+    def scan_for_metadata(self):
         """
         Update the metadata without modifying the bucket indices.
         """
