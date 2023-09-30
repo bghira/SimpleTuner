@@ -5,7 +5,8 @@ from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.brightness import calculate_batch_luminance
 from accelerate.logging import get_logger
 
-logger = get_logger("collate_fn", environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger = logging.getLogger("collate_fn")
+logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 rank_text = rank_info()
 from torchvision.transforms import ToTensor
 
