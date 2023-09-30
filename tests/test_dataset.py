@@ -52,11 +52,11 @@ class TestMultiAspectDataset(unittest.TestCase):
             examples = self.dataset.__getitem__(target)
         # Grab the size of the first image:
         example = examples[0]
-        first_size = example["image_data"].size
+        first_size = example["original_size"]
         # Are all sizes the same?
         for example in examples:
             self.assertIsNotNone(example)
-            self.assertEqual(example["image_data"].size, first_size)
+            self.assertEqual(example["original_size"], first_size)
             self.assertEqual(example["image_path"], self.image_path)
 
     def test_getitem_invalid_image(self):
