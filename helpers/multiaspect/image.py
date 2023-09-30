@@ -42,6 +42,7 @@ class MultiaspectImage:
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
+        delete_problematic_images: bool = False,
     ):
         try:
             image_metadata = {}
@@ -74,6 +75,9 @@ class MultiaspectImage:
             logger.error(f"Error processing image: {e}")
             logging.debug(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
+            if delete_problematic_images:
+                logger.error(f"Deleting image.")
+                data_backend.delete(image_path_str)
         return aspect_ratio_bucket_indices
 
     @staticmethod
