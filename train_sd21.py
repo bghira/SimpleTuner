@@ -484,7 +484,7 @@ def main(args):
         if StateTracker.tracking_luminance():
             training_logger.debug(f"Computing luminance for input batch")
             batch_luminance = calculate_batch_luminance(
-                [example["instance_images"] for example in examples]
+                [example["image_data"] for example in examples]
             )
 
         # Initialize the VAE Cache if it doesn't exist
@@ -504,14 +504,14 @@ def main(args):
         pixel_values = []
         filepaths = []  # we will store the file paths here
         for example in examples:
-            image_data = example["instance_images"]
+            image_data = example["image_data"]
             # SDXL would grab the width/height here, but it's not needed for SD 2.x
             pixel_values.append(
                 to_tensor(image_data).to(
                     memory_format=torch.contiguous_format, dtype=vae_dtype
                 )
             )
-            filepaths.append(example["instance_images_path"])  # store the file path
+            filepaths.append(example["image_path"])  # store the file path
 
         # Compute the VAE embeddings for individual images
         latents = [
