@@ -455,7 +455,7 @@ class BucketManager:
             logger.info("No new files discovered. Exiting.")
             return
 
-        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+        existing_files_set = self.image_metadata.keys()
 
         num_cpus = 8  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
