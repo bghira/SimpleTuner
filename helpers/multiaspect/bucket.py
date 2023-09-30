@@ -449,7 +449,7 @@ class BucketManager:
         """Load image metadata from a JSON file."""
         self.image_metadata = {}
         if self.data_backend.exists(self.metadata_file):
-            cache_data_raw = self.data_backend.read(self.metadata_file, "r")
+            cache_data_raw = self.data_backend.read(self.metadata_file)
             data = json.loads(cache_data_raw)
             self.image_metadata = data.get("image_metadata", {})
 
