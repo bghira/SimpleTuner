@@ -202,7 +202,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--cache_dir_vae",
         type=str,
-        default=None,
+        default="",
         help=(
             "This is the path to a local directory that will contain your VAE outputs."
             " Unlike the text embed cache, your VAE latents will be stored in the AWS data backend."
