@@ -24,7 +24,7 @@ init(autoreset=True)
 # Set up logging with the custom formatter
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-accel_logger = logging.getLogger('DeepSpeed')
+accel_logger = logging.getLogger("DeepSpeed")
 accel_logger.setLevel(logging.WARNING)
 new_handler = logging.StreamHandler()
 new_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -34,8 +34,12 @@ for handler in logger.handlers[:]:
 if not logger.handlers:
     logger.addHandler(new_handler)
 
-forward_logger = logging.getLogger('diffusers.models.unet_2d_condition')
+forward_logger = logging.getLogger("diffusers.models.unet_2d_condition")
 forward_logger.setLevel(logging.WARNING)
 
 pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)
+pil_logger = logging.getLogger("PIL.Image")
+pil_logger.setLevel("WARNING")
+pil_logger = logging.getLogger("PIL.PngImagePlugin")
+pil_logger.setLevel("WARNING")

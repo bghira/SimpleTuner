@@ -78,16 +78,9 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def compute_latents(pixel_values, filepaths):
-    if pixel_values is None:
-        latents = [
-            StateTracker.get_vaecache().encode_image(None, fp) for fp in filepaths
-        ]
-    else:
-        latents = [
-            StateTracker.get_vaecache().encode_image(pv, fp)
-            for pv, fp in zip(pixel_values, filepaths)
-        ]
+def compute_latents(filepaths):
+    latents = [StateTracker.get_vaecache().encode_image(None, fp) for fp in filepaths]
+
     test_shape = latents[0].shape
     idx = 0
     for latent in latents:
@@ -137,15 +130,9 @@ def collate_fn(batch):
             "This trainer is not designed to handle multiple batches in a single collate."
         )
     examples = batch[0]
-    pixel_values = None
-    if StateTracker.tracking_luminance():
-        logger.debug(f"Computing luminance for input batch")
-        batch_luminance = calculate_batch_luminance(
-            [example["image_data"] for example in examples]
-        )
-        pixel_values = extract_pixel_values(examples)
+    batch_luminance = [example["luminance"] for example in examples]
     filepaths = extract_filepaths(examples)
-    latent_batch = compute_latents(pixel_values, filepaths)
+    latent_batch = compute_latents(filepaths)
     check_latent_shapes(latent_batch, filepaths)
 
     # Extract the captions from the examples.

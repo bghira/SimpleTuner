@@ -13,6 +13,16 @@ class TestMultiAspectDataset(unittest.TestCase):
         self.accelerator = Mock()
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.__len__ = Mock(return_value=10)
+        self.image_metadata = {
+            "original_size": (16, 8),
+            "crop_coordinates": (0, 0),
+            "target_size": (16, 8),
+            "aspect_ratio": 1.0,
+            "luminance": 0.5,
+        }
+        self.bucket_manager.get_metadata_by_filepath = Mock(
+            return_value=self.image_metadata
+        )
         self.data_backend = Mock(spec=BaseDataBackend)
         self.image_path = "fake_image_path"
         # Mock the Path.exists method to return True
@@ -71,12 +81,13 @@ class TestMultiAspectDataset(unittest.TestCase):
                     self.dataset.__getitem__(self.image_path)
 
     def test_getitem_not_in_training_state(self):
+        input_data = tuple([{"image_path": self.image_path}])
         with patch(
             "helpers.training.state_tracker.StateTracker.status_training",
             return_value=False,
         ):
-            example = self.dataset.__getitem__(self.image_path)
-        self.assertIsNone(example)
+            example = self.dataset.__getitem__(input_data)
+        self.assertIsNotNone(example)
 
 
 if __name__ == "__main__":
