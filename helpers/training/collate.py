@@ -79,10 +79,15 @@ def extract_filepaths(examples):
 
 
 def compute_latents(pixel_values, filepaths):
-    latents = [
-        StateTracker.get_vaecache().encode_image(pv, fp)
-        for pv, fp in zip(pixel_values, filepaths)
-    ]
+    if pixel_values is None:
+        latents = [
+            StateTracker.get_vaecache().encode_image(None, fp) for fp in filepaths
+        ]
+    else:
+        latents = [
+            StateTracker.get_vaecache().encode_image(pv, fp)
+            for pv, fp in zip(pixel_values, filepaths)
+        ]
     test_shape = latents[0].shape
     idx = 0
     for latent in latents:
