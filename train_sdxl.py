@@ -771,6 +771,9 @@ def main():
     if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
         bucket_manager.scan_for_metadata()
     accelerator.wait_for_everyone()
+    if not accelerator.is_main_process:
+        bucket_manager.load_image_metadata()
+    accelerator.wait_for_everyone()
 
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
