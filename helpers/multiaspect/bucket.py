@@ -435,11 +435,11 @@ class BucketManager:
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
+        self.image_metadata = {}
         if self.metadata_file.exists():
             with open(self.metadata_file, "r") as f:
                 data = json.load(f)
                 self.image_metadata = data.get("image_metadata", {})
-        return {}
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
@@ -449,7 +449,7 @@ class BucketManager:
         """
         Update the metadata without modifying the bucket indices.
         """
-        logger.info("Discovering new files...")
+        logger.info("Discovering new images for metadata scan...")
         new_files = self._discover_new_files(for_metadata=True)
         if not new_files:
             logger.info("No new files discovered. Exiting.")
