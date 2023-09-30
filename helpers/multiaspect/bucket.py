@@ -441,9 +441,7 @@ class BucketManager:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
-        return self.image_metadata.get(
-            os.path.basename(filepath), self.image_metadata.get(filepath, None)
-        )
+        return self.image_metadata.get(filepath, None)
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
@@ -472,7 +470,7 @@ class BucketManager:
             return
 
         existing_files_set = {
-            os.path.basename(key_value) for key_value in self.image_metadata.keys()
+            existing_file for existing_file in self.image_metadata.keys()
         }
 
         num_cpus = 8  # Using a fixed number for better control and predictability
