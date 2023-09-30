@@ -7,13 +7,15 @@ from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
-import accelerate
+from accelerate import PartialState
 from PIL import Image
 
 
 class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
-        self.accelerator = Mock(spec=accelerate.Accelerator)
+        self.process_state = PartialState()
+        self.accelerator = MagicMock()
+        self.accelerator.log = MagicMock()
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
         self.bucket_manager.seen_images = {}
@@ -25,6 +27,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.sampler = MultiAspectSampler(
             bucket_manager=self.bucket_manager,
             data_backend=self.data_backend,
+            accelerator=self.accelerator,
             batch_size=self.batch_size,
             seen_images_path=self.seen_images_path,
             state_path=self.state_path,

@@ -9,7 +9,9 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from accelerate.logging import get_logger
 
-logger = get_logger("MultiAspectSampler", os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger = get_logger(
+    "MultiAspectSampler", os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
+)
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -48,7 +50,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - delete_unwanted_images: Flag to decide whether to delete unwanted (small) images or just remove from the bucket.
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
-        self.rank_info = rank_info(accelerator)
+        self.rank_info = rank_info()
         self.accelerator = accelerator
         self.bucket_manager = bucket_manager
         self.data_backend = data_backend
