@@ -443,17 +443,9 @@ class BucketManager:
         """
         Scan all images for metadata to update.
         """
-        logger.info("Discovering new files...")
-        new_files = self._discover_new_files()
-
-        if not new_files:
-            logger.info("No new files discovered. Exiting.")
-            return
-
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
 
         num_cpus = 8  # Using a fixed number for better control and predictability
-        files_split = np.array_split(new_files, num_cpus)
 
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
@@ -477,7 +469,7 @@ class BucketManager:
         for worker in workers:
             worker.start()
 
-        with tqdm(total=len(new_files)) as pbar:
+        with tqdm(total=len(existing_files_set)) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
