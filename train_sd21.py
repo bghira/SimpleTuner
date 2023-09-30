@@ -402,6 +402,7 @@ def main(args):
         data_backend=data_backend,
         accelerator=accelerator,
         batch_size=args.train_batch_size,
+        delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
         cache_file=os.path.join(
