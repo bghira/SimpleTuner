@@ -264,7 +264,15 @@ class BucketManager:
 
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
-        self.seen_images[image_path] = True  # This will be shared across all processes
+        self.seen_images[image_path] = True
+        
+    def mark_batch_as_seen(self, image_paths):
+        """Efficiently extend the Manager with new contents, image_paths
+        
+        Args:
+            image_paths (list): A list of image paths to mark as seen.
+        """
+        self.seen_images.update({image_path: True for image_path in image_paths})
 
     def is_seen(self, image_path):
         """Check if an image is seen."""
