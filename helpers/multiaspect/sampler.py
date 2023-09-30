@@ -275,6 +275,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
+            self.debug_log(f"Image {image_path} is considered valid. Adding to yield list.")
+            to_yield.append({"image_path": image_path})
             self.debug_log(
                 f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
