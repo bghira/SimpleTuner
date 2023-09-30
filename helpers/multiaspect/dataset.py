@@ -49,10 +49,6 @@ class MultiAspectDataset(Dataset):
         self.print_names = print_names
         self.debug_dataset_loader = debug_dataset_loader
         self.instance_data_root = Path(instance_data_root)
-        if not self.instance_data_root.exists():
-            raise ValueError(
-                f"Instance {self.instance_data_root} images root doesn't exists."
-            )
         self.instance_prompt = instance_prompt
         self.aspect_ratio_buckets = aspect_ratio_buckets
         self.use_original_images = use_original_images

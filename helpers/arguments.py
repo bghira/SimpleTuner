@@ -1,4 +1,7 @@
-import argparse, os, random, time, json
+import argparse, os, random, time, json, logging
+
+logger = logging.getLogger("ArgsParser")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def parse_args(input_args=None):
@@ -189,6 +192,24 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--cache_dir_text",
+        type=str,
+        default="cache",
+        help=(
+            "This is the path to a local directory that will contain your text embed cache."
+        ),
+    )
+    parser.add_argument(
+        "--cache_dir_vae",
+        type=str,
+        default=None,
+        help=(
+            "This is the path to a local directory that will contain your VAE outputs."
+            " Unlike the text embed cache, your VAE latents will be stored in the AWS data backend."
+            " If the AWS backend is in use, this will be a prefix for the bucket's VAE cache entries."
+        ),
+    )
+    parser.add_argument(
         "--data_backend",
         type=str,
         default="local",
@@ -231,6 +252,15 @@ def parse_args(input_args=None):
         type=str,
         default=None,
         help="The AWS bucket name to use.",
+    )
+    parser.add_argument(
+        "--aws_bucket_image_prefix",
+        type=str,
+        default="",
+        help=(
+            "Instead of using --instance_data_dir, AWS S3 relies on aws_bucket_*_prefix parameters."
+            " When provided, this parameter will be prepended to the image path."
+        ),
     )
     parser.add_argument(
         "--aws_endpoint_url",
@@ -963,6 +993,9 @@ def parse_args(input_args=None):
         if not isinstance(aws_config, dict):
             raise ValueError("AWS config file must be a JSON object.")
         args.aws_bucket_name = aws_config.get("aws_bucket_name", args.aws_bucket_name)
+        args.aws_bucket_image_prefix = aws_config.get(
+            "aws_bucket_image_prefix", args.aws_bucket_name
+        )
         args.aws_endpoint_url = aws_config.get(
             "aws_endpoint_url", args.aws_endpoint_url
         )
@@ -982,6 +1015,16 @@ def parse_args(input_args=None):
             raise ValueError("Must specify an AWS access key ID.")
         if args.aws_secret_access_key is None:
             raise ValueError("Must specify an AWS secret access key.")
+        # Override the instance data dir with the bucket image prefix.
+        args.instance_data_dir = args.aws_bucket_image_prefix
+    else:
+        if args.cache_dir_vae is None:
+            args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
+        if args.cache_dir_text is None:
+            args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
+        os.path.makedirs([args.cache_dir_vae, args.cache_dir_text], exist_ok=True)
+    logger.info(f"VAE Cache location: {args.cache_dir_vae}")
+    logger.info(f"Text Cache location: {args.cache_dir_text}")
 
     if args.validation_resolution < 128:
         raise ValueError(

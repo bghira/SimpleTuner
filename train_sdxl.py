@@ -245,6 +245,10 @@ def main():
         from helpers.data_backend.local import LocalDataBackend
 
         data_backend = LocalDataBackend(accelerator=accelerator)
+        if not os.path.exists(args.instance_data_root):
+            raise FileNotFoundError(
+                f"Instance {args.instance_data_root} images root doesn't exist. Cannot continue."
+            )
     elif args.data_backend == "aws":
         from helpers.data_backend.aws import S3DataBackend
 
@@ -909,8 +913,8 @@ def main():
         range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
         initial=global_step,
+        desc="Steps",
     )
-    progress_bar.set_description("Steps")
     accelerator.wait_for_everyone()
 
     for epoch in range(first_epoch, args.num_train_epochs):

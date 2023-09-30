@@ -35,13 +35,12 @@ class TestMultiAspectDataset(unittest.TestCase):
             )
 
     def test_init_invalid_instance_data_root(self):
-        with self.assertRaises(ValueError):
-            MultiAspectDataset(
-                instance_data_root="/invalid/path",
-                accelerator=self.accelerator,
-                bucket_manager=self.bucket_manager,
-                data_backend=self.data_backend,
-            )
+        MultiAspectDataset(
+            instance_data_root="/invalid/path",
+            accelerator=self.accelerator,
+            bucket_manager=self.bucket_manager,
+            data_backend=self.data_backend,
+        )
 
     def test_len(self):
         self.bucket_manager.__len__.return_value = 10
