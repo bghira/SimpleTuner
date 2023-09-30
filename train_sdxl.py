@@ -451,8 +451,8 @@ def main():
         shuffle=False,  # The sampler handles shuffling
         sampler=custom_balanced_sampler,
         collate_fn=lambda examples: collate_fn(examples),
-        num_workers=args.dataloader_num_workers,
-        persistent_workers=args.dataloader_persistent_workers,
+        num_workers=0,
+        persistent_workers=False,
     )
     logger.info("Initialise prompt handler")
     prompt_handler = PromptHandler(
@@ -585,7 +585,10 @@ def main():
             text_encoder_2.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
-    extra_optimizer_args = {}
+    extra_optimizer_args = {
+        "weight_decay": args.adam_weight_decay,
+        "eps": args.adam_epsilon,
+    }
     # Initialize the optimizer
     if args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
@@ -632,6 +635,7 @@ def main():
             )
 
         optimizer_class = Adafactor
+        extra_optimizer_args = {}
         extra_optimizer_args["lr"] = None
         extra_optimizer_args["relative_step"] = True
         extra_optimizer_args["scale_parameter"] = False
@@ -643,8 +647,6 @@ def main():
     )
     optimizer = optimizer_class(
         unet.parameters(),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
         **extra_optimizer_args,
     )
 
