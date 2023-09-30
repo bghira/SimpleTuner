@@ -60,7 +60,7 @@ class BucketManager:
             / self.batch_size
         )
 
-    def _discover_new_files(self):
+    def _discover_new_files(self, for_metadata: bool = False):
         """
         Discover new files that have not been processed yet.
 
@@ -77,7 +77,12 @@ class BucketManager:
             )
         )
         # Extract only the files from the data
-
+        if for_metadata:
+            return [
+                file
+                for file in all_image_files
+                if self.get_metadata_by_filepath(file) is None
+            ]
         return [
             file
             for file in all_image_files
@@ -439,13 +444,20 @@ class BucketManager:
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
-    def scan_for_metadata(self):
+    def update_metadata(self):
         """
-        Scan all images for metadata to update.
+        Update the metadata without modifying the bucket indices.
         """
+        logger.info("Discovering new files...")
+        new_files = self._discover_new_files(for_metadata=True)
+        if not new_files:
+            logger.info("No new files discovered. Exiting.")
+            return
+
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
 
         num_cpus = 8  # Using a fixed number for better control and predictability
+        files_split = np.array_split(new_files, num_cpus)
 
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
@@ -469,7 +481,7 @@ class BucketManager:
         for worker in workers:
             worker.start()
 
-        with tqdm(total=len(existing_files_set)) as pbar:
+        with tqdm(total=len(new_files)) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
