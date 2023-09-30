@@ -1,11 +1,12 @@
 import torch, logging
 from os import environ
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.brightness import calculate_batch_luminance
+from accelerate.logging import get_logger
 
-logger = logging.getLogger("Collate")
-logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-
+logger = get_logger("collate_fn", environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+rank_text = rank_info()
 from torchvision.transforms import ToTensor
 
 # Convert PIL Image to PyTorch Tensor
@@ -79,26 +80,31 @@ def extract_filepaths(examples):
 
 
 def compute_latents(filepaths):
+    logger.debug(f"{rank_text} -> pull latents from cache")
     latents = [StateTracker.get_vaecache().encode_image(None, fp) for fp in filepaths]
 
     test_shape = latents[0].shape
     idx = 0
     for latent in latents:
         # Move to CPU and pin memory if it's not on the GPU
+        logger.debug(f"{rank_text} -> push latents to GPU via pinned memory")
         latent = latent.to("cpu").pin_memory()
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
         idx += 1
+    logger.debug(f"{rank_text} -> stacking latents")
     return torch.stack(latents)
 
 
 def compute_prompt_embeddings(captions):
+    logger.debug(f"{rank_text} -> get embed from cache")
     (
         prompt_embeds_all,
         add_text_embeds_all,
     ) = StateTracker.get_embedcache().compute_embeddings_for_sdxl_prompts(captions)
+    logger.debug(f"{rank_text} -> concat embeds")
     prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
     add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
     return prompt_embeds_all, add_text_embeds_all
@@ -129,28 +135,33 @@ def collate_fn(batch):
         raise ValueError(
             "This trainer is not designed to handle multiple batches in a single collate."
         )
+    logger.debug(f"{rank_text}Begin collate_fn on batch")
     examples = batch[0]
+    logger.debug(f"{rank_text}Collect luminance values")
     batch_luminance = [example["luminance"] for example in examples]
+    logger.debug(f"{rank_text}Extract filepaths")
     filepaths = extract_filepaths(examples)
+    logger.debug(f"{rank_text}Compute latents")
     latent_batch = compute_latents(filepaths)
+    logger.debug(f"{rank_text}Check latents")
     check_latent_shapes(latent_batch, filepaths)
 
     # Extract the captions from the examples.
+    logger.debug(f"{rank_text}Extract captions")
     captions = [example["instance_prompt_text"] for example in examples]
+    logger.debug(f"{rank_text}Pull cached text embeds")
     prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
 
+    logger.debug(f"{rank_text}Compute and stack SDXL time ids")
     batch_time_ids = gather_conditional_size_features(
         examples, latent_batch, StateTracker.get_weight_dtype()
     )
-    logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
+    logger.debug(f"{rank_text}Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
-    result = {
+    return {
         "latent_batch": latent_batch,
         "prompt_embeds": prompt_embeds_all,
         "add_text_embeds": add_text_embeds_all,
         "batch_time_ids": batch_time_ids,
+        "luminance": batch_luminance
     }
-    if StateTracker.tracking_luminance():
-        result["luminance"] = batch_luminance
-
-    return result
