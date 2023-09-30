@@ -83,7 +83,7 @@ class BucketManager:
         # Extract only the files from the data
         if for_metadata:
             result = [
-                os.path.basename(file)
+                file
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
