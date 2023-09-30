@@ -758,6 +758,7 @@ def main():
         resolution_type=args.resolution_type,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
+        cache_dir=args.cache_dir_vae,
     )
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
