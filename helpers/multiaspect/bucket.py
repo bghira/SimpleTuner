@@ -79,7 +79,7 @@ class BucketManager:
         # Extract only the files from the data
         if for_metadata:
             return [
-                file
+                os.path.basename(file)
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
@@ -426,12 +426,16 @@ class BucketManager:
         """Retrieve metadata for a given image file path.
 
         Args:
-            filepath (str): The complete path from the aspect bucket list.
+            filepath (str): The complete or basename path from the aspect bucket list.
+                            First, we search for the basename as the key, and we fall
+                             back to the
 
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
-        return self.image_metadata.get(filepath, None)
+        return self.image_metadata.get(
+            os.path.basename(filepath), self.image_metadata.get(filepath, None)
+        )
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
@@ -455,7 +459,9 @@ class BucketManager:
             logger.info("No new files discovered. Exiting.")
             return
 
-        existing_files_set = self.image_metadata.keys()
+        existing_files_set = {
+            os.path.basename(key_value) for key_value in self.image_metadata.keys()
+        }
 
         num_cpus = 8  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
