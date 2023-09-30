@@ -280,7 +280,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     logging.debug(
                         f"Image meets our minimum size status: {image.width}x{image.height}"
                     )
-            return image_path, image_data
+            return image_path, image
         except Exception as e:
             logger.warning(f"Image was bad or in-progress: {image_path}, {e}")
             return None, None
