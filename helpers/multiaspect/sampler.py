@@ -238,15 +238,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         bucket = self.buckets[self.current_bucket]
         self.exhausted_buckets.append(bucket)
         self.buckets.remove(bucket)
-        logger.debug(
+        self.debug_log(
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
         )
 
     def log_state(self):
-        logger.debug(
+        self.debug_log(
             f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
         )
-        logger.debug(
+        self.debug_log(
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
         )
         logger.info(
@@ -265,8 +265,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         to_yield = []
         for image_path in samples:
-            logging.debug(
-                f"Before analysing sample, we have {len(to_yield)} images to yield."
+            self.debug_log(
+                f"Begin analysing sample. We have {len(to_yield)} images to yield."
             )
             vae_cache = self.retrieve_vae_cache()
             vae_cache_path, basename = vae_cache.generate_vae_cache_filename(image_path)
@@ -278,13 +278,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
             if self.data_backend.exists(vae_cache_path):
-                logging.debug(f"Image {image_path} is considered valid.")
+                self.debug_log(f"Image {image_path} is considered valid. Adding to yield list.")
                 to_yield.append({"image_path": image_path})
+                self.debug_log("Now marking image as seen.")
                 self.bucket_manager.mark_as_seen(image_path)
             else:
-                logging.debug(f"Image {image_path} is considered invalid.")
-            logging.debug(
-                f"After analysing sample, we have {len(to_yield)} images to yield."
+                self.debug_log(f"Image {image_path} is considered invalid.")
+            self.debug_log(
+                f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
 
         return to_yield
