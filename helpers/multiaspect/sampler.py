@@ -268,10 +268,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
                 image_path, "crop_coordinates"
             )
-            if (
-                self.data_backend.exists(vae_cache_path)
-                and crop_coordinates is not None
-            ):
+            if crop_coordinates is None:
+                raise Exception(
+                    f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
+                )
+            if self.data_backend.exists(vae_cache_path):
                 logging.debug(f"Image {image_path} is considered valid.")
                 to_yield.append({"image_path": image_path})
                 self.bucket_manager.mark_as_seen(image_path)
