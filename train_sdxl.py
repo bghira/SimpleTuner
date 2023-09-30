@@ -439,6 +439,7 @@ def main():
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
+        accelerator=accelerator,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
