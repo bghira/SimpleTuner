@@ -76,13 +76,21 @@ class BucketManager:
                 )
             )
         )
+        # Log an excerpt of the all_image_files:
+        logger.debug(
+            f"Found {len(all_image_files)} images in the instance data root (truncated): {all_image_files[:5]}"
+        )
         # Extract only the files from the data
         if for_metadata:
-            return [
+            result = [
                 os.path.basename(file)
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
+            logger.debug(
+                f"Found {len(result)} new images for metadata scan (truncated): {result[:5]}"
+            )
+            return result
         return [
             file
             for file in all_image_files
@@ -488,7 +496,7 @@ class BucketManager:
         for worker in workers:
             worker.start()
 
-        with tqdm(total=len(new_files)) as pbar:
+        with tqdm(desc="Scanning metadata for images", total=len(new_files)) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
