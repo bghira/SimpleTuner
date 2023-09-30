@@ -280,14 +280,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if self.data_backend.exists(vae_cache_path):
                 self.debug_log(f"Image {image_path} is considered valid. Adding to yield list.")
                 to_yield.append({"image_path": image_path})
-                self.debug_log("Now marking image as seen.")
-                self.bucket_manager.mark_as_seen(image_path)
             else:
                 self.debug_log(f"Image {image_path} is considered invalid.")
             self.debug_log(
                 f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
-
+        self.debug_log("Now marking image as seen.")
+        self.bucket_manager.mark_batch_as_seen([instance["image_path"] for instance in to_yield])
         return to_yield
 
     def _clear_batch_accumulator(self):
