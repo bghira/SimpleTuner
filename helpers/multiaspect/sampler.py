@@ -261,26 +261,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         try:
             logger.debug(f"AspectBucket is loading image: {image_path}")
             image_data = self.data_backend.read(image_path)
-            with Image.open(BytesIO(image_data)) as image:
-                if (
-                    int(image.width) < self.minimum_image_size
-                    or int(image.height) < self.minimum_image_size
-                ):
-                    image.close()
-                    self.bucket_manager.handle_small_image(
-                        image_path=image_path,
-                        bucket=bucket,
-                        delete_unwanted_images=self.delete_unwanted_images,
-                    )
-                    logging.debug(
-                        f"_process_single_image discovered image was too small, returning None"
-                    )
-                    return None, None
-                else:
-                    logging.debug(
-                        f"Image meets our minimum size status: {image.width}x{image.height}"
-                    )
-                return image_path, image
+            image = Image.open(BytesIO(image_data))
+            if (
+                int(image.width) < self.minimum_image_size
+                or int(image.height) < self.minimum_image_size
+            ):
+                image.close()
+                self.bucket_manager.handle_small_image(
+                    image_path=image_path,
+                    bucket=bucket,
+                    delete_unwanted_images=self.delete_unwanted_images,
+                )
+                logging.debug(
+                    f"_process_single_image discovered image was too small, returning None"
+                )
+                return None, None
+            else:
+                logging.debug(
+                    f"Image meets our minimum size status: {image.width}x{image.height}"
+                )
+            return image_path, image
         except Exception as e:
             logger.warning(f"Image was bad or in-progress: {image_path}, {e}")
             return None, None
