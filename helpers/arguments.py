@@ -993,9 +993,7 @@ def parse_args(input_args=None):
         if not isinstance(aws_config, dict):
             raise ValueError("AWS config file must be a JSON object.")
         args.aws_bucket_name = aws_config.get("aws_bucket_name", args.aws_bucket_name)
-        args.aws_bucket_image_prefix = aws_config.get(
-            "aws_bucket_image_prefix", args.aws_bucket_name
-        )
+        args.aws_bucket_image_prefix = aws_config.get("aws_bucket_image_prefix", "")
         args.aws_endpoint_url = aws_config.get(
             "aws_endpoint_url", args.aws_endpoint_url
         )
