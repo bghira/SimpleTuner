@@ -113,7 +113,8 @@ class MultiAspectDataset(Dataset):
 
             if original_size is None or target_size is None:
                 raise Exception(
-                    "Metadata was unavailable for image: {image_path}. Ensure that --skip_file_discovery=metadata is not set."
+                    f"Metadata was unavailable for image: {image_path}. Ensure --skip_file_discovery=metadata is not set."
+                    f" Metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
 
             if self.print_names:
