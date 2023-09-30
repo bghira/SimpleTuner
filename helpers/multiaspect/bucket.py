@@ -464,7 +464,7 @@ class BucketManager:
         logger.info(f"Loading metadata from {self.metadata_file}")
         self.load_image_metadata()
         logger.debug(
-            f"A subset of the available metadata: {list(self.image_data.keys())[:5]}"
+            f"A subset of the available metadata: {list(self.image_metadata.keys())[:5]}"
         )
         logger.info("Discovering new images for metadata scan...")
         new_files = self._discover_new_files(for_metadata=True)
