@@ -546,23 +546,6 @@ def parse_args(input_args=None):
         help="Learning rate for the discriminator adaptation. Default: 1.0",
     )
     parser.add_argument(
-        "--dataloader_num_workers",
-        type=int,
-        default=0,
-        help=(
-            "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
-        ),
-    )
-    parser.add_argument(
-        "--dataloader_persistent_workers",
-        type=bool,
-        default=False,
-        help=(
-            "If set to `True`, the data loader will not shutdown the worker processes after a dataset has been consumed once."
-            " Defaults to `False`."
-        ),
-    )
-    parser.add_argument(
         "--adam_beta1",
         type=float,
         default=0.9,
