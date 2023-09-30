@@ -7,9 +7,9 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from accelerate.logging import get_logger
 
-logger = logging.getLogger("MultiAspectSampler")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger = get_logger("MultiAspectSampler", os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -49,6 +49,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
         self.rank_info = rank_info(accelerator)
+        self.accelerator = accelerator
         self.bucket_manager = bucket_manager
         self.data_backend = data_backend
         self.current_bucket = None
@@ -395,4 +396,4 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return f"{ratio_width}:{ratio_height}"
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info}{msg}")
+        logger.debug(f"{self.rank_info}{msg}", main_process_only=False)
