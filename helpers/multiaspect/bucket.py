@@ -438,3 +438,61 @@ class BucketManager:
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+
+    def scan_for_metadata(self):
+        """
+        Scan all images for metadata to update.
+        """
+        logger.info("Discovering new files...")
+        new_files = self._discover_new_files()
+
+        if not new_files:
+            logger.info("No new files discovered. Exiting.")
+            return
+
+        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+
+        num_cpus = 8  # Using a fixed number for better control and predictability
+        files_split = np.array_split(new_files, num_cpus)
+
+        metadata_updates_queue = Queue()
+        tqdm_queue = Queue()
+        self.load_image_metadata()
+
+        workers = [
+            Process(
+                target=self._bucket_worker,
+                args=(
+                    tqdm_queue,
+                    file_shard,
+                    None,  # Passing None to indicate we don't want to update the buckets
+                    metadata_updates_queue,
+                    existing_files_set,
+                    self.data_backend,
+                ),
+            )
+            for file_shard in files_split
+        ]
+
+        for worker in workers:
+            worker.start()
+
+        with tqdm(total=len(new_files)) as pbar:
+            while any(worker.is_alive() for worker in workers):
+                while not tqdm_queue.empty():
+                    pbar.update(tqdm_queue.get())
+
+                # Only update the metadata
+                while not metadata_updates_queue.empty():
+                    metadata_update = metadata_updates_queue.get()
+                    for filepath, meta in metadata_update.items():
+                        self.set_metadata_by_filepath(
+                            filepath=filepath, metadata=meta, update_json=False
+                        )
+
+        for worker in workers:
+            worker.join()
+
+        self._save_cache()
+        self.save_image_metadata()
+        logger.info("Completed metadata update.")

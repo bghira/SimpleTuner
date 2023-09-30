@@ -763,6 +763,9 @@ def main():
         vaecache.discover_all_files()
     accelerator.wait_for_everyone()
 
+    if "metadata" not in args.skip_file_discovery:
+        bucket_manager.scan_for_metadata()
+
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
         vaecache.process_buckets(bucket_manager=bucket_manager)
