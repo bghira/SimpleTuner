@@ -336,6 +336,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.debug_log(
                         f"Bucket {self.buckets[self.current_bucket]} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
                     )
+                    self.move_to_exhausted()
                     self.change_bucket()
             while len(available_images) >= self.batch_size:
                 self.debug_log(
