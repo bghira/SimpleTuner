@@ -293,78 +293,72 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Iterate over the sampler to yield image paths in batches.
         """
         self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
+
         while True:
             all_buckets_exhausted = True  # Initial assumption
-            for idx, bucket in enumerate(self.buckets):
+
+            # Loop through all buckets to find one with sufficient images
+            for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
-                available_images = self._get_unseen_images(bucket)
-                while len(available_images) >= self.batch_size:
-                    self.debug_log(
-                        f"Bucket {bucket} has {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
-                    )
+                available_images = self._get_unseen_images(self.current_bucket)
+
+                if len(available_images) >= self.batch_size:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
-                    samples = random.sample(available_images, k=self.batch_size)
-                    to_yield = self._validate_and_yield_images_from_samples(
-                        samples, bucket
-                    )
-                    self.debug_log(
-                        f"After validating and yielding, we have {len(to_yield)} images to yield."
-                    )
-                    if len(self.batch_accumulator) < self.batch_size:
-                        remaining_entries_needed = self.batch_size - len(
-                            self.batch_accumulator
-                        )
-                        # Now we'll add only remaining_entries_needed amount to the accumulator:
-                        self.batch_accumulator.extend(
-                            to_yield[:remaining_entries_needed]
-                        )
-                    # If the batch is full, yield it
-                    if len(self.batch_accumulator) >= self.batch_size:
-                        self.debug_log(
-                            f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
-                        )
-                        # Yield self.batch_accumulator as a tuple for the Dataloader:
-                        final_yield = self.batch_accumulator[: self.batch_size]
-                        self.bucket_manager.mark_batch_as_seen(
-                            [instance["image_path"] for instance in final_yield]
-                        )
-                        yield tuple(final_yield)
-                        # Change bucket after a full batch is yielded
-                        self.debug_log(
-                            f"Clearing batch accumulator while changing buckets."
-                        )
-                        self.change_bucket()
-                        # Break out of the while loop:
-                        break
-
-                    self.debug_log(
-                        f"Updating available image list for bucket {bucket} after yielding batch"
-                    )
-                    # Update available images after yielding
-                    available_images = self._get_unseen_images(bucket)
-                    self.debug_log(
-                        f"Bucket {bucket} now has {len(available_images)} available images after yielding."
-                    )
-
-                bucket_count = len(self.exhausted_buckets) + len(self.buckets)
-                # Handle exhausted bucket
-                if (
-                    len(available_images) < self.batch_size
-                    and idx == len(self.buckets) - 1
-                    and bucket_count > 1
-                ):
-                    self.debug_log(
-                        f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
-                    )
-                    self.move_to_exhausted()
+                    break
+                else:
+                    # Current bucket doesn't have enough images, try the next bucket
                     self.change_bucket()
-                elif len(available_images) < self.batch_size and bucket_count == 1:
-                    self.debug_log(
-                        f"Our only bucket {self.current_bucket} is exhausted, so we reset."
+            while len(available_images) >= self.batch_size:
+                self.debug_log(
+                    f"Bucket {self.current_bucket} has {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
+                )
+                all_buckets_exhausted = False  # Found a non-exhausted bucket
+                samples = random.sample(available_images, k=self.batch_size)
+                to_yield = self._validate_and_yield_images_from_samples(
+                    samples, self.current_bucket
+                )
+                self.debug_log(
+                    f"After validating and yielding, we have {len(to_yield)} images to yield."
+                )
+                if len(self.batch_accumulator) < self.batch_size:
+                    remaining_entries_needed = self.batch_size - len(
+                        self.batch_accumulator
                     )
-                    self._reset_buckets()
-                    return
+                    # Now we'll add only remaining_entries_needed amount to the accumulator:
+                    self.batch_accumulator.extend(to_yield[:remaining_entries_needed])
+                # If the batch is full, yield it
+                if len(self.batch_accumulator) >= self.batch_size:
+                    self.debug_log(
+                        f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
+                    )
+                    final_yield = self.batch_accumulator[: self.batch_size]
+                    self.bucket_manager.mark_batch_as_seen(
+                        [instance["image_path"] for instance in final_yield]
+                    )
+                    yield tuple(final_yield)
+                    # Change bucket after a full batch is yielded
+                    self.debug_log(
+                        f"Clearing batch accumulator while changing buckets."
+                    )
+                    self.change_bucket()
+                    # Break out of the while loop:
+                    break
 
+                # Update available images after yielding
+                available_images = self._get_unseen_images(self.current_bucket)
+                self.debug_log(
+                    f"Bucket {self.current_bucket} now has {len(available_images)} available images after yielding."
+                )
+
+            # Handle exhausted bucket
+            if len(available_images) < self.batch_size:
+                self.debug_log(
+                    f"Bucket {self.current_bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
+                )
+                self.move_to_exhausted()
+                self.change_bucket()
+
+            # Check if all buckets are exhausted
             if all_buckets_exhausted:
                 # If all buckets are exhausted, reset the seen images and refresh buckets
                 logger.warning(

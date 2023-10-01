@@ -284,6 +284,11 @@ def main():
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
     )
+    if bucket_manager.has_single_underfilled_bucket():
+        raise Exception(
+            f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
+            " You have to reduce your batch size, or increase your dataset size."
+        )
     logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
     if "aspect" not in args.skip_file_discovery:
         if accelerator.is_local_main_process:

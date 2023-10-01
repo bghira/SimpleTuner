@@ -26,6 +26,7 @@ class BucketManager:
         resolution: float,
         resolution_type: str,
         apply_dataset_padding: bool = False,
+        delete_problematic_images: bool = False,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -43,6 +44,7 @@ class BucketManager:
         self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
+        self.delete_problematic_images = delete_problematic_images
 
     def __len__(self):
         """
@@ -171,6 +173,7 @@ class BucketManager:
                     file,
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
+                    delete_problematic_images=self.delete_problematic_images,
                 )
             tqdm_queue.put(1)
         if aspect_ratio_bucket_indices_queue is not None:
@@ -265,10 +268,10 @@ class BucketManager:
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
         self.seen_images[image_path] = True
-        
+
     def mark_batch_as_seen(self, image_paths):
         """Efficiently extend the Manager with new contents, image_paths
-        
+
         Args:
             image_paths (list): A list of image paths to mark as seen.
         """
@@ -388,6 +391,22 @@ class BucketManager:
                 f"Image {image_path} too small, but --delete_unwanted_images is not provided, so we simply ignore and remove from bucket."
             )
         self.remove_image(image_path, bucket)
+
+    def has_single_underfilled_bucket(self):
+        """
+        Check if there's only one active bucket and it has fewer images than the batch size.
+
+        Returns:
+            bool: True if there's a single underfilled bucket, False otherwise.
+        """
+        if len(self.aspect_ratio_bucket_indices) != 1:
+            return False
+
+        bucket = list(self.aspect_ratio_bucket_indices.keys())[0]
+        if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            return True
+
+        return False
 
     def read_cache(self):
         """
