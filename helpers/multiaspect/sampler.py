@@ -184,11 +184,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])
             < self.batch_size
         ):
+            logger.debug(
+                f"Bucket {bucket} has insufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
+            )
             if bucket not in self.exhausted_buckets:
+                logger.debug(
+                    f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
+                )
                 self.move_to_exhausted()
+            logger.debug(
+                "Changing bucket to another random selection."
+            )
             self.change_bucket()
             return True
-        logging.debug(
+        logger.debug(
             f"Bucket {bucket} has sufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
         )
         return False
@@ -224,6 +233,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self._reset_buckets()
             available_buckets = self.buckets
 
+        logger.debug(f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}")
         next_bucket = random.choice(available_buckets)
         return next_bucket
 
@@ -241,7 +251,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.exhausted_buckets.append(bucket)
         self.buckets.remove(bucket)
         self.debug_log(
-            f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
+            f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Removing from bucket list. {len(self.buckets)} remain."
         )
 
     def log_state(self):
