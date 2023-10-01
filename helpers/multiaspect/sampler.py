@@ -239,7 +239,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.debug_log(f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}")
         self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
         self.debug_log(f"bucket list: {self.buckets}")
-        next_bucket = random.choice(available_buckets)
+        
+        # Sequentially get the next bucket
+        if hasattr(self, 'current_bucket'):
+            self.current_bucket = (self.current_bucket + 1) % len(available_buckets)
+        else:
+            self.current_bucket = 0
+        if self.current_bucket not in available_buckets:
+            raise Exception(f'Tried to select bucket index {self.current_index} from this list of buckets, which do not contain it: {available_buckets}')
+        next_bucket = available_buckets[self.current_bucket]
         return next_bucket
 
     def change_bucket(self):
