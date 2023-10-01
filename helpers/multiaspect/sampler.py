@@ -275,13 +275,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
-            self.debug_log(f"Image {image_path} is considered valid. Adding to yield list.")
+            self.debug_log(
+                f"Image {image_path} is considered valid. Adding to yield list."
+            )
             to_yield.append({"image_path": image_path})
             self.debug_log(
                 f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
         self.debug_log("Now marking image as seen.")
-        self.bucket_manager.mark_batch_as_seen([instance["image_path"] for instance in to_yield])
         return to_yield
 
     def _clear_batch_accumulator(self):
@@ -323,7 +324,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                             f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
                         )
                         # Yield self.batch_accumulator as a tuple for the Dataloader:
-                        yield tuple(self.batch_accumulator[: self.batch_size])
+                        final_yield = self.batch_accumulator[: self.batch_size]
+                        self.bucket_manager.mark_batch_as_seen(
+                            [instance["image_path"] for instance in final_yield]
+                        )
+                        yield tuple(final_yield)
                         # Change bucket after a full batch is yielded
                         self.debug_log(
                             f"Clearing batch accumulator while changing buckets."
