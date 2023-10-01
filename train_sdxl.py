@@ -283,6 +283,7 @@ def main():
             args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
+        delete_problematic_images=args.delete_problematic_images or False,
     )
     if bucket_manager.has_single_underfilled_bucket():
         raise Exception(

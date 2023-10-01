@@ -402,7 +402,6 @@ def main(args):
         data_backend=data_backend,
         accelerator=accelerator,
         batch_size=args.train_batch_size,
-        delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
         cache_file=os.path.join(
@@ -412,6 +411,7 @@ def main(args):
             args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
+        delete_problematic_images=args.delete_problematic_images or False,
     )
     if accelerator.is_main_process:
         logger.info(
