@@ -1020,9 +1020,9 @@ def parse_args(input_args=None):
         # Override the instance data dir with the bucket image prefix.
         args.instance_data_dir = args.aws_bucket_image_prefix
     else:
-        if args.cache_dir_vae is None:
+        if args.cache_dir_vae is None or args.cache_dir_vae == "":
             args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
-        if args.cache_dir_text is None:
+        if args.cache_dir_text is None or args.cache_dir_text == "":
             args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
         for target_dir in [Path(args.cache_dir), Path(args.cache_dir_vae), Path(args.cache_dir_text)]:
             os.makedirs(target_dir, exist_ok=True)
