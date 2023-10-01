@@ -249,18 +249,38 @@ class BucketManager:
         """
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """
+        # Determine the number of images each process should handle
+        num_processes = self.accelerator.state.num_processes
+        if num_processes == 1:
+            logger.debug(
+                f"Only one process is available, so we will not split the aspect ratio bucket indices."
+            )
+            return
         new_aspect_ratio_bucket_indices = {}
-        logger.debug(f"Count of items before split: {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}")
+        total_images = sum(
+            [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
+        )
+        logger.debug(f"Count of items before split: {total_images}")
+        images_per_process = total_images // num_processes
+
         for bucket, images in self.aspect_ratio_bucket_indices.items():
+            # Trim the list to the determined length
+            trimmed_images = images[: images_per_process * num_processes]
+            logger.warning(
+                f"Bucket {bucket} is TRIMMING {len(images)} images to {len(trimmed_images)} - THESE IMAGES WILL NOT BE SAMPLED."
+                " This is happening with Multi-GPU training because we *cannot* have any imbalance in the aspect buckets."
+            )
             with self.accelerator.split_between_processes(
-                images, apply_padding=self.apply_dataset_padding
+                trimmed_images, apply_padding=self.apply_dataset_padding
             ) as images_split:
                 # Now images_split contains only the part of the images list that this process should handle
                 new_aspect_ratio_bucket_indices[bucket] = images_split
 
         # Replace the original aspect_ratio_bucket_indices with the new one containing only this process's share
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
-        logger.debug(f"Count of items after split: {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}")
+        logger.debug(
+            f"Count of items after split: {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}"
+        )
 
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
