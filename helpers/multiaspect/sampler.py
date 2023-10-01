@@ -258,7 +258,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
         self._clear_batch_accumulator()
-        self.accelerator.wait_for_everyone()
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -375,6 +374,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.bucket_manager.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
                     )
+                    self.accelerator.wait_for_everyone()
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
                     self.debug_log(
