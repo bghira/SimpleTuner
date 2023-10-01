@@ -302,7 +302,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Loop through all buckets to find one with sufficient images
             for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
-                available_images = self._get_unseen_images(self.current_bucket)
+                available_images = self._get_unseen_images(
+                    self.buckets[self.current_bucket]
+                )
 
                 if len(available_images) >= self.batch_size:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
@@ -312,12 +314,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.change_bucket()
             while len(available_images) >= self.batch_size:
                 self.debug_log(
-                    f"Bucket {self.current_bucket} has {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
+                    f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
                 all_buckets_exhausted = False  # Found a non-exhausted bucket
                 samples = random.sample(available_images, k=self.batch_size)
                 to_yield = self._validate_and_yield_images_from_samples(
-                    samples, self.current_bucket
+                    samples, self.buckets[self.current_bucket]
                 )
                 self.debug_log(
                     f"After validating and yielding, we have {len(to_yield)} images to yield."
@@ -347,15 +349,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     break
 
                 # Update available images after yielding
-                available_images = self._get_unseen_images(self.current_bucket)
+                available_images = self._get_unseen_images(
+                    self.buckets[self.current_bucket]
+                )
                 self.debug_log(
-                    f"Bucket {self.current_bucket} now has {len(available_images)} available images after yielding."
+                    f"Bucket {self.buckets[self.current_bucket]} now has {len(available_images)} available images after yielding."
                 )
 
             # Handle exhausted bucket
             if len(available_images) < self.batch_size:
                 self.debug_log(
-                    f"Bucket {self.current_bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
+                    f"Bucket {self.buckets[self.current_bucket]} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
                 )
                 self.move_to_exhausted()
                 self.change_bucket()
