@@ -258,6 +258,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
         self._clear_batch_accumulator()
+        self.accelerator.wait_for_everyone()
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
