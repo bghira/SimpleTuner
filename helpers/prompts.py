@@ -311,37 +311,22 @@ class PromptHandler:
             logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")
             return {}
 
-    def process_long_prompt(
-        self, prompt: str, negative_prompt: str, num_images_per_prompt: int = 1
-    ):
+    def process_long_prompt(self, prompt: str, num_images_per_prompt: int = 1):
         if "sdxl" in self.encoder_style:
             logger.debug(
                 f"Running dual encoder Compel pipeline for batch size {num_images_per_prompt}."
             )
             # We need to make a list of prompt * num_images_per_prompt count.
             prompt = [prompt] * num_images_per_prompt
-            negative_prompt = [negative_prompt] * num_images_per_prompt
             conditioning, pooled_embed = self.compel(prompt)
-            negative_conditioning, negative_pooled_embed = self.compel(negative_prompt)
         else:
             logger.debug(f"Running single encoder Compel pipeline.")
             conditioning = self.compel.build_conditioning_tensor(prompt)
-            negative_conditioning = self.compel.build_conditioning_tensor(
-                negative_prompt
-            )
-        [
-            conditioning,
-            negative_conditioning,
-        ] = self.compel.pad_conditioning_tensors_to_same_length(
-            [conditioning, negative_conditioning]
+        [conditioning] = self.compel.pad_conditioning_tensors_to_same_length(
+            [conditioning]
         )
         if "sdxl" in self.encoder_style:
             logger.debug(f"Returning pooled embeds along with hidden states.")
-            return (
-                conditioning,
-                pooled_embed,
-                negative_conditioning,
-                negative_pooled_embed,
-            )
+            return (conditioning, pooled_embed)
         logger.debug("Returning legacy style hidden states without pooled embeds")
-        return conditioning, negative_conditioning
+        return conditioning
