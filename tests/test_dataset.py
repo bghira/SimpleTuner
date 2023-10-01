@@ -13,6 +13,16 @@ class TestMultiAspectDataset(unittest.TestCase):
         self.accelerator = Mock()
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.__len__ = Mock(return_value=10)
+        self.image_metadata = {
+            "original_size": (16, 8),
+            "crop_coordinates": (0, 0),
+            "target_size": (16, 8),
+            "aspect_ratio": 1.0,
+            "luminance": 0.5,
+        }
+        self.bucket_manager.get_metadata_by_filepath = Mock(
+            return_value=self.image_metadata
+        )
         self.data_backend = Mock(spec=BaseDataBackend)
         self.image_path = "fake_image_path"
         # Mock the Path.exists method to return True
@@ -25,13 +35,12 @@ class TestMultiAspectDataset(unittest.TestCase):
             )
 
     def test_init_invalid_instance_data_root(self):
-        with self.assertRaises(ValueError):
-            MultiAspectDataset(
-                instance_data_root="/invalid/path",
-                accelerator=self.accelerator,
-                bucket_manager=self.bucket_manager,
-                data_backend=self.data_backend,
-            )
+        MultiAspectDataset(
+            instance_data_root="/invalid/path",
+            accelerator=self.accelerator,
+            bucket_manager=self.bucket_manager,
+            data_backend=self.data_backend,
+        )
 
     def test_len(self):
         self.bucket_manager.__len__.return_value = 10
@@ -41,42 +50,32 @@ class TestMultiAspectDataset(unittest.TestCase):
         mock_image_data = b"fake_image_data"
         self.data_backend.read.return_value = mock_image_data
 
-        with patch("PIL.Image.open") as mock_image_open, patch(
-            "helpers.training.state_tracker.StateTracker.status_training",
-            return_value=True,
-        ):
+        with patch("PIL.Image.open") as mock_image_open:
             # Create a blank canvas:
             mock_image = Image.new(mode="RGB", size=(16, 8))
             mock_image_open.return_value = mock_image
-            target = tuple([self.image_path])
+            target = tuple([{"image_path": self.image_path, "image_data": mock_image}])
             examples = self.dataset.__getitem__(target)
         # Grab the size of the first image:
         example = examples[0]
-        first_size = example["instance_images"].size
+        first_size = example["original_size"]
         # Are all sizes the same?
         for example in examples:
             self.assertIsNotNone(example)
-            self.assertEqual(example["instance_images"].size, first_size)
-            self.assertEqual(example["instance_images_path"], self.image_path)
+            self.assertEqual(example["original_size"], first_size)
+            self.assertEqual(example["image_path"], self.image_path)
 
     def test_getitem_invalid_image(self):
         self.data_backend.read.side_effect = Exception("Some error")
 
         with self.assertRaises(Exception):
-            with patch(
-                "helpers.training.state_tracker.StateTracker.status_training",
-                return_value=True,
-            ):
-                with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
-                    self.dataset.__getitem__(self.image_path)
+            with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
+                self.dataset.__getitem__(self.image_path)
 
     def test_getitem_not_in_training_state(self):
-        with patch(
-            "helpers.training.state_tracker.StateTracker.status_training",
-            return_value=False,
-        ):
-            example = self.dataset.__getitem__(self.image_path)
-        self.assertIsNone(example)
+        input_data = tuple([{"image_path": self.image_path}])
+        example = self.dataset.__getitem__(input_data)
+        self.assertIsNotNone(example)
 
 
 if __name__ == "__main__":

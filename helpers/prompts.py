@@ -1,5 +1,6 @@
 import json, io
 from pathlib import Path
+from helpers.training.state_tracker import StateTracker
 
 prompts = {
     "zen_garden_snowfall": "A serene Zen garden during a gentle snowfall.",
@@ -277,7 +278,7 @@ class PromptHandler:
         data_backend: BaseDataBackend,
     ) -> list:
         captions = []
-        all_image_files = data_backend.list_files(
+        all_image_files = StateTracker.get_image_files() or data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:

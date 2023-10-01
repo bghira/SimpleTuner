@@ -26,6 +26,7 @@ class BucketManager:
         resolution: float,
         resolution_type: str,
         apply_dataset_padding: bool = False,
+        delete_problematic_images: bool = False,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -43,6 +44,7 @@ class BucketManager:
         self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
+        self.delete_problematic_images = delete_problematic_images
 
     def __len__(self):
         """
@@ -60,7 +62,7 @@ class BucketManager:
             / self.batch_size
         )
 
-    def _discover_new_files(self):
+    def _discover_new_files(self, for_metadata: bool = False):
         """
         Discover new files that have not been processed yet.
 
@@ -76,8 +78,21 @@ class BucketManager:
                 )
             )
         )
+        # Log an excerpt of the all_image_files:
+        logger.debug(
+            f"Found {len(all_image_files)} images in the instance data root (truncated): {list(all_image_files)[:5]}"
+        )
         # Extract only the files from the data
-
+        if for_metadata:
+            result = [
+                file
+                for file in all_image_files
+                if self.get_metadata_by_filepath(file) is None
+            ]
+            logger.debug(
+                f"Found {len(result)} new images for metadata scan (truncated): {list(result)[:5]}"
+            )
+            return result
         return [
             file
             for file in all_image_files
@@ -158,9 +173,11 @@ class BucketManager:
                     file,
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
+                    delete_problematic_images=self.delete_problematic_images,
                 )
             tqdm_queue.put(1)
-        aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+        if aspect_ratio_bucket_indices_queue is not None:
+            aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
         metadata_updates_queue.put(local_metadata_updates)
 
     def compute_aspect_ratio_bucket_indices(self):
@@ -250,7 +267,15 @@ class BucketManager:
 
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
-        self.seen_images[image_path] = True  # This will be shared across all processes
+        self.seen_images[image_path] = True
+
+    def mark_batch_as_seen(self, image_paths):
+        """Efficiently extend the Manager with new contents, image_paths
+
+        Args:
+            image_paths (list): A list of image paths to mark as seen.
+        """
+        self.seen_images.update({image_path: True for image_path in image_paths})
 
     def is_seen(self, image_path):
         """Check if an image is seen."""
@@ -367,6 +392,22 @@ class BucketManager:
             )
         self.remove_image(image_path, bucket)
 
+    def has_single_underfilled_bucket(self):
+        """
+        Check if there's only one active bucket and it has fewer images than the batch size.
+
+        Returns:
+            bool: True if there's a single underfilled bucket, False otherwise.
+        """
+        if len(self.aspect_ratio_bucket_indices) != 1:
+            return False
+
+        bucket = list(self.aspect_ratio_bucket_indices.keys())[0]
+        if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            return True
+
+        return False
+
     def read_cache(self):
         """
         Read the entire bucket cache.
@@ -420,7 +461,9 @@ class BucketManager:
         """Retrieve metadata for a given image file path.
 
         Args:
-            filepath (str): The complete path from the aspect bucket list.
+            filepath (str): The complete or basename path from the aspect bucket list.
+                            First, we search for the basename as the key, and we fall
+                             back to the
 
         Returns:
             dict: Metadata for the image. Returns None if not found.
@@ -429,12 +472,74 @@ class BucketManager:
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
-        if self.metadata_file.exists():
-            with open(self.metadata_file, "r") as f:
-                data = json.load(f)
-                self.image_metadata = data.get("image_metadata", {})
-        return {}
+        self.image_metadata = {}
+        if self.data_backend.exists(self.metadata_file):
+            cache_data_raw = self.data_backend.read(self.metadata_file)
+            self.image_metadata = json.loads(cache_data_raw)
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
+
+    def scan_for_metadata(self):
+        """
+        Update the metadata without modifying the bucket indices.
+        """
+        logger.info(f"Loading metadata from {self.metadata_file}")
+        self.load_image_metadata()
+        logger.debug(
+            f"A subset of the available metadata: {list(self.image_metadata.keys())[:5]}"
+        )
+        logger.info("Discovering new images for metadata scan...")
+        new_files = self._discover_new_files(for_metadata=True)
+        if not new_files:
+            logger.info("No new files discovered. Exiting.")
+            return
+
+        existing_files_set = {
+            existing_file for existing_file in self.image_metadata.keys()
+        }
+
+        num_cpus = 8  # Using a fixed number for better control and predictability
+        files_split = np.array_split(new_files, num_cpus)
+
+        metadata_updates_queue = Queue()
+        tqdm_queue = Queue()
+
+        workers = [
+            Process(
+                target=self._bucket_worker,
+                args=(
+                    tqdm_queue,
+                    file_shard,
+                    None,  # Passing None to indicate we don't want to update the buckets
+                    metadata_updates_queue,
+                    existing_files_set,
+                    self.data_backend,
+                ),
+            )
+            for file_shard in files_split
+        ]
+
+        for worker in workers:
+            worker.start()
+
+        with tqdm(desc="Scanning metadata for images", total=len(new_files)) as pbar:
+            while any(worker.is_alive() for worker in workers):
+                while not tqdm_queue.empty():
+                    pbar.update(tqdm_queue.get())
+
+                # Only update the metadata
+                while not metadata_updates_queue.empty():
+                    metadata_update = metadata_updates_queue.get()
+                    for filepath, meta in metadata_update.items():
+                        self.set_metadata_by_filepath(
+                            filepath=filepath, metadata=meta, update_json=False
+                        )
+
+        for worker in workers:
+            worker.join()
+
+        self._save_cache()
+        self.save_image_metadata()
+        logger.info("Completed metadata update.")

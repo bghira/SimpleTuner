@@ -1,15 +1,22 @@
 import torch, logging
 from os import environ
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.brightness import calculate_batch_luminance
+from accelerate.logging import get_logger
+import concurrent.futures
 
-logger = logging.getLogger("Collate")
-logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-
+logger = logging.getLogger("collate_fn")
+logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO"))
+rank_text = rank_info()
 from torchvision.transforms import ToTensor
 
 # Convert PIL Image to PyTorch Tensor
 to_tensor = ToTensor()
+
+
+def debug_log(msg: str):
+    logger.debug(f"{rank_text}{msg}")
 
 
 def compute_time_ids(
@@ -58,44 +65,61 @@ def compute_time_ids(
     return add_time_ids
 
 
-def extract_pixel_values_and_filepaths(examples):
+def extract_pixel_values(examples):
     pixel_values = []
-    filepaths = []
     for example in examples:
-        image_data = example["instance_images"]
+        image_data = example["image_data"]
         pixel_values.append(
             to_tensor(image_data).to(
                 memory_format=torch.contiguous_format,
                 dtype=StateTracker.get_vae_dtype(),
             )
         )
-        filepaths.append(example["instance_images_path"])
-    return pixel_values, filepaths
+    return pixel_values
 
 
-def compute_latents(pixel_values, filepaths):
-    latents = [
-        StateTracker.get_vaecache().encode_image(pv, fp)
-        for pv, fp in zip(pixel_values, filepaths)
-    ]
+def extract_filepaths(examples):
+    filepaths = []
+    for example in examples:
+        filepaths.append(example["image_path"])
+    return filepaths
+
+
+def fetch_latent(fp):
+    """Worker method to fetch latent for a single image."""
+    debug_log(" -> pull latents from cache")
+    latent = StateTracker.get_vaecache().encode_image(None, fp)
+
+    # Move to CPU and pin memory if it's not on the GPU
+    debug_log(" -> push latents to GPU via pinned memory")
+    latent = latent.to("cpu").pin_memory()
+    return latent
+
+
+def compute_latents(filepaths):
+    # Use a thread pool to fetch latents concurrently
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        latents = list(executor.map(fetch_latent, filepaths))
+
+    # Validate shapes
     test_shape = latents[0].shape
-    idx = 0
-    for latent in latents:
-        # Move to CPU and pin memory if it's not on the GPU
-        latent = latent.to("cpu").pin_memory()
+    for idx, latent in enumerate(latents):
         if latent.shape != test_shape:
             raise ValueError(
                 f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
-        idx += 1
+
+    debug_log(" -> stacking latents")
     return torch.stack(latents)
 
 
 def compute_prompt_embeddings(captions):
+    debug_log(" -> get embed from cache")
     (
         prompt_embeds_all,
         add_text_embeds_all,
     ) = StateTracker.get_embedcache().compute_embeddings_for_sdxl_prompts(captions)
+    debug_log(" -> concat embeds")
     prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
     add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
     return prompt_embeds_all, add_text_embeds_all
@@ -104,7 +128,7 @@ def compute_prompt_embeddings(captions):
 def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = [
         compute_time_ids(
-            original_size=example["instance_images"].size,
+            original_size=tuple(example["original_size"]),
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
             weight_dtype=weight_dtype,
@@ -126,35 +150,33 @@ def collate_fn(batch):
         raise ValueError(
             "This trainer is not designed to handle multiple batches in a single collate."
         )
+    debug_log("Begin collate_fn on batch")
     examples = batch[0]
-    logger.debug(f"Examples: {examples}")
-
-    if StateTracker.tracking_luminance():
-        logger.debug(f"Computing luminance for input batch")
-        batch_luminance = calculate_batch_luminance(
-            [example["instance_images"] for example in examples]
-        )
-
-    pixel_values, filepaths = extract_pixel_values_and_filepaths(examples)
-    latent_batch = compute_latents(pixel_values, filepaths)
+    debug_log("Collect luminance values")
+    batch_luminance = [example["luminance"] for example in examples]
+    debug_log("Extract filepaths")
+    filepaths = extract_filepaths(examples)
+    debug_log("Compute latents")
+    latent_batch = compute_latents(filepaths)
+    debug_log("Check latents")
     check_latent_shapes(latent_batch, filepaths)
 
     # Extract the captions from the examples.
+    debug_log("Extract captions")
     captions = [example["instance_prompt_text"] for example in examples]
+    debug_log("Pull cached text embeds")
     prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
 
+    debug_log("Compute and stack SDXL time ids")
     batch_time_ids = gather_conditional_size_features(
         examples, latent_batch, StateTracker.get_weight_dtype()
     )
-    logger.debug(f"Stacked to {batch_time_ids.shape}: {batch_time_ids}")
+    debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
-    result = {
+    return {
         "latent_batch": latent_batch,
         "prompt_embeds": prompt_embeds_all,
         "add_text_embeds": add_text_embeds_all,
         "batch_time_ids": batch_time_ids,
+        "batch_luminance": batch_luminance,
     }
-    if StateTracker.tracking_luminance():
-        result["luminance"] = batch_luminance
-
-    return result

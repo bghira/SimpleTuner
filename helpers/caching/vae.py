@@ -38,7 +38,7 @@ class VAECache:
         self.vae_batch_size = vae_batch_size
         self.transform = MultiaspectImage.get_image_transforms()
 
-    def _generate_filename(self, filepath: str) -> tuple:
+    def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
         # Extract the base name from the filepath and replace the image extension with .pt
         base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
@@ -85,7 +85,9 @@ class VAECache:
         logger.debug(
             f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files"
         )
-        cache_filenames = {self._generate_filename(file)[1] for file in all_image_files}
+        cache_filenames = {
+            self.generate_vae_cache_filename(file)[1] for file in all_image_files
+        }
         unprocessed_files = {
             f"{os.path.splitext(file)[0]}.png"
             for file in cache_filenames
@@ -119,18 +121,25 @@ class VAECache:
             raise ValueError("Mismatch between number of images and filepaths.")
 
         full_filenames = [
-            self._generate_filename(filepath)[0] for filepath in filepaths
+            self.generate_vae_cache_filename(filepath)[0] for filepath in filepaths
         ]
 
         # Check cache for each image and filter out already cached ones
+        uncached_images = []
         uncached_image_indices = [
             i
             for i, filename in enumerate(full_filenames)
             if not self.data_backend.exists(filename)
         ]
-        uncached_images = [images[i] for i in uncached_image_indices]
+        if len(uncached_image_indices) > 0 and load_from_cache:
+            # We wanted only uncached images. Something went wrong.
+            raise Exception(
+                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set."
+            )
+        elif not load_from_cache:
+            uncached_images = [images[i] for i in uncached_image_indices]
 
-        if not uncached_images and load_from_cache:
+        if load_from_cache:
             # If all images are cached, simply load them
             latents = [self.load_from_cache(filename) for filename in full_filenames]
         elif len(uncached_images) > 0:
@@ -171,7 +180,7 @@ class VAECache:
         )
 
     def _process_image(self, filepath):
-        full_filename, base_filename = self._generate_filename(filepath)
+        full_filename, base_filename = self.generate_vae_cache_filename(filepath)
         if self.data_backend.exists(full_filename):
             return None
 
@@ -196,7 +205,7 @@ class VAECache:
                 raise e
 
     def _accumulate_batch(self, latents, filepath, batch_data, batch_filepaths):
-        full_filename, _ = self._generate_filename(filepath)
+        full_filename, _ = self.generate_vae_cache_filename(filepath)
         batch_data.append(latents.squeeze())
         batch_filepaths.append(full_filename)
 
@@ -247,9 +256,7 @@ class VAECache:
                     raise ValueError(
                         f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
                     )
-                test_filepath = (
-                    f"{os.path.splitext(self._generate_filename(filepath)[1])[0]}.png"
-                )
+                test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
                 if test_filepath not in self.local_unprocessed_files:
                     logger.debug(
                         f"Skipping {test_filepath} because it is not in local unprocessed files"
@@ -293,7 +300,10 @@ class VAECache:
                     if latents_batch is not None:
                         batch_data.extend(latents_batch)
                         batch_filepaths.extend(
-                            [self._generate_filename(f)[0] for f in vae_input_filepaths]
+                            [
+                                self.generate_vae_cache_filename(f)[0]
+                                for f in vae_input_filepaths
+                            ]
                         )
                     vae_input_images, vae_input_filepaths = [], []
 
@@ -314,7 +324,10 @@ class VAECache:
                 if latents_batch is not None:
                     batch_data.extend(latents_batch)
                     batch_filepaths.extend(
-                        [self._generate_filename(f)[0] for f in vae_input_filepaths]
+                        [
+                            self.generate_vae_cache_filename(f)[0]
+                            for f in vae_input_filepaths
+                        ]
                     )
                 vae_input_images, vae_input_filepaths = [], []
 

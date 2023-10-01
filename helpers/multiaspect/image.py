@@ -1,4 +1,5 @@
 from torchvision import transforms
+from helpers.image_manipulation.brightness import calculate_luminance
 from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
@@ -41,6 +42,7 @@ class MultiaspectImage:
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
+        delete_problematic_images: bool = False,
     ):
         try:
             image_metadata = {}
@@ -56,6 +58,7 @@ class MultiaspectImage:
                 # Round to avoid excessive unique buckets
                 aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
                 image_metadata["aspect_ratio"] = aspect_ratio
+                image_metadata["luminance"] = calculate_luminance(image)
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
                 )
@@ -72,6 +75,9 @@ class MultiaspectImage:
             logger.error(f"Error processing image: {e}")
             logging.debug(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
+            if delete_problematic_images:
+                logger.error(f"Deleting image.")
+                data_backend.delete(image_path_str)
         return aspect_ratio_bucket_indices
 
     @staticmethod

@@ -240,18 +240,16 @@ def log_validations(
                             validation_document[
                                 validation_shortnames[idx]
                             ] = wandb.Image(validation_image)
-                            if StateTracker.tracking_luminance():
-                                # Compute the luminance of each image.
-                                validation_luminance.append(
-                                    calculate_luminance(validation_image)
-                                )
-                        if StateTracker.tracking_luminance():
-                            # Compute the mean luminance across all samples:
-                            validation_luminance = torch.tensor(validation_luminance)
-                            validation_document[
-                                "validation_luminance"
-                            ] = validation_luminance.mean()
-                            del validation_luminance
+                            # Compute the luminance of each image.
+                            validation_luminance.append(
+                                calculate_luminance(validation_image)
+                            )
+                        # Compute the mean luminance across all samples:
+                        validation_luminance = torch.tensor(validation_luminance)
+                        validation_document[
+                            "validation_luminance"
+                        ] = validation_luminance.mean()
+                        del validation_luminance
                         tracker.log(validation_document, step=global_step)
                 val_img_idx = 0
                 for a_val_img in validation_images:

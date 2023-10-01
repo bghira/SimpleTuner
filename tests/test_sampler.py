@@ -7,13 +7,15 @@ from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
-import accelerate
+from accelerate import PartialState
 from PIL import Image
 
 
 class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
-        self.accelerator = Mock(spec=accelerate.Accelerator)
+        self.process_state = PartialState()
+        self.accelerator = MagicMock()
+        self.accelerator.log = MagicMock()
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
         self.bucket_manager.seen_images = {}
@@ -25,6 +27,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.sampler = MultiAspectSampler(
             bucket_manager=self.bucket_manager,
             data_backend=self.data_backend,
+            accelerator=self.accelerator,
             batch_size=self.batch_size,
             seen_images_path=self.seen_images_path,
             state_path=self.state_path,
@@ -129,12 +132,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": img_paths}
 
         # Collect batches by iterating over the generator
-        with patch(
-            "helpers.training.state_tracker.StateTracker.status_training",
-            return_value=True,
-        ):
-            # your test code here
-            batches = [next(self.sampler.__iter__()) for _ in range(len(img_paths))]
+        batches = [next(self.sampler.__iter__()) for _ in range(len(img_paths))]
         # Ensure that all batches have consistent image sizes
         # We retrieve the size using PIL for validation
         first_img_size = Image.open(batches[0]).size

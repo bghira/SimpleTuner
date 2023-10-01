@@ -188,12 +188,8 @@ def main():
             )
         import wandb
 
-    # If we have args.track_luminance, we need to set that now.
-    if args.track_luminance:
-        StateTracker.enable_luminance()
-
     # If passed along, set the training seed now.
-    if args.seed is not None:
+    if args.seed is not None and args.seed != 0:
         set_seed(args.seed, args.seed_for_each_device)
 
     # Handle the repository creation
@@ -227,7 +223,7 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
     else:
-        logging.warning(
+        logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
 
@@ -245,6 +241,10 @@ def main():
         from helpers.data_backend.local import LocalDataBackend
 
         data_backend = LocalDataBackend(accelerator=accelerator)
+        if not os.path.exists(args.instance_data_root):
+            raise FileNotFoundError(
+                f"Instance {args.instance_data_root} images root doesn't exist. Cannot continue."
+            )
     elif args.data_backend == "aws":
         from helpers.data_backend.aws import S3DataBackend
 
@@ -279,7 +279,13 @@ def main():
             args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
         ),
         apply_dataset_padding=args.apply_dataset_padding or False,
+        delete_problematic_images=args.delete_problematic_images or False,
     )
+    if bucket_manager.has_single_underfilled_bucket():
+        raise Exception(
+            f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
+            " You have to reduce your batch size, or increase your dataset size."
+        )
     logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
     if "aspect" not in args.skip_file_discovery:
         if accelerator.is_local_main_process:
@@ -339,7 +345,7 @@ def main():
                     f"--image_prompt_column' value '{args.image_prompt_column}' needs to be one of: {', '.join(column_names)}"
                 )
     else:
-        logging.info(
+        logger.info(
             "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
         )
 
@@ -435,6 +441,7 @@ def main():
     custom_balanced_sampler = MultiAspectSampler(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
+        accelerator=accelerator,
         batch_size=args.train_batch_size,
         seen_images_path=args.seen_state_path,
         state_path=args.state_path,
@@ -451,7 +458,8 @@ def main():
         shuffle=False,  # The sampler handles shuffling
         sampler=custom_balanced_sampler,
         collate_fn=lambda examples: collate_fn(examples),
-        num_workers=args.dataloader_num_workers,
+        num_workers=0,
+        persistent_workers=False,
     )
     logger.info("Initialise prompt handler")
     prompt_handler = PromptHandler(
@@ -500,12 +508,13 @@ def main():
         accelerator.wait_for_everyone()
         logger.info(f"Discovered {len(all_captions)} captions.")
 
-    (
-        validation_prompts,
-        validation_shortnames,
-        validation_negative_prompt_embeds,
-        validation_negative_pooled_embeds,
-    ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
+    with accelerator.main_process_first():
+        (
+            validation_prompts,
+            validation_shortnames,
+            validation_negative_prompt_embeds,
+            validation_negative_pooled_embeds,
+        ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
     accelerator.wait_for_everyone()
     # Grab GPU memory used:
     if accelerator.is_main_process:
@@ -584,7 +593,10 @@ def main():
             text_encoder_2.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
-    extra_optimizer_args = {}
+    extra_optimizer_args = {
+        "weight_decay": args.adam_weight_decay,
+        "eps": args.adam_epsilon,
+    }
     # Initialize the optimizer
     if args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
@@ -631,6 +643,7 @@ def main():
             )
 
         optimizer_class = Adafactor
+        extra_optimizer_args = {}
         extra_optimizer_args["lr"] = None
         extra_optimizer_args["relative_step"] = True
         extra_optimizer_args["scale_parameter"] = False
@@ -642,8 +655,6 @@ def main():
     )
     optimizer = optimizer_class(
         unet.parameters(),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
         **extra_optimizer_args,
     )
 
@@ -751,6 +762,7 @@ def main():
         resolution_type=args.resolution_type,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
+        cache_dir=args.cache_dir_vae,
     )
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
@@ -758,6 +770,13 @@ def main():
 
     if accelerator.is_local_main_process:
         vaecache.discover_all_files()
+    accelerator.wait_for_everyone()
+
+    if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
+        bucket_manager.scan_for_metadata()
+    accelerator.wait_for_everyone()
+    if not accelerator.is_main_process:
+        bucket_manager.load_image_metadata()
     accelerator.wait_for_everyone()
 
     if "vae" not in args.skip_file_discovery:
@@ -866,7 +885,6 @@ def main():
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
     custom_balanced_sampler.log_state()
-    StateTracker.start_training()
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
@@ -881,6 +899,7 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
+
     logger.info("***** Running training *****")
     logger.info(
         f"  Num batches = {len(train_dataset)} ({len(train_dataset) * args.train_batch_size} samples)"
@@ -902,8 +921,8 @@ def main():
         range(0, args.max_train_steps),
         disable=not accelerator.is_local_main_process,
         initial=global_step,
+        desc="Steps",
     )
-    progress_bar.set_description("Steps")
     accelerator.wait_for_everyone()
 
     for epoch in range(first_epoch, args.num_train_epochs):
@@ -942,8 +961,8 @@ def main():
                 )
 
             # Add the current batch of training data's avg luminance to a list.
-            if StateTracker.tracking_luminance() and "luminance" in batch:
-                training_luminance_values.append(batch["luminance"])
+            if "batch_luminance" in batch:
+                training_luminance_values.append(batch["batch_luminance"])
 
             with accelerator.accumulate(unet):
                 training_logger.debug(
@@ -1111,12 +1130,11 @@ def main():
                     "train_loss": train_loss,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
-                if StateTracker.tracking_luminance():
-                    # Average out the luminance values of each batch, so that we can store that in this step.
-                    avg_training_data_luminance = sum(training_luminance_values) / len(
-                        training_luminance_values
-                    )
-                    logs["train_luminance"] = avg_training_data_luminance
+                # Average out the luminance values of each batch, so that we can store that in this step.
+                avg_training_data_luminance = sum(training_luminance_values) / len(
+                    training_luminance_values
+                )
+                logs["train_luminance"] = avg_training_data_luminance
                 accelerator.log(
                     logs,
                     step=global_step,
@@ -1302,17 +1320,15 @@ def main():
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            if StateTracker.tracking_luminance():
-                                validation_luminance.append(
-                                    calculate_luminance(validation_image)
-                                )
-                        if StateTracker.tracking_luminance():
-                            # Compute the mean luminance across all samples:
-                            validation_luminance = torch.tensor(validation_luminance)
-                            validation_document[
-                                "validation_luminance"
-                            ] = validation_luminance.mean()
-                            del validation_luminance
+                            validation_luminance.append(
+                                calculate_luminance(validation_image)
+                            )
+                        # Compute the mean luminance across all samples:
+                        validation_luminance = torch.tensor(validation_luminance)
+                        validation_document[
+                            "validation_luminance"
+                        ] = validation_luminance.mean()
+                        del validation_luminance
                         tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()
