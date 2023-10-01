@@ -226,7 +226,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         If all buckets are exhausted, first reset the seen images and exhausted buckets.
         """
         available_buckets = [
-            self._bucket_name_to_id(bucket) for bucket in self.buckets if self._bucket_name_to_id(bucket) not in self.exhausted_buckets
+            bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
         ]
         if not available_buckets:
             logger.warning(
