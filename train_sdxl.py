@@ -884,7 +884,6 @@ def main():
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
     custom_balanced_sampler.log_state()
-    StateTracker.start_training()
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = custom_balanced_sampler.current_epoch
@@ -899,6 +898,7 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
+
     logger.info("***** Running training *****")
     logger.info(
         f"  Num batches = {len(train_dataset)} ({len(train_dataset) * args.train_batch_size} samples)"
