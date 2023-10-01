@@ -250,7 +250,7 @@ class BucketManager:
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """
         new_aspect_ratio_bucket_indices = {}
-        logger.debug(f"Count of items before split: {len(self.aspect_ratio_bucket_indices.items())}")
+        logger.debug(f"Count of items before split: {sum([len(item_list) for item_list in self.aspect_ratio_bucket_indices.items()])}")
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             with self.accelerator.split_between_processes(
                 images, apply_padding=self.apply_dataset_padding
@@ -260,7 +260,7 @@ class BucketManager:
 
         # Replace the original aspect_ratio_bucket_indices with the new one containing only this process's share
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
-        logger.debug(f"Count of items after split: {len(self.aspect_ratio_bucket_indices.items())}")
+        logger.debug(f"Count of items after split: {sum([len(item_list) for item_list in self.aspect_ratio_bucket_indices.items()])}")
 
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
