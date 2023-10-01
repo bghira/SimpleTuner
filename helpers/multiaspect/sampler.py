@@ -156,13 +156,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Get unseen images from the specified bucket.
         If bucket is None, get unseen images from all buckets.
         """
-        if bucket:
+        if bucket and bucket in self.bucket_manager.aspect_ratio_bucket_indices:
             return [
                 image
                 for image in self.bucket_manager.aspect_ratio_bucket_indices[bucket]
                 if not self.bucket_manager.is_seen(image)
             ]
-        else:
+        elif bucket is None:
             unseen_images = []
             for b, images in self.bucket_manager.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
@@ -173,6 +173,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     ]
                 )
             return unseen_images
+        else:
+            return []
 
     def _handle_bucket_with_insufficient_images(self, bucket):
         """
