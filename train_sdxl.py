@@ -514,7 +514,9 @@ def main():
             validation_shortnames,
             validation_negative_prompt_embeds,
             validation_negative_pooled_embeds,
-        ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
+        ) = prepare_validation_prompt_list(
+            args=args, embed_cache=embed_cache, prompt_handler=prompt_handler
+        )
     accelerator.wait_for_everyone()
     # Grab GPU memory used:
     if accelerator.is_main_process:
@@ -1192,6 +1194,7 @@ def main():
             log_validations(
                 logger,
                 accelerator,
+                prompt_handler,
                 unet,
                 args,
                 validation_prompts,
