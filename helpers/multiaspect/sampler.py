@@ -100,7 +100,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.current_epoch = previous_state["current_epoch"]
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
-            self.bucket_manager.seen_images = previous_state["seen_images"]
+            self.bucket_manager.seen_images.update(previous_state["seen_images"])
 
     def load_buckets(self):
         return list(
@@ -258,6 +258,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
         self._clear_batch_accumulator()
+        self.debug_log("Changed bucket to {next_bucket} ({self.buckets[self.current_bucket]}).")
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -307,7 +308,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(
                 f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
-        self.debug_log("Now marking image as seen.")
         return to_yield
 
     def _clear_batch_accumulator(self):
