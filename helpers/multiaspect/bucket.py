@@ -245,33 +245,29 @@ class BucketManager:
         self.save_image_metadata()
         logger.info("Completed aspect bucket update.")
 
-    def split_buckets_between_processes(self):
+    def split_buckets_between_processes(self, gradient_accumulation_steps=1):
         """
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """
-        # Determine the number of images each process should handle
-        num_processes = self.accelerator.state.num_processes
-        if num_processes == 1:
-            logger.debug(
-                f"Only one process is available, so we will not split the aspect ratio bucket indices."
-            )
-            return
         new_aspect_ratio_bucket_indices = {}
         total_images = sum(
             [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
         )
         logger.debug(f"Count of items before split: {total_images}")
-        images_per_process = total_images // num_processes
+
+        # Determine the effective batch size for all processes considering gradient accumulation
+        num_processes = self.accelerator.num_processes
+        effective_batch_size = (
+            self.batch_size * num_processes * gradient_accumulation_steps
+        )
 
         for bucket, images in self.aspect_ratio_bucket_indices.items():
-            # Trim the list to the determined length
-            trimmed_images = images[: images_per_process * num_processes]
-            logger.warning(
-                f"Bucket {bucket} is TRIMMING {len(images)} images to {len(trimmed_images)} - THESE IMAGES WILL NOT BE SAMPLED."
-                " This is happening with Multi-GPU training because we *cannot* have any imbalance in the aspect buckets."
-            )
+            # Trim the list to a length that's divisible by the effective batch size
+            num_batches = len(images) // effective_batch_size
+            trimmed_images = images[: num_batches * effective_batch_size]
+
             with self.accelerator.split_between_processes(
-                trimmed_images, apply_padding=self.apply_dataset_padding
+                trimmed_images, apply_padding=False
             ) as images_split:
                 # Now images_split contains only the part of the images list that this process should handle
                 new_aspect_ratio_bucket_indices[bucket] = images_split
