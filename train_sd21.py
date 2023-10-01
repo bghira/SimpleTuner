@@ -179,10 +179,6 @@ def main(args):
             "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
         )
 
-    # If we have args.track_luminance, we need to set that now.
-    if args.track_luminance:
-        StateTracker.enable_luminance()
-
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed, args.seed_for_each_device)
@@ -483,12 +479,7 @@ def main(args):
             )
         examples = batch[0]
         training_logger.debug(f"Examples: {examples}")
-        if StateTracker.tracking_luminance():
-            training_logger.debug(f"Computing luminance for input batch")
-            batch_luminance = calculate_batch_luminance(
-                [example["image_data"] for example in examples]
-            )
-
+        batch_luminance = [example["luminance"] for example in examples]
         # Initialize the VAE Cache if it doesn't exist
         global vaecache
         if "vaecache" not in globals():
@@ -532,9 +523,8 @@ def main(args):
         result = {
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
+            "batch_luminance": batch_luminance,
         }
-        if StateTracker.tracking_luminance():
-            result["luminance"] = batch_luminance
         return result
 
     logger.info("Plugging sampler into dataloader")
@@ -884,7 +874,7 @@ def main(args):
                     f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
                 )
 
-            if StateTracker.tracking_luminance() and "luminance" in batch:
+            if "batch_luminance" in batch:
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["luminance"])
 
@@ -1264,17 +1254,15 @@ def main(args):
                             validation_document[shortname] = wandb.Image(
                                 validation_image
                             )
-                            if StateTracker.tracking_luminance():
-                                validation_luminance.append(
-                                    calculate_luminance(validation_image)
-                                )
-                        if StateTracker.tracking_luminance():
-                            # Compute the mean luminance across all samples:
-                            validation_luminance = torch.tensor(validation_luminance)
-                            validation_document[
-                                "validation_luminance"
-                            ] = validation_luminance.mean()
-                            del validation_luminance
+                            validation_luminance.append(
+                                calculate_luminance(validation_image)
+                            )
+                        # Compute the mean luminance across all samples:
+                        validation_luminance = torch.tensor(validation_luminance)
+                        validation_document[
+                            "validation_luminance"
+                        ] = validation_luminance.mean()
+                        del validation_luminance
                         tracker.log(validation_document, step=global_step)
 
     accelerator.end_training()

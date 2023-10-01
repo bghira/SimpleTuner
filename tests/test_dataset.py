@@ -50,10 +50,7 @@ class TestMultiAspectDataset(unittest.TestCase):
         mock_image_data = b"fake_image_data"
         self.data_backend.read.return_value = mock_image_data
 
-        with patch("PIL.Image.open") as mock_image_open, patch(
-            "helpers.training.state_tracker.StateTracker.status_training",
-            return_value=True,
-        ):
+        with patch("PIL.Image.open") as mock_image_open:
             # Create a blank canvas:
             mock_image = Image.new(mode="RGB", size=(16, 8))
             mock_image_open.return_value = mock_image
@@ -72,20 +69,12 @@ class TestMultiAspectDataset(unittest.TestCase):
         self.data_backend.read.side_effect = Exception("Some error")
 
         with self.assertRaises(Exception):
-            with patch(
-                "helpers.training.state_tracker.StateTracker.status_training",
-                return_value=True,
-            ):
-                with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
-                    self.dataset.__getitem__(self.image_path)
+            with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
+                self.dataset.__getitem__(self.image_path)
 
     def test_getitem_not_in_training_state(self):
         input_data = tuple([{"image_path": self.image_path}])
-        with patch(
-            "helpers.training.state_tracker.StateTracker.status_training",
-            return_value=False,
-        ):
-            example = self.dataset.__getitem__(input_data)
+        example = self.dataset.__getitem__(input_data)
         self.assertIsNotNone(example)
 
 

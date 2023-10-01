@@ -178,5 +178,5 @@ def collate_fn(batch):
         "prompt_embeds": prompt_embeds_all,
         "add_text_embeds": add_text_embeds_all,
         "batch_time_ids": batch_time_ids,
-        "luminance": batch_luminance,
+        "batch_luminance": batch_luminance,
     }

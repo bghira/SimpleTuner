@@ -26,22 +26,6 @@ class StateTracker:
     args = None
 
     @classmethod
-    def start_training(cls):
-        cls.has_training_started = True
-
-    @classmethod
-    def status_training(cls):
-        return cls.has_training_started
-
-    @classmethod
-    def enable_luminance(cls):
-        cls.calculate_luminance = True
-
-    @classmethod
-    def tracking_luminance(cls):
-        return cls.calculate_luminance
-
-    @classmethod
     def delete_cache_files(cls):
         for cache_name in ["all_image_files", "all_vae_cache_files"]:
             cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"

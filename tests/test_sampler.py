@@ -132,12 +132,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": img_paths}
 
         # Collect batches by iterating over the generator
-        with patch(
-            "helpers.training.state_tracker.StateTracker.status_training",
-            return_value=True,
-        ):
-            # your test code here
-            batches = [next(self.sampler.__iter__()) for _ in range(len(img_paths))]
+        batches = [next(self.sampler.__iter__()) for _ in range(len(img_paths))]
         # Ensure that all batches have consistent image sizes
         # We retrieve the size using PIL for validation
         first_img_size = Image.open(batches[0]).size
