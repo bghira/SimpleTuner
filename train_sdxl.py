@@ -168,7 +168,9 @@ def main():
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.state.num_processes > 1 and not args.apply_dataset_padding:
-        logger.warning(f"Enabling dataset padding for multiGPU system. Supply --apply_dataset_padding parameter to disable this warning, or ignore it.")
+        logger.warning(
+            f"Enabling dataset padding for multiGPU system. Supply --apply_dataset_padding parameter to disable this warning, or ignore it."
+        )
         args.apply_dataset_padding = True
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -303,7 +305,9 @@ def main():
     accelerator.wait_for_everyone()
     bucket_manager.reload_cache()
     # Now split the contents of these buckets between all processes
-    bucket_manager.split_buckets_between_processes()
+    bucket_manager.split_buckets_between_processes(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+    )
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
     for bucket in bucket_manager.aspect_ratio_bucket_indices:
         print(
