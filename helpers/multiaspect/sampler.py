@@ -129,7 +129,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             int: Bucket array index, eg. 0
         """
         if '.' not in str(bucket_name):
-            logger.debug(f"Assuming {bucket_name} is already an index.")
+            self.debug_log(f"Assuming {bucket_name} is already an index.")
             return int(bucket_name)
         return self.buckets.index(str(bucket_name))
 
@@ -187,20 +187,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])
             < self.batch_size
         ):
-            logger.debug(
+            self.debug_log(
                 f"Bucket {bucket} has insufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
             )
             if bucket not in self.exhausted_buckets:
-                logger.debug(
+                self.debug_log(
                     f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
                 )
                 self.move_to_exhausted()
-            logger.debug(
+            self.debug_log(
                 "Changing bucket to another random selection."
             )
             self.change_bucket()
             return True
-        logger.debug(
+        self.debug_log(
             f"Bucket {bucket} has sufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
         )
         return False
@@ -236,9 +236,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self._reset_buckets()
             available_buckets = self.buckets
 
-        logger.debug(f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}")
-        logger.debug(f"exhausted buckets: {self.exhausted_buckets}")
-        logger.debug(f"bucket list: {self.buckets}")
+        self.debug_log(f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}")
+        self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
+        self.debug_log(f"bucket list: {self.buckets}")
         next_bucket = random.choice(available_buckets)
         return next_bucket
 
