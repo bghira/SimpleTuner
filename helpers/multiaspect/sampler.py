@@ -245,7 +245,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.current_bucket = (self.current_bucket + 1) % len(available_buckets)
         else:
             self.current_bucket = 0
-        if self.current_bucket not in available_buckets:
+        if self.current_bucket not in available_buckets.keys():
             raise Exception(f'Tried to select bucket index {self.current_bucket} from this list of buckets, which do not contain it: {available_buckets}')
         next_bucket = available_buckets[self.current_bucket]
         return next_bucket
