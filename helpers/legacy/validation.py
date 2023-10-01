@@ -85,6 +85,7 @@ def prepare_validation_prompt_list(args, embed_cache):
 def log_validations(
     logger,
     accelerator,
+    prompt_handler,
     unet,
     args,
     validation_prompts,
@@ -212,6 +213,16 @@ def log_validations(
                         ) = embed_cache.compute_embeddings_for_prompts(
                             [validation_prompt]
                         )
+                        [
+                            current_validation_prompt_embeds,
+                            validation_negative_prompt_embeds,
+                        ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                            [
+                                current_validation_prompt_embeds,
+                                validation_negative_prompt_embeds,
+                            ]
+                        )
+
                         logger.debug(
                             f"Generating validation image: {validation_prompt}"
                         )

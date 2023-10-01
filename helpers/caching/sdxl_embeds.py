@@ -51,17 +51,22 @@ class TextEmbeddingCache:
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
     def encode_sdxl_prompt(
-        self, text_encoders, tokenizers, prompt, is_validation: bool = False
+        self,
+        text_encoders,
+        tokenizers,
+        prompt,
+        is_validation: bool = False,
+        negative_prompt: str = "",
     ):
         prompt_embeds_list = []
 
         emitted_warning = False
         # If prompt_handler (Compel) is available, use it for all prompts
         if self.prompt_handler and is_validation:
-            output = self.prompt_handler.process_long_prompt(prompt)
-            logger.debug(f"Compel shapes: {[x.shape for x in output]}")
-            logger.debug(f"Compel output: {output}")
-            return output
+            positive_prompt, negative_prompt = self.prompt_handler.process_long_prompt(
+                prompt
+            )
+            return positive_prompt, negative_prompt
         for tokenizer, text_encoder in zip(tokenizers, text_encoders):
             text_inputs = tokenizer(
                 prompt, padding="max_length", truncation=True, return_tensors="pt"
@@ -106,7 +111,12 @@ class TextEmbeddingCache:
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_prompt
     def encode_sdxl_prompts(
-        self, text_encoders, tokenizers, prompts, is_validation: bool = False
+        self,
+        text_encoders,
+        tokenizers,
+        prompts,
+        is_validation: bool = False,
+        negative_prompt: str = "",
     ):
         prompt_embeds_all = []
         pooled_prompt_embeds_all = []
@@ -133,11 +143,18 @@ class TextEmbeddingCache:
             )
 
     def compute_embeddings_for_prompts(
-        self, prompts, return_concat: bool = True, is_validation: bool = False
+        self,
+        prompts,
+        return_concat: bool = True,
+        is_validation: bool = False,
+        negative_prompt: str = "",
     ):
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
-                prompts, return_concat=return_concat, is_validation=is_validation
+                prompts,
+                return_concat=return_concat,
+                is_validation=is_validation,
+                negative_prompt=negative_prompt,
             )
         elif self.model_type == "legacy":
             return self.compute_embeddings_for_legacy_prompts(
@@ -149,6 +166,7 @@ class TextEmbeddingCache:
         prompts: list = None,
         return_concat: bool = True,
         is_validation: bool = False,
+        negative_prompt: str = "",
     ):
         prompt_embeds_all = []
         add_text_embeds_all = []
@@ -170,7 +188,11 @@ class TextEmbeddingCache:
                 else:
                     logger.debug(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
-                        self.text_encoders, self.tokenizers, [prompt], is_validation
+                        self.text_encoders,
+                        self.tokenizers,
+                        [prompt],
+                        is_validation,
+                        negative_prompt=negative_prompt,
                     )
                     add_text_embeds = pooled_prompt_embeds
                     if return_concat:
