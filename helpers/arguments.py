@@ -1006,7 +1006,7 @@ def parse_args(input_args=None):
         args.aws_secret_access_key = aws_config.get(
             "aws_secret_access_key", args.aws_secret_access_key
         )
-    if args.cache_dir is None:
+    if args.cache_dir is None or args.cache_dir == "":
         args.cache_dir = os.path.join(args.output_dir, "cache")
     if args.data_backend == "aws":
         if args.aws_bucket_name is None:
@@ -1048,5 +1048,5 @@ def parse_args(input_args=None):
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-
+    logger.debug(f"Parsed arguments: {args}")
     return args
