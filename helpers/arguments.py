@@ -1006,6 +1006,8 @@ def parse_args(input_args=None):
         args.aws_secret_access_key = aws_config.get(
             "aws_secret_access_key", args.aws_secret_access_key
         )
+    if args.cache_dir is None:
+        args.cache_dir = os.path.join(args.output_dir, "cache")
     if args.data_backend == "aws":
         if args.aws_bucket_name is None:
             raise ValueError("Must specify an AWS bucket name.")
@@ -1022,7 +1024,7 @@ def parse_args(input_args=None):
             args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
         if args.cache_dir_text is None:
             args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-        for target_dir in [Path(args.cache_dir_vae), Path(args.cache_dir_text)]:
+        for target_dir in [Path(args.cache_dir), Path(args.cache_dir_vae), Path(args.cache_dir_text)]:
             os.makedirs(target_dir, exist_ok=True)
     logger.info(f"VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
