@@ -508,12 +508,13 @@ def main():
         accelerator.wait_for_everyone()
         logger.info(f"Discovered {len(all_captions)} captions.")
 
-    (
-        validation_prompts,
-        validation_shortnames,
-        validation_negative_prompt_embeds,
-        validation_negative_pooled_embeds,
-    ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
+    with accelerator.main_process_first():
+        (
+            validation_prompts,
+            validation_shortnames,
+            validation_negative_prompt_embeds,
+            validation_negative_pooled_embeds,
+        ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
     accelerator.wait_for_everyone()
     # Grab GPU memory used:
     if accelerator.is_main_process:

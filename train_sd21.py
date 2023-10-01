@@ -569,11 +569,12 @@ def main(args):
     accelerator.wait_for_everyone()
     embed_cache.split_cache_between_processes(all_captions)
     embed_cache.compute_embeddings_for_legacy_prompts()
-    (
-        validation_prompts,
-        validation_shortnames,
-        validation_negative_prompt_embeds,
-    ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
+    with accelerator.main_process_first():
+        (
+            validation_prompts,
+            validation_shortnames,
+            validation_negative_prompt_embeds,
+        ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
 
     logger.info("Configuring runtime step count and epoch limit")
     # Scheduler and math around the number of training steps.
