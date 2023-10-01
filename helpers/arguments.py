@@ -1022,7 +1022,7 @@ def parse_args(input_args=None):
             args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
         if args.cache_dir_text is None:
             args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-        os.path.makedirs([args.cache_dir_vae, args.cache_dir_text], exist_ok=True)
+        os.makedirs([args.cache_dir_vae, args.cache_dir_text], exist_ok=True)
     logger.info(f"VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
 
