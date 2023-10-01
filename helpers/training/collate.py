@@ -7,7 +7,7 @@ from accelerate.logging import get_logger
 import concurrent.futures
 
 logger = logging.getLogger("collate_fn")
-logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO"))
 rank_text = rank_info()
 from torchvision.transforms import ToTensor
 
@@ -171,7 +171,7 @@ def collate_fn(batch):
     batch_time_ids = gather_conditional_size_features(
         examples, latent_batch, StateTracker.get_weight_dtype()
     )
-    debug_log("Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
+    debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
     return {
         "latent_batch": latent_batch,
