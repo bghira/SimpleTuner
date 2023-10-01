@@ -304,7 +304,7 @@ def main():
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
     for bucket in bucket_manager.aspect_ratio_bucket_indices:
         print(
-            f"{rank_info(accelerator)}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
+            f"{rank_info()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
         )
 
     if len(bucket_manager) == 0:

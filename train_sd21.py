@@ -388,7 +388,7 @@ def main(args):
     else:
         raise ValueError(f"Unsupported data backend: {args.data_backend}")
     logger.info(
-        f"{rank_info(accelerator)} created {args.data_backend} data backend.",
+        f"{rank_info()} created {args.data_backend} data backend.",
         main_process_only=False,
     )
 
@@ -397,7 +397,7 @@ def main(args):
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
 
     logger.info(
-        f"{rank_info(accelerator)} is creating a bucket manager.",
+        f"{rank_info()} is creating a bucket manager.",
         main_process_only=False,
     )
     bucket_manager = BucketManager(
@@ -423,16 +423,16 @@ def main(args):
         )
     if accelerator.is_main_process:
         logger.info(
-            f"{rank_info(accelerator)} is now refreshing the buckets..",
+            f"{rank_info()} is now refreshing the buckets..",
             main_process_only=False,
         )
         bucket_manager.refresh_buckets()
         logger.info(
-            f"{rank_info(accelerator)} has completed its bucket manager tasks.",
+            f"{rank_info()} has completed its bucket manager tasks.",
             main_process_only=False,
         )
         logger.info(
-            f"{rank_info(accelerator)} is now splitting the data.",
+            f"{rank_info()} is now splitting the data.",
             main_process_only=False,
         )
     accelerator.wait_for_everyone()
@@ -443,7 +443,7 @@ def main(args):
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
     for bucket in bucket_manager.aspect_ratio_bucket_indices:
         print(
-            f"{rank_info(accelerator)}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
+            f"{rank_info()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
         )
 
     if len(bucket_manager) == 0:
