@@ -241,7 +241,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.debug_log(f"bucket list: {self.buckets}")
         
         # Sequentially get the next bucket
-        if hasattr(self, 'current_bucket'):
+        if hasattr(self, 'current_bucket') and self.current_bucket is not None:
             self.current_bucket = (self.current_bucket + 1) % len(available_buckets)
         else:
             self.current_bucket = 0
