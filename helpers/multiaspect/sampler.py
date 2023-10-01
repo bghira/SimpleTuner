@@ -267,13 +267,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
         )
         logger.info(
-            "Training Statistics:\n"
-            f"    -> Batch size: {self.batch_size}\n"
-            f"    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
-            f"    -> Unseen images: {len(self._get_unseen_images())}\n"
-            f"    -> Current Bucket: {self.current_bucket}\n"
-            f"    -> {len(self.buckets)} Buckets: {self.buckets}\n"
-            f"    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}\n"
+            f"{self.rank_info}Multi-aspect sampler statistics:\n"
+            f"{self.rank_info}    -> Batch size: {self.batch_size}\n"
+            f"{self.rank_info}    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
+            f"{self.rank_info}    -> Unseen images: {len(self._get_unseen_images())}\n"
+            f"{self.rank_info}    -> Current Bucket: {self.current_bucket}\n"
+            f"{self.rank_info}    -> {len(self.buckets)} Buckets: {self.buckets}\n"
+            f"{self.rank_info}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}\n"
         )
 
     def _validate_and_yield_images_from_samples(self, samples, bucket):
@@ -362,6 +362,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
                     )
                     final_yield = self.batch_accumulator[: self.batch_size]
+                    self.debug_log(f"Marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} unseen images before adding.")
                     self.bucket_manager.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
                     )
