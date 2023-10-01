@@ -237,6 +237,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             available_buckets = self.buckets
 
         logger.debug(f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}")
+        logger.debug(f"exhausted buckets: {self.exhausted_buckets}")
+        logger.debug(f"bucket list: {self.buckets}")
         next_bucket = random.choice(available_buckets)
         return next_bucket
 
