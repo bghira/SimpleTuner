@@ -49,17 +49,12 @@ class BucketManager:
     def __len__(self):
         """
         Returns:
-            int: The number of batches in the dataset, rounded down to account for likely-discarded images.
+            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
         """
-        return floor(
-            sum(
-                [
-                    (len(bucket) // self.batch_size) * self.batch_size
-                    for bucket in self.aspect_ratio_bucket_indices.values()
-                    if len(bucket) >= self.batch_size
-                ]
-            )
-            / self.batch_size
+        return sum(
+            len(bucket) // self.batch_size
+            for bucket in self.aspect_ratio_bucket_indices.values()
+            if len(bucket) >= self.batch_size
         )
 
     def _discover_new_files(self, for_metadata: bool = False):
