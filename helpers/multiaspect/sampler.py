@@ -128,6 +128,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
+        if '.' not in bucket_name:
+            logger.debug(f"Assuming {bucket_name} is already an index.")
+            return int(bucket_name)
         return self.buckets.index(str(bucket_name))
 
     def _reset_buckets(self):
@@ -223,7 +226,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         If all buckets are exhausted, first reset the seen images and exhausted buckets.
         """
         available_buckets = [
-            bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
+            self._bucket_name_to_id(bucket) for bucket in self.buckets if self._bucket_name_to_id(bucket) not in self.exhausted_buckets
         ]
         if not available_buckets:
             logger.warning(
