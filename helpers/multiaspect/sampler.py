@@ -300,10 +300,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             all_buckets_exhausted = True  # Initial assumption
 
             # Loop through all buckets to find one with sufficient images
+            self.debug_log(f"Found {len(self.buckets)} buckets.")
             for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
+                self.debug_log(
+                    f"Fetching available images for bucket {self.current_bucket} ({self.buckets[self.current_bucket]})."
+                )
                 available_images = self._get_unseen_images(
                     self.buckets[self.current_bucket]
+                )
+                self.debug_log(
+                    f"We found {len(available_images)} images in bucket {self.current_bucket} ({self.buckets[self.current_bucket]})."
                 )
 
                 if len(available_images) >= self.batch_size:
@@ -311,6 +318,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     break
                 else:
                     # Current bucket doesn't have enough images, try the next bucket
+                    self.debug_log(
+                        f"Bucket {self.buckets[self.current_bucket]} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
+                    )
                     self.change_bucket()
             while len(available_images) >= self.batch_size:
                 self.debug_log(
