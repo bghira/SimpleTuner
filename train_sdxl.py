@@ -299,6 +299,14 @@ def main():
         logger.debug("Refreshed buckets and computed aspect ratios.")
     accelerator.wait_for_everyone()
     bucket_manager.reload_cache()
+    # Now split the contents of these buckets between all processes
+    bucket_manager.split_buckets_between_processes()
+    # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
+    for bucket in bucket_manager.aspect_ratio_bucket_indices:
+        print(
+            f"{rank_info(accelerator)}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
+        )
+
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."

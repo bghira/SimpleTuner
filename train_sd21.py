@@ -436,6 +436,8 @@ def main(args):
             main_process_only=False,
         )
     accelerator.wait_for_everyone()
+    bucket_manager.reload_cache()
+
     # Now split the contents of these buckets between all processes
     bucket_manager.split_buckets_between_processes()
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
