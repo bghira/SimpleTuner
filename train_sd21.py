@@ -439,7 +439,9 @@ def main(args):
     bucket_manager.reload_cache()
 
     # Now split the contents of these buckets between all processes
-    bucket_manager.split_buckets_between_processes()
+    bucket_manager.split_buckets_between_processes(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+    )
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
     for bucket in bucket_manager.aspect_ratio_bucket_indices:
         print(
