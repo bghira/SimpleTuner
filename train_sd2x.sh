@@ -17,7 +17,9 @@ if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
     done
     echo "." # Newline
     echo "YOUR TIME HAS COME."
-    find "${INSTANCE_DIR}" -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+    if [ -n "${INSTANCE_DIR}" ]; then
+     find "${INSTANCE_DIR}" -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
+    fi
     find "${OUTPUT_DIR}" -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
     find "." -type d -name ".ipynb_checkpoints" -exec rm -vr {} \;
 fi
