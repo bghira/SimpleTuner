@@ -154,6 +154,8 @@ def collate_fn(batch):
     examples = batch[0]
     debug_log("Collect luminance values")
     batch_luminance = [example["luminance"] for example in examples]
+    # average it
+    batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
