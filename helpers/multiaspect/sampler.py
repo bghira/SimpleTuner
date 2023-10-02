@@ -128,7 +128,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
-        if '.' not in str(bucket_name):
+        if "." not in str(bucket_name):
             self.debug_log(f"Assuming {bucket_name} is already an index.")
             return int(bucket_name)
         return self.buckets.index(str(bucket_name))
@@ -195,9 +195,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
                 )
                 self.move_to_exhausted()
-            self.debug_log(
-                "Changing bucket to another random selection."
-            )
+            self.debug_log("Changing bucket to another random selection.")
             self.change_bucket()
             return True
         self.debug_log(
@@ -236,17 +234,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self._reset_buckets()
             available_buckets = self.buckets
 
-        self.debug_log(f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}")
+        self.debug_log(
+            f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}"
+        )
         self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
         self.debug_log(f"bucket list: {self.buckets}")
-        
+
         # Sequentially get the next bucket
-        if hasattr(self, 'current_bucket') and self.current_bucket is not None:
+        if hasattr(self, "current_bucket") and self.current_bucket is not None:
             self.current_bucket = (self.current_bucket + 1) % len(available_buckets)
         else:
             self.current_bucket = 0
         if self.buckets[self.current_bucket] not in available_buckets:
-            raise Exception(f'Tried to select bucket {self.buckets[self.current_bucket]} from this list of buckets, which do not contain it: {available_buckets}')
+            random_bucket = random.choice(available_buckets)
+            self.current_bucket = available_buckets.index(random_bucket)
+
         next_bucket = available_buckets[self.current_bucket]
         return next_bucket
 
@@ -258,7 +260,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
         self._clear_batch_accumulator()
-        self.debug_log(f"Changed bucket to {next_bucket} ({self.buckets[self.current_bucket]}).")
+        self.debug_log(
+            f"Changed bucket to {next_bucket} ({self.buckets[self.current_bucket]})."
+        )
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -370,7 +374,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
                     )
                     final_yield = self.batch_accumulator[: self.batch_size]
-                    self.debug_log(f"Marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} unseen images before adding.")
+                    self.debug_log(
+                        f"Marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} unseen images before adding."
+                    )
                     self.bucket_manager.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
                     )
