@@ -49,17 +49,12 @@ class BucketManager:
     def __len__(self):
         """
         Returns:
-            int: The number of batches in the dataset, rounded down to account for likely-discarded images.
+            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
         """
-        return floor(
-            sum(
-                [
-                    (len(bucket) // self.batch_size) * self.batch_size
-                    for bucket in self.aspect_ratio_bucket_indices.values()
-                    if len(bucket) >= self.batch_size
-                ]
-            )
-            / self.batch_size
+        return sum(
+            len(bucket) // self.batch_size
+            for bucket in self.aspect_ratio_bucket_indices.values()
+            if len(bucket) >= self.batch_size
         )
 
     def _discover_new_files(self, for_metadata: bool = False):
@@ -250,20 +245,38 @@ class BucketManager:
         self.save_image_metadata()
         logger.info("Completed aspect bucket update.")
 
-    def split_buckets_between_processes(self):
+    def split_buckets_between_processes(self, gradient_accumulation_steps=1):
         """
         Splits the contents of each bucket in aspect_ratio_bucket_indices between the available processes.
         """
         new_aspect_ratio_bucket_indices = {}
+        total_images = sum(
+            [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
+        )
+        logger.debug(f"Count of items before split: {total_images}")
+
+        # Determine the effective batch size for all processes considering gradient accumulation
+        num_processes = self.accelerator.num_processes
+        effective_batch_size = (
+            self.batch_size * num_processes * gradient_accumulation_steps
+        )
+
         for bucket, images in self.aspect_ratio_bucket_indices.items():
+            # Trim the list to a length that's divisible by the effective batch size
+            num_batches = len(images) // effective_batch_size
+            trimmed_images = images[: num_batches * effective_batch_size]
+
             with self.accelerator.split_between_processes(
-                images, apply_padding=self.apply_dataset_padding
+                trimmed_images, apply_padding=False
             ) as images_split:
                 # Now images_split contains only the part of the images list that this process should handle
                 new_aspect_ratio_bucket_indices[bucket] = images_split
 
         # Replace the original aspect_ratio_bucket_indices with the new one containing only this process's share
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
+        logger.debug(
+            f"Count of items after split: {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}"
+        )
 
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""

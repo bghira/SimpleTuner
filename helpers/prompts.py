@@ -322,14 +322,11 @@ class PromptHandler:
         else:
             logger.debug(f"Running single encoder Compel pipeline.")
             conditioning = self.compel.build_conditioning_tensor(prompt)
-        [
-            conditioning,
-        ] = self.compel.pad_conditioning_tensors_to_same_length([conditioning])
+        [conditioning] = self.compel.pad_conditioning_tensors_to_same_length(
+            [conditioning]
+        )
         if "sdxl" in self.encoder_style:
             logger.debug(f"Returning pooled embeds along with hidden states.")
-            return (
-                conditioning,
-                pooled_embed,
-            )
+            return (conditioning, pooled_embed)
         logger.debug("Returning legacy style hidden states without pooled embeds")
         return conditioning

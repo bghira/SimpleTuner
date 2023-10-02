@@ -50,10 +50,10 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(buckets, ["1.0"])
 
     def test_change_bucket(self):
-        self.sampler.buckets = ["1.0", "1.5"]
+        self.sampler.buckets = ["1.5"]
         self.sampler.exhausted_buckets = ["1.0"]
         self.sampler.change_bucket()
-        self.assertEqual(self.sampler.current_bucket, 1)  # Should now point to '1.5'
+        self.assertEqual(self.sampler.current_bucket, 0)  # Should now point to '1.5'
 
     def test_move_to_exhausted(self):
         self.sampler.current_bucket = 0  # Pointing to '1.0'

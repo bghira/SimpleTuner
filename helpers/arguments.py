@@ -1,5 +1,5 @@
 import argparse, os, random, time, json, logging
-
+from pathlib import Path
 logger = logging.getLogger("ArgsParser")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -1006,6 +1006,8 @@ def parse_args(input_args=None):
         args.aws_secret_access_key = aws_config.get(
             "aws_secret_access_key", args.aws_secret_access_key
         )
+    if args.cache_dir is None or args.cache_dir == "":
+        args.cache_dir = os.path.join(args.output_dir, "cache")
     if args.data_backend == "aws":
         if args.aws_bucket_name is None:
             raise ValueError("Must specify an AWS bucket name.")
@@ -1018,11 +1020,12 @@ def parse_args(input_args=None):
         # Override the instance data dir with the bucket image prefix.
         args.instance_data_dir = args.aws_bucket_image_prefix
     else:
-        if args.cache_dir_vae is None:
+        if args.cache_dir_vae is None or args.cache_dir_vae == "":
             args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
-        if args.cache_dir_text is None:
+        if args.cache_dir_text is None or args.cache_dir_text == "":
             args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-        os.path.makedirs([args.cache_dir_vae, args.cache_dir_text], exist_ok=True)
+        for target_dir in [Path(args.cache_dir), Path(args.cache_dir_vae), Path(args.cache_dir_text)]:
+            os.makedirs(target_dir, exist_ok=True)
     logger.info(f"VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
 
@@ -1045,5 +1048,5 @@ def parse_args(input_args=None):
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-
+    logger.debug(f"Parsed arguments: {args}")
     return args
