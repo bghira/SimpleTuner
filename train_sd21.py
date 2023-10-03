@@ -501,6 +501,7 @@ def main(args):
         if "vaecache" not in globals():
             vaecache = VAECache(
                 vae=vae,
+                instance_data_root=args.instance_data_dir,
                 accelerator=accelerator,
                 data_backend=data_backend,
                 resolution=args.resolution,
@@ -694,6 +695,7 @@ def main(args):
     vaecache = VAECache(
         vae=vae,
         accelerator=accelerator,
+        instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
