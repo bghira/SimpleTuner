@@ -772,6 +772,7 @@ def main():
         vae=vae,
         accelerator=accelerator,
         data_backend=data_backend,
+        instance_data_root=args.instance_data_dir,
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
