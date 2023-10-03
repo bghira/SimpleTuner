@@ -543,7 +543,8 @@ def main():
         import gc
 
         del text_encoder_1, text_encoder_2
-        text_encoder_1, text_encoder_2 = None
+        text_encoder_1 = None
+        text_encoder_2 = None
         gc.collect()
         torch.cuda.empty_cache()
     else:
