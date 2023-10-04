@@ -166,7 +166,7 @@ def main():
 
     StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
-    logger.info(accelerator.state, main_process_only=False)
+    logger.info(accelerator.state, main_process_only=True)
     if accelerator.state.num_processes > 1 and not args.apply_dataset_padding:
         logger.warning(
             f"Enabling dataset padding for multiGPU system. Supply --apply_dataset_padding parameter to disable this warning, or ignore it."
