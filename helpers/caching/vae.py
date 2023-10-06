@@ -18,6 +18,7 @@ class VAECache:
         self,
         vae,
         accelerator,
+        instance_data_root: str,
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
         resolution: float = 1024,
@@ -36,6 +37,7 @@ class VAECache:
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.vae_batch_size = vae_batch_size
+        self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
@@ -115,6 +117,9 @@ class VAECache:
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
         Encode a batch of input images. Images must be the same dimension.
+
+        If load_from_cache=True, we read from the VAE cache rather than encode.
+        If load_from_cache=True, we will throw an exception if the entry is not found.
         """
         batch_size = len(images)
         if batch_size != len(filepaths):
@@ -134,7 +139,7 @@ class VAECache:
         if len(uncached_image_indices) > 0 and load_from_cache:
             # We wanted only uncached images. Something went wrong.
             raise Exception(
-                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set."
+                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_image_indices}"
             )
         elif not load_from_cache:
             uncached_images = [images[i] for i in uncached_image_indices]
