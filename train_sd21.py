@@ -130,7 +130,6 @@ def compute_ids(prompt: str):
 
 
 def main(args):
-    args = parse_args()
     StateTracker.set_args(args)
     StateTracker.delete_cache_files()
 
@@ -1294,4 +1293,5 @@ def main(args):
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)
