@@ -1,5 +1,5 @@
 from multiprocessing import Manager
-from os import environ
+from os import environ, path
 from pathlib import Path
 import json, logging
 
@@ -78,7 +78,7 @@ class StateTracker:
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
-                cls.all_vae_cache_files[image] = False
+                cls.all_vae_cache_files[path.basename(image)] = False
         cls._save_to_disk("all_vae_cache_files", cls.all_vae_cache_files)
         logger.debug(
             f"set_vae_cache_files found {len(cls.all_vae_cache_files)} images."
