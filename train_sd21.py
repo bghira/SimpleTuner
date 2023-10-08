@@ -1129,7 +1129,7 @@ def main(args):
                 text_encoder,
                 tokenizer,
                 vae_path=args.pretrained_model_name_or_path,
-                weight_dtype=unet.dtype,
+                weight_dtype=accelerator.unwrap_model(unet).dtype,
                 embed_cache=embed_cache,
                 validation_negative_pooled_embeds=None,
                 validation_negative_prompt_embeds=validation_negative_prompt_embeds,
