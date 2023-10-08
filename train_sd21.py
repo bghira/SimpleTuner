@@ -460,7 +460,6 @@ def main(args):
         accelerator=accelerator,
         size=args.resolution,
         size_type=args.resolution_type,
-        center_crop=args.center_crop,
         print_names=args.print_filenames or False,
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
