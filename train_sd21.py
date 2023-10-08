@@ -529,11 +529,20 @@ def main(args):
     )
 
     logger.info("Initialise text embedding cache")
+    prompt_handler = PromptHandler(
+        args=args,
+        text_encoders=[text_encoder, None],
+        tokenizers=[tokenizer, None],
+        accelerator=accelerator,
+        model_type="legacy",
+    )
+
     embed_cache = TextEmbeddingCache(
         text_encoders=[text_encoder, None],
         tokenizers=[tokenizer, None],
         accelerator=accelerator,
         model_type="legacy",
+        prompt_handler=prompt_handler,
     )
 
     logger.info(f"Pre-computing text embeds / updating cache.")
@@ -1108,6 +1117,7 @@ def main(args):
             log_validations(
                 logger,
                 accelerator,
+                prompt_handler,
                 unet,
                 args,
                 validation_prompts,
