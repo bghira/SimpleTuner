@@ -485,6 +485,11 @@ def main(args):
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
+    from helpers.training.collate import (
+        extract_filepaths,
+        compute_latents,
+        check_latent_shapes,
+    )
 
     def collate_fn(batch):
         if len(batch) != 1:
@@ -492,55 +497,25 @@ def main(args):
                 "This trainer is not designed to handle multiple batches in a single collate."
             )
         examples = batch[0]
-        training_logger.debug(f"Examples: {examples}")
         batch_luminance = [example["luminance"] for example in examples]
-        # Initialize the VAE Cache if it doesn't exist
-        global vaecache
-        if "vaecache" not in globals():
-            vaecache = VAECache(
-                vae=vae,
-                instance_data_root=args.instance_data_dir,
-                accelerator=accelerator,
-                data_backend=data_backend,
-                resolution=args.resolution,
-                resolution_type=args.resolution_type,
-                delete_problematic_images=args.delete_problematic_images,
-                vae_batch_size=args.vae_batch_size,
-                write_batch_size=args.write_batch_size,
-            )
-
-        pixel_values = []
-        filepaths = []  # we will store the file paths here
-        for example in examples:
-            image_data = example["image_data"]
-            # SDXL would grab the width/height here, but it's not needed for SD 2.x
-            pixel_values.append(
-                to_tensor(image_data).to(
-                    memory_format=torch.contiguous_format, dtype=vae_dtype
-                )
-            )
-            filepaths.append(example["image_path"])  # store the file path
-
-        # Compute the VAE embeddings for individual images
-        latents = [
-            vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
-        ]
-        latent_batch = torch.stack(latents)
+        # average it
+        batch_luminance = sum(batch_luminance) / len(batch_luminance)
+        filepaths = extract_filepaths(examples)
+        latent_batch = compute_latents(filepaths)
+        check_latent_shapes(latent_batch, filepaths)
 
         # Extract the captions from the examples.
         captions = [example["instance_prompt_text"] for example in examples]
-
         # Compute the embeddings using the captions.
         prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
         logger.debug(f"{len(prompt_embeds_all)} prompt_embeds_all: {prompt_embeds_all}")
         prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
 
-        result = {
+        return {
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
             "batch_luminance": batch_luminance,
         }
-        return result
 
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
