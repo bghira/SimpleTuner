@@ -367,7 +367,7 @@ def main(args):
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
 
-        data_backend = LocalDataBackend()
+        data_backend = LocalDataBackend(accelerator=accelerator)
         if not os.path.exists(args.instance_data_root):
             raise FileNotFoundError(
                 f"Instance {args.instance_data_root} images root doesn't exist. Cannot continue."
