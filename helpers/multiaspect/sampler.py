@@ -216,6 +216,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
             self._reset_buckets()
             return True
+        available_buckets = [
+            bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
+        ]
+        if not available_buckets:
+            logger.warning(
+                f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
+                f" ({len(self.exhausted_buckets)}), resetting"
+            )
+            self._reset_buckets()
+            return True
         return False
 
     def _get_next_bucket(self):
