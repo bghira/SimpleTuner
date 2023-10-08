@@ -174,6 +174,9 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
+        logger.debug(
+            f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
+        )
         # Use the accelerator to split the data
         with self.accelerator.split_between_processes(
             all_unprocessed_files
