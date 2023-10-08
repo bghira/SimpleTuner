@@ -562,7 +562,7 @@ def main(args):
     )
 
     logger.info(f"Pre-computing text embeds / updating cache.")
-    if accelerator.is_local_main_process:
+    with accelerator.local_main_process_first():
         all_captions = PromptHandler.get_all_captions(
             data_backend=data_backend,
             instance_data_root=args.instance_data_dir,
