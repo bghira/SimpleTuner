@@ -23,6 +23,8 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
+from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
+
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
@@ -77,6 +79,7 @@ from diffusers import (
 from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+from transformers.utils import ContextManagers
 
 tokenizer = None
 
@@ -168,15 +171,7 @@ def main(args):
     # Currently, it's not possible to do gradient accumulation when training two models with accelerate.accumulate
     # This will be enabled soon in accelerate. For now, we don't allow gradient accumulation when training two models.
     # TODO (patil-suraj): Remove this check when gradient accumulation with two models is enabled in accelerate.
-    if (
-        args.train_text_encoder
-        and args.gradient_accumulation_steps > 1
-        and accelerator.num_processes > 1
-    ):
-        raise ValueError(
-            "Gradient accumulation is not supported when training the text encoder in distributed training. "
-            "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
-        )
+    # FIXED (bghira): https://github.com/huggingface/accelerate/pull/1708
 
     # If passed along, set the training seed now.
     if args.seed is not None and args.seed != 0:
@@ -230,17 +225,27 @@ def main(args):
         trained_betas=temp_scheduler.betas.clone().detach(),
         prediction_type="v_prediction",
     )
-    text_encoder = freeze_text_encoder(
-        args,
-        text_encoder_cls.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="text_encoder",
-            revision=args.revision,
-        ),
-    )
-    vae = AutoencoderKL.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
-    )
+    # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
+    # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
+    # will try to assign the same optimizer with the same weights to all models during
+    # `deepspeed.initialize`, which of course doesn't work.
+    #
+    # For now the following workaround will partially support Deepspeed ZeRO-3, by excluding the 2
+    # frozen models from being partitioned during `zero.Init` which gets called during
+    # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
+    # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
+    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        text_encoder = freeze_text_encoder(
+            args,
+            text_encoder_cls.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="text_encoder",
+                revision=args.revision,
+            ),
+        )
+        vae = AutoencoderKL.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
+        )
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
@@ -652,7 +657,7 @@ def main(args):
         text_encoder.to(accelerator.device, dtype=weight_dtype)
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device)
+        ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
@@ -861,9 +866,11 @@ def main(args):
         train_loss = 0.0
         training_luminance_values = []
         current_epoch_step = 0
+        training_models = [unet]
         if args.train_text_encoder:
             logger.debug(f"Bumping text encoder.")
             text_encoder.train()
+            training_models.append(text_encoder)
         for step, batch in enumerate(train_dataloader):
             if accelerator.is_main_process:
                 progress_bar.set_description(
@@ -886,7 +893,7 @@ def main(args):
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["batch_luminance"])
 
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(training_models):
                 logger.debug(f"Sending latent batch from pinned memory to device")
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
@@ -1213,7 +1220,7 @@ def main(args):
 
         if validation_prompts:
             validation_images = []
-            pipeline = pipeline.to(accelerator.device)
+            pipeline = pipeline.to(accelerator.device, dtype=weight_dtype)
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler
             ].from_pretrained(

@@ -1,5 +1,6 @@
 import argparse, os, random, time, json, logging
 from pathlib import Path
+
 logger = logging.getLogger("ArgsParser")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -557,6 +558,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--offload_param_path",
+        type=str,
+        default=None,
+        help=(
+            "When using DeepSpeed ZeRo stage 2 or 3 with NVMe offload, this may be specified to provide a path for the offload."
+        ),
+    )
+    parser.add_argument(
         "--use_8bit_adam",
         action="store_true",
         help="Whether or not to use 8-bit Adam from bitsandbytes.",
@@ -1024,7 +1033,11 @@ def parse_args(input_args=None):
             args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
         if args.cache_dir_text is None or args.cache_dir_text == "":
             args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-        for target_dir in [Path(args.cache_dir), Path(args.cache_dir_vae), Path(args.cache_dir_text)]:
+        for target_dir in [
+            Path(args.cache_dir),
+            Path(args.cache_dir_vae),
+            Path(args.cache_dir_text),
+        ]:
             os.makedirs(target_dir, exist_ok=True)
     logger.info(f"VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
