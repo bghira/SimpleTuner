@@ -174,7 +174,7 @@ class PromptHandler:
 
         self.accelerator = accelerator
         self.encoder_style = model_type
-        if len(text_encoders) == 2 and text_encoders[0] is not None:
+        if len(text_encoders) == 2 and text_encoders[1] is not None:
             # SDXL Refiner and Base can both use the 2nd tokenizer/encoder.
             logger.debug(f"Initialising Compel prompt manager with dual text encoders.")
             self.compel = Compel(
