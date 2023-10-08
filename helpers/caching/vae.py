@@ -82,10 +82,10 @@ class VAECache:
         all_image_files = StateTracker.get_image_files()
         existing_cache_files = StateTracker.get_vae_cache_files()
         logger.debug(
-            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {all_image_files[:5]}"
+            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
         )
         logger.debug(
-            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {existing_cache_files[:5]}"
+            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
         )
         cache_filenames = {
             self.generate_vae_cache_filename(file)[1] for file in all_image_files
