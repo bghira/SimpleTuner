@@ -1182,8 +1182,8 @@ def main(args):
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
             prediction_type=args.prediction_type,
-            timestep_spacing=args.training_scheduler_timestep_spacing,
-            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+            timestep_spacing="trailing",
+            rescale_betas_zero_snr=True,
         )
         pipeline.save_pretrained(
             os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
@@ -1220,8 +1220,8 @@ def main(args):
                 args.pretrained_model_name_or_path,
                 subfolder="scheduler",
                 prediction_type=args.prediction_type,
-                timestep_spacing=args.inference_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                timestep_spacing="trailing",
+                rescale_betas_zero_snr=True,
             )
             with torch.autocast(str(accelerator.device).replace(":0", "")):
                 validation_generator = torch.Generator(
