@@ -1377,61 +1377,32 @@ def main():
                 ignore_patterns=["step_*", "epoch_*"],
             )
 
-        if validation_prompts:
-            validation_images = []
-            pipeline = pipeline.to(accelerator.device, dtype=weight_dtype)
-            with torch.autocast(str(accelerator.device).replace(":0", "")):
-                validation_generator = torch.Generator(
-                    device=accelerator.device
-                ).manual_seed(args.seed or 0)
-                for validation_prompt in tqdm(
-                    validation_prompts, desc="Generating validation images"
-                ):
-                    # Each validation prompt needs its own embed.
-                    (
-                        current_validation_prompt_embeds,
-                        current_validation_pooled_embeds,
-                    ) = embed_cache.compute_embeddings_for_sdxl_prompts(
-                        [validation_prompt]
-                    )
-                    validation_images.extend(
-                        pipeline(
-                            prompt_embeds=current_validation_prompt_embeds,
-                            pooled_prompt_embeds=current_validation_pooled_embeds,
-                            negative_prompt_embeds=validation_negative_prompt_embeds,
-                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                            num_images_per_prompt=args.num_validation_images,
-                            num_inference_steps=args.validation_num_inference_steps,
-                            guidance_scale=args.validation_guidance,
-                            guidance_rescale=args.validation_guidance_rescale,
-                            generator=validation_generator,
-                            height=args.validation_resolution,
-                            width=args.validation_resolution,
-                        ).images
-                    )
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "wandb":
-                        validation_document = {}
-                        validation_luminance = []
-                        for idx, validation_image in enumerate(validation_images):
-                            # Create a WandB entry containing each image.
-                            shortname = f"no_shortname-{idx}"
-                            if idx in validation_shortnames:
-                                shortname = f"{validation_shortnames[idx]}-{idx}"
-                            validation_document[shortname] = wandb.Image(
-                                validation_image
-                            )
-                            validation_luminance.append(
-                                calculate_luminance(validation_image)
-                            )
-                        # Compute the mean luminance across all samples:
-                        validation_luminance = torch.tensor(validation_luminance)
-                        validation_document[
-                            "validation_luminance"
-                        ] = validation_luminance.mean()
-                        del validation_luminance
-                        tracker.log(validation_document, step=global_step)
+        log_validations(
+            logger,
+            accelerator,
+            prompt_handler,
+            unet,
+            args,
+            validation_prompts,
+            validation_shortnames,
+            global_step,
+            resume_global_step,
+            step,
+            progress_bar,
+            text_encoder_1,
+            tokenizer=None,
+            vae_path=vae_path,
+            weight_dtype=weight_dtype,
+            embed_cache=embed_cache,
+            validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+            validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+            text_encoder_2=text_encoder_2,
+            tokenizer_2=None,
+            ema_unet=ema_unet,
+            vae=vae,
+            SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
+            validation_type="finish"
+        )
 
     accelerator.end_training()
 

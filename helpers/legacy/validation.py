@@ -106,6 +106,7 @@ def log_validations(
     ema_unet=None,
     vae=None,
     SCHEDULER_NAME_MAP: dict = {},
+    validation_type: str = "training"
 ):
     ### BEGIN: Perform validation every `validation_epochs` steps
     if accelerator.is_main_process:
@@ -116,7 +117,7 @@ def log_validations(
             f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
             f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
         )
-        if (
+        if validation_type == "finish" or (
             validation_prompts
             and global_step % args.validation_steps == 0
             and step % args.gradient_accumulation_steps == 0
@@ -144,7 +145,7 @@ def log_validations(
                 f"Running validation... \n Generating {len(validation_prompts)} images."
             )
             # create pipeline
-            if args.use_ema:
+            if validation_type == "validation" and args.use_ema:
                 # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                 ema_unet.store(unet.parameters())
                 ema_unet.copy_to(unet.parameters())
@@ -273,7 +274,7 @@ def log_validations(
                     )
                     val_img_idx += 1
 
-            if args.use_ema:
+            if validation_type == "validation" and args.use_ema:
                 # Switch back to the original UNet parameters.
                 ema_unet.restore(unet.parameters())
             if not args.keep_vae_loaded:
