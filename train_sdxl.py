@@ -1226,6 +1226,9 @@ def main():
                     ema_unet.step(unet.parameters())
                     # There seems to be an issue with EMAmodel not keeping proper track of itself.
                     ema_unet.optimization_step = global_step
+                    training_logger.debug(
+                        f"EMA decay value: {ema_unet.get_decay(ema_unet.optimization_step)}"
+                    )
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
