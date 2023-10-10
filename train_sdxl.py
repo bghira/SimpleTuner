@@ -489,14 +489,16 @@ def main():
         num_workers=0,
         persistent_workers=False,
     )
-    logger.info("Initialise prompt handler")
-    prompt_handler = PromptHandler(
-        args=args,
-        text_encoders=[text_encoder_1, text_encoder_2],
-        tokenizers=[tokenizer_1, tokenizer_2],
-        accelerator=accelerator,
-        model_type="sdxl",
-    )
+    prompt_handler = None
+    if not args.disable_compel:
+        logger.info("Initialise prompt handler")
+        prompt_handler = PromptHandler(
+            args=args,
+            text_encoders=[text_encoder_1, text_encoder_2],
+            tokenizers=[tokenizer_1, tokenizer_2],
+            accelerator=accelerator,
+            model_type="sdxl",
+        )
     logger.info("Initialise text embedding cache")
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders,
