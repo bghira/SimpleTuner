@@ -299,7 +299,15 @@ def parse_args(input_args=None):
         default=None,
         help="The directory where the downloaded models and datasets will be stored.",
     )
-
+    parser.add_argument(
+        "--cache_clear_validation_prompts",
+        action="store_true",
+        help=(
+            "When provided, any validation prompt entries in the text embed cache will be recreated."
+            " This is useful if you've modified any of the existing prompts, or, disabled/enabled Compel,"
+            " via `--disable_compel`"
+        ),
+    )
     parser.add_argument(
         "--dataset_name",
         type=str,

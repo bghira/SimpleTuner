@@ -163,7 +163,14 @@ class TextEmbeddingCache:
     ):
         prompt_embeds_all = []
         add_text_embeds_all = []
-
+        load_from_cache = True
+        args = StateTracker.get_args()
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and is_validation
+        ):
+            load_from_cache = False
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -175,9 +182,9 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                if os.path.exists(filename) and not return_concat:
+                if os.path.exists(filename) and load_from_cache and not return_concat:
                     continue
-                if os.path.exists(filename):
+                if os.path.exists(filename) and load_from_cache:
                     logger.debug(f"Loading from cache: {filename}")
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
