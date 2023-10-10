@@ -33,7 +33,10 @@ def prepare_validation_prompt_list(args, embed_cache):
 
         # Iterate through the prompts with a progress bar
         for shortname, prompt in tqdm(
-            prompt_library.items(), desc="Precomputing validation prompt embeddings"
+            prompt_library.items(),
+            leave=False,
+            ncols=100,
+            desc="Precomputing validation prompt embeddings",
         ):
             embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
             validation_prompts.append(prompt)
@@ -42,6 +45,8 @@ def prepare_validation_prompt_list(args, embed_cache):
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in tqdm(
             user_prompt_library.items(),
+            leave=False,
+            ncols=100,
             desc="Precomputing user prompt library embeddings",
         ):
             embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
@@ -106,7 +111,7 @@ def log_validations(
     ema_unet=None,
     vae=None,
     SCHEDULER_NAME_MAP: dict = {},
-    validation_type: str = "training"
+    validation_type: str = "training",
 ):
     ### BEGIN: Perform validation every `validation_epochs` steps
     if accelerator.is_main_process:
@@ -205,7 +210,10 @@ def log_validations(
                             device=accelerator.device
                         ).manual_seed(args.validation_seed or args.seed or 0)
                     for validation_prompt in tqdm(
-                        validation_prompts, desc="Generating validation images"
+                        validation_prompts,
+                        leave=False,
+                        ncols=100,
+                        desc="Generating validation images",
                     ):
                         # Each validation prompt needs its own embed.
                         (

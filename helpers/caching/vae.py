@@ -177,9 +177,7 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        logger.debug(
-            f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
-        )
+        logger.debug(f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)")
         # Use the accelerator to split the data
         with self.accelerator.split_between_processes(
             all_unprocessed_files
@@ -255,7 +253,11 @@ class VAECache:
                 continue
 
             for raw_filepath in tqdm(
-                relevant_files, desc=f"Processing bucket {bucket}", position=get_rank()
+                relevant_files,
+                desc=f"Processing bucket {bucket}",
+                position=get_rank(),
+                ncols=100,
+                leave=False,
             ):
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath
