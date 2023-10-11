@@ -1025,6 +1025,9 @@ def main():
         desc="Steps",
     )
     accelerator.wait_for_everyone()
+    timesteps_buffer = []
+    train_loss = 0.0
+    training_luminance_values = []
 
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
@@ -1040,10 +1043,7 @@ def main():
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
             scheduler_kwargs["epoch"] = epoch
         unet.train()
-        train_loss = 0.0
-        training_luminance_values = []
         current_epoch_step = 0
-        timesteps_buffer = []
         for step, batch in enumerate(train_dataloader):
             if accelerator.is_main_process:
                 progress_bar.set_description(
