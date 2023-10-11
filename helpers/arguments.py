@@ -74,7 +74,7 @@ def parse_args(input_args=None):
         "--timestep_bias_strategy",
         type=str,
         default="none",
-        choices=["earlier", "later", "none"],
+        choices=["earlier", "later", "range", "none"],
         help=(
             "The timestep bias strategy, which may help direct the model toward learning low or frequency details."
             " Choices: ['earlier', 'later', 'none']."
