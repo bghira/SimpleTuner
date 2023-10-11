@@ -1095,7 +1095,8 @@ def main():
                 timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
                 # Prepare the data for the scatter plot
-                timesteps_buffer.extend(timesteps.tolist())
+                for timestep in timesteps.tolist():
+                    timesteps_buffer.append((global_step, timestep))
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
@@ -1250,7 +1251,7 @@ def main():
                     )
                     data = [
                         [iteration, timestep]
-                        for iteration, timestep in zip(iterations, timesteps_buffer)
+                        for iteration, timestep in timesteps_buffer
                     ]
                     table = wandb.Table(data=data, columns=["global_step", "timestep"])
                     logs["timesteps_scatter"] = wandb.plot.scatter(
@@ -1262,7 +1263,6 @@ def main():
 
                 # Clear buffers
                 timesteps_buffer = []
-                iterations_buffer = []
 
                 # Average out the luminance values of each batch, so that we can store that in this step.
                 avg_training_data_luminance = sum(training_luminance_values) / len(
