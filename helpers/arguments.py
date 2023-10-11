@@ -645,6 +645,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_torch_compile",
+        type=bool,
+        default=True,
+        help=(
+            "Supply `--validation_torch_compile=false` to disable the use of torch.compile() on the validation pipeline."
+            " For some setups, torch.compile() may error out. This is dependent on PyTorch version, phase of the moon,"
+            " but if it works, you should leave it enabled for a great speed-up."
+        ),
+    )
+    parser.add_argument(
         "--allow_tf32",
         action="store_true",
         help=(
