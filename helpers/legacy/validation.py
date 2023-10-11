@@ -185,6 +185,10 @@ def log_validations(
                 timestep_spacing=args.inference_scheduler_timestep_spacing,
                 rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             )
+            if args.validation_torch_compile:
+                pipeline.unet = torch.compile(
+                    unet, mode=args.validation_torch_compile_mode, fullgraph=False
+                )
             pipeline = pipeline.to(accelerator.device)
             pipeline.set_progress_bar_config(disable=True)
 

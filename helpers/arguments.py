@@ -647,11 +647,21 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--validation_torch_compile",
         type=bool,
-        default=True,
+        default=False,
         help=(
-            "Supply `--validation_torch_compile=false` to disable the use of torch.compile() on the validation pipeline."
+            "Supply `--validation_torch_compile=true` to enable the use of torch.compile() on the validation pipeline."
             " For some setups, torch.compile() may error out. This is dependent on PyTorch version, phase of the moon,"
             " but if it works, you should leave it enabled for a great speed-up."
+        ),
+    )
+    parser.add_argument(
+        "--validation_torch_compile_mode",
+        type=str,
+        default="reduce-overhead",
+        choices=["reduce-overhead", "default"],
+        help=(
+            "PyTorch provides different modes for the Torch Inductor when compiling graphs. reduce-overhead,"
+            " the default mode, provides the most benefit."
         ),
     )
     parser.add_argument(
