@@ -1043,6 +1043,8 @@ def main():
         train_loss = 0.0
         training_luminance_values = []
         current_epoch_step = 0
+        timesteps_buffer = []
+        iterations_buffer = []
         for step, batch in enumerate(train_dataloader):
             if accelerator.is_main_process:
                 progress_bar.set_description(
@@ -1092,6 +1094,12 @@ def main():
                     args, noise_scheduler.config.num_train_timesteps
                 ).to(accelerator.device)
                 timesteps = torch.multinomial(weights, bsz, replacement=True).long()
+
+                # Prepare the data for the scatter plot
+                iterations_buffer.extend(
+                    [i for i in range(len(timesteps))]
+                )  # Assuming timesteps is 1D
+                timesteps_buffer.extend(timesteps.tolist())
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
@@ -1236,6 +1244,25 @@ def main():
                     "train_loss": train_loss,
                     "learning_rate": lr_scheduler.get_last_lr()[0],
                 }
+
+                # Log scatter plot to wandb
+                if args.report_to == "wandb":
+                    # Prepare the data for the scatter plot
+                    data = [
+                        [iteration, timestep]
+                        for iteration, timestep in zip(
+                            iterations_buffer, timesteps_buffer
+                        )
+                    ]
+                    table = wandb.Table(data=data, columns=["iteration", "timestep"])
+                    logs["timesteps_scatter"] = wandb.plot.scatter(
+                        table, "iteration", "timestep", title="Timesteps per Iteration"
+                    )
+
+                # Clear buffers
+                timesteps_buffer = []
+                iterations_buffer = []
+
                 # Average out the luminance values of each batch, so that we can store that in this step.
                 avg_training_data_luminance = sum(training_luminance_values) / len(
                     training_luminance_values
