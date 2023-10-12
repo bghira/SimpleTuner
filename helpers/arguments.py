@@ -1089,5 +1089,4 @@ def parse_args(input_args=None):
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-    logger.debug(f"Parsed arguments: {args}")
     return args
