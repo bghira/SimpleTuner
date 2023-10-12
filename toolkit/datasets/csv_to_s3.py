@@ -230,6 +230,11 @@ def parse_args():
         help="Maximum luminance threshold for images. If not provided, only capping is applied.",
     )
     parser.add_argument(
+        "--midjourney_data_checks",
+        action="store_true",
+        help="If set, only images with certain entries in the caption will be included. This is useful for midjourney data checks.",
+    )
+    parser.add_argument(
         "--caption_field",
         type=str,
         default=None,
@@ -520,10 +525,12 @@ def fetch_data(s3_client, data, args, uri_column):
             hasattr(args, "midjourney_data_checks")
             and args.midjourney_data_checks
             and (
-                "Variations" in row[args.caption_field]
-                or "Upscaled" not in row[args.caption_field]
+                "Image #" not in row[args.caption_field]
+                or "Upscaled" in row[args.caption_field]
+                or "(fast)" in row[args.caption_field]
             )
         ):
+            # Midjourney's upscaler sucks. We only want single images, non-tiled.
             continue
         if new_filename not in to_fetch:
             to_fetch[new_filename] = {
@@ -600,7 +607,6 @@ def main():
         if content_to_filename(file.name, args) in existing_files:
             logger.info(f"Skipping already processed file: {file}")
             continue
-        logger.info(f"Loading file: {file}")
         # If it's a parquet file from the Git LFS repo, pull it Just-in-Time
         if file.suffix == ".parquet":
             if args.git_lfs_repo:
@@ -611,6 +617,7 @@ def main():
                 os.system(f"env GIT_LFS_SKIP_SMUDGE=0 git lfs pull -I {file.name}")
                 # return to prev dir
                 os.chdir(cwd)
+            logger.info(f"Loading file: {file}")
             df = pd.read_parquet(file)
         elif file.suffix == ".csv":
             df = pd.read_csv(file)
