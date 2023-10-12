@@ -306,13 +306,13 @@ def get_uri_column(df):
         return None
 
 
-def get_width_column(df):
+def get_width_field(df):
     if "WIDTH" in df.columns:
         return "WIDTH"
     return "width"
 
 
-def get_height_column(df):
+def get_height_field(df):
     if "HEIGHT" in df.columns:
         return "HEIGHT"
     return "height"
@@ -604,8 +604,13 @@ def main():
         # If it's a parquet file from the Git LFS repo, pull it Just-in-Time
         if file.suffix == ".parquet":
             if args.git_lfs_repo:
-                logger.info(f"Fetching {file.name} from Git LFS")
-                os.system(f"git lfs pull -I {file.name}")
+                logger.info(f"Fetching {file} from Git LFS")
+                # chdir to repo_path
+                cwd = os.getcwd()
+                os.chdir(repo_path)
+                os.system(f"env GIT_LFS_SKIP_SMUDGE=0 git lfs pull -I {file.name}")
+                # return to prev dir
+                os.chdir(cwd)
             df = pd.read_parquet(file)
         elif file.suffix == ".csv":
             df = pd.read_csv(file)
@@ -623,9 +628,9 @@ def main():
             continue
         logger.info(f"URI field: {uri_column}")
         if args.height_field is None:
-            args.height_field = get_height_column(df)
+            args.height_field = get_height_field(df)
         if args.width_field is None:
-            args.width_field = get_width_column(df)
+            args.width_field = get_width_field(df)
         logger.info(
             f"Resolution fields: '{args.width_field}' and '{args.height_field}'"
         )
@@ -644,21 +649,21 @@ def main():
             )
             df = df[df["aesthetic"] >= args.aesthetic_threshold]
             logger.info(f"Filtered to {len(df)} rows.")
-        if args.width_column in df.columns and args.minimum_resolution > 0:
+        if args.width_field in df.columns and args.minimum_resolution > 0:
             logger.info(
                 f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
             )
-            df = df[df[args.width_column] >= args.minimum_resolution]
+            df = df[df[args.width_field] >= args.minimum_resolution]
             logger.info(f"Filtered to {len(df)} rows.")
-        if args.height_column in df.columns and args.minimum_resolution > 0:
+        if args.height_field in df.columns and args.minimum_resolution > 0:
             logger.info(
                 f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
             )
-            df = df[df[args.height_column] >= args.minimum_resolution]
+            df = df[df[args.height_field] >= args.minimum_resolution]
             logger.info(f"Filtered to {len(df)} rows.")
         if (
-            args.width_column in df.columns
-            and args.height_column in df.columns
+            args.width_field in df.columns
+            and args.height_field in df.columns
             and args.minimum_pixel_area > 0
         ):
             # megapixel to pixel:
@@ -667,8 +672,7 @@ def main():
                 f"Applying minimum pixel area filter with threshold {args.minimum_pixel_area}"
             )
             df = df[
-                df[args.width_column] * df[args.height_column]
-                >= args.minimum_pixel_area
+                df[args.width_field] * df[args.height_field] >= args.minimum_pixel_area
             ]
             logger.info(f"Filtered to {len(df)} rows.")
         if "similarity" in df.columns:
