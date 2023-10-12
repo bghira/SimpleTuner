@@ -669,12 +669,12 @@ def main():
             and args.minimum_pixel_area > 0
         ):
             # megapixel to pixel:
-            args.minimum_pixel_area = args.minimum_pixel_area * 1000000
+            minimum_pixel_area = args.minimum_pixel_area * 1000000
             logger.info(
-                f"Applying minimum pixel area filter with threshold {args.minimum_pixel_area}"
+                f"Applying minimum pixel area filter with threshold {minimum_pixel_area}"
             )
             df = df[
-                df[args.width_field] * df[args.height_field] >= args.minimum_pixel_area
+                df[args.width_field] * df[args.height_field] >= minimum_pixel_area
             ]
             logger.info(f"Filtered to {len(df)} rows.")
         if "similarity" in df.columns:
