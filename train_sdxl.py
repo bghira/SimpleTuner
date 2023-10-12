@@ -818,12 +818,7 @@ def main():
 
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
-    unet, train_dataloader = accelerator.prepare(unet, train_dataloader)
-    if not use_deepspeed_scheduler:
-        logger.info("Preparing the learning rate scheduler")
-        lr_scheduler = accelerator.prepare(lr_scheduler)
-    logger.info("Preparing the optimizer")
-    optimizer = accelerator.prepare(optimizer)
+    unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(unet, train_dataloader, lr_scheduler, optimizer)
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
         ema_unet.to(accelerator.device, dtype=weight_dtype)
