@@ -822,9 +822,8 @@ def main():
     if not use_deepspeed_scheduler:
         logger.info("Preparing the learning rate scheduler")
         lr_scheduler = accelerator.prepare(lr_scheduler)
-    if not use_deepspeed_optimizer:
-        logger.info("Preparing the optimizer")
-        optimizer = accelerator.prepare(optimizer)
+    logger.info("Preparing the optimizer")
+    optimizer = accelerator.prepare(optimizer)
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
         ema_unet.to(accelerator.device, dtype=weight_dtype)
@@ -1246,9 +1245,6 @@ def main():
                 # Log scatter plot to wandb
                 if args.report_to == "wandb":
                     # Prepare the data for the scatter plot
-                    iterations = list(
-                        range(global_step - len(timesteps_buffer) + 1, global_step + 1)
-                    )
                     data = [
                         [iteration, timestep]
                         for iteration, timestep in timesteps_buffer
@@ -1258,7 +1254,7 @@ def main():
                         table,
                         "global_step",
                         "timestep",
-                        title="Timestep selection bias",
+                        title="Timestep distribution by step",
                     )
 
                 # Clear buffers
