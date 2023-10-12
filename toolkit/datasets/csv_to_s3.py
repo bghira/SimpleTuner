@@ -161,6 +161,11 @@ def parse_args():
         help="Connection timeout in seconds.",
     )
     parser.add_argument(
+        "--midjourney_data_checks",
+        action="store_true",
+        help="If set, only images with certain entries in the caption will be included. This is useful for midjourney data checks.",
+    )
+    parser.add_argument(
         "--read_timeout",
         type=int,
         default=30,
@@ -246,8 +251,28 @@ def parse_args():
     parser.add_argument(
         "--minimum_resolution",
         type=int,
-        default=768,
-        help="Minimum resolution for images.",
+        default=0,
+        help="Minimum resolution for images. Set to 0 to disable.",
+    )
+    parser.add_argument(
+        "--minimum_pixel_area",
+        type=int,
+        default=1,
+        help="Minimum pixel area for images, measured in megapixels. Set to 0 to disable.",
+    )
+    parser.add_argument(
+        "--width_field",
+        type=str,
+        default=None,
+        help=("Column name for image width. Auto-detected, if not supplied."),
+    )
+    parser.add_argument(
+        "--height_field",
+        type=str,
+        default=None,
+        help=(
+            "The column name in the dataset for the image height. Auto-detected, if not supplied."
+        ),
     )
     parser.add_argument(
         "--condition_image_size",
@@ -279,6 +304,18 @@ def get_uri_column(df):
     else:
         logger.error("No recognized URI column found in the dataset.")
         return None
+
+
+def get_width_column(df):
+    if "WIDTH" in df.columns:
+        return "WIDTH"
+    return "width"
+
+
+def get_height_column(df):
+    if "HEIGHT" in df.columns:
+        return "HEIGHT"
+    return "height"
 
 
 def get_caption_column(df):
@@ -514,7 +551,6 @@ def main():
     # List existing files in the S3 bucket
     existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
     logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
-
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
@@ -580,6 +616,14 @@ def main():
             logger.warning(f"Row has no uri_column: {uri_column}")
             continue
         logger.info(f"URI field: {uri_column}")
+        if args.height_field is None:
+            args.height_field = get_height_column(df)
+        if args.width_field is None:
+            args.width_field = get_width_column(df)
+        logger.info(
+            f"Resolution fields: '{args.width_field}' and '{args.height_field}'"
+        )
+
         logger.info(f"Before filtering, we have {len(df)} rows.")
         # Apply filters
         if "pwatermark" in df.columns:
@@ -594,17 +638,32 @@ def main():
             )
             df = df[df["aesthetic"] >= args.aesthetic_threshold]
             logger.info(f"Filtered to {len(df)} rows.")
-        if "WIDTH" in df.columns:
+        if args.width_column in df.columns and args.minimum_resolution > 0:
             logger.info(
                 f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
             )
-            df = df[df["WIDTH"] >= args.minimum_resolution]
+            df = df[df[args.width_column] >= args.minimum_resolution]
             logger.info(f"Filtered to {len(df)} rows.")
-        if "HEIGHT" in df.columns:
+        if args.height_column in df.columns and args.minimum_resolution > 0:
             logger.info(
                 f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
             )
-            df = df[df["HEIGHT"] >= args.minimum_resolution]
+            df = df[df[args.height_column] >= args.minimum_resolution]
+            logger.info(f"Filtered to {len(df)} rows.")
+        if (
+            args.width_column in df.columns
+            and args.height_column in df.columns
+            and args.minimum_pixel_area > 0
+        ):
+            # megapixel to pixel:
+            args.minimum_pixel_area = args.minimum_pixel_area * 1000000
+            logger.info(
+                f"Applying minimum pixel area filter with threshold {args.minimum_pixel_area}"
+            )
+            df = df[
+                df[args.width_column] * df[args.height_column]
+                >= args.minimum_pixel_area
+            ]
             logger.info(f"Filtered to {len(df)} rows.")
         if "similarity" in df.columns:
             logger.info(
