@@ -556,7 +556,7 @@ def main():
         if not os.path.exists(repo_path):
             logger.info(f"Thin-cloning Git LFS repo to {repo_path}")
             os.system(
-                f"env GIT_LFS_SKIP_SMUDGE=1 git lfs clone {args.git_lfs_repo} {repo_path}"
+                f"env GIT_LFS_SKIP_SMUDGE=1 git clone {args.git_lfs_repo} {repo_path}"
             )
         else:
             logger.info(
