@@ -229,11 +229,6 @@ def parse_args():
         help="Maximum luminance threshold for images. If not provided, only capping is applied.",
     )
     parser.add_argument(
-        "--midjourney_data_checks",
-        action="store_true",
-        help="If set, only images with certain entries in the caption will be included. This is useful for midjourney data checks.",
-    )
-    parser.add_argument(
         "--caption_field",
         type=str,
         default=None,
