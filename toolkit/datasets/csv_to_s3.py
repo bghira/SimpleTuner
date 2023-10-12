@@ -7,9 +7,8 @@ import pandas as pd
 from pathlib import Path
 from PIL import Image, ExifTags
 from tqdm import tqdm
-from tqdm.contrib.concurrent import thread_map
 from requests.adapters import HTTPAdapter
-from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import Pool
 import requests
 import re
 import shutil
@@ -538,15 +537,14 @@ def fetch_data(s3_client, data, args, uri_column):
                 "filename": new_filename,
                 "args": args,
             }
+
     logging.info("Fetching {} images...".format(len(to_fetch)))
-    thread_map(
-        fetch_and_upload_image,
-        to_fetch.values(),
-        [args] * len(to_fetch),
-        [s3_client] * len(to_fetch),
-        desc="Fetching & Uploading Images",
-        max_workers=args.num_workers,
-    )
+
+    with Pool(processes=args.num_workers) as pool:
+        results = pool.starmap(
+            fetch_and_upload_image,
+            [(item, args, s3_client) for item in to_fetch.values()],
+        )
 
 
 def main():
