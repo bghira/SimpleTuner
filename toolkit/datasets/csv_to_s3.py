@@ -500,9 +500,10 @@ def process_git_lfs_images(args, s3_client):
             upload_local_image_to_s3(image_path, args, s3_client)
 
 
-def fetch_and_upload_image(info, args, s3_client):
+def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""
     try:
+        s3_client = initialize_s3_client(args)
         fetch_image(info, args)
     except Exception as e:
         if args.print_nonfatal_errors:
@@ -510,8 +511,9 @@ def fetch_and_upload_image(info, args, s3_client):
     upload_to_s3(info["filename"], args, s3_client)
 
 
-def fetch_data(s3_client, data, args, uri_column):
+def fetch_data(data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
+    s3_client = initialize_s3_client(args)
     to_fetch = {}
     for row in data:
         new_filename = content_to_filename(row[args.caption_field], args)
@@ -538,7 +540,7 @@ def fetch_data(s3_client, data, args, uri_column):
     with Pool(processes=args.num_workers) as pool:
         results = pool.starmap(
             fetch_and_upload_image,
-            [(item, args, s3_client) for item in to_fetch.values()],
+            [(item, args) for item in to_fetch.values()],
         )
 
 
@@ -699,7 +701,7 @@ def main():
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
-        fetch_data(s3_client, to_fetch, args, uri_column)
+        fetch_data(to_fetch, args, uri_column)
 
         # Remove source file if argument is provided
         if args.delete_after_processing:
