@@ -554,8 +554,10 @@ def main():
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
-            logger.info(f"Cloning Git LFS repo to {repo_path}")
-            os.system(f"git lfs clone {args.git_lfs_repo} {repo_path}")
+            logger.info(f"Thin-cloning Git LFS repo to {repo_path}")
+            os.system(
+                f"env GIT_LFS_SKIP_SMUDGE=1 git lfs clone {args.git_lfs_repo} {repo_path}"
+            )
         else:
             logger.info(
                 f"Git LFS repo already exists at {repo_path}. Using existing files."
@@ -599,7 +601,11 @@ def main():
             logger.info(f"Skipping already processed file: {file}")
             continue
         logger.info(f"Loading file: {file}")
+        # If it's a parquet file from the Git LFS repo, pull it Just-in-Time
         if file.suffix == ".parquet":
+            if args.git_lfs_repo:
+                logger.info(f"Fetching {file.name} from Git LFS")
+                os.system(f"git lfs pull -I {file.name}")
             df = pd.read_parquet(file)
         elif file.suffix == ".csv":
             df = pd.read_csv(file)
