@@ -944,6 +944,7 @@ def main():
         * args.gradient_accumulation_steps
     )
 
+    lr = 0.0
     global_step = 0
     first_epoch = 0
     resume_step = 0
@@ -1220,7 +1221,6 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                lr = 0.0
                 try:
                     lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
@@ -1318,7 +1318,7 @@ def main():
 
             logs = {
                 "step_loss": loss.detach().item(),
-                "lr": lr_scheduler.get_last_lr()[0],
+                "lr": lr,
             }
             progress_bar.set_postfix(**logs)
             log_validations(
