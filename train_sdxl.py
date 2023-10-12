@@ -1220,9 +1220,16 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
+                lr = 0.0
+                try:
+                    lr = lr_scheduler.get_last_lr()[0]
+                except Exception as e:
+                    logger.error(
+                        f"Failed to get the last learning rate from the scheduler. Error: {e}"
+                    )
                 logs = {
                     "train_loss": train_loss,
-                    "learning_rate": lr_scheduler.get_last_lr()[0],
+                    "learning_rate": lr,
                     "epoch": epoch,
                 }
                 if args.use_ema:
