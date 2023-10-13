@@ -818,7 +818,9 @@ def main():
 
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
-    unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(unet, train_dataloader, lr_scheduler, optimizer)
+    unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(
+        unet, train_dataloader, lr_scheduler, optimizer
+    )
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
         ema_unet.to(accelerator.device, dtype=weight_dtype)
@@ -1022,6 +1024,7 @@ def main():
     accelerator.wait_for_everyone()
     timesteps_buffer = []
     train_loss = 0.0
+    step = global_step
     training_luminance_values = []
 
     for epoch in range(first_epoch, args.num_train_epochs):
