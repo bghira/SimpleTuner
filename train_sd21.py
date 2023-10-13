@@ -23,6 +23,8 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.training.state_tracker import StateTracker
+from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
+
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
@@ -77,6 +79,7 @@ from diffusers import (
 from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+from transformers.utils import ContextManagers
 
 tokenizer = None
 
@@ -130,7 +133,6 @@ def compute_ids(prompt: str):
 
 
 def main(args):
-    args = parse_args()
     StateTracker.set_args(args)
     StateTracker.delete_cache_files()
 
@@ -169,15 +171,7 @@ def main(args):
     # Currently, it's not possible to do gradient accumulation when training two models with accelerate.accumulate
     # This will be enabled soon in accelerate. For now, we don't allow gradient accumulation when training two models.
     # TODO (patil-suraj): Remove this check when gradient accumulation with two models is enabled in accelerate.
-    if (
-        args.train_text_encoder
-        and args.gradient_accumulation_steps > 1
-        and accelerator.num_processes > 1
-    ):
-        raise ValueError(
-            "Gradient accumulation is not supported when training the text encoder in distributed training. "
-            "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
-        )
+    # FIXED (bghira): https://github.com/huggingface/accelerate/pull/1708
 
     # If passed along, set the training seed now.
     if args.seed is not None and args.seed != 0:
@@ -231,17 +225,27 @@ def main(args):
         trained_betas=temp_scheduler.betas.clone().detach(),
         prediction_type="v_prediction",
     )
-    text_encoder = freeze_text_encoder(
-        args,
-        text_encoder_cls.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="text_encoder",
-            revision=args.revision,
-        ),
-    )
-    vae = AutoencoderKL.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
-    )
+    # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
+    # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
+    # will try to assign the same optimizer with the same weights to all models during
+    # `deepspeed.initialize`, which of course doesn't work.
+    #
+    # For now the following workaround will partially support Deepspeed ZeRO-3, by excluding the 2
+    # frozen models from being partitioned during `zero.Init` which gets called during
+    # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
+    # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
+    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        text_encoder = freeze_text_encoder(
+            args,
+            text_encoder_cls.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="text_encoder",
+                revision=args.revision,
+            ),
+        )
+        vae = AutoencoderKL.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
+        )
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
@@ -368,10 +372,10 @@ def main(args):
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
 
-        data_backend = LocalDataBackend()
-        if not os.path.exists(args.instance_data_root):
+        data_backend = LocalDataBackend(accelerator=accelerator)
+        if not os.path.exists(args.instance_data_dir):
             raise FileNotFoundError(
-                f"Instance {args.instance_data_root} images root doesn't exist. Cannot continue."
+                f"Instance {args.instance_data_dir} images root doesn't exist. Cannot continue."
             )
 
     elif args.data_backend == "aws":
@@ -461,7 +465,6 @@ def main(args):
         accelerator=accelerator,
         size=args.resolution,
         size_type=args.resolution_type,
-        center_crop=args.center_crop,
         print_names=args.print_filenames or False,
         use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
@@ -487,6 +490,11 @@ def main(args):
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
+    from helpers.training.collate import (
+        extract_filepaths,
+        compute_latents,
+        check_latent_shapes,
+    )
 
     def collate_fn(batch):
         if len(batch) != 1:
@@ -494,55 +502,25 @@ def main(args):
                 "This trainer is not designed to handle multiple batches in a single collate."
             )
         examples = batch[0]
-        training_logger.debug(f"Examples: {examples}")
         batch_luminance = [example["luminance"] for example in examples]
-        # Initialize the VAE Cache if it doesn't exist
-        global vaecache
-        if "vaecache" not in globals():
-            vaecache = VAECache(
-                vae=vae,
-                instance_data_root=args.instance_data_dir,
-                accelerator=accelerator,
-                data_backend=data_backend,
-                resolution=args.resolution,
-                resolution_type=args.resolution_type,
-                delete_problematic_images=args.delete_problematic_images,
-                vae_batch_size=args.vae_batch_size,
-                write_batch_size=args.write_batch_size,
-            )
-
-        pixel_values = []
-        filepaths = []  # we will store the file paths here
-        for example in examples:
-            image_data = example["image_data"]
-            # SDXL would grab the width/height here, but it's not needed for SD 2.x
-            pixel_values.append(
-                to_tensor(image_data).to(
-                    memory_format=torch.contiguous_format, dtype=vae_dtype
-                )
-            )
-            filepaths.append(example["image_path"])  # store the file path
-
-        # Compute the VAE embeddings for individual images
-        latents = [
-            vaecache.encode_image(pv, fp) for pv, fp in zip(pixel_values, filepaths)
-        ]
-        latent_batch = torch.stack(latents)
+        # average it
+        batch_luminance = sum(batch_luminance) / len(batch_luminance)
+        filepaths = extract_filepaths(examples)
+        latent_batch = compute_latents(filepaths)
+        check_latent_shapes(latent_batch, filepaths)
 
         # Extract the captions from the examples.
         captions = [example["instance_prompt_text"] for example in examples]
-
         # Compute the embeddings using the captions.
         prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
         logger.debug(f"{len(prompt_embeds_all)} prompt_embeds_all: {prompt_embeds_all}")
         prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
 
-        result = {
+        return {
             "latent_batch": latent_batch,
             "prompt_embeds": prompt_embeds_all,
             "batch_luminance": batch_luminance,
         }
-        return result
 
     logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
@@ -556,15 +534,24 @@ def main(args):
     )
 
     logger.info("Initialise text embedding cache")
-    embed_cache = TextEmbeddingCache(
+    prompt_handler = PromptHandler(
+        args=args,
         text_encoders=[text_encoder, None],
         tokenizers=[tokenizer, None],
         accelerator=accelerator,
         model_type="legacy",
     )
 
+    embed_cache = TextEmbeddingCache(
+        text_encoders=[text_encoder, None],
+        tokenizers=[tokenizer, None],
+        accelerator=accelerator,
+        model_type="legacy",
+        prompt_handler=prompt_handler,
+    )
+
     logger.info(f"Pre-computing text embeds / updating cache.")
-    if accelerator.is_local_main_process:
+    with accelerator.local_main_process_first():
         all_captions = PromptHandler.get_all_captions(
             data_backend=data_backend,
             instance_data_root=args.instance_data_dir,
@@ -670,7 +657,7 @@ def main(args):
         text_encoder.to(accelerator.device, dtype=weight_dtype)
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device)
+        ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
@@ -879,9 +866,11 @@ def main(args):
         train_loss = 0.0
         training_luminance_values = []
         current_epoch_step = 0
+        training_models = [unet]
         if args.train_text_encoder:
             logger.debug(f"Bumping text encoder.")
             text_encoder.train()
+            training_models.append(text_encoder)
         for step, batch in enumerate(train_dataloader):
             if accelerator.is_main_process:
                 progress_bar.set_description(
@@ -904,7 +893,7 @@ def main(args):
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["batch_luminance"])
 
-            with accelerator.accumulate(unet):
+            with accelerator.accumulate(training_models):
                 logger.debug(f"Sending latent batch from pinned memory to device")
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
@@ -1050,6 +1039,8 @@ def main(args):
                 if args.use_ema:
                     training_logger.debug(f"Stepping EMA unet forward")
                     ema_unet.step(unet.parameters())
+                    # There seems to be an issue with EMAmodel not keeping proper track of itself.
+                    ema_unet.optimization_step = global_step
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
@@ -1135,6 +1126,7 @@ def main(args):
             log_validations(
                 logger,
                 accelerator,
+                prompt_handler,
                 unet,
                 args,
                 validation_prompts,
@@ -1146,7 +1138,7 @@ def main(args):
                 text_encoder,
                 tokenizer,
                 vae_path=args.pretrained_model_name_or_path,
-                weight_dtype=unet.dtype,
+                weight_dtype=accelerator.unwrap_model(unet).dtype,
                 embed_cache=embed_cache,
                 validation_negative_pooled_embeds=None,
                 validation_negative_prompt_embeds=validation_negative_prompt_embeds,
@@ -1199,8 +1191,8 @@ def main(args):
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
             prediction_type=args.prediction_type,
-            timestep_spacing=args.training_scheduler_timestep_spacing,
-            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+            timestep_spacing="trailing",
+            rescale_betas_zero_snr=True,
         )
         pipeline.save_pretrained(
             os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
@@ -1230,15 +1222,15 @@ def main(args):
 
         if validation_prompts:
             validation_images = []
-            pipeline = pipeline.to(accelerator.device)
+            pipeline = pipeline.to(accelerator.device, dtype=weight_dtype)
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler
             ].from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="scheduler",
                 prediction_type=args.prediction_type,
-                timestep_spacing=args.inference_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                timestep_spacing="trailing",
+                rescale_betas_zero_snr=True,
             )
             with torch.autocast(str(accelerator.device).replace(":0", "")):
                 validation_generator = torch.Generator(
@@ -1294,4 +1286,5 @@ def main(args):
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)

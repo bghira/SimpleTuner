@@ -1,3 +1,4 @@
+import subprocess
 import os
 import random
 import argparse
@@ -7,8 +8,9 @@ import pandas as pd
 from pathlib import Path
 from PIL import Image, ExifTags
 from tqdm import tqdm
+from tqdm.contrib.concurrent import thread_map
 from requests.adapters import HTTPAdapter
-from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import re
 import shutil
@@ -18,6 +20,7 @@ from botocore.config import Config
 conn_timeout = 6
 read_timeout = 60
 timeouts = (conn_timeout, read_timeout)
+OUTPUT_DIR = "/notebooks/images/datasets/midjourney"  # Directory to save images
 
 # Set up logging
 logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
@@ -64,12 +67,14 @@ def resize_for_condition_image(input_image: Image, resolution: int):
     return img
 
 
-def object_exists_in_s3(s3_client, bucket_name, object_name):
-    """Check if a specific object exists in the S3 bucket."""
+def object_exists_in_lfs(object_name, repo_path):
     try:
-        s3_client.head_object(Bucket=bucket_name, Key=object_name)
-        return True
-    except:
+        cmd_output = subprocess.check_output(
+            ["git", "lfs", "ls-files"], cwd=repo_path, text=True
+        )
+        return object_name in cmd_output
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Error checking LFS for {object_name}: {str(e)}")
         return False
 
 
@@ -134,7 +139,7 @@ def fetch_image(info, args):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Filter and upload images from Parquet files to S3."
+        description="Filter and upload images from Parquet files to LFS repository, splitting 10,000 files per directory."
     )
 
     # AWS-related arguments
@@ -175,7 +180,9 @@ def parse_args():
         "--parquet_folder", type=str, help="Location of the Parquet files."
     )
     parser.add_argument("--csv_folder", type=str, help="Location of the CSV files.")
-    parser.add_argument("--git_lfs_repo", type=str, help="The Git LFS repository URL.")
+    parser.add_argument(
+        "--git_repo_source", type=str, help="The Git LFS repository URL."
+    )
     parser.add_argument(
         "--delete_after_processing",
         action="store_true",
@@ -250,28 +257,8 @@ def parse_args():
     parser.add_argument(
         "--minimum_resolution",
         type=int,
-        default=0,
-        help="Minimum resolution for images. Set to 0 to disable.",
-    )
-    parser.add_argument(
-        "--minimum_pixel_area",
-        type=int,
-        default=1,
-        help="Minimum pixel area for images, measured in megapixels. Set to 0 to disable.",
-    )
-    parser.add_argument(
-        "--width_field",
-        type=str,
-        default=None,
-        help=("Column name for image width. Auto-detected, if not supplied."),
-    )
-    parser.add_argument(
-        "--height_field",
-        type=str,
-        default=None,
-        help=(
-            "The column name in the dataset for the image height. Auto-detected, if not supplied."
-        ),
+        default=768,
+        help="Minimum resolution for images.",
     )
     parser.add_argument(
         "--condition_image_size",
@@ -305,18 +292,6 @@ def get_uri_column(df):
         return None
 
 
-def get_width_field(df):
-    if "WIDTH" in df.columns:
-        return "WIDTH"
-    return "width"
-
-
-def get_height_field(df):
-    if "HEIGHT" in df.columns:
-        return "HEIGHT"
-    return "height"
-
-
 def get_caption_column(df):
     if "top_caption" in df.columns:
         return "top_caption"
@@ -326,21 +301,6 @@ def get_caption_column(df):
         return "TEXT"
     elif "all_captions" in df.columns:
         return "all_captions"
-
-
-def initialize_s3_client(args):
-    """Initialize the boto3 S3 client using the provided AWS credentials and settings."""
-    s3_config = Config(max_pool_connections=100)
-
-    s3_client = boto3.client(
-        "s3",
-        endpoint_url=args.aws_endpoint_url,
-        region_name=args.aws_region_name,
-        aws_access_key_id=args.aws_access_key_id,
-        aws_secret_access_key=args.aws_secret_access_key,
-        config=s3_config,
-    )
-    return s3_client
 
 
 def content_to_filename(content, args):
@@ -429,137 +389,81 @@ def valid_exif_data(image_path):
     return False
 
 
-def list_all_s3_objects(s3_client, bucket_name):
-    paginator = s3_client.get_paginator("list_objects_v2")
-    existing_files = set()
-
-    for page in paginator.paginate(Bucket=bucket_name):
-        if "Contents" in page:
-            for item in page["Contents"]:
-                existing_files.add(item["Key"])
-
-    return existing_files
-
-
-def upload_to_s3(filename, args, s3_client):
-    """Upload the specified file to the S3 bucket with filename shuffling if needed."""
-    local_path = os.path.join(args.temporary_folder, filename)
-    # Just use the base filename without any directory prefix for S3
-    object_name = os.path.basename(filename)
-
-    # Check if the file exists just before uploading
-    if not os.path.exists(local_path):
-        return
-
-    if object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
-        try:
-            os.remove(local_path)
-        except:
-            pass
-        return
-
+def fetch_and_save_image(info, args):
+    """Fetch the image, process it, and save it locally."""
     try:
-        s3_client.upload_file(local_path, args.aws_bucket_name, object_name)
-        # Delete the local file after successful upload
-        os.remove(local_path)
-    except Exception as e:
-        logger.error(f"Error uploading {object_name} to S3: {e}")
-
-
-def upload_local_image_to_s3(image_path, args, s3_client):
-    """Upload local image directly to the S3 bucket."""
-    object_name = os.path.basename(image_path)
-
-    # Check if the file exists just before uploading
-    if not os.path.exists(image_path):
-        return
-
-    if object_exists_in_s3(s3_client, args.aws_bucket_name, object_name):
-        try:
-            os.remove(image_path)
-        except:
-            pass
-        return
-
-    try:
-        s3_client.upload_file(image_path, args.aws_bucket_name, object_name)
-        # Optionally, delete the local file after successful upload
-        if args.delete_after_processing:
-            os.remove(image_path)
-    except Exception as e:
-        logger.error(f"Error uploading {object_name} to S3: {e}")
-
-
-def process_git_lfs_images(args, s3_client):
-    """Scan the git-lfs-repo directory for image files and upload them."""
-    repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
-    image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
-
-    for ext in image_exts:
-        for image_path in Path(repo_path).rglob(f"*{ext}"):
-            upload_local_image_to_s3(image_path, args, s3_client)
-
-
-def fetch_and_upload_image(info, args):
-    """Fetch the image, process it, and upload it to S3."""
-    try:
-        s3_client = initialize_s3_client(args)
         fetch_image(info, args)
     except Exception as e:
         if args.print_nonfatal_errors:
             logger.error(f"Encountered error fetching file: {e}")
-    upload_to_s3(info["filename"], args, s3_client)
 
 
-def fetch_data(data, args, uri_column):
-    """Function to fetch all images specified in data and upload them to S3."""
-    s3_client = initialize_s3_client(args)
+def organize_images():
+    """
+    Organize images into folders of 10k images each
+    """
+    all_files = [
+        f for f in os.listdir(OUTPUT_DIR) if os.path.isfile(os.path.join(OUTPUT_DIR, f))
+    ]
+    folder_count = 0
+    image_count = 0
+
+    for file in all_files:
+        if image_count % 10000 == 0:
+            folder_count += 1
+            folder_path = os.path.join(OUTPUT_DIR, f"folder_{folder_count}")
+            if not os.path.exists(folder_path):
+                os.makedirs(folder_path)
+
+        old_path = os.path.join(OUTPUT_DIR, file)
+        new_path = os.path.join(OUTPUT_DIR, f"folder_{folder_count}", file)
+        shutil.move(old_path, new_path)
+        image_count += 1
+
+
+def fetch_data(data, args, NUM_WORKERS: int = 128):
+    """
+    Function to fetch all images specified in data
+    """
     to_fetch = {}
     for row in data:
-        new_filename = content_to_filename(row[args.caption_field], args)
-        if (
-            hasattr(args, "midjourney_data_checks")
-            and args.midjourney_data_checks
-            and (
-                "Image #" not in row[args.caption_field]
-                or "Upscaled" in row[args.caption_field]
-                or "(fast)" in row[args.caption_field]
-            )
-        ):
-            # Midjourney's upscaler sucks. We only want single images, non-tiled.
-            continue
+        new_filename = content_to_filename(row["caption"])
         if new_filename not in to_fetch:
             to_fetch[new_filename] = {
-                "url": row[uri_column],
+                "url": row["url"],
                 "filename": new_filename,
-                "args": args,
             }
+    logging.info(f"Fetching {len(to_fetch)} images...")
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        executor.map(lambda info: fetch_and_save_image(info, args), to_fetch.values())
 
-    logging.info("Fetching {} images...".format(len(to_fetch)))
+    organize_images()
 
-    with Pool(processes=args.num_workers) as pool:
-        results = pool.starmap(
-            fetch_and_upload_image,
-            [(item, args) for item in to_fetch.values()],
-        )
+
+def move_to_lfs(folder_path, repo_path):
+    os.system(f"mv {folder_path}/* {repo_path}/")
+    os.chdir(repo_path)
+    os.system(f"git lfs track {repo_path}/*")
+    os.system("git add .")
+    os.system("git commit -m 'Add new images'")
+    os.system("git push")
 
 
 def main():
     args = parse_args()
 
-    # Initialize S3 client
-    s3_client = initialize_s3_client(args)
+    # List existing files to make sure we do not download unnecesarily:
+    existing_files = {
+        f
+        for f in os.listdir(args.temporary_folder)
+        if os.path.isfile(os.path.join(args.temporary_folder, f))
+    }
 
-    # List existing files in the S3 bucket
-    existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
-    logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
-    if args.git_lfs_repo:
+    if args.git_repo_source:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
-            logger.info(f"Thin-cloning Git LFS repo to {repo_path}")
-            os.system(
-                f"env GIT_LFS_SKIP_SMUDGE=1 git clone {args.git_lfs_repo} {repo_path}"
-            )
+            logger.info(f"Cloning Git LFS repo to {repo_path}")
+            os.system(f"git lfs clone {args.git_repo_source} {repo_path}")
         else:
             logger.info(
                 f"Git LFS repo already exists at {repo_path}. Using existing files."
@@ -573,8 +477,6 @@ def main():
         if len(csv_file_list) > 0:
             args.csv_folder = repo_path
             logger.info(f"Using CSV files from {args.csv_folder}")
-        # Process and upload images from the git-lfs-repo
-        process_git_lfs_images(args, s3_client)
 
     # Check if input folder exists
     parquet_files = []
@@ -602,17 +504,8 @@ def main():
         if content_to_filename(file.name, args) in existing_files:
             logger.info(f"Skipping already processed file: {file}")
             continue
-        # If it's a parquet file from the Git LFS repo, pull it Just-in-Time
+        logger.info(f"Loading file: {file}")
         if file.suffix == ".parquet":
-            if args.git_lfs_repo:
-                logger.info(f"Fetching {file} from Git LFS")
-                # chdir to repo_path
-                cwd = os.getcwd()
-                os.chdir(repo_path)
-                os.system(f"env GIT_LFS_SKIP_SMUDGE=0 git lfs pull -I {file.name}")
-                # return to prev dir
-                os.chdir(cwd)
-            logger.info(f"Loading file: {file}")
             df = pd.read_parquet(file)
         elif file.suffix == ".csv":
             df = pd.read_csv(file)
@@ -629,14 +522,6 @@ def main():
             logger.warning(f"Row has no uri_column: {uri_column}")
             continue
         logger.info(f"URI field: {uri_column}")
-        if args.height_field is None:
-            args.height_field = get_height_field(df)
-        if args.width_field is None:
-            args.width_field = get_width_field(df)
-        logger.info(
-            f"Resolution fields: '{args.width_field}' and '{args.height_field}'"
-        )
-
         logger.info(f"Before filtering, we have {len(df)} rows.")
         # Apply filters
         if "pwatermark" in df.columns:
@@ -651,31 +536,17 @@ def main():
             )
             df = df[df["aesthetic"] >= args.aesthetic_threshold]
             logger.info(f"Filtered to {len(df)} rows.")
-        if args.width_field in df.columns and args.minimum_resolution > 0:
+        if "WIDTH" in df.columns:
             logger.info(
                 f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
             )
-            df = df[df[args.width_field] >= args.minimum_resolution]
+            df = df[df["WIDTH"] >= args.minimum_resolution]
             logger.info(f"Filtered to {len(df)} rows.")
-        if args.height_field in df.columns and args.minimum_resolution > 0:
+        if "HEIGHT" in df.columns:
             logger.info(
                 f"Applying minimum resolution filter with threshold {args.minimum_resolution}"
             )
-            df = df[df[args.height_field] >= args.minimum_resolution]
-            logger.info(f"Filtered to {len(df)} rows.")
-        if (
-            args.width_field in df.columns
-            and args.height_field in df.columns
-            and args.minimum_pixel_area > 0
-        ):
-            # megapixel to pixel:
-            minimum_pixel_area = args.minimum_pixel_area * 1000000
-            logger.info(
-                f"Applying minimum pixel area filter with threshold {minimum_pixel_area}"
-            )
-            df = df[
-                df[args.width_field] * df[args.height_field] >= minimum_pixel_area
-            ]
+            df = df[df["HEIGHT"] >= args.minimum_resolution]
             logger.info(f"Filtered to {len(df)} rows.")
         if "similarity" in df.columns:
             logger.info(
@@ -701,7 +572,7 @@ def main():
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
         logger.info(f"Fetching {len(to_fetch)} images...")
-        fetch_data(to_fetch, args, uri_column)
+        fetch_data(to_fetch, args)
 
         # Remove source file if argument is provided
         if args.delete_after_processing:

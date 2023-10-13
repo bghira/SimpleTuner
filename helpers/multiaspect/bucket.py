@@ -217,7 +217,7 @@ class BucketManager:
         for worker in workers:
             worker.start()
 
-        with tqdm(total=len(new_files)) as pbar:
+        with tqdm(total=len(new_files), leave=False, ncols=100) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
@@ -537,7 +537,12 @@ class BucketManager:
         for worker in workers:
             worker.start()
 
-        with tqdm(desc="Scanning metadata for images", total=len(new_files)) as pbar:
+        with tqdm(
+            desc="Scanning metadata for images",
+            total=len(new_files),
+            leave=False,
+            ncols=100,
+        ) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())

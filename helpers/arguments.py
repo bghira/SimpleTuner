@@ -1,5 +1,6 @@
 import argparse, os, random, time, json, logging
 from pathlib import Path
+
 logger = logging.getLogger("ArgsParser")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -73,7 +74,7 @@ def parse_args(input_args=None):
         "--timestep_bias_strategy",
         type=str,
         default="none",
-        choices=["earlier", "later", "none"],
+        choices=["earlier", "later", "range", "none"],
         help=(
             "The timestep bias strategy, which may help direct the model toward learning low or frequency details."
             " Choices: ['earlier', 'later', 'none']."
@@ -298,7 +299,15 @@ def parse_args(input_args=None):
         default=None,
         help="The directory where the downloaded models and datasets will be stored.",
     )
-
+    parser.add_argument(
+        "--cache_clear_validation_prompts",
+        action="store_true",
+        help=(
+            "When provided, any validation prompt entries in the text embed cache will be recreated."
+            " This is useful if you've modified any of the existing prompts, or, disabled/enabled Compel,"
+            " via `--disable_compel`"
+        ),
+    )
     parser.add_argument(
         "--dataset_name",
         type=str,
@@ -557,6 +566,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--offload_param_path",
+        type=str,
+        default=None,
+        help=(
+            "When using DeepSpeed ZeRo stage 2 or 3 with NVMe offload, this may be specified to provide a path for the offload."
+        ),
+    )
+    parser.add_argument(
         "--use_8bit_adam",
         action="store_true",
         help="Whether or not to use 8-bit Adam from bitsandbytes.",
@@ -625,6 +642,26 @@ def parse_args(input_args=None):
         help=(
             "[TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to"
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
+        ),
+    )
+    parser.add_argument(
+        "--validation_torch_compile",
+        type=bool,
+        default=False,
+        help=(
+            "Supply `--validation_torch_compile=true` to enable the use of torch.compile() on the validation pipeline."
+            " For some setups, torch.compile() may error out. This is dependent on PyTorch version, phase of the moon,"
+            " but if it works, you should leave it enabled for a great speed-up."
+        ),
+    )
+    parser.add_argument(
+        "--validation_torch_compile_mode",
+        type=str,
+        default="reduce-overhead",
+        choices=["reduce-overhead", "default"],
+        help=(
+            "PyTorch provides different modes for the Torch Inductor when compiling graphs. reduce-overhead,"
+            " the default mode, provides the most benefit."
         ),
     )
     parser.add_argument(
@@ -1024,7 +1061,11 @@ def parse_args(input_args=None):
             args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
         if args.cache_dir_text is None or args.cache_dir_text == "":
             args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-        for target_dir in [Path(args.cache_dir), Path(args.cache_dir_vae), Path(args.cache_dir_text)]:
+        for target_dir in [
+            Path(args.cache_dir),
+            Path(args.cache_dir_vae),
+            Path(args.cache_dir_text),
+        ]:
             os.makedirs(target_dir, exist_ok=True)
     logger.info(f"VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
@@ -1048,5 +1089,4 @@ def parse_args(input_args=None):
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-    logger.debug(f"Parsed arguments: {args}")
     return args

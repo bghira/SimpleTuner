@@ -1,6 +1,9 @@
 from diffusers.training_utils import EMAModel
 from diffusers import UNet2DConditionModel
-import os
+import os, logging
+
+logger = logging.getLogger("SDXLSaveHook")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class SDXLSaveHook:
@@ -25,6 +28,9 @@ class SDXLSaveHook:
                 os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
             )
             self.ema_unet.load_state_dict(load_model.state_dict())
+            logger.info(
+                f"Moving EMA model to GPU. Model state: {self.ema_unet.state_dict()}"
+            )
             self.ema_unet.to(self.accelerator.device)
             del load_model
 

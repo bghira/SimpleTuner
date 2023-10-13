@@ -33,7 +33,10 @@ def prepare_validation_prompt_list(args, embed_cache):
 
         # Iterate through the prompts with a progress bar
         for shortname, prompt in tqdm(
-            prompt_library.items(), desc="Precomputing validation prompt embeddings"
+            prompt_library.items(),
+            leave=False,
+            ncols=100,
+            desc="Precomputing validation prompt embeddings",
         ):
             embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
             validation_prompts.append(prompt)
@@ -42,6 +45,8 @@ def prepare_validation_prompt_list(args, embed_cache):
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in tqdm(
             user_prompt_library.items(),
+            leave=False,
+            ncols=100,
             desc="Precomputing user prompt library embeddings",
         ):
             embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
@@ -106,6 +111,7 @@ def log_validations(
     ema_unet=None,
     vae=None,
     SCHEDULER_NAME_MAP: dict = {},
+    validation_type: str = "training",
 ):
     ### BEGIN: Perform validation every `validation_epochs` steps
     if accelerator.is_main_process:
@@ -116,7 +122,7 @@ def log_validations(
             f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
             f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
         )
-        if (
+        if validation_type == "finish" or (
             validation_prompts
             and global_step % args.validation_steps == 0
             and step % args.gradient_accumulation_steps == 0
@@ -144,7 +150,7 @@ def log_validations(
                 f"Running validation... \n Generating {len(validation_prompts)} images."
             )
             # create pipeline
-            if args.use_ema:
+            if validation_type == "validation" and args.use_ema:
                 # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                 ema_unet.store(unet.parameters())
                 ema_unet.copy_to(unet.parameters())
@@ -179,6 +185,10 @@ def log_validations(
                 timestep_spacing=args.inference_scheduler_timestep_spacing,
                 rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             )
+            if args.validation_torch_compile:
+                pipeline.unet = torch.compile(
+                    unet, mode=args.validation_torch_compile_mode, fullgraph=False
+                )
             pipeline = pipeline.to(accelerator.device)
             pipeline.set_progress_bar_config(disable=True)
 
@@ -204,7 +214,10 @@ def log_validations(
                             device=accelerator.device
                         ).manual_seed(args.validation_seed or args.seed or 0)
                     for validation_prompt in tqdm(
-                        validation_prompts, desc="Generating validation images"
+                        validation_prompts,
+                        leave=False,
+                        ncols=100,
+                        desc="Generating validation images",
                     ):
                         # Each validation prompt needs its own embed.
                         (
@@ -213,15 +226,16 @@ def log_validations(
                         ) = embed_cache.compute_embeddings_for_prompts(
                             [validation_prompt]
                         )
-                        [
-                            current_validation_prompt_embeds,
-                            validation_negative_prompt_embeds,
-                        ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                        if prompt_handler is not None:
                             [
                                 current_validation_prompt_embeds,
                                 validation_negative_prompt_embeds,
-                            ]
-                        )
+                            ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                                [
+                                    current_validation_prompt_embeds,
+                                    validation_negative_prompt_embeds,
+                                ]
+                            )
 
                         logger.debug(
                             f"Generating validation image: {validation_prompt}"
@@ -272,7 +286,7 @@ def log_validations(
                     )
                     val_img_idx += 1
 
-            if args.use_ema:
+            if validation_type == "validation" and args.use_ema:
                 # Switch back to the original UNet parameters.
                 ema_unet.restore(unet.parameters())
             if not args.keep_vae_loaded:

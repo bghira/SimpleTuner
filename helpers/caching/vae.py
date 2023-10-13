@@ -82,14 +82,17 @@ class VAECache:
         all_image_files = StateTracker.get_image_files()
         existing_cache_files = StateTracker.get_vae_cache_files()
         logger.debug(
-            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker"
+            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
         )
         logger.debug(
-            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files"
+            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
         )
         cache_filenames = {
             self.generate_vae_cache_filename(file)[1] for file in all_image_files
         }
+        logger.debug(
+            f"discover_unprocessed_files found {len(cache_filenames)} cache filenames (truncated): {list(cache_filenames)[:5]}"
+        )
         unprocessed_files = {
             f"{os.path.splitext(file)[0]}.png"
             for file in cache_filenames
@@ -136,13 +139,13 @@ class VAECache:
             for i, filename in enumerate(full_filenames)
             if not self.data_backend.exists(filename)
         ]
+        uncached_images = [images[i] for i in uncached_image_indices]
+
         if len(uncached_image_indices) > 0 and load_from_cache:
             # We wanted only uncached images. Something went wrong.
             raise Exception(
-                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_image_indices}"
+                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_images}"
             )
-        elif not load_from_cache:
-            uncached_images = [images[i] for i in uncached_image_indices]
 
         if load_from_cache:
             # If all images are cached, simply load them
@@ -174,6 +177,7 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
+        logger.debug(f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)")
         # Use the accelerator to split the data
         with self.accelerator.split_between_processes(
             all_unprocessed_files
@@ -249,7 +253,11 @@ class VAECache:
                 continue
 
             for raw_filepath in tqdm(
-                relevant_files, desc=f"Processing bucket {bucket}", position=get_rank()
+                relevant_files,
+                desc=f"Processing bucket {bucket}",
+                position=get_rank(),
+                ncols=100,
+                leave=False,
             ):
                 if type(raw_filepath) == str or len(raw_filepath) == 1:
                     filepath = raw_filepath

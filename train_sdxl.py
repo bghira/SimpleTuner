@@ -28,6 +28,8 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.state_tracker import StateTracker
 from helpers.training.collate import collate_fn
+from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
+
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.image_manipulation.brightness import (
@@ -94,6 +96,7 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
 from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version, deprecate, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
+from transformers.utils import ContextManagers
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.20.0.dev0")
@@ -213,12 +216,6 @@ def main():
         args.pretrained_model_name_or_path
         if args.pretrained_vae_model_name_or_path is None
         else args.pretrained_vae_model_name_or_path
-    )
-    vae = AutoencoderKL.from_pretrained(
-        vae_path,
-        subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
-        revision=args.revision,
-        force_upcast=False,
     )
 
     # Enable TF32 for faster training on Ampere GPUs,
@@ -413,16 +410,32 @@ def main():
         timestep_spacing=args.training_scheduler_timestep_spacing,
         trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
-    text_encoder_1 = text_encoder_cls_1.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="text_encoder",
-        revision=args.revision,
-    )
-    text_encoder_2 = text_encoder_cls_2.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="text_encoder_2",
-        revision=args.revision,
-    )
+    # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
+    # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
+    # will try to assign the same optimizer with the same weights to all models during
+    # `deepspeed.initialize`, which of course doesn't work.
+    #
+    # For now the following workaround will partially support Deepspeed ZeRO-3, by excluding the 2
+    # frozen models from being partitioned during `zero.Init` which gets called during
+    # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
+    # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
+    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        text_encoder_1 = text_encoder_cls_1.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder",
+            revision=args.revision,
+        )
+        text_encoder_2 = text_encoder_cls_2.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder_2",
+            revision=args.revision,
+        )
+        vae = AutoencoderKL.from_pretrained(
+            vae_path,
+            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+            revision=args.revision,
+            force_upcast=False,
+        )
 
     text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     text_encoder_2.to(accelerator.device, dtype=weight_dtype)
@@ -476,14 +489,16 @@ def main():
         num_workers=0,
         persistent_workers=False,
     )
-    logger.info("Initialise prompt handler")
-    prompt_handler = PromptHandler(
-        args=args,
-        text_encoders=[text_encoder_1, text_encoder_2],
-        tokenizers=[tokenizer_1, tokenizer_2],
-        accelerator=accelerator,
-        model_type="sdxl",
-    )
+    prompt_handler = None
+    if not args.disable_compel:
+        logger.info("Initialise prompt handler")
+        prompt_handler = PromptHandler(
+            args=args,
+            text_encoders=[text_encoder_1, text_encoder_2],
+            tokenizers=[tokenizer_1, tokenizer_2],
+            accelerator=accelerator,
+            model_type="sdxl",
+        )
     logger.info("Initialise text embedding cache")
     embed_cache = TextEmbeddingCache(
         text_encoders=text_encoders,
@@ -613,8 +628,64 @@ def main():
         "weight_decay": args.adam_weight_decay,
         "eps": args.adam_epsilon,
     }
+    use_deepspeed_optimizer = False
+    use_deepspeed_scheduler = False
+    if (
+        hasattr(accelerator.state, "deepspeed_plugin")
+        and accelerator.state.deepspeed_plugin is not None
+    ):
+        offload_param = accelerator.state.deepspeed_plugin.deepspeed_config[
+            "zero_optimization"
+        ]["offload_param"]
+        accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"][
+            "offload_param"
+        ]["pin_memory"] = False
+        if offload_param["device"] == "nvme":
+            if offload_param["nvme_path"] == "none":
+                if args.offload_param_path is None:
+                    raise ValueError(
+                        f"DeepSpeed is using {offload_param['device']} but nvme_path is not specified."
+                    )
+                else:
+                    accelerator.state.deepspeed_plugin.deepspeed_config[
+                        "zero_optimization"
+                    ]["offload_param"]["nvme_path"] = args.offload_param_path
+            logger.info(
+                f"Using DeepSpeed NVMe offload at {accelerator.state.deepspeed_plugin.deepspeed_config['zero_optimization']['offload_param']['nvme_path']}."
+            )
+
+        use_deepspeed_optimizer = True
+        if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
+                "type": "AdamW",
+                "params": {
+                    "lr": args.learning_rate,
+                    "betas": [args.adam_beta1, args.adam_beta2],
+                    "eps": args.adam_epsilon,
+                    "weight_decay": args.adam_weight_decay,
+                },
+            }
+
+        use_deepspeed_scheduler = True
+        if "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            accelerator.state.deepspeed_plugin.deepspeed_config["scheduler"] = {
+                "type": "WarmupLR",
+                "params": {
+                    "warmup_min_lr": 0,
+                    "warmup_max_lr": args.learning_rate,
+                    "warmup_num_steps": args.lr_warmup_steps,
+                },
+            }
+
     # Initialize the optimizer
-    if args.use_8bit_adam:
+    if use_deepspeed_optimizer:
+        logger.info("Using DeepSpeed optimizer.")
+        optimizer_class = accelerate.utils.DummyOptim
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["eps"] = args.adam_epsilon
+        extra_optimizer_args["weight_decay"] = args.adam_weight_decay
+    elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
             import bitsandbytes as bnb
@@ -666,15 +737,25 @@ def main():
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
-    logger.info(
-        f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
-    )
-    optimizer = optimizer_class(
-        unet.parameters(),
-        **extra_optimizer_args,
-    )
+    if use_deepspeed_optimizer:
+        optimizer = optimizer_class(unet.parameters())
+    else:
+        logger.info(
+            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
+        )
+        optimizer = optimizer_class(
+            unet.parameters(),
+            **extra_optimizer_args,
+        )
 
-    if args.use_adafactor_optimizer:
+    if use_deepspeed_scheduler:
+        logger.info(f"Using DeepSpeed learning rate scheduler")
+        lr_scheduler = accelerate.utils.DummyScheduler(
+            optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.lr_warmup_steps,
+        )
+    elif args.use_adafactor_optimizer:
         # Use the AdafactorScheduler.
         lr_scheduler = AdafactorSchedule(optimizer)
     elif args.lr_scheduler == "cosine_annealing_warm_restarts":
@@ -737,13 +818,10 @@ def main():
 
     # Prepare everything with our `accelerator`.
     logger.info(f"Loading our accelerator...")
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
-    )
-
+    unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(unet, train_dataloader, lr_scheduler, optimizer)
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device)
+        ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
@@ -866,6 +944,7 @@ def main():
         * args.gradient_accumulation_steps
     )
 
+    lr = 0.0
     global_step = 0
     first_epoch = 0
     resume_step = 0
@@ -941,6 +1020,9 @@ def main():
         desc="Steps",
     )
     accelerator.wait_for_everyone()
+    timesteps_buffer = []
+    train_loss = 0.0
+    training_luminance_values = []
 
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
@@ -956,8 +1038,6 @@ def main():
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
             scheduler_kwargs["epoch"] = epoch
         unet.train()
-        train_loss = 0.0
-        training_luminance_values = []
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
             if accelerator.is_main_process:
@@ -1008,6 +1088,10 @@ def main():
                     args, noise_scheduler.config.num_train_timesteps
                 ).to(accelerator.device)
                 timesteps = torch.multinomial(weights, bsz, replacement=True).long()
+
+                # Prepare the data for the scatter plot
+                for timestep in timesteps.tolist():
+                    timesteps_buffer.append((global_step, timestep))
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
@@ -1137,16 +1221,47 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
+                try:
+                    lr = lr_scheduler.get_last_lr()[0]
+                except Exception as e:
+                    logger.error(
+                        f"Failed to get the last learning rate from the scheduler. Error: {e}"
+                    )
+                logs = {
+                    "train_loss": train_loss,
+                    "learning_rate": lr,
+                    "epoch": epoch,
+                }
                 if args.use_ema:
                     training_logger.debug(f"Stepping EMA unet forward")
                     ema_unet.step(unet.parameters())
+                    # There seems to be an issue with EMAmodel not keeping proper track of itself.
+                    ema_unet.optimization_step = global_step
+                    ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
+                    logs["ema_decay_value"] = ema_decay_value
+                    training_logger.debug(f"EMA decay value: {ema_decay_value}")
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
-                logs = {
-                    "train_loss": train_loss,
-                    "learning_rate": lr_scheduler.get_last_lr()[0],
-                }
+
+                # Log scatter plot to wandb
+                if args.report_to == "wandb":
+                    # Prepare the data for the scatter plot
+                    data = [
+                        [iteration, timestep]
+                        for iteration, timestep in timesteps_buffer
+                    ]
+                    table = wandb.Table(data=data, columns=["global_step", "timestep"])
+                    logs["timesteps_scatter"] = wandb.plot.scatter(
+                        table,
+                        "global_step",
+                        "timestep",
+                        title="Timestep distribution by step",
+                    )
+
+                # Clear buffers
+                timesteps_buffer = []
+
                 # Average out the luminance values of each batch, so that we can store that in this step.
                 avg_training_data_luminance = sum(training_luminance_values) / len(
                     training_luminance_values
@@ -1203,7 +1318,7 @@ def main():
 
             logs = {
                 "step_loss": loss.detach().item(),
-                "lr": lr_scheduler.get_last_lr()[0],
+                "lr": lr,
             }
             progress_bar.set_postfix(**logs)
             log_validations(
@@ -1293,61 +1408,31 @@ def main():
                 ignore_patterns=["step_*", "epoch_*"],
             )
 
-        if validation_prompts:
-            validation_images = []
-            pipeline = pipeline.to(accelerator.device)
-            with torch.autocast(str(accelerator.device).replace(":0", "")):
-                validation_generator = torch.Generator(
-                    device=accelerator.device
-                ).manual_seed(args.seed or 0)
-                for validation_prompt in tqdm(
-                    validation_prompts, desc="Generating validation images"
-                ):
-                    # Each validation prompt needs its own embed.
-                    (
-                        current_validation_prompt_embeds,
-                        current_validation_pooled_embeds,
-                    ) = embed_cache.compute_embeddings_for_sdxl_prompts(
-                        [validation_prompt]
-                    )
-                    validation_images.extend(
-                        pipeline(
-                            prompt_embeds=current_validation_prompt_embeds,
-                            pooled_prompt_embeds=current_validation_pooled_embeds,
-                            negative_prompt_embeds=validation_negative_prompt_embeds,
-                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                            num_images_per_prompt=args.num_validation_images,
-                            num_inference_steps=args.validation_num_inference_steps,
-                            guidance_scale=args.validation_guidance,
-                            guidance_rescale=args.validation_guidance_rescale,
-                            generator=validation_generator,
-                            height=args.validation_resolution,
-                            width=args.validation_resolution,
-                        ).images
-                    )
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "wandb":
-                        validation_document = {}
-                        validation_luminance = []
-                        for idx, validation_image in enumerate(validation_images):
-                            # Create a WandB entry containing each image.
-                            shortname = f"no_shortname-{idx}"
-                            if idx in validation_shortnames:
-                                shortname = f"{validation_shortnames[idx]}-{idx}"
-                            validation_document[shortname] = wandb.Image(
-                                validation_image
-                            )
-                            validation_luminance.append(
-                                calculate_luminance(validation_image)
-                            )
-                        # Compute the mean luminance across all samples:
-                        validation_luminance = torch.tensor(validation_luminance)
-                        validation_document[
-                            "validation_luminance"
-                        ] = validation_luminance.mean()
-                        del validation_luminance
-                        tracker.log(validation_document, step=global_step)
+        log_validations(
+            logger,
+            accelerator,
+            prompt_handler,
+            unet,
+            args,
+            validation_prompts,
+            validation_shortnames,
+            global_step,
+            resume_global_step,
+            step,
+            progress_bar,
+            text_encoder_1,
+            tokenizer=None,
+            vae_path=vae_path,
+            weight_dtype=weight_dtype,
+            embed_cache=embed_cache,
+            validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+            validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+            text_encoder_2=text_encoder_2,
+            tokenizer_2=None,
+            vae=vae,
+            SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
+            validation_type="finish",
+        )
 
     accelerator.end_training()
 

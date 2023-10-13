@@ -56,17 +56,14 @@ class TextEmbeddingCache:
         tokenizers,
         prompt,
         is_validation: bool = False,
-        negative_prompt: str = "",
     ):
         prompt_embeds_list = []
 
         emitted_warning = False
         # If prompt_handler (Compel) is available, use it for all prompts
         if self.prompt_handler and is_validation:
-            positive_prompt, negative_prompt = self.prompt_handler.process_long_prompt(
-                prompt
-            )
-            return positive_prompt, negative_prompt
+            positive_prompt = self.prompt_handler.process_long_prompt(prompt)
+            return positive_prompt
         for tokenizer, text_encoder in zip(tokenizers, text_encoders):
             text_inputs = tokenizer(
                 prompt, padding="max_length", truncation=True, return_tensors="pt"
@@ -116,7 +113,6 @@ class TextEmbeddingCache:
         tokenizers,
         prompts,
         is_validation: bool = False,
-        negative_prompt: str = "",
     ):
         prompt_embeds_all = []
         pooled_prompt_embeds_all = []
@@ -147,14 +143,12 @@ class TextEmbeddingCache:
         prompts,
         return_concat: bool = True,
         is_validation: bool = False,
-        negative_prompt: str = "",
     ):
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
                 prompts,
                 return_concat=return_concat,
                 is_validation=is_validation,
-                negative_prompt=negative_prompt,
             )
         elif self.model_type == "legacy":
             return self.compute_embeddings_for_legacy_prompts(
@@ -166,23 +160,31 @@ class TextEmbeddingCache:
         prompts: list = None,
         return_concat: bool = True,
         is_validation: bool = False,
-        negative_prompt: str = "",
     ):
         prompt_embeds_all = []
         add_text_embeds_all = []
-
+        load_from_cache = True
+        args = StateTracker.get_args()
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and is_validation
+        ):
+            load_from_cache = False
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
                 desc="Processing prompts",
                 disable=return_concat,
+                leave=False,
+                ncols=100,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                if os.path.exists(filename) and not return_concat:
+                if os.path.exists(filename) and load_from_cache and not return_concat:
                     continue
-                if os.path.exists(filename):
+                if os.path.exists(filename) and load_from_cache:
                     logger.debug(f"Loading from cache: {filename}")
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
@@ -192,7 +194,6 @@ class TextEmbeddingCache:
                         self.tokenizers,
                         [prompt],
                         is_validation,
-                        negative_prompt=negative_prompt,
                     )
                     add_text_embeds = pooled_prompt_embeds
                     if return_concat:
@@ -222,6 +223,8 @@ class TextEmbeddingCache:
             for prompt in tqdm(
                 prompts or self.prompts,
                 desc="Processing prompts",
+                leave=False,
+                ncols=100,
                 disable=return_concat,
             ):
                 filename = os.path.join(
