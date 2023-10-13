@@ -34,11 +34,14 @@ The features implemented will eventually be shared between SD 2.1 and SDXL as mu
 
 Please fully explore this README before embarking on [the tutorial](/TUTORIAL.md), as it contains vital information that you might need to know first.
 
+For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload.
+
 ## Features
 
 - Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during the forward pass.
 - Precomputed captions are run through the text encoder(s) and saved to storage to save on VRAM.
-- Trainable on a 40G GPU at lower base resolutions. **Note: SDXL's full U-net is incompatible with 24G GPUs.**
+- Trainable on a 40G GPU at lower base resolutions.
+- DeepSpeed integration allowing for [training SDXL on 12G of VRAM](/documentation/DEEPSPEED.md) - although, incidentally, DeepSpeed stage 1 is required for SimpleTuner to work on **24G of VRAM** as well.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
 - Support for a variety of image sizes, not limited to 768x768 squares, for improved generalization across aspect ratios.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
