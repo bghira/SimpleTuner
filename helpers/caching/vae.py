@@ -272,7 +272,7 @@ class VAECache:
                     )
                     continue
                 self.debug_log(
-                    f"Processing {sample}  (quick_piece {quick_piece}) because it is in local unprocessed files"
+                    f"Processing bucket {bucket} sample {sample}  (quick_piece {quick_piece}) because it is in local unprocessed files"
                 )
             self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
