@@ -260,7 +260,7 @@ class VAECache:
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
             )
             self.debug_log(
-                f"We compared the basename {os.path.splitext(os.path.basename(relevant_files[0]))[0]} to the processed images (truncated) {processed_images[:5]}"
+                f"We compared the basename {os.path.splitext(os.path.basename(relevant_files[0]))[0]} to the processed images (truncated) {list(processed_images)[:5]}"
             )
             if len(relevant_files) == 0:
                 continue
