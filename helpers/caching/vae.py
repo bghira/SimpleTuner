@@ -245,6 +245,7 @@ class VAECache:
                 f
                 for f in aspect_bucket_cache[bucket]
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
+                and f in self.local_unprocessed_files
             ]
             logger.debug(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
@@ -276,6 +277,14 @@ class VAECache:
                     )
                     continue
                 try:
+                    # Does it exist on the backend?
+                    if self.data_backend.exists(
+                        self.generate_vae_cache_filename(filepath)[0]
+                    ):
+                        logger.debug(
+                            f"Skipping {filepath} because it is already in the cache"
+                        )
+                        continue
                     logger.debug(
                         f"Processing {filepath} because it is in local unprocessed files"
                     )
