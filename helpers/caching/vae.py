@@ -105,7 +105,15 @@ class VAECache:
             for file in cache_filenames
             if file not in existing_cache_files
         }
-
+        for file in cache_filenames:
+            if file not in existing_cache_files:
+                self.debug_log(
+                    f"discover_unprocessed_files: {file} is not in existing_cache_files"
+                )
+            else:
+                self.debug_log(
+                    f"discover_unprocessed_files: {file} is in existing_cache_files"
+                )
         return list(unprocessed_files)
 
     def _list_cached_images(self):
@@ -264,9 +272,6 @@ class VAECache:
             for sample in aspect_bucket_cache[bucket]:
                 quick_piece = os.path.splitext(os.path.basename(sample))[0]
                 if quick_piece in processed_images:
-                    self.debug_log(
-                        f"Skipping {quick_piece} because it is in processed images"
-                    )
                     continue
                 if sample not in self.local_unprocessed_files:
                     self.debug_log(
