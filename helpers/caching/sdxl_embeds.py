@@ -95,6 +95,7 @@ class TextEmbeddingCache:
             # We are always interested in the pooled output of the final text encoder
             pooled_prompt_embeds = prompt_embeds_output[0]
             prompt_embeds = prompt_embeds_output.hidden_states[-2]
+            del prompt_embeds_output
             bs_embed, seq_len, _ = prompt_embeds.shape
             prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
 
