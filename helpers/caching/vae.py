@@ -257,14 +257,10 @@ class VAECache:
                 and f in self.local_unprocessed_files
             ]
             for sample in aspect_bucket_cache[bucket]:
-                if sample not in relevant_files:
+                quick_piece = os.path.splitext(os.path.basename(sample))[0]
+                if quick_piece in processed_images:
                     self.debug_log(
-                        f"Skipping {sample} because it is not in relevant files"
-                    )
-                    continue
-                if os.path.splitext(os.path.basename(sample))[0] in processed_images:
-                    self.debug_log(
-                        f"Skipping {sample} because it is in processed images"
+                        f"Skipping {quick_piece} because it is in processed images"
                     )
                     continue
                 if sample not in self.local_unprocessed_files:
@@ -272,6 +268,9 @@ class VAECache:
                         f"Skipping {sample} because it is not in local unprocessed files"
                     )
                     continue
+                self.debug_log(
+                    f"Processing {sample}  (quick_piece {quick_piece}) because it is in local unprocessed files"
+                )
             self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
             )
