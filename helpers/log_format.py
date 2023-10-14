@@ -42,9 +42,11 @@ forward_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)
 pil_logger = logging.getLogger("PIL.Image")
-pil_logger.setLevel("WARNING")
+pil_logger.setLevel("ERROR")
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
-pil_logger.setLevel("WARNING")
+pil_logger.setLevel("ERROR")
+pil_logger = logging.getLogger("transformers.configuration_utils")
+pil_logger.setLevel("ERROR")
 
 import warnings
 
