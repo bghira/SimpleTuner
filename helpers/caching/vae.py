@@ -114,9 +114,12 @@ class VAECache:
         """
         # Extract array of tuple into just, an array of files:
         pt_files = StateTracker.get_vae_cache_files()
-        logging.debug(f"Found {len(pt_files)} cached files in {self.cache_dir}")
         # Extract just the base filename without the extension
-        return {os.path.splitext(f)[0] for f in pt_files}
+        results = {os.path.splitext(f)[0] for f in pt_files}
+        logging.debug(
+            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {results[:5]}"
+        )
+        return results
 
     def encode_image(self, image, filepath):
         """
