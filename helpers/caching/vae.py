@@ -8,6 +8,7 @@ from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
+from helpers.training.multi_process import rank_info
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -39,6 +40,10 @@ class VAECache:
         self.vae_batch_size = vae_batch_size
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
+        self.rank_info = rank_info()
+
+    def debug_log(self, msg: str):
+        logger.debug(f"{self.rank_info}{msg}", main_process_only=False)
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
