@@ -79,23 +79,25 @@ class VAECache:
                 )
             )
         )
-        logger.debug(f"VAECache discover_all_files found {len(all_image_files)} images")
+        self.debug_log(
+            f"VAECache discover_all_files found {len(all_image_files)} images"
+        )
         return all_image_files
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files()
         existing_cache_files = StateTracker.get_vae_cache_files()
-        logger.debug(
+        self.debug_log(
             f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
         )
-        logger.debug(
+        self.debug_log(
             f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
         )
         cache_filenames = {
             self.generate_vae_cache_filename(file)[1] for file in all_image_files
         }
-        logger.debug(
+        self.debug_log(
             f"discover_unprocessed_files found {len(cache_filenames)} cache filenames (truncated): {list(cache_filenames)[:5]}"
         )
         unprocessed_files = {
@@ -182,14 +184,16 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        logger.debug(f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)")
+        self.debug_log(
+            f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
+        )
         # Use the accelerator to split the data
         with self.accelerator.split_between_processes(
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
         # Print the first 5 as a debug log:
-        logger.debug(
+        self.debug_log(
             f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
         )
 
@@ -252,7 +256,7 @@ class VAECache:
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
                 and f in self.local_unprocessed_files
             ]
-            logger.debug(
+            self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
             )
             if len(relevant_files) == 0:
@@ -277,7 +281,7 @@ class VAECache:
                     )
                 test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
                 if test_filepath not in self.local_unprocessed_files:
-                    logger.debug(
+                    self.debug_log(
                         f"Skipping {test_filepath} because it is not in local unprocessed files"
                     )
                     continue
@@ -286,11 +290,11 @@ class VAECache:
                     if self.data_backend.exists(
                         self.generate_vae_cache_filename(filepath)[0]
                     ):
-                        logger.debug(
+                        self.debug_log(
                             f"Skipping {filepath} because it is already in the cache"
                         )
                         continue
-                    logger.debug(
+                    self.debug_log(
                         f"Processing {filepath} because it is in local unprocessed files"
                     )
                     image = self.data_backend.read_image(filepath)
@@ -318,7 +322,7 @@ class VAECache:
 
                 # If VAE input batch is ready
                 if len(vae_input_images) >= self.vae_batch_size:
-                    logger.debug(
+                    self.debug_log(
                         f"Reached a VAE batch size of {self.vae_batch_size} pixel groups, so we will now encode them into latents."
                     )
                     latents_batch = self.encode_images(
