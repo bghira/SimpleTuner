@@ -117,7 +117,7 @@ class VAECache:
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
         logging.debug(
-            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {results[:5]}"
+            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
         )
         return results
 
