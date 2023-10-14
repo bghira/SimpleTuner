@@ -256,11 +256,24 @@ class VAECache:
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
                 and f in self.local_unprocessed_files
             ]
+            for sample in aspect_bucket_cache[bucket]:
+                if sample not in relevant_files:
+                    self.debug_log(
+                        f"Skipping {sample} because it is not in relevant files"
+                    )
+                    continue
+                if os.path.splitext(os.path.basename(sample))[0] in processed_images:
+                    self.debug_log(
+                        f"Skipping {sample} because it is in processed images"
+                    )
+                    continue
+                if sample not in self.local_unprocessed_files:
+                    self.debug_log(
+                        f"Skipping {sample} because it is not in local unprocessed files"
+                    )
+                    continue
             self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
-            )
-            self.debug_log(
-                f"We compared the basename {os.path.splitext(os.path.basename(relevant_files[0]))[0]} to the processed images (truncated) {list(processed_images)[:5]}"
             )
             if len(relevant_files) == 0:
                 continue
