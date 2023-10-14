@@ -43,7 +43,7 @@ class VAECache:
         self.rank_info = rank_info()
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info}{msg}", main_process_only=False)
+        logger.debug(f"{self.rank_info}{msg}")
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
