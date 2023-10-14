@@ -105,15 +105,6 @@ class VAECache:
             for file in cache_filenames
             if file not in existing_cache_files
         }
-        for file in cache_filenames:
-            if file not in existing_cache_files:
-                self.debug_log(
-                    f"discover_unprocessed_files: {file} is not in existing_cache_files"
-                )
-            else:
-                self.debug_log(
-                    f"discover_unprocessed_files: {file} is in existing_cache_files"
-                )
         return list(unprocessed_files)
 
     def _list_cached_images(self):
@@ -269,18 +260,6 @@ class VAECache:
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
                 and f in self.local_unprocessed_files
             ]
-            for sample in aspect_bucket_cache[bucket]:
-                quick_piece = os.path.splitext(os.path.basename(sample))[0]
-                if quick_piece in processed_images:
-                    continue
-                if sample not in self.local_unprocessed_files:
-                    self.debug_log(
-                        f"Skipping {sample} because it is not in local unprocessed files"
-                    )
-                    continue
-                self.debug_log(
-                    f"Processing bucket {bucket} sample {sample}  (quick_piece {quick_piece}) because it is in local unprocessed files"
-                )
             self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
             )
@@ -332,6 +311,9 @@ class VAECache:
                     )
                     vae_input_images.append(pixel_values)
                     vae_input_filepaths.append(filepath)
+                    self.debug_log(
+                        f"Completed processing {filepath}"
+                    )
                 except ValueError as e:
                     logger.error(f"Received fatal error: {e}")
                     raise e
@@ -374,6 +356,9 @@ class VAECache:
 
             # Handle remainders after processing the bucket
             if vae_input_images:  # If there are images left to be encoded
+                self.debug_log(
+                    f"Processing the remainder, {len(vae_input_images)} images"
+                )
                 latents_batch = self.encode_images(
                     vae_input_images, vae_input_filepaths, load_from_cache=False
                 )
