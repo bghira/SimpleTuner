@@ -45,8 +45,10 @@ pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel("ERROR")
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel("ERROR")
-pil_logger = logging.getLogger("transformers.configuration_utils")
-pil_logger.setLevel("ERROR")
+transformers_logger = logging.getLogger("transformers.configuration_utils")
+transformers_logger.setLevel("ERROR")
+diffusers_logger = logging.getLogger("diffusers.configuration_utils")
+diffusers_logger.setLevel("ERROR")
 
 import warnings
 
