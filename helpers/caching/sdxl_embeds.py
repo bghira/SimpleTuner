@@ -100,6 +100,7 @@ class TextEmbeddingCache:
             prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
 
             # Clear out anything we moved to the text encoder device
+            text_input_ids.to('cpu')
             del text_input_ids
 
             prompt_embeds_list.append(prompt_embeds)

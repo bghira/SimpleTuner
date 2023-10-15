@@ -817,13 +817,15 @@ def main():
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
-    logger.info(f"Loading our accelerator...")
-    unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(
-        unet, train_dataloader, lr_scheduler, optimizer
-    )
-    if args.use_ema:
-        logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device, dtype=weight_dtype)
+    disable_accelerator = os.environ.get('SIMPLETUNER_DISABLE_ACCELERATOR', False)
+    if not disable_accelerator:
+        logger.info(f"Loading our accelerator...")
+        unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(
+            unet, train_dataloader, lr_scheduler, optimizer
+        )
+        if args.use_ema:
+            logger.info("Moving EMA model weights to accelerator...")
+            ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.

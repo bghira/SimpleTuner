@@ -13,7 +13,7 @@ SimpleTuner v0.7 includes preliminary support for training SDXL using DeepSpeed 
 |                               |                      |               MIG M. |
 |===============================+======================+======================|
 |   0  NVIDIA GeForce ...  Off  | 00000000:08:00.0 Off |                  Off |
-|  0%   43C    P2   100W / 450W |   9237MiB / 24564MiB |      0%      Default |
+|  0%   43C    P2   100W / 450W |   9237MiB / 24564MiB |    100%      Default |
 |                               |                      |                  N/A |
 +-------------------------------+----------------------+----------------------+
                                                                                
