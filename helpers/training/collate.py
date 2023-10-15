@@ -88,7 +88,7 @@ def extract_filepaths(examples):
 def fetch_latent(fp):
     """Worker method to fetch latent for a single image."""
     debug_log(" -> pull latents from cache")
-    latent = StateTracker.get_vaecache().encode_image(None, fp)
+    latent = StateTracker.get_vaecache().retrieve_from_cache(fp)
 
     # Move to CPU and pin memory if it's not on the GPU
     debug_log(" -> push latents to GPU via pinned memory")
