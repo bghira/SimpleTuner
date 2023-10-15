@@ -45,9 +45,16 @@ class BaseDataBackend(ABC):
         pass
 
     @abstractmethod
-    def read_image(self, filepath):
+    def read_image(self, filepath: str, delete_problematic_images: bool = False):
         """
         Read an image from the backend and return a PIL Image.
+        """
+        pass
+
+    @abstractmethod
+    def read_image_batch(self, filepaths: str, delete_problematic_images: bool = False):
+        """
+        Read a batch of images from the backend and return a list of PIL Images.
         """
         pass
 

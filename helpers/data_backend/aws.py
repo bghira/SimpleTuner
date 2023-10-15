@@ -6,6 +6,8 @@ from pathlib import PosixPath
 import concurrent.futures
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
+from PIL import Image
+from io import BytesIO
 
 loggers_to_silence = [
     "botocore.hooks",
@@ -218,10 +220,42 @@ class S3DataBackend(BaseDataBackend):
         return path.split("/")[-1]
 
     def read_image(self, s3_key):
-        from PIL import Image
-        from io import BytesIO
-
         return Image.open(BytesIO(self.read(s3_key)))
+
+    def read_image_batch(self, s3_keys: list, delete_problematic_images: bool = False):
+        """
+        Return a list of Image objects, given a list of S3 keys.
+        This makes use of read_batch for efficiency.
+        Args:
+            s3_keys (list): List of S3 keys to read. May not be included in the output, if it does not exist, or had an error.
+            delete_problematic_images (bool, optional): Whether to delete problematic images. Defaults to False.
+
+        Returns:
+            tuple(list, list): (available_keys, output_images)
+        """
+        batch = self.read_batch(s3_keys)
+        output_images = []
+        available_keys = []
+        for s3_key, data in zip(s3_keys, batch):
+            try:
+                image_data = Image.open(BytesIO(data))
+                if image_data is None:
+                    logger.warning(f"Unable to load image '{s3_key}', skipping.")
+                    continue
+                output_images.append(image_data)
+                available_keys.append(s3_key)
+            except Exception as e:
+                if delete_problematic_images:
+                    logger.warning(
+                        f"Deleting image '{s3_key}', because --delete_problematic_images is provided. Error: {e}"
+                    )
+                    self.delete(s3_key)
+                else:
+                    logger.warning(
+                        f"A problematic image {s3_key} is detected, but we are not allowed to remove it, because --delete_problematic_image is not provided."
+                        f" Please correct this manually. Error: {e}"
+                    )
+        return (available_keys, output_images)
 
     def create_directory(self, directory_path):
         # Since S3 doesn't have a traditional directory structure, this is just a pass-through

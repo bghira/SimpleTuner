@@ -3,6 +3,7 @@ from pathlib import Path
 from io import BytesIO
 import os, logging, torch
 from typing import Any
+from PIL import Image
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
@@ -11,6 +12,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 class LocalDataBackend(BaseDataBackend):
     def __init__(self, accelerator):
         self.accelerator = accelerator
+
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
         # Openfilepath as BytesIO:
@@ -94,9 +96,7 @@ class LocalDataBackend(BaseDataBackend):
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
 
-    def read_image(self, filepath):
-        from PIL import Image
-
+    def read_image(self, filepath: str, delete_problematic_images: bool = False):
         # Remove embedded null byte:
         filepath = filepath.replace("\x00", "")
         try:
@@ -104,7 +104,38 @@ class LocalDataBackend(BaseDataBackend):
             return image
         except Exception as e:
             logger.error(f"Encountered error opening image: {e}")
+            if delete_problematic_images:
+                logger.error(
+                    f"Deleting image, because --delete_problematic_images is provided."
+                )
+                self.delete(filepath)
             raise e
+
+    def read_image_batch(
+        self, filepaths: list, delete_problematic_images: bool = False
+    ) -> list:
+        """Read a batch of images from the specified filepaths."""
+        output_images = []
+        available_keys = []
+        for filepath in filepaths:
+            try:
+                image_data = self.read_image(filepath, delete_problematic_images)
+                if image_data is None:
+                    logger.warning(f"Unable to load image '{filepath}', skipping.")
+                    continue
+                output_images.append(image_data)
+                available_keys.append(filepath)
+            except Exception as e:
+                if delete_problematic_images:
+                    logger.error(
+                        f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}"
+                    )
+                else:
+                    logger.warning(
+                        f"A problematic image {filepath} is detected, but we are not allowed to remove it, because --delete_problematic_image is not provided."
+                        f" Please correct this manually. Error: {e}"
+                    )
+        return (available_keys, output_images)
 
     def create_directory(self, directory_path):
         os.makedirs(directory_path, exist_ok=True)
@@ -113,7 +144,9 @@ class LocalDataBackend(BaseDataBackend):
         # Check if file exists:
         if not self.exists(filename):
             raise FileNotFoundError(f"{filename} not found.")
-        return torch.load(self.read(filename, as_byteIO=True), map_location=self.accelerator.device)
+        return torch.load(
+            self.read(filename, as_byteIO=True), map_location=self.accelerator.device
+        )
 
     def torch_save(self, data, original_location):
         if type(original_location) == str:
