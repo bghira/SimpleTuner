@@ -8,6 +8,7 @@ from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
+from helpers.training.multi_process import rank_info
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -39,6 +40,10 @@ class VAECache:
         self.vae_batch_size = vae_batch_size
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
+        self.rank_info = rank_info()
+
+    def debug_log(self, msg: str):
+        logger.debug(f"{self.rank_info}{msg}")
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
@@ -74,23 +79,25 @@ class VAECache:
                 )
             )
         )
-        logger.debug(f"VAECache discover_all_files found {len(all_image_files)} images")
+        self.debug_log(
+            f"VAECache discover_all_files found {len(all_image_files)} images"
+        )
         return all_image_files
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files()
         existing_cache_files = StateTracker.get_vae_cache_files()
-        logger.debug(
+        self.debug_log(
             f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
         )
-        logger.debug(
+        self.debug_log(
             f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
         )
         cache_filenames = {
             self.generate_vae_cache_filename(file)[1] for file in all_image_files
         }
-        logger.debug(
+        self.debug_log(
             f"discover_unprocessed_files found {len(cache_filenames)} cache filenames (truncated): {list(cache_filenames)[:5]}"
         )
         unprocessed_files = {
@@ -98,7 +105,6 @@ class VAECache:
             for file in cache_filenames
             if file not in existing_cache_files
         }
-
         return list(unprocessed_files)
 
     def _list_cached_images(self):
@@ -107,9 +113,12 @@ class VAECache:
         """
         # Extract array of tuple into just, an array of files:
         pt_files = StateTracker.get_vae_cache_files()
-        logging.debug(f"Found {len(pt_files)} cached files in {self.cache_dir}")
         # Extract just the base filename without the extension
-        return {os.path.splitext(f)[0] for f in pt_files}
+        results = {os.path.splitext(f)[0] for f in pt_files}
+        logging.debug(
+            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
+        )
+        return results
 
     def encode_image(self, image, filepath):
         """
@@ -177,14 +186,16 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        logger.debug(f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)")
+        self.debug_log(
+            f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
+        )
         # Use the accelerator to split the data
         with self.accelerator.split_between_processes(
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
         # Print the first 5 as a debug log:
-        logger.debug(
+        self.debug_log(
             f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
         )
 
@@ -237,16 +248,21 @@ class VAECache:
         aspect_bucket_cache = bucket_manager.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
-        shuffled_keys = list(aspect_bucket_cache.keys())
-        shuffle(shuffled_keys)
+        do_shuffle = os.environ.get('SIMPLETUNER_SHUFFLE_ASPECTS', 'true').lower() == 'true'
+        if do_shuffle:
+            shuffled_keys = list(aspect_bucket_cache.keys())
+            shuffle(shuffled_keys)
 
         for bucket in shuffled_keys:
             relevant_files = [
                 f
                 for f in aspect_bucket_cache[bucket]
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
+                and f in self.local_unprocessed_files
             ]
-            logger.debug(
+            if do_shuffle:
+                shuffle(relevant_files)
+            self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
             )
             if len(relevant_files) == 0:
@@ -271,12 +287,20 @@ class VAECache:
                     )
                 test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
                 if test_filepath not in self.local_unprocessed_files:
-                    logger.debug(
+                    self.debug_log(
                         f"Skipping {test_filepath} because it is not in local unprocessed files"
                     )
                     continue
                 try:
-                    logger.debug(
+                    # Does it exist on the backend?
+                    if self.data_backend.exists(
+                        self.generate_vae_cache_filename(filepath)[0]
+                    ):
+                        self.debug_log(
+                            f"Skipping {filepath} because it is already in the cache"
+                        )
+                        continue
+                    self.debug_log(
                         f"Processing {filepath} because it is in local unprocessed files"
                     )
                     image = self.data_backend.read_image(filepath)
@@ -289,6 +313,9 @@ class VAECache:
                     )
                     vae_input_images.append(pixel_values)
                     vae_input_filepaths.append(filepath)
+                    self.debug_log(
+                        f"Completed processing {filepath}"
+                    )
                 except ValueError as e:
                     logger.error(f"Received fatal error: {e}")
                     raise e
@@ -304,7 +331,7 @@ class VAECache:
 
                 # If VAE input batch is ready
                 if len(vae_input_images) >= self.vae_batch_size:
-                    logger.debug(
+                    self.debug_log(
                         f"Reached a VAE batch size of {self.vae_batch_size} pixel groups, so we will now encode them into latents."
                     )
                     latents_batch = self.encode_images(
@@ -331,6 +358,9 @@ class VAECache:
 
             # Handle remainders after processing the bucket
             if vae_input_images:  # If there are images left to be encoded
+                self.debug_log(
+                    f"Processing the remainder, {len(vae_input_images)} images"
+                )
                 latents_batch = self.encode_images(
                     vae_input_images, vae_input_filepaths, load_from_cache=False
                 )

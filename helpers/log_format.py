@@ -27,7 +27,9 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 accel_logger = logging.getLogger("DeepSpeed")
 accel_logger.setLevel(logging.WARNING)
 new_handler = logging.StreamHandler()
-new_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s"))
+new_handler.setFormatter(
+    ColorizedFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
+)
 # Remove existing handlers
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)
@@ -40,6 +42,20 @@ forward_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL")
 pil_logger.setLevel(logging.INFO)
 pil_logger = logging.getLogger("PIL.Image")
-pil_logger.setLevel("WARNING")
+pil_logger.setLevel("ERROR")
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
-pil_logger.setLevel("WARNING")
+pil_logger.setLevel("ERROR")
+transformers_logger = logging.getLogger("transformers.configuration_utils")
+transformers_logger.setLevel("ERROR")
+diffusers_logger = logging.getLogger("diffusers.configuration_utils")
+diffusers_logger.setLevel("ERROR")
+
+import warnings
+
+# Suppress specific PIL warning
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="PIL",
+    message="Palette images with Transparency expressed in bytes should be converted to RGBA images",
+)

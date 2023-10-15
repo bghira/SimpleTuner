@@ -2,7 +2,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
-import json, logging, os
+import json, logging, os, time
 from multiprocessing import Manager
 from tqdm import tqdm
 from multiprocessing import Process, Queue
@@ -217,7 +217,13 @@ class BucketManager:
         for worker in workers:
             worker.start()
 
-        with tqdm(total=len(new_files), leave=False, ncols=100) as pbar:
+        with tqdm(
+            desc="Generating aspect bucket cache",
+            total=len(new_files),
+            leave=False,
+            ncols=100,
+            miniters=int(len(new_files) / 100),
+        ) as pbar:
             while any(worker.is_alive() for worker in workers):
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
@@ -236,6 +242,8 @@ class BucketManager:
                         self.set_metadata_by_filepath(
                             filepath=filepath, metadata=meta, update_json=False
                         )
+
+                time.sleep(0.1)
 
         for worker in workers:
             worker.join()
