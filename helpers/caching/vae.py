@@ -1,4 +1,5 @@
 import os, torch, logging
+from concurrent.futures import ThreadPoolExecutor
 from random import shuffle
 from tqdm import tqdm
 from pathlib import Path
@@ -9,12 +10,20 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
+from asyncio import Queue
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class VAECache:
+    read_queue = Queue()
+    read_batch_size = 32
+    process_queue = Queue()
+    process_batch_size = 32
+    write_queue = Queue()
+    write_batch_size = 32
+
     def __init__(
         self,
         vae,
@@ -224,6 +233,27 @@ class VAECache:
             else:
                 raise e
 
+    def write_latents_in_batch(self, latents: list, filepaths: list):
+        self.data_backend.write_batch(filepaths, latents)
+
+    def process_images_in_batch(self, images: list, filepaths: list):
+        pixel_values = [
+            self.transform(img).to(self.accelerator.device, dtype=self.vae.dtype)
+            for img in images
+        ]
+        latents = self.encode_images(pixel_values, filepaths, load_from_cache=False)
+        return latents
+
+    def read_images_in_batch(self, filepaths: list):
+        images = []
+        for filepath in filepaths:
+            image = self.data_backend.read_image(filepath)
+            image, _ = MultiaspectImage.prepare_image(
+                image, self.resolution, self.resolution_type
+            )
+            images.append(image)
+        return images
+
     def _accumulate_batch(self, latents, filepath, batch_data, batch_filepaths):
         full_filename, _ = self.generate_vae_cache_filename(filepath)
         batch_data.append(latents.squeeze())
@@ -238,7 +268,8 @@ class VAECache:
 
     def process_buckets(self, bucket_manager):
         processed_images = self._list_cached_images()
-        batch_data, batch_filepaths, vae_input_images, vae_input_filepaths = (
+        futures, batch_data, batch_filepaths, vae_input_images, vae_input_filepaths = (
+            [],
             [],
             [],
             [],
@@ -248,91 +279,118 @@ class VAECache:
         aspect_bucket_cache = bucket_manager.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
-        do_shuffle = os.environ.get('SIMPLETUNER_SHUFFLE_ASPECTS', 'true').lower() == 'true'
+        do_shuffle = (
+            os.environ.get("SIMPLETUNER_SHUFFLE_ASPECTS", "true").lower() == "true"
+        )
         if do_shuffle:
             shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
-
-        for bucket in shuffled_keys:
-            relevant_files = [
-                f
-                for f in aspect_bucket_cache[bucket]
-                if os.path.splitext(os.path.basename(f))[0] not in processed_images
-                and f in self.local_unprocessed_files
-            ]
-            if do_shuffle:
-                shuffle(relevant_files)
-            self.debug_log(
-                f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
-            )
-            if len(relevant_files) == 0:
-                continue
-
-            for raw_filepath in tqdm(
-                relevant_files,
-                desc=f"Processing bucket {bucket}",
-                position=get_rank(),
-                ncols=100,
-                leave=False,
-            ):
-                if type(raw_filepath) == str or len(raw_filepath) == 1:
-                    filepath = raw_filepath
-                elif len(raw_filepath) == 2:
-                    basename, filepath = raw_filepath
-                elif type(raw_filepath) == Path or type(raw_filepath) == numpy_str:
-                    filepath = str(raw_filepath)
-                else:
-                    raise ValueError(
-                        f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
-                    )
-                test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
-                if test_filepath not in self.local_unprocessed_files:
-                    self.debug_log(
-                        f"Skipping {test_filepath} because it is not in local unprocessed files"
-                    )
+        with ThreadPoolExecutor() as executor:
+            for bucket in shuffled_keys:
+                relevant_files = [
+                    f
+                    for f in aspect_bucket_cache[bucket]
+                    if os.path.splitext(os.path.basename(f))[0] not in processed_images
+                    and f in self.local_unprocessed_files
+                ]
+                if do_shuffle:
+                    shuffle(relevant_files)
+                self.debug_log(
+                    f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
+                )
+                if len(relevant_files) == 0:
                     continue
-                try:
-                    # Does it exist on the backend?
-                    if self.data_backend.exists(
-                        self.generate_vae_cache_filename(filepath)[0]
-                    ):
+
+                for raw_filepath in tqdm(
+                    relevant_files,
+                    desc=f"Processing bucket {bucket}",
+                    position=get_rank(),
+                    ncols=100,
+                    leave=False,
+                ):
+                    if type(raw_filepath) == str or len(raw_filepath) == 1:
+                        filepath = raw_filepath
+                    elif len(raw_filepath) == 2:
+                        basename, filepath = raw_filepath
+                    elif type(raw_filepath) == Path or type(raw_filepath) == numpy_str:
+                        filepath = str(raw_filepath)
+                    else:
+                        raise ValueError(
+                            f"Received unknown filepath type ({type(raw_filepath)}) value: {raw_filepath}"
+                        )
+                    test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
+                    if test_filepath not in self.local_unprocessed_files:
                         self.debug_log(
-                            f"Skipping {filepath} because it is already in the cache"
+                            f"Skipping {test_filepath} because it is not in local unprocessed files"
                         )
                         continue
-                    self.debug_log(
-                        f"Processing {filepath} because it is in local unprocessed files"
-                    )
-                    image = self.data_backend.read_image(filepath)
-                    image, crop_coordinates = MultiaspectImage.prepare_image(
-                        image, self.resolution, self.resolution_type
-                    )
-                    aspect_ratio = float(round(image.width / image.height, 2))
-                    pixel_values = self.transform(image).to(
-                        self.accelerator.device, dtype=self.vae.dtype
-                    )
-                    vae_input_images.append(pixel_values)
-                    vae_input_filepaths.append(filepath)
-                    self.debug_log(
-                        f"Completed processing {filepath}"
-                    )
-                except ValueError as e:
-                    logger.error(f"Received fatal error: {e}")
-                    raise e
-                except Exception as e:
-                    import traceback
-
-                    logger.error(f"Error processing image {filepath}: {e}")
-                    logging.debug(f"Error traceback: {traceback.format_exc()}")
-                    if self.delete_problematic_images:
-                        self.data_backend.delete(filepath)
-                    else:
+                    try:
+                        # Does it exist on the backend?
+                        if self.data_backend.exists(
+                            self.generate_vae_cache_filename(filepath)[0]
+                        ):
+                            self.debug_log(
+                                f"Skipping {filepath} because it is already in the cache"
+                            )
+                            continue
+                        self.debug_log(
+                            f"Processing {filepath} because it is in local unprocessed files"
+                        )
+                        image = self.data_backend.read_image(filepath)
+                        image, crop_coordinates = MultiaspectImage.prepare_image(
+                            image, self.resolution, self.resolution_type
+                        )
+                        aspect_ratio = float(round(image.width / image.height, 2))
+                        pixel_values = self.transform(image).to(
+                            self.accelerator.device, dtype=self.vae.dtype
+                        )
+                        vae_input_images.append(pixel_values)
+                        vae_input_filepaths.append(filepath)
+                        self.debug_log(f"Completed processing {filepath}")
+                    except ValueError as e:
+                        logger.error(f"Received fatal error: {e}")
                         raise e
+                    except Exception as e:
+                        import traceback
 
-                # If VAE input batch is ready
-                if len(vae_input_images) >= self.vae_batch_size:
+                        logger.error(f"Error processing image {filepath}: {e}")
+                        logging.debug(f"Error traceback: {traceback.format_exc()}")
+                        if self.delete_problematic_images:
+                            self.data_backend.delete(filepath)
+                        else:
+                            raise e
+
+                    # If VAE input batch is ready
+                    if len(vae_input_images) >= self.vae_batch_size:
+                        self.debug_log(
+                            f"Reached a VAE batch size of {self.vae_batch_size} pixel groups, so we will now encode them into latents."
+                        )
+                        latents_batch = self.encode_images(
+                            vae_input_images, vae_input_filepaths, load_from_cache=False
+                        )
+                        if latents_batch is not None:
+                            batch_data.extend(latents_batch)
+                            batch_filepaths.extend(
+                                [
+                                    self.generate_vae_cache_filename(f)[0]
+                                    for f in vae_input_filepaths
+                                ]
+                            )
+                        vae_input_images, vae_input_filepaths = [], []
+
+                    # If write batch is ready
+                    if len(batch_filepaths) >= self.write_batch_size:
+                        logging.debug(
+                            f"We have accumulated {self.write_batch_size} latents, so we will now write them to disk."
+                        )
+                        self.data_backend.write_batch(batch_filepaths, batch_data)
+                        batch_filepaths.clear()
+                        batch_data.clear()
+
+                # Handle remainders after processing the bucket
+                if vae_input_images:  # If there are images left to be encoded
                     self.debug_log(
-                        f"Reached a VAE batch size of {self.vae_batch_size} pixel groups, so we will now encode them into latents."
+                        f"Processing the remainder, {len(vae_input_images)} images"
                     )
                     latents_batch = self.encode_images(
                         vae_input_images, vae_input_filepaths, load_from_cache=False
@@ -347,35 +405,8 @@ class VAECache:
                         )
                     vae_input_images, vae_input_filepaths = [], []
 
-                # If write batch is ready
-                if len(batch_filepaths) >= self.write_batch_size:
-                    logging.debug(
-                        f"We have accumulated {self.write_batch_size} latents, so we will now write them to disk."
-                    )
+                # Write the remaining batches
+                if batch_data:
                     self.data_backend.write_batch(batch_filepaths, batch_data)
                     batch_filepaths.clear()
                     batch_data.clear()
-
-            # Handle remainders after processing the bucket
-            if vae_input_images:  # If there are images left to be encoded
-                self.debug_log(
-                    f"Processing the remainder, {len(vae_input_images)} images"
-                )
-                latents_batch = self.encode_images(
-                    vae_input_images, vae_input_filepaths, load_from_cache=False
-                )
-                if latents_batch is not None:
-                    batch_data.extend(latents_batch)
-                    batch_filepaths.extend(
-                        [
-                            self.generate_vae_cache_filename(f)[0]
-                            for f in vae_input_filepaths
-                        ]
-                    )
-                vae_input_images, vae_input_filepaths = [], []
-
-            # Write the remaining batches
-            if batch_data:
-                self.data_backend.write_batch(batch_filepaths, batch_data)
-                batch_filepaths.clear()
-                batch_data.clear()
