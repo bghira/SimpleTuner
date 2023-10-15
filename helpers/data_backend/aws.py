@@ -183,7 +183,7 @@ class S3DataBackend(BaseDataBackend):
         )
 
         # Paginating over the entire bucket objects
-        for page in paginator.paginate(Bucket=self.bucket_name):
+        for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=10000):
             for obj in page.get("Contents", []):
                 # Filter based on the provided pattern
                 if fnmatch.fnmatch(obj["Key"], pattern):
