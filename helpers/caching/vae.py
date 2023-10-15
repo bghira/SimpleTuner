@@ -260,6 +260,8 @@ class VAECache:
                 if os.path.splitext(os.path.basename(f))[0] not in processed_images
                 and f in self.local_unprocessed_files
             ]
+            if do_shuffle:
+                shuffle(relevant_files)
             self.debug_log(
                 f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
             )
