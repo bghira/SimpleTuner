@@ -25,12 +25,10 @@ class BucketManager:
         batch_size: int,
         resolution: float,
         resolution_type: str,
-        apply_dataset_padding: bool = False,
         delete_problematic_images: bool = False,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
-        self.apply_dataset_padding = apply_dataset_padding
         self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
@@ -402,7 +400,7 @@ class BucketManager:
                 logger.warning(
                     f"Image {image_path} too small: DELETING image and continuing search."
                 )
-                self.data_backend.remove(image_path)
+                self.data_backend.delete(image_path)
             except Exception as e:
                 logger.debug(
                     f"Image {image_path} was already deleted. Another GPU must have gotten to it."

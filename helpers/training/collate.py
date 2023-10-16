@@ -51,10 +51,7 @@ def compute_time_ids(
     if original_height is None:
         raise ValueError("Original height must be specified.")
     if crop_coordinates is None:
-        crop_coordinates = (
-            StateTracker.get_args().crops_coords_top_left_h,
-            StateTracker.get_args().crops_coords_top_left_w,
-        )
+        raise ValueError("Crop coordinates were not collected during collate.")
     add_time_ids = list(
         (original_height, original_width) + tuple(crop_coordinates) + final_target_size
     )

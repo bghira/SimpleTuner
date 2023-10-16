@@ -389,6 +389,7 @@ class VAECache:
                     ncols=100,
                     leave=False,
                 ):
+                    filepath = self._process_raw_filepath(raw_filepath)
                     test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
                     if test_filepath not in self.local_unprocessed_files:
                         self.debug_log(
@@ -410,7 +411,7 @@ class VAECache:
                             futures.append(future_to_read)
 
                         # Now we try and process the images, if we have a process batch size large enough.
-                        if self.process_queue.qsize() >= self.process_batch_size:
+                        if self.process_queue.qsize() >= self.process_queue_size:
                             future_to_process = executor.submit(
                                 self._process_images_in_batch
                             )

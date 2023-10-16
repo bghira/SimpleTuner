@@ -19,15 +19,12 @@ export LEARNING_RATE_END=4e-7 #@param {type:"number"}
 # Caption dropout can help generalise style or overall improvements across the entire model.
 # If you are setting out to train SD 2.1 on eg. photographs, to improve its realism, you want this at about 10%.
 # If it is disabled, the training improvements/changes will be more limited to the captions shown.
-# Default: 10%. Use 0 to disable. Highest recommended value: 20%.
-export CAPTION_DROPOUT_INTERVAL=10
+# Default: 0.1, Use 0 to disable. Highest recommended value: .2
+export CAPTION_DROPOUT_PROBABILITY=0.1
 # How the trainer should locate your captions.
 # "filename" will use the image filename, replacing underscores to spaces, and a couple other clean-ups.
 # "textfile" will use contents of a .txt file next to the image with the same filename.
 export CAPTION_STRATEGY="filename"
-
-# Don't do any cropping. Empty this out to make it do cropping.
-export USE_ORIGINAL_IMAGES="true"
 
 # Configure these values.
 # Using a Huggingface Hub model:

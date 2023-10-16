@@ -110,7 +110,6 @@ export TRAINER_EXTRA_ARGS="--allow_tf32 --use_8bit_adam --use_ema"
 # Reproducible training. Set to -1 to disable.
 export TRAINING_SEED=420420420
 
-# Below here, these are pretty sketchy to change. --use_original_images can be removed to enable image cropping. Not tested for SDXL.
 # Mixed precision is the best. You honestly might need to YOLO it in fp16 mode for Google Colab type setups.
 export MIXED_PRECISION="bf16"                # Might not be supported on all GPUs. fp32 will be needed for others.
 

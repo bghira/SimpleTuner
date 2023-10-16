@@ -56,7 +56,7 @@ train_sd21.py \
 --use_original_images="${USE_ORIGINAL_IMAGES}" \
 --seen_state_path="${SEEN_STATE_PATH}" \
 --state_path="${STATE_PATH}" \
---caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}" \
+--caption_dropout_probability="${CAPTION_DROPOUT_PROBABILITY}" \
 --caption_strategy="${CAPTION_STRATEGY}" \
 --data_backend="${DATA_BACKEND}" ${TRAINER_EXTRA_ARGS}
 

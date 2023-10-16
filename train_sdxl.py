@@ -305,11 +305,21 @@ def main():
     bucket_manager.split_buckets_between_processes(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
+
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
-    for bucket in bucket_manager.aspect_ratio_bucket_indices:
-        print(
-            f"{rank_info()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
-        )
+    def print_bucket_info(bucket_manager):
+        # Print table header
+        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
+
+        # Print separator
+        print("-" * 30)
+
+        # Print each bucket's information
+        for bucket in bucket_manager.aspect_ratio_bucket_indices:
+            image_count = len(bucket_manager.aspect_ratio_bucket_indices[bucket])
+            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
+
+    print_bucket_info(bucket_manager)
 
     if len(bucket_manager) == 0:
         raise Exception(
@@ -817,7 +827,7 @@ def main():
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
-    disable_accelerator = os.environ.get('SIMPLETUNER_DISABLE_ACCELERATOR', False)
+    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
         unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(

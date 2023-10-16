@@ -57,7 +57,7 @@ def parse_args(input_args=None):
         default="trailing",
         choices=["leading", "linspace", "trailing"],
         help=(
-            "Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights."
+            "(SDXL Only) Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights."
             " For all training, including epsilon, it would seem that 'trailing' is the right choice."
         ),
     )
@@ -67,7 +67,7 @@ def parse_args(input_args=None):
         default="trailing",
         choices=["leading", "linspace", "trailing"],
         help=(
-            "The Bytedance paper on zero terminal SNR recommends inference using 'trailing'."
+            "(SDXL Only) The Bytedance paper on zero terminal SNR recommends inference using 'trailing'."
         ),
     )
     parser.add_argument(
@@ -160,7 +160,7 @@ def parse_args(input_args=None):
             "Comma-separated values of which stages to skip discovery for. Skipping any stage will speed up resumption,"
             " but will increase the risk of errors, as missing images or incorrectly bucketed images may not be caught."
             " 'vae' will skip the VAE cache process, 'aspect' will not build any aspect buckets, and 'text' will avoid text embed management."
-            " Valid options: aspect, vae, text."
+            " Valid options: aspect, vae, text, metadata."
         ),
     )
     parser.add_argument(
@@ -174,12 +174,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--tokenizer_name",
-        type=str,
-        default=None,
-        help="Pretrained tokenizer name or path if not the same as model_name",
-    )
-    parser.add_argument(
         "--instance_data_dir",
         type=str,
         default=None,
@@ -189,7 +183,7 @@ def parse_args(input_args=None):
             " the SimpleTuner documentation (https://github.com/bghira/SimpleTuner), or the structure described in"
             " https://huggingface.co/docs/datasets/image_dataset#imagefolder. For 🤗 Datasets in particular,"
             " a `metadata.jsonl` file must exist to provide the captions for the images. For SimpleTuner layout,"
-            " the images can be in subfolders. No particular config is required. Ignored if `dataset_name` is specified."
+            " the images can be in subfolders. No particular config is required."
         ),
     )
     parser.add_argument(
@@ -228,15 +222,6 @@ def parse_args(input_args=None):
             "When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching."
             " In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written."
             " This mostly applies to S3, but some shared server filesystems may benefit as well, eg. Ceph. Default: 64."
-        ),
-    )
-    parser.add_argument(
-        "--apply_dataset_padding",
-        action="store_true",
-        default=False,
-        help=(
-            "If set, will apply padding to the dataset to ensure that the number of images is divisible by the batch."
-            " This has some side-effects (especially on smaller datasets) of over-sampling and overly repeating images."
         ),
     )
     parser.add_argument(
@@ -307,35 +292,6 @@ def parse_args(input_args=None):
             " This is useful if you've modified any of the existing prompts, or, disabled/enabled Compel,"
             " via `--disable_compel`"
         ),
-    )
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default=None,
-        help=(
-            "The name of the Dataset (from the HuggingFace hub) to train on (could be your own, possibly private,"
-            " dataset). It can also be a path pointing to a local copy of a dataset in your filesystem,"
-            " or to a folder containing files that 🤗 Datasets can understand."
-        ),
-    )
-    parser.add_argument(
-        "--dataset_config_name",
-        type=str,
-        default=None,
-        help="The config of the Dataset, leave as None if there's only one config.",
-    )
-    # TODO: Fix Huggingface dataset handling.
-    parser.add_argument(
-        "--image_column",
-        type=str,
-        default="input_image",
-        help="The column of the dataset containing the original image on which edits where made.",
-    )
-    parser.add_argument(
-        "--image_prompt_column",
-        type=str,
-        default="image_prompt",
-        help="The column of the dataset containing the caption.",
     )
     parser.add_argument(
         "--seen_state_path",
@@ -416,22 +372,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--crops_coords_top_left_h",
-        type=int,
-        default=0,
-        help=(
-            "Coordinate for (the height) to be included in the crop coordinate embeddings needed by SDXL UNet."
-        ),
-    )
-    parser.add_argument(
-        "--crops_coords_top_left_w",
-        type=int,
-        default=0,
-        help=(
-            "Coordinate for (the height) to be included in the crop coordinate embeddings needed by SDXL UNet."
-        ),
-    )
-    parser.add_argument(
         "--center_crop",
         default=False,
         action="store_true",
@@ -442,14 +382,9 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--random_flip",
-        action="store_true",
-        help="whether to randomly flip images horizontally",
-    )
-    parser.add_argument(
         "--train_text_encoder",
         action="store_true",
-        help="Whether to train the text encoder. If set, the text encoder should be float32 precision.",
+        help="(SD 2.x only) Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
     parser.add_argument(
         "--train_batch_size",
@@ -458,15 +393,6 @@ def parse_args(input_args=None):
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument("--num_train_epochs", type=int, default=1)
-    parser.add_argument(
-        "--max_train_samples",
-        type=int,
-        default=None,
-        help=(
-            "For debugging purposes or quicker training, truncate the number of training examples to this "
-            "value if set. Currently untested."
-        ),
-    )
     parser.add_argument(
         "--max_train_steps",
         type=int,
@@ -682,16 +608,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--track_luminance",
-        action="store_true",
-        help=(
-            "When provided, the luminance of the images will be tracked during training."
-            " This has a pretty substantial compute cost for higher resolution images,"
-            " though it is easily justified when training with offset noise or some other"
-            " noise modification technique that could bias the model toward very-dark images."
-        ),
-    )
-    parser.add_argument(
         "--tracker_run_name",
         type=str,
         default="simpletuner-testing",
@@ -703,7 +619,6 @@ def parse_args(input_args=None):
         default="simpletuner",
         help="The name of the project for WandB or Tensorboard.",
     )
-
     parser.add_argument(
         "--validation_prompt",
         type=str,
@@ -724,7 +639,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--num_validation_images",
         type=int,
-        default=4,
+        default=1,
         help="Number of images that should be generated during validation with `validation_prompt`.",
     )
     parser.add_argument(
@@ -787,7 +702,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--mixed_precision",
         type=str,
-        default=None,
+        default="bf16",
         choices=["no", "fp16", "bf16"],
         help=(
             "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
@@ -820,12 +735,6 @@ def parse_args(input_args=None):
         type=float,
         default=0.1,
         help="The scale of noise offset. Default: 0.1",
-    )
-    parser.add_argument(
-        "--validation_epochs",
-        type=int,
-        default=5,
-        help="Run validation every X epochs.",
     )
     parser.add_argument(
         "--validation_guidance",
@@ -930,17 +839,6 @@ def parse_args(input_args=None):
         help="Use the instance prompt instead of the caption from filename.",
     )
     parser.add_argument(
-        "--caption_dropout_interval",
-        type=int,
-        default=0,
-        help=(
-            "Every X steps, we will drop the caption from the input to assist in classifier-free guidance training."
-            " When StabilityAI trained Stable Diffusion, a value of 10 was used."
-            " Very high values might be useful to do some sort of enforced style training."
-            " Default value is zero, maximum value is 100."
-        ),
-    )
-    parser.add_argument(
         "--conditioning_dropout_probability",
         type=float,
         default=None,
@@ -950,22 +848,13 @@ def parse_args(input_args=None):
         "--caption_dropout_probability",
         type=float,
         default=None,
-        help="Caption dropout probability. Same as caption_dropout_interval, but this is for SDXL.",
+        help="Caption dropout probability.",
     )
     parser.add_argument(
         "--input_pertubation",
         type=float,
         default=0,
         help="The scale of input pretubation. Recommended 0.1.",
-    )
-    parser.add_argument(
-        "--use_original_images",
-        type=str,
-        default="false",
-        help=(
-            "When this option is provided, image cropping and processing will be disabled."
-            " It is a good idea to use this with caution, for training multiple aspect ratios."
-        ),
     )
     parser.add_argument(
         "--delete_unwanted_images",
@@ -1004,7 +893,7 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    if args.dataset_name is None and args.instance_data_dir is None:
+    if args.instance_data_dir is None:
         raise ValueError("Need either a dataset name or a training folder.")
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
@@ -1082,10 +971,6 @@ def parse_args(input_args=None):
     if args.state_path is None:
         raise ValueError(
             "Please specify a location of your training state status file via the --state_path parameter."
-        )
-    if args.caption_dropout_interval > 100:
-        raise ValueError(
-            "Please specify a caption dropout interval equal to or less than 100 via the --caption_dropout_interval parameter."
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
