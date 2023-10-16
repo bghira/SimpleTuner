@@ -167,6 +167,7 @@ def main(args):
             raise ImportError(
                 "Make sure to install wandb if you want to use it for logging during training."
             )
+        import wandb
 
     # Currently, it's not possible to do gradient accumulation when training two models with accelerate.accumulate
     # This will be enabled soon in accelerate. For now, we don't allow gradient accumulation when training two models.
@@ -1200,7 +1201,7 @@ def main(args):
             ).repo_id
             save_model_card(
                 repo_id,
-                images=images,
+                images=None,
                 base_model=args.pretrained_model_name_or_path,
                 train_text_encoder=args.train_text_encoder,
                 prompt=args.instance_prompt,
