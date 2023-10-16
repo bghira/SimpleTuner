@@ -170,11 +170,6 @@ def main():
     StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=True)
-    if accelerator.state.num_processes > 1 and not args.apply_dataset_padding:
-        logger.warning(
-            f"Enabling dataset padding for multiGPU system. Supply --apply_dataset_padding parameter to disable this warning, or ignore it."
-        )
-        args.apply_dataset_padding = True
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
@@ -280,7 +275,6 @@ def main():
         metadata_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
         ),
-        apply_dataset_padding=args.apply_dataset_padding or False,
         delete_problematic_images=args.delete_problematic_images or False,
     )
     if bucket_manager.has_single_underfilled_bucket():
@@ -324,51 +318,6 @@ def main():
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
-        )
-
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        logger.info(f"Loading Huggingface Hub dataset: {args.dataset_name}")
-        from datasets import load_dataset
-
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-        )
-
-    # 6. Get the column names for input/target.
-    if hasattr(args, "dataset_name") and args.dataset_name is not None:
-        raise ValueError("Huggingface datasets are not currently supported.")
-        # Preprocessing the datasets.
-        # We need to tokenize inputs and targets.
-        column_names = dataset["train"].column_names
-        dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-        if args.image_column is None:
-            image_column = (
-                dataset_columns[0] if dataset_columns is not None else column_names[0]
-            )
-        else:
-            image_column = args.image_column
-            if image_column not in column_names:
-                raise ValueError(
-                    f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-                )
-        if args.image_prompt_column is None:
-            image_prompt_column = (
-                dataset_columns[1] if dataset_columns is not None else column_names[1]
-            )
-        else:
-            image_prompt_column = args.image_prompt_column
-            if image_prompt_column not in column_names:
-                raise ValueError(
-                    f"--image_prompt_column' value '{args.image_prompt_column}' needs to be one of: {', '.join(column_names)}"
-                )
-    else:
-        logger.info(
-            "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
         )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -467,10 +416,8 @@ def main():
         size=args.resolution,
         size_type=args.resolution_type,
         print_names=args.print_filenames or False,
-        use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
-        caption_dropout_interval=args.caption_dropout_interval,
         use_precomputed_token_ids=True,
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy,
