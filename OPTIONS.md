@@ -375,33 +375,6 @@ options:
                         When using 'after' strategy, we will freeze layers later than this.
   --freeze_encoder_strategy FREEZE_ENCODER_STRATEGY
                         When freezing the text_encoder, we can use the 'before', 'between', or 'after' strategy. The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen. The
-                        Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10.and an Nvidia Ampere GPU. Default to the value of accelerate config of the current system or the
-                        flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config.
-  --local_rank LOCAL_RANK
-                        For distributed training: local_rank
-  --enable_xformers_memory_efficient_attention
-                        Whether or not to use xformers.
-  --set_grads_to_none   Save more memory by using setting grads to None instead of zero. Be aware, that this changes certain behaviors, so disable this argument if it causes any problems. More info:
-                        https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html
-  --noise_offset NOISE_OFFSET
-                        The scale of noise offset. Default: 0.1
-  --validation_guidance VALIDATION_GUIDANCE
-                        CFG value for validation images. Default: 7.5
-  --validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE
-                        CFG rescale value for validation images. Default: 0.0, max 1.0
-  --validation_randomize
-                        If supplied, validations will be random, ignoring any seeds.
-  --validation_seed VALIDATION_SEED
-                        If not supplied, the value for --seed will be used. If neither those nor --validation_randomize are supplied, a seed of zero is used.
-  --fully_unload_text_encoder
-                        If set, will fully unload the text_encoder from memory when not in use. This currently has the side effect of crashing validations, but it is useful for initiating VAE caching on GPUs that would
-                        otherwise be too small.
-  --freeze_encoder_before FREEZE_ENCODER_BEFORE
-                        When using 'before' strategy, we will freeze layers earlier than this.
-  --freeze_encoder_after FREEZE_ENCODER_AFTER
-                        When using 'after' strategy, we will freeze layers later than this.
-  --freeze_encoder_strategy FREEZE_ENCODER_STRATEGY
-                        When freezing the text_encoder, we can use the 'before', 'between', or 'after' strategy. The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen. The
                         default strategy is to freeze all layers from 17 up. This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style.
   --print_filenames     If any image files are stopping the process eg. due to corruption or truncation, this will help identify which is at fault.
   --debug_aspect_buckets
