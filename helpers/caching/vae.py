@@ -64,6 +64,20 @@ class VAECache:
         full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
 
+    def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
+        test_filepath = (
+            f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[0])[0]}.png"
+        )
+        if str(self.cache_dir) in test_filepath:
+            # replace cache_dir with instance_data_root:
+            test_filepath = test_filepath.replace(
+                self.cache_dir, self.instance_data_root
+            )
+        elif str(self.instance_data_root) not in test_filepath:
+            test_filepath = os.path.join(self.instance_data_root, test_filepath)
+
+        return test_filepath
+
     def already_cached(self, filepath: str) -> bool:
         if self.data_backend.exists(self.generate_vae_cache_filename(filepath)[0]):
             self.debug_log(f"Skipping {filepath} because it is already in the cache")
@@ -137,15 +151,16 @@ class VAECache:
             f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
         )
         cache_filenames = {
-            self.generate_vae_cache_filename(file)[1] for file in all_image_files
+            (file, self.generate_vae_cache_filename(file)[0])
+            for file in all_image_files
         }
         self.debug_log(
             f"discover_unprocessed_files found {len(cache_filenames)} cache filenames (truncated): {list(cache_filenames)[:5]}"
         )
         unprocessed_files = {
-            f"{os.path.splitext(file)[0]}.png"
+            f"{os.path.splitext(file[0])[0]}.png"
             for file in cache_filenames
-            if file not in existing_cache_files
+            if file[0] not in existing_cache_files
         }
         return list(unprocessed_files)
 
@@ -159,16 +174,24 @@ class VAECache:
         """
         Given a bucket, return the relevant files for that bucket.
         """
-        relevant_files = [
-            f
-            for f in aspect_bucket_cache[bucket]
-            if os.path.splitext(os.path.basename(f))[0] not in processed_images
-            and f in self.local_unprocessed_files
-        ]
+        relevant_files = []
+        for f in aspect_bucket_cache[bucket]:
+            if os.path.splitext(f)[0] in processed_images:
+                self.debug_log(
+                    f"Skipping {f} because it is already in the processed images list"
+                )
+                continue
+            if f not in self.local_unprocessed_files:
+                self.debug_log(
+                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                )
+                continue
+            relevant_files.append(f)
         if do_shuffle:
             shuffle(relevant_files)
         self.debug_log(
-            f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files"
+            f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files."
+            f" Our system has {len(self.local_unprocessed_files)} images in its assigned slice for processing."
         )
         return relevant_files
 
@@ -248,8 +271,15 @@ class VAECache:
     def _write_latents_in_batch(self):
         # Pull the 'filepaths' and 'latents' from self.write_queue
         filepaths, latents = [], []
-        for filepath, latent_vector in self.write_queue.get():
-            filepaths.append(filepath)
+        qlen = self.write_queue.qsize()
+        logger.debug(f"We have {qlen} latents to write to disk.")
+        for idx in range(0, qlen):
+            output_file, filepath, latent_vector = self.write_queue.get()
+            if os.path.splitext(output_file)[1] == ".png":
+                raise ValueError(
+                    f"Cannot write a latent embedding to an image path, {output_file}"
+                )
+            filepaths.append(output_file)
             latents.append(latent_vector)
         self.data_backend.write_batch(filepaths, latents)
 
@@ -261,7 +291,9 @@ class VAECache:
         """
         try:
             filepaths = []
-            for filepath, image in self.process_queue.get():
+            qlen = self.process_queue.qsize()
+            for idx in range(0, qlen):
+                filepath, image = self.process_queue.get()
                 filepaths.extend(filepath)
                 self.debug_log(f"Processing {filepath}")
                 image, crop_coordinates = MultiaspectImage.prepare_image(
@@ -284,23 +316,36 @@ class VAECache:
             ValueError: If we receive any invalid results.
         """
         try:
-            vae_input_images, vae_input_filepaths = [], []
-            for pixel_values, filepath in self.vae_input_queue.get():
-                vae_input_images.append(pixel_values)
-                vae_input_filepaths.append(filepath)
-            latents = self.encode_images(
-                vae_input_images, vae_input_filepaths, load_from_cache=False
-            )
-            if latents is None:
-                raise ValueError("Received None from encode_images")
+            qlen = self.vae_input_queue.qsize()
+            if qlen == 0:
+                return
+            while qlen > 0:
+                vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
+                for idx in range(0, min(qlen, self.vae_batch_size)):
+                    pixel_values, filepath = self.vae_input_queue.get()
+                    vae_input_images.append(pixel_values)
+                    vae_input_filepaths.append(filepath)
+                    vae_output_filepaths.append(
+                        self.generate_vae_cache_filename(filepath)[0]
+                    )
+                latents = self.encode_images(
+                    vae_input_images, vae_input_filepaths, load_from_cache=False
+                )
+                if latents is None:
+                    raise ValueError("Received None from encode_images")
+                for output_file, latent_vector, filepath in zip(
+                    vae_output_filepaths, latents, vae_input_filepaths
+                ):
+                    if latent_vector is None:
+                        raise ValueError(
+                            f"Latent vector is None for filepath {filepath}"
+                        )
+                    self.write_queue.put((output_file, filepath, latent_vector))
+                qlen = self.vae_input_queue.qsize()
         except Exception as e:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
             logging.debug(f"Error traceback: {traceback.format_exc()}")
             raise e
-        for latent_vector, filepath in zip(latents, vae_input_filepaths):
-            if latent_vector is None:
-                raise ValueError(f"Latent vector is None for filepath {filepath}")
-            self.write_queue.put((filepath, latent_vector))
 
     def read_images_in_batch(self) -> None:
         """Immediately read a batch of images.
@@ -314,16 +359,20 @@ class VAECache:
             None
         """
         filepaths = []
-        for path in self.read_queue.get():
+        qlen = self.read_queue.qsize()
+        for idx in range(0, qlen):
+            path = self.read_queue.get()
+            logger.debug(f"Read path '{path}' from read_queue.")
             filepaths.append(path)
-        batch_output = self.data_backend.read_image_batch(
+        logger.debug(f"Beginning to read images in batch: {filepaths}")
+        available_filepaths, batch_output = self.data_backend.read_image_batch(
             filepaths, delete_problematic_images=self.delete_problematic_images
         )
-        if len(batch_output) != len(filepaths):
+        if len(available_filepaths) != len(filepaths):
             logging.warning(
-                f"Received {len(batch_output)} items from the batch read, when we requested {len(filepaths)}"
+                f"Received {len(batch_output)} items from the batch read, when we requested {len(filepaths)}: {batch_output}"
             )
-        for filepath, element in batch_output:
+        for filepath, element in zip(available_filepaths, batch_output):
             if type(filepath) != str:
                 raise ValueError(
                     f"Received unknown filepath type ({type(filepath)}) value: {filepath}"
@@ -358,7 +407,9 @@ class VAECache:
                 future.result()
                 completed_futures.append(future)
             except Exception as e:
-                logging.error(f"An error occurred in a future: {e}")
+                logging.error(
+                    f"An error occurred in a future: {e}, file {e.__traceback__.tb_frame}, {e.__traceback__.tb_lineno}"
+                )
         return [f for f in futures if f not in completed_futures]
 
     def process_buckets(self, bucket_manager):
@@ -390,7 +441,9 @@ class VAECache:
                     leave=False,
                 ):
                     filepath = self._process_raw_filepath(raw_filepath)
-                    test_filepath = f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[1])[0]}.png"
+                    test_filepath = self._image_filename_from_vaecache_filename(
+                        filepath
+                    )
                     if test_filepath not in self.local_unprocessed_files:
                         self.debug_log(
                             f"Skipping {test_filepath} because it is not in local unprocessed files"
@@ -403,6 +456,7 @@ class VAECache:
                         if self.already_cached(filepath):
                             continue
                         # It does not exist. We can add it to the read queue.
+                        logger.debug(f"Adding {filepath} to the read queue.")
                         self._accumulate_read_queue(filepath)
                         # We will check to see whether the queue is ready.
                         if self.read_queue.qsize() >= self.read_batch_size:
@@ -442,17 +496,42 @@ class VAECache:
                     # Cleanly removes futures from the list, once they are completed.
                     futures = self._process_futures(futures, executor)
 
-                # Handle remainders after processing the bucket
-                if self.vae_input_queue.qsize() > 0:
-                    future_to_process = executor.submit(self._encode_images_in_batch)
-                    futures.append(future_to_process)
+                try:
+                    # Handle remainders after processing the bucket
+                    if self.read_queue.qsize() > 0:
+                        # We have an adequate number of samples to read. Let's now do that in a batch, to reduce I/O wait.
+                        future_to_read = executor.submit(self.read_images_in_batch)
+                        futures.append(future_to_read)
 
-                futures = self._process_futures(futures, executor)
+                    futures = self._process_futures(futures, executor)
 
-                # Write the remaining batches. This is not strictly necessary, since they do not need to be written with matching dimensions.
-                # However, it's simply easiest to do this now, even if we have less-than a single batch size.
-                if self.write_queue.qsize() > 0:
-                    future_to_write = executor.submit(self._write_latents_in_batch)
-                    futures.append(future_to_write)
+                    # Now we try and process the images, if we have a process batch size large enough.
+                    if self.process_queue.qsize() > 0:
+                        future_to_process = executor.submit(
+                            self._process_images_in_batch
+                        )
+                        futures.append(future_to_process)
 
-                futures = self._process_futures(futures, executor)
+                    futures = self._process_futures(futures, executor)
+
+                    if self.vae_input_queue.qsize() > 0:
+                        future_to_process = executor.submit(
+                            self._encode_images_in_batch
+                        )
+                        futures.append(future_to_process)
+
+                    futures = self._process_futures(futures, executor)
+
+                    # Write the remaining batches. This is not strictly necessary, since they do not need to be written with matching dimensions.
+                    # However, it's simply easiest to do this now, even if we have less-than a single batch size.
+                    if self.write_queue.qsize() > 0:
+                        future_to_write = executor.submit(self._write_latents_in_batch)
+                        futures.append(future_to_write)
+
+                    futures = self._process_futures(futures, executor)
+                    logger.debug(
+                        "Completed process_buckets, all futures have been returned."
+                    )
+                except Exception as e:
+                    logger.error(f"Fatal error when processing bucket {bucket}: {e}")
+                    continue

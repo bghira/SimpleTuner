@@ -49,6 +49,8 @@ transformers_logger = logging.getLogger("transformers.configuration_utils")
 transformers_logger.setLevel("ERROR")
 diffusers_logger = logging.getLogger("diffusers.configuration_utils")
 diffusers_logger.setLevel("ERROR")
+torchdistlogger = logging.getLogger("torch.distributed.nn.jit.instantiator")
+torchdistlogger.setLevel("WARNING")
 
 import warnings
 

@@ -184,7 +184,7 @@ class BucketManager:
         new_files = self._discover_new_files()
 
         if not new_files:
-            logger.info("No new files discovered. Exiting.")
+            logger.info("No new files discovered. Doing nothing.")
             return
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
@@ -336,20 +336,14 @@ class BucketManager:
         """
         Discover new files and remove images that no longer exist.
         """
-        logger.debug(f"{rank} Computing new file aspect bucket indices")
         # Discover new files and update bucket indices
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
         existing_files = StateTracker.get_image_files()
-        logger.debug(
-            f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
-        )
 
         # Update bucket indices to remove entries that no longer exist
-        logger.debug(f"{rank} Finally, we can update the bucket index")
         self.update_buckets_with_existing_files(existing_files)
-        logger.debug(f"{rank} Done updating bucket index, continuing.")
         return
 
     def _enforce_min_bucket_size(self):

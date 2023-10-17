@@ -191,6 +191,23 @@ def main():
             )
         import wandb
 
+    if (
+        hasattr(accelerator.state, "deepspeed_plugin")
+        and accelerator.state.deepspeed_plugin is not None
+    ):
+        if (
+            "gradient_accumulation_steps"
+            in accelerator.state.deepspeed_plugin.deepspeed_config
+        ):
+            args.gradient_accumulation_steps = (
+                accelerator.state.deepspeed_plugin.deepspeed_config[
+                    "gradient_accumulation_steps"
+                ]
+            )
+            logger.info(
+                f"Updated gradient_accumulation_steps to the value provided by DeepSpeed: {args.gradient_accumulation_steps}"
+            )
+
     # If passed along, set the training seed now.
     if args.seed is not None and args.seed != 0:
         set_seed(args.seed, args.seed_for_each_device)
@@ -216,7 +233,9 @@ def main():
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
-        logger.info("Enabling tf32 precision boost for NVIDIA devices.")
+        logger.info(
+            "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
+        )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
     else:
@@ -255,13 +274,10 @@ def main():
         )
     else:
         raise ValueError(f"Unsupported data backend: {args.data_backend}")
-    logger.info(f"Created {args.data_backend} data backend.")
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    logger.info(f"Loading a bucket manager")
-    logger.debug(f"{rank_info()}Beginning bucket manager stuff.")
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -282,17 +298,9 @@ def main():
             f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
             " You have to reduce your batch size, or increase your dataset size."
         )
-    logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
     if "aspect" not in args.skip_file_discovery:
         if accelerator.is_local_main_process:
-            logger.debug(
-                f"{rank_info()}Refreshing buckets.",
-            )
             bucket_manager.refresh_buckets(rank_info())
-            logger.debug(
-                f"{rank_info()}Control is returned to the main training script.",
-            )
-        logger.debug("Refreshed buckets and computed aspect ratios.")
     accelerator.wait_for_everyone()
     bucket_manager.reload_cache()
     # Now split the contents of these buckets between all processes
@@ -407,7 +415,6 @@ def main():
     text_encoder_2.requires_grad_(False)
 
     # Data loader
-    logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -436,7 +443,6 @@ def main():
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
-    logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=1,  # The sample handles batching
@@ -448,7 +454,6 @@ def main():
     )
     prompt_handler = None
     if not args.disable_compel:
-        logger.info("Initialise prompt handler")
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
@@ -1022,7 +1027,6 @@ def main():
             # Add the current batch of training data's avg luminance to a list.
             if "batch_luminance" in batch:
                 training_luminance_values.append(batch["batch_luminance"])
-
             with accelerator.accumulate(unet):
                 training_logger.debug(
                     f"Sending latent batch from pinned memory to device."

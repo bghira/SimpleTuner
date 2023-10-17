@@ -168,6 +168,9 @@ class S3DataBackend(BaseDataBackend):
         # Initialize the results list
         results = []
 
+        # Grab a timestamp for our start time.
+        start_time = time.time()
+
         # Temporarily, we do not use prefixes in S3.
         instance_data_root = None
 
@@ -181,11 +184,11 @@ class S3DataBackend(BaseDataBackend):
         prefix_dict = {}
         # Log the first few items, alphabetically sorted:
         logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} with prefix {pattern}"
+            f"Listing files in S3 bucket {self.bucket_name} with search pattern: {pattern}"
         )
 
         # Paginating over the entire bucket objects
-        for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=10000):
+        for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=1000):
             for obj in page.get("Contents", []):
                 # Filter based on the provided pattern
                 if fnmatch.fnmatch(obj["Key"], pattern):
@@ -205,6 +208,13 @@ class S3DataBackend(BaseDataBackend):
         for subdir, files in prefix_dict.items():
             results.append((subdir, [], files))
 
+        end_time = time.time()
+        total_time = end_time - start_time
+        # Log the output in n automatically human friendly manner, eg. "x minutes" or "x seconds"
+        if total_time > 120:
+            logger.debug(f"Completed file list in {total_time/60} minutes.")
+        elif total_time < 60:
+            logger.debug(f"Completed file list in {total_time} seconds.")
         return results
 
     def _convert_path_to_key(self, path: str) -> str:
