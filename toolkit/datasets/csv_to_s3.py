@@ -10,7 +10,7 @@ from tqdm import tqdm
 from requests.adapters import HTTPAdapter
 from multiprocessing import Pool
 import requests
-import helpers.log_format
+from ...helpers import log_format
 import re
 import shutil
 from botocore.config import Config
