@@ -187,6 +187,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--preserve_data_backend_cache",
+        action="store_true",
+        default=False,
+        help=(
+            "For very large cloud storage buckets that will never change, enabling this option will prevent the trainer"
+            " from scanning it at startup, by preserving the cache files that we generate."
+        ),
+    )
+    parser.add_argument(
         "--cache_dir_text",
         type=str,
         default="cache",

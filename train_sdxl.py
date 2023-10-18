@@ -154,7 +154,8 @@ def compute_null_conditioning(
 def main():
     args = parse_args()
     StateTracker.set_args(args)
-    StateTracker.delete_cache_files()
+    if not args.preserve_data_backend_cache:
+        StateTracker.delete_cache_files()
 
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
