@@ -20,7 +20,7 @@ read_timeout = 60
 timeouts = (conn_timeout, read_timeout)
 
 # Set up logging
-logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO"))
+logging.basicConfig(level=os.getenv("SIMPLETUNER_LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 connection_logger = logging.getLogger("urllib3.connectionpool")
 connection_logger.setLevel(logging.ERROR)
@@ -158,6 +158,7 @@ def fetch_image(info, args):
         else:
             pass
     except Exception as e:
+        logger.error(f"Error: {e}")
         raise e
 
 
@@ -397,6 +398,8 @@ def content_to_filename(content, args):
         # Remove anything after ' - Upscaled by'
         if "Upscaled" in filename:
             filename = filename.split(" - Upscaled by", 1)[0]
+        if "- Image #" in filename:
+            filename = filename.split("- Image #", 1)[0]
         if "--" in filename:
             # Remove anything after '--'
             filename = filename.split("--", 1)[0]
@@ -466,7 +469,7 @@ def list_all_s3_objects(s3_client, bucket_name):
     paginator = s3_client.get_paginator("list_objects_v2")
     existing_files = set()
 
-    for page in paginator.paginate(Bucket=bucket_name):
+    for page in paginator.paginate(Bucket=bucket_name, MaxKeys=1000):
         if "Contents" in page:
             for item in page["Contents"]:
                 existing_files.add(item["Key"])
@@ -554,12 +557,13 @@ def fetch_data(data, args, uri_column):
             hasattr(args, "midjourney_data_checks")
             and args.midjourney_data_checks
             and (
-                "Image #" not in row[args.caption_field]
-                or "Upscaled" in row[args.caption_field]
-                or "(fast)" in row[args.caption_field]
+                "image #" not in row[args.caption_field].lower()
+                or "upscaled" in row[args.caption_field].lower()
+                or "(fast)" in row[args.caption_field].lower()
             )
         ):
             # Midjourney's upscaler sucks. We only want single images, non-tiled.
+            logger.debug(f"Skipping: {row[args.caption_field]}")
             continue
         if new_filename not in to_fetch:
             to_fetch[new_filename] = {
@@ -568,7 +572,7 @@ def fetch_data(data, args, uri_column):
                 "args": args,
             }
 
-    logging.info("Fetching {} images...".format(len(to_fetch)))
+    logging.info(f"Fetching {len(to_fetch)} images (truncated): {list(to_fetch)[:10]}")
 
     with Pool(processes=args.num_workers) as pool:
         results = pool.starmap(
@@ -584,8 +588,9 @@ def main():
     s3_client = initialize_s3_client(args)
 
     # List existing files in the S3 bucket
-    existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
-    logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
+    existing_files = []
+    # existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
+    # logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
@@ -731,7 +736,7 @@ def main():
 
         # Fetch and process images
         to_fetch = df.to_dict(orient="records")
-        logger.info(f"Fetching {len(to_fetch)} images...")
+        logger.info(f"Fetching {len(to_fetch)} images (truncated): {to_fetch[:5]}")
         fetch_data(to_fetch, args, uri_column)
 
         # Remove source file if argument is provided
