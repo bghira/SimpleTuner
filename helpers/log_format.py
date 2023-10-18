@@ -61,3 +61,9 @@ warnings.filterwarnings(
     module="PIL",
     message="Palette images with Transparency expressed in bytes should be converted to RGBA images",
 )
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="transformers.deepspeed",
+    message="transformers.deepspeed module is deprecated and will be removed in a future version. Please import deepspeed modules directly from transformers.integrations",
+)
