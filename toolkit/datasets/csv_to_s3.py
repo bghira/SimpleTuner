@@ -589,8 +589,8 @@ def main():
 
     # List existing files in the S3 bucket
     existing_files = []
-    # existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
-    # logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
+    existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
+    logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
