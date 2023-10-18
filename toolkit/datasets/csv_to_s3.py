@@ -296,6 +296,8 @@ def parse_args():
 
 
 def get_uri_column(df):
+    if "url" in df.columns:
+        return "url"
     if "URL" in df.columns:
         return "URL"
     elif "Attachments" in df.columns:
@@ -322,9 +324,11 @@ def get_caption_column(df):
         return "top_caption"
     if "Content" in df.columns:
         return "Content"
-    elif "TEXT" in df.columns:
+    if "caption" in df.columns:
+        return "Content"
+    if "TEXT" in df.columns:
         return "TEXT"
-    elif "all_captions" in df.columns:
+    if "all_captions" in df.columns:
         return "all_captions"
 
 
@@ -673,9 +677,7 @@ def main():
             logger.info(
                 f"Applying minimum pixel area filter with threshold {minimum_pixel_area}"
             )
-            df = df[
-                df[args.width_field] * df[args.height_field] >= minimum_pixel_area
-            ]
+            df = df[df[args.width_field] * df[args.height_field] >= minimum_pixel_area]
             logger.info(f"Filtered to {len(df)} rows.")
         if "similarity" in df.columns:
             logger.info(
