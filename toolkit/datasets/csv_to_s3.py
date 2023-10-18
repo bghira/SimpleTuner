@@ -10,7 +10,6 @@ from tqdm import tqdm
 from requests.adapters import HTTPAdapter
 from multiprocessing import Pool
 import requests
-from ...helpers import log_format
 import re
 import shutil
 from botocore.config import Config
@@ -27,6 +26,35 @@ connection_logger = logging.getLogger("urllib3.connectionpool")
 connection_logger.setLevel(logging.ERROR)
 connection_logger = logging.getLogger("urllib3.connection")
 connection_logger.setLevel(logging.ERROR)
+pil_logger = logging.getLogger("PIL")
+pil_logger.setLevel(logging.INFO)
+pil_logger = logging.getLogger("PIL.Image")
+pil_logger.setLevel("ERROR")
+pil_logger = logging.getLogger("PIL.PngImagePlugin")
+pil_logger.setLevel("ERROR")
+loggers_to_silence = [
+    "botocore.hooks",
+    "botocore.auth",
+    "botocore.httpsession",
+    "botocore.parsers",
+    "botocore.retryhandler",
+    "botocore.loaders",
+    "botocore.regions",
+    "botocore.utils",
+    "botocore.client",
+    "botocore.handler",
+    "botocore.handlers",
+    "botocore.awsrequest",
+]
+
+for logger_name in loggers_to_silence:
+    logger = logging.getLogger(logger_name)
+    logger.setLevel("ERROR")
+
+# Arguably, the most interesting one:
+boto_logger = logging.getLogger("botocore.endpoint")
+boto_logger.setLevel(os.environ.get("SIMPLETUNER_AWS_LOG_LEVEL", "ERROR"))
+
 http = requests.Session()
 adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100)
 http.mount("http://", adapter)
