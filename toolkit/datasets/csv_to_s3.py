@@ -48,8 +48,8 @@ loggers_to_silence = [
 ]
 
 for logger_name in loggers_to_silence:
-    logger = logging.getLogger(logger_name)
-    logger.setLevel("ERROR")
+    _logger = logging.getLogger(logger_name)
+    _logger.setLevel("ERROR")
 
 # Arguably, the most interesting one:
 boto_logger = logging.getLogger("botocore.endpoint")
