@@ -58,7 +58,8 @@ def parse_args(input_args=None):
         choices=["leading", "linspace", "trailing"],
         help=(
             "(SDXL Only) Spacing timesteps can fundamentally alter the course of history. Er, I mean, your model weights."
-            " For all training, including epsilon, it would seem that 'trailing' is the right choice."
+            " For all training, including epsilon, it would seem that 'trailing' is the right choice. SD 2.x always uses 'trailing',"
+            " but SDXL may do better in its default state when using 'leading'."
         ),
     )
     parser.add_argument(
@@ -67,7 +68,8 @@ def parse_args(input_args=None):
         default="trailing",
         choices=["leading", "linspace", "trailing"],
         help=(
-            "(SDXL Only) The Bytedance paper on zero terminal SNR recommends inference using 'trailing'."
+            "(SDXL Only) The Bytedance paper on zero terminal SNR recommends inference using 'trailing'. SD 2.x always uses 'trailing',"
+            " but SDXL may do better in its default state when using 'leading'."
         ),
     )
     parser.add_argument(
@@ -192,7 +194,9 @@ def parse_args(input_args=None):
         default=False,
         help=(
             "For very large cloud storage buckets that will never change, enabling this option will prevent the trainer"
-            " from scanning it at startup, by preserving the cache files that we generate."
+            " from scanning it at startup, by preserving the cache files that we generate. Be careful when using this,"
+            " as, switching datasets can result in the preserved cache being used, which would be problematic."
+            " Currently, cache is not stored in the dataset itself but rather, locally. This may change in a future release."
         ),
     )
     parser.add_argument(
