@@ -51,10 +51,7 @@ def compute_time_ids(
     if original_height is None:
         raise ValueError("Original height must be specified.")
     if crop_coordinates is None:
-        crop_coordinates = (
-            StateTracker.get_args().crops_coords_top_left_h,
-            StateTracker.get_args().crops_coords_top_left_w,
-        )
+        raise ValueError("Crop coordinates were not collected during collate.")
     add_time_ids = list(
         (original_height, original_width) + tuple(crop_coordinates) + final_target_size
     )
@@ -88,7 +85,7 @@ def extract_filepaths(examples):
 def fetch_latent(fp):
     """Worker method to fetch latent for a single image."""
     debug_log(" -> pull latents from cache")
-    latent = StateTracker.get_vaecache().encode_image(None, fp)
+    latent = StateTracker.get_vaecache().retrieve_from_cache(fp)
 
     # Move to CPU and pin memory if it's not on the GPU
     debug_log(" -> push latents to GPU via pinned memory")

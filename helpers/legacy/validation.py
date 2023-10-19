@@ -113,7 +113,6 @@ def log_validations(
     SCHEDULER_NAME_MAP: dict = {},
     validation_type: str = "training",
 ):
-    ### BEGIN: Perform validation every `validation_epochs` steps
     if accelerator.is_main_process:
         logger.debug(
             f"Performing validation every {args.validation_steps} steps."
@@ -294,4 +293,3 @@ def log_validations(
                 vae = None
             del pipeline
             torch.cuda.empty_cache()
-        ### END: Perform validation every `validation_epochs` steps

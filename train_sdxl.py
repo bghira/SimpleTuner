@@ -154,7 +154,8 @@ def compute_null_conditioning(
 def main():
     args = parse_args()
     StateTracker.set_args(args)
-    StateTracker.delete_cache_files()
+    if not args.preserve_data_backend_cache:
+        StateTracker.delete_cache_files()
 
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
@@ -170,11 +171,6 @@ def main():
     StateTracker.set_accelerator(accelerator)
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=True)
-    if accelerator.state.num_processes > 1 and not args.apply_dataset_padding:
-        logger.warning(
-            f"Enabling dataset padding for multiGPU system. Supply --apply_dataset_padding parameter to disable this warning, or ignore it."
-        )
-        args.apply_dataset_padding = True
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
@@ -195,6 +191,23 @@ def main():
                 "Make sure to install wandb if you want to use it for logging during training."
             )
         import wandb
+
+    if (
+        hasattr(accelerator.state, "deepspeed_plugin")
+        and accelerator.state.deepspeed_plugin is not None
+    ):
+        if (
+            "gradient_accumulation_steps"
+            in accelerator.state.deepspeed_plugin.deepspeed_config
+        ):
+            args.gradient_accumulation_steps = (
+                accelerator.state.deepspeed_plugin.deepspeed_config[
+                    "gradient_accumulation_steps"
+                ]
+            )
+            logger.info(
+                f"Updated gradient_accumulation_steps to the value provided by DeepSpeed: {args.gradient_accumulation_steps}"
+            )
 
     # If passed along, set the training seed now.
     if args.seed is not None and args.seed != 0:
@@ -221,7 +234,9 @@ def main():
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if args.allow_tf32:
-        logger.info("Enabling tf32 precision boost for NVIDIA devices.")
+        logger.info(
+            "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
+        )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
     else:
@@ -260,13 +275,10 @@ def main():
         )
     else:
         raise ValueError(f"Unsupported data backend: {args.data_backend}")
-    logger.info(f"Created {args.data_backend} data backend.")
 
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
     # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    logger.info(f"Loading a bucket manager")
-    logger.debug(f"{rank_info()}Beginning bucket manager stuff.")
     bucket_manager = BucketManager(
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
@@ -280,7 +292,6 @@ def main():
         metadata_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
         ),
-        apply_dataset_padding=args.apply_dataset_padding or False,
         delete_problematic_images=args.delete_problematic_images or False,
     )
     if bucket_manager.has_single_underfilled_bucket():
@@ -288,77 +299,34 @@ def main():
             f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
             " You have to reduce your batch size, or increase your dataset size."
         )
-    logger.debug(f"{rank_info()}Beginning aspect bucket stuff.")
     if "aspect" not in args.skip_file_discovery:
         if accelerator.is_local_main_process:
-            logger.debug(
-                f"{rank_info()}Refreshing buckets.",
-            )
             bucket_manager.refresh_buckets(rank_info())
-            logger.debug(
-                f"{rank_info()}Control is returned to the main training script.",
-            )
-        logger.debug("Refreshed buckets and computed aspect ratios.")
     accelerator.wait_for_everyone()
     bucket_manager.reload_cache()
     # Now split the contents of these buckets between all processes
     bucket_manager.split_buckets_between_processes(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
+
     # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
-    for bucket in bucket_manager.aspect_ratio_bucket_indices:
-        print(
-            f"{rank_info()}: {len(bucket_manager.aspect_ratio_bucket_indices[bucket])} images in bucket {bucket}"
-        )
+    def print_bucket_info(bucket_manager):
+        # Print table header
+        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
+
+        # Print separator
+        print("-" * 30)
+
+        # Print each bucket's information
+        for bucket in bucket_manager.aspect_ratio_bucket_indices:
+            image_count = len(bucket_manager.aspect_ratio_bucket_indices[bucket])
+            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
+
+    print_bucket_info(bucket_manager)
 
     if len(bucket_manager) == 0:
         raise Exception(
             "No images were discovered by the bucket manager in the dataset."
-        )
-
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        logger.info(f"Loading Huggingface Hub dataset: {args.dataset_name}")
-        from datasets import load_dataset
-
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-        )
-
-    # 6. Get the column names for input/target.
-    if hasattr(args, "dataset_name") and args.dataset_name is not None:
-        raise ValueError("Huggingface datasets are not currently supported.")
-        # Preprocessing the datasets.
-        # We need to tokenize inputs and targets.
-        column_names = dataset["train"].column_names
-        dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
-        if args.image_column is None:
-            image_column = (
-                dataset_columns[0] if dataset_columns is not None else column_names[0]
-            )
-        else:
-            image_column = args.image_column
-            if image_column not in column_names:
-                raise ValueError(
-                    f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
-                )
-        if args.image_prompt_column is None:
-            image_prompt_column = (
-                dataset_columns[1] if dataset_columns is not None else column_names[1]
-            )
-        else:
-            image_prompt_column = args.image_prompt_column
-            if image_prompt_column not in column_names:
-                raise ValueError(
-                    f"--image_prompt_column' value '{args.image_prompt_column}' needs to be one of: {', '.join(column_names)}"
-                )
-    else:
-        logger.info(
-            "Using SimpleTuner dataset layout, instead of huggingface --dataset layout."
         )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -448,7 +416,6 @@ def main():
     text_encoder_2.requires_grad_(False)
 
     # Data loader
-    logger.info("Creating dataset iterator object")
     train_dataset = MultiAspectDataset(
         bucket_manager=bucket_manager,
         data_backend=data_backend,
@@ -457,10 +424,8 @@ def main():
         size=args.resolution,
         size_type=args.resolution_type,
         print_names=args.print_filenames or False,
-        use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
-        caption_dropout_interval=args.caption_dropout_interval,
         use_precomputed_token_ids=True,
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy,
@@ -479,7 +444,6 @@ def main():
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
-    logger.info("Plugging sampler into dataloader")
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=1,  # The sample handles batching
@@ -491,7 +455,6 @@ def main():
     )
     prompt_handler = None
     if not args.disable_compel:
-        logger.info("Initialise prompt handler")
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
@@ -817,7 +780,7 @@ def main():
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
-    disable_accelerator = os.environ.get('SIMPLETUNER_DISABLE_ACCELERATOR', False)
+    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
         unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(
@@ -1065,7 +1028,6 @@ def main():
             # Add the current batch of training data's avg luminance to a list.
             if "batch_luminance" in batch:
                 training_luminance_values.append(batch["batch_luminance"])
-
             with accelerator.accumulate(unet):
                 training_logger.debug(
                     f"Sending latent batch from pinned memory to device."

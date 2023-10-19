@@ -167,6 +167,7 @@ def main(args):
             raise ImportError(
                 "Make sure to install wandb if you want to use it for logging during training."
             )
+        import wandb
 
     # Currently, it's not possible to do gradient accumulation when training two models with accelerate.accumulate
     # This will be enabled soon in accelerate. For now, we don't allow gradient accumulation when training two models.
@@ -191,17 +192,12 @@ def main(args):
 
     # Load the tokenizer
     global tokenizer
-    if args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.tokenizer_name, revision=args.revision, use_fast=False
-        )
-    elif args.pretrained_model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer",
-            revision=args.revision,
-            use_fast=False,
-        )
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.pretrained_model_name_or_path,
+        subfolder="tokenizer",
+        revision=args.revision,
+        use_fast=False,
+    )
     if not tokenizer:
         raise Exception("Failed to load tokenizer.")
 
@@ -466,11 +462,9 @@ def main(args):
         size=args.resolution,
         size_type=args.resolution_type,
         print_names=args.print_filenames or False,
-        use_original_images=bool(args.use_original_images),
         prepend_instance_prompt=args.prepend_instance_prompt or False,
         use_captions=not args.only_instance_prompt or False,
         use_precomputed_token_ids=False,
-        caption_dropout_interval=args.caption_dropout_interval,
         debug_dataset_loader=args.debug_dataset_loader,
         caption_strategy=args.caption_strategy,
         return_tensor=True,
@@ -972,7 +966,7 @@ def main(args):
 
                 if args.snr_gamma is None:
                     training_logger.debug(f"Calculating loss")
-                    loss = F.mse_loss(
+                    loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
                 else:
@@ -1207,7 +1201,7 @@ def main(args):
             ).repo_id
             save_model_card(
                 repo_id,
-                images=images,
+                images=None,
                 base_model=args.pretrained_model_name_or_path,
                 train_text_encoder=args.train_text_encoder,
                 prompt=args.instance_prompt,
@@ -1249,7 +1243,7 @@ def main(args):
                         pipeline(
                             prompt_embeds=current_validation_prompt_embeds,
                             negative_prompt_embeds=validation_negative_prompt_embeds,
-                            num_images_per_prompt=args.num_validation_images,
+                            num_images_per_prompt=1,
                             num_inference_steps=args.validation_num_inference_steps,
                             guidance_scale=args.validation_guidance,
                             guidance_rescale=args.validation_guidance_rescale,

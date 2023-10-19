@@ -110,7 +110,6 @@ export TRAINER_EXTRA_ARGS="--allow_tf32 --use_8bit_adam --use_ema"
 # Reproducible training. Set to -1 to disable.
 export TRAINING_SEED=420420420
 
-# Below here, these are pretty sketchy to change. --use_original_images can be removed to enable image cropping. Not tested for SDXL.
 # Mixed precision is the best. You honestly might need to YOLO it in fp16 mode for Google Colab type setups.
 export MIXED_PRECISION="bf16"                # Might not be supported on all GPUs. fp32 will be needed for others.
 
@@ -118,7 +117,7 @@ export MIXED_PRECISION="bf16"                # Might not be supported on all GPU
 export TRAINING_NUM_PROCESSES=1
 export TRAINING_NUM_MACHINES=1
 export ACCELERATE_EXTRA_ARGS=""                          # --multi_gpu or other similar flags for huggingface accelerate
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --enable_xformers_memory_efficient_attention --use_original_images=true --set_grads_to_none"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --enable_xformers_memory_efficient_attention --set_grads_to_none"
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --gradient_checkpointing --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS}"
 
 # With Pytorch 2.1, you might have pretty good luck here.

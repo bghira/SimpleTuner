@@ -6,6 +6,8 @@ from pathlib import PosixPath
 import concurrent.futures
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
+from PIL import Image
+from io import BytesIO
 
 loggers_to_silence = [
     "botocore.hooks",
@@ -93,6 +95,9 @@ class S3DataBackend(BaseDataBackend):
                     Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
                 )
                 return response["Body"].read()
+            except self.client.exceptions.NoSuchKey:
+                logger.debug(f'File "{s3_key}" does not exist in S3 bucket.')
+                return None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
             except Exception as e:
@@ -166,6 +171,9 @@ class S3DataBackend(BaseDataBackend):
         # Initialize the results list
         results = []
 
+        # Grab a timestamp for our start time.
+        start_time = time.time()
+
         # Temporarily, we do not use prefixes in S3.
         instance_data_root = None
 
@@ -179,11 +187,11 @@ class S3DataBackend(BaseDataBackend):
         prefix_dict = {}
         # Log the first few items, alphabetically sorted:
         logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} with prefix {pattern}"
+            f"Listing files in S3 bucket {self.bucket_name} with search pattern: {pattern}"
         )
 
         # Paginating over the entire bucket objects
-        for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=10000):
+        for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=1000):
             for obj in page.get("Contents", []):
                 # Filter based on the provided pattern
                 if fnmatch.fnmatch(obj["Key"], pattern):
@@ -203,6 +211,13 @@ class S3DataBackend(BaseDataBackend):
         for subdir, files in prefix_dict.items():
             results.append((subdir, [], files))
 
+        end_time = time.time()
+        total_time = end_time - start_time
+        # Log the output in n automatically human friendly manner, eg. "x minutes" or "x seconds"
+        if total_time > 120:
+            logger.debug(f"Completed file list in {total_time/60} minutes.")
+        elif total_time < 60:
+            logger.debug(f"Completed file list in {total_time} seconds.")
         return results
 
     def _convert_path_to_key(self, path: str) -> str:
@@ -218,10 +233,42 @@ class S3DataBackend(BaseDataBackend):
         return path.split("/")[-1]
 
     def read_image(self, s3_key):
-        from PIL import Image
-        from io import BytesIO
-
         return Image.open(BytesIO(self.read(s3_key)))
+
+    def read_image_batch(self, s3_keys: list, delete_problematic_images: bool = False):
+        """
+        Return a list of Image objects, given a list of S3 keys.
+        This makes use of read_batch for efficiency.
+        Args:
+            s3_keys (list): List of S3 keys to read. May not be included in the output, if it does not exist, or had an error.
+            delete_problematic_images (bool, optional): Whether to delete problematic images. Defaults to False.
+
+        Returns:
+            tuple(list, list): (available_keys, output_images)
+        """
+        batch = self.read_batch(s3_keys)
+        output_images = []
+        available_keys = []
+        for s3_key, data in zip(s3_keys, batch):
+            try:
+                image_data = Image.open(BytesIO(data))
+                if image_data is None:
+                    logger.warning(f"Unable to load image '{s3_key}', skipping.")
+                    continue
+                output_images.append(image_data)
+                available_keys.append(s3_key)
+            except Exception as e:
+                if delete_problematic_images:
+                    logger.warning(
+                        f"Deleting image '{s3_key}', because --delete_problematic_images is provided. Error: {e}"
+                    )
+                    self.delete(s3_key)
+                else:
+                    logger.warning(
+                        f"A problematic image {s3_key} is detected, but we are not allowed to remove it, because --delete_problematic_image is not provided."
+                        f" Please correct this manually. Error: {e}"
+                    )
+        return (available_keys, output_images)
 
     def create_directory(self, directory_path):
         # Since S3 doesn't have a traditional directory structure, this is just a pass-through

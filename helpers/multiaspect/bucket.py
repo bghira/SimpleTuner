@@ -25,12 +25,10 @@ class BucketManager:
         batch_size: int,
         resolution: float,
         resolution_type: str,
-        apply_dataset_padding: bool = False,
         delete_problematic_images: bool = False,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
-        self.apply_dataset_padding = apply_dataset_padding
         self.batch_size = batch_size
         self.instance_data_root = Path(instance_data_root)
         self.cache_file = Path(cache_file)
@@ -186,7 +184,7 @@ class BucketManager:
         new_files = self._discover_new_files()
 
         if not new_files:
-            logger.info("No new files discovered. Exiting.")
+            logger.info("No new files discovered. Doing nothing.")
             return
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
@@ -338,20 +336,14 @@ class BucketManager:
         """
         Discover new files and remove images that no longer exist.
         """
-        logger.debug(f"{rank} Computing new file aspect bucket indices")
         # Discover new files and update bucket indices
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
         existing_files = StateTracker.get_image_files()
-        logger.debug(
-            f"{rank} Discovering existing files for refresh_buckets, so that we can remove files from the aspect bucket cache if they no longer exist"
-        )
 
         # Update bucket indices to remove entries that no longer exist
-        logger.debug(f"{rank} Finally, we can update the bucket index")
         self.update_buckets_with_existing_files(existing_files)
-        logger.debug(f"{rank} Done updating bucket index, continuing.")
         return
 
     def _enforce_min_bucket_size(self):
@@ -402,7 +394,7 @@ class BucketManager:
                 logger.warning(
                     f"Image {image_path} too small: DELETING image and continuing search."
                 )
-                self.data_backend.remove(image_path)
+                self.data_backend.delete(image_path)
             except Exception as e:
                 logger.debug(
                     f"Image {image_path} was already deleted. Another GPU must have gotten to it."

@@ -49,6 +49,8 @@ transformers_logger = logging.getLogger("transformers.configuration_utils")
 transformers_logger.setLevel("ERROR")
 diffusers_logger = logging.getLogger("diffusers.configuration_utils")
 diffusers_logger.setLevel("ERROR")
+torchdistlogger = logging.getLogger("torch.distributed.nn.jit.instantiator")
+torchdistlogger.setLevel("WARNING")
 
 import warnings
 
@@ -58,4 +60,10 @@ warnings.filterwarnings(
     category=UserWarning,
     module="PIL",
     message="Palette images with Transparency expressed in bytes should be converted to RGBA images",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module="transformers.deepspeed",
+    message="transformers.deepspeed module is deprecated and will be removed in a future version. Please import deepspeed modules directly from transformers.integrations",
 )

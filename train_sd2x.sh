@@ -53,16 +53,8 @@ train_sd21.py \
 --train_text_encoder --text_encoder_limit="${TEXT_ENCODER_LIMIT}" \
 --freeze_encoder --freeze_encoder_strategy="${TEXT_ENCODER_FREEZE_STRATEGY}" --freeze_encoder_before="${TEXT_ENCODER_FREEZE_BEFORE}" --freeze_encoder_after="${TEXT_ENCODER_FREEZE_AFTER}" \
 --gradient_accumulation_steps="${GRADIENT_ACCUMULATION_STEPS}" --gradient_checkpointing \
---use_original_images="${USE_ORIGINAL_IMAGES}" \
 --seen_state_path="${SEEN_STATE_PATH}" \
 --state_path="${STATE_PATH}" \
---caption_dropout_interval="${CAPTION_DROPOUT_INTERVAL}" \
+--caption_dropout_probability="${CAPTION_DROPOUT_PROBABILITY}" \
 --caption_strategy="${CAPTION_STRATEGY}" \
 --data_backend="${DATA_BACKEND}" ${TRAINER_EXTRA_ARGS}
-
-
-#--prepend_instance_prompt --instance_prompt="${INSTANCE_PROMPT}" \
-#--max_train_steps=${MAX_NUM_STEPS} \
-#--print_filenames \
-
-#--lr_warmup_steps=${LR_WARMUP_STEPS} \
