@@ -62,8 +62,8 @@ EMA (exponential moving average) weights are a memory-heavy affair, but provide 
 ### SDXL
 
 * A100-80G (EMA, large batches)
-* A6000 48G (EMA@768px, no EMA@1024px)
-* A100 40G (no EMA@1024px, no EMA@768px, EMA@512px)
+* A6000-48G (EMA@768px, no EMA@1024px)
+* A100-40G (no EMA@1024px, no EMA@768px, EMA@512px)
 
 ### Stable Diffusion 2.x
 
