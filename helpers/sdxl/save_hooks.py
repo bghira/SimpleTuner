@@ -1,6 +1,6 @@
 from diffusers.training_utils import EMAModel
 from diffusers import UNet2DConditionModel
-import os, logging
+import os, logging, shutil
 
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -13,14 +13,28 @@ class SDXLSaveHook:
         self.accelerator = accelerator
 
     def save_model_hook(self, models, weights, output_dir):
+        # Create a temporary directory for atomic saves
+        temporary_dir = output_dir.replace("checkpoint", "temporary")
+        os.makedirs(temporary_dir, exist_ok=True)
+
         if self.args.use_ema:
-            self.ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
+            self.ema_unet.save_pretrained(os.path.join(temporary_dir, "unet_ema"))
 
-        for i, model in enumerate(models):
-            model.save_pretrained(os.path.join(output_dir, "unet"))
+        for model in models:
+            model.save_pretrained(os.path.join(temporary_dir, "unet"))
+            weights.pop()  # Pop the last weight
 
-            # make sure to pop weight so that corresponding model is not saved again
-            weights.pop()
+        # Copy contents of temporary directory to output directory
+        for item in os.listdir(temporary_dir):
+            s = os.path.join(temporary_dir, item)
+            d = os.path.join(output_dir, item)
+            if os.path.isdir(s):
+                shutil.copytree(s, d, dirs_exist_ok=True)  # Python 3.8+
+            else:
+                shutil.copy2(s, d)
+
+        # Remove the temporary directory
+        shutil.rmtree(temporary_dir)
 
     def load_model_hook(self, models, input_dir):
         if self.args.use_ema:
