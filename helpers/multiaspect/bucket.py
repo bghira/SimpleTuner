@@ -36,9 +36,7 @@ class BucketManager:
         self.aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
         self.instance_images_path = set()
-        # Initialize a multiprocessing.Manager dict for seen_images
-        manager = Manager()
-        self.seen_images = manager.dict()
+        self.seen_images = {}
         self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
