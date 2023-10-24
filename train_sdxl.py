@@ -765,7 +765,10 @@ def main():
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
         ema_unet = EMAModel(
-            unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
+            unet.parameters(),
+            model_cls=UNet2DConditionModel,
+            model_config=unet.config,
+            decay=args.ema_decay,
         )
         logger.info("EMA model creation complete.")
 
@@ -914,7 +917,6 @@ def main():
     lr = 0.0
     global_step = 0
     first_epoch = 0
-    resume_step = 0
     resume_global_step = 0
     scheduler_kwargs = {}
     accelerator.wait_for_everyone()
@@ -938,12 +940,20 @@ def main():
         else:
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            # If we use a constant LR, we can update that now.
+            if args.lr_scheduler == "constant":
+                lr_scheduler = get_scheduler(
+                    "constant",
+                    optimizer=optimizer,
+                    num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+                )
+
             custom_balanced_sampler.load_states(
                 state_path=os.path.join(args.output_dir, path, "training_state.json"),
             )
             resume_global_step = global_step = int(path.split("-")[1])
             logger.info(
-                f"Basically, we have resume_step {resume_step} after considering"
+                f"Basically, we have resume_global_step {resume_global_step} after considering"
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )

@@ -617,7 +617,10 @@ def main(args):
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
         ema_unet = EMAModel(
-            unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
+            unet.parameters(),
+            model_cls=UNet2DConditionModel,
+            model_config=unet.config,
+            decay=args.ema_decay,
         )
         logger.info("EMA model creation complete.")
 

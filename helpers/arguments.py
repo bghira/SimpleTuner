@@ -495,6 +495,15 @@ def parse_args(input_args=None):
         help="Whether to use EMA (exponential moving average) model.",
     )
     parser.add_argument(
+        "--ema_decay",
+        type=float,
+        default=0.995,
+        help=(
+            "The closer to 0.9999 this gets, the less updates will occur over time. Setting it to a lower value, such as 0.990,"
+            " will allow greater influence of later updates."
+        ),
+    )
+    parser.add_argument(
         "--non_ema_revision",
         type=str,
         default=None,
