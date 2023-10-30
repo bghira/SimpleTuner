@@ -590,7 +590,7 @@ def main(args):
             optimizer=optimizer,
             T_0=args.lr_warmup_steps * accelerator.num_processes,
             T_mult=args.lr_num_cycles,
-            eta_min=args.learning_rate_end,
+            eta_min=args.lr_end,
             last_epoch=-1,
         )
     elif args.lr_scheduler == "polynomial":
@@ -598,7 +598,7 @@ def main(args):
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
             num_training_steps=args.max_train_steps * accelerator.num_processes,
-            lr_end=args.learning_rate_end,
+            lr_end=args.lr_end,
             power=args.lr_power,
             last_epoch=-1,
         )
