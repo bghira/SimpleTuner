@@ -125,6 +125,10 @@ if [ -z "$RESOLUTION_TYPE" ]; then
     printf "RESOLUTION_TYPE not set, defaulting to pixel.\n"
     export RESOLUTION_TYPE="pixel"
 fi
+if [ -z "$LR_WARMUP_STEPS" ]; then
+    printf "LR_WARMUP_STEPS not set, defaulting to 0.\n"
+    export LR_WARMUP_STEPS=0
+fi
 if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
     # We had no value for protecting the folders, so we nuke them!
     echo "Deleting Jupyter notebook folders in 5 seconds if you do not cancel out."
@@ -152,7 +156,7 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
 --pretrained_model_name_or_path="${MODEL_NAME}" \
 --resume_from_checkpoint="${RESUME_CHECKPOINT}" \
 --num_train_epochs=${NUM_EPOCHS} --max_train_steps=${MAX_NUM_STEPS} \
---learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" \
+--learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
 --instance_data_dir="${INSTANCE_DIR}" --seen_state_path="${SEEN_STATE_PATH}" --state_path="${STATE_PATH}" --output_dir="${OUTPUT_DIR}" \
 ${DEBUG_EXTRA_ARGS}	--mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
 --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
