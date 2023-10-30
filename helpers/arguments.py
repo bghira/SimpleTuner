@@ -457,7 +457,7 @@ def parse_args(input_args=None):
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
-        "--scale_lr",
+        "--lr_scale",
         action="store_true",
         default=False,
         help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
@@ -904,7 +904,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--learning_rate_end",
+        "--lr_end",
         type=str,
         default="4e-7",
         help="A polynomial learning rate will end up at this value after the specified number of warmup steps.",

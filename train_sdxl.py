@@ -244,8 +244,8 @@ def main():
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
 
-    if args.scale_lr:
-        logger.info(f"Scaling learning rate ({args.learning_rate}), due to --scale_lr")
+    if args.lr_scale:
+        logger.info(f"Scaling learning rate ({args.learning_rate}), due to --lr_scale")
         args.learning_rate = (
             args.learning_rate
             * args.gradient_accumulation_steps
@@ -1206,6 +1206,7 @@ def main():
                     )
                 logs = {
                     "train_loss": train_loss,
+                    "optimization_loss": loss,
                     "learning_rate": lr,
                     "epoch": epoch,
                 }

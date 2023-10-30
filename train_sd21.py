@@ -294,7 +294,7 @@ def main(args):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    if args.scale_lr:
+    if args.lr_scale:
         args.learning_rate = (
             args.learning_rate
             * args.gradient_accumulation_steps
