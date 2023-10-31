@@ -186,8 +186,9 @@ class CosineAnnealingWarmRestarts(LRScheduler):
         ]
 
         # Debugging print statements
-        print(f"T_cur: {self.T_cur}, T_i: {self.T_i}")
-        print(f"Learning rates: {lrs}")
+        if self.verbose:
+            print(f"T_cur: {self.T_cur}, T_i: {self.T_i}")
+            print(f"Learning rates: {lrs}")
 
         return lrs
 
@@ -231,7 +232,7 @@ class CosineAnnealingWarmRestarts(LRScheduler):
         with _enable_get_lr_call(self):
             for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
                 param_group, lr = data
-                param_group['lr'] = lr
+                param_group['lr'] = math.floor(lr * 1e9) / 1e9
                 self.print_lr(self.verbose, i, lr, epoch)
 
         self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
