@@ -177,13 +177,19 @@ class CosineAnnealingWarmRestarts(LRScheduler):
                 UserWarning,
             )
 
-        return [
+        lrs = [
             self.eta_min
             + (base_lr - self.eta_min)
             * (1 + math.cos(math.pi * self.T_cur / self.T_i))
             / 2
             for base_lr in self.base_lrs
         ]
+
+        # Debugging print statements
+        print(f"T_cur: {self.T_cur}, T_i: {self.T_i}")
+        print(f"Learning rates: {lrs}")
+
+        return lrs
 
     def step(self, epoch=None):
         if epoch is None and self.last_epoch < 0:
