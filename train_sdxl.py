@@ -734,9 +734,9 @@ def main():
 
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
-            T_0=args.lr_warmup_steps * accelerator.num_processes,
-            T_mult=1,
-            eta_min=args.lr_end,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
             last_epoch=-1,
         )
     elif args.lr_scheduler == "polynomial":
