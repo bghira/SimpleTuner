@@ -1015,7 +1015,7 @@ def main():
         )
         current_epoch = epoch
         if args.lr_scheduler == "cosine_annealing_warm_restarts":
-            scheduler_kwargs["epoch"] = epoch
+            scheduler_kwargs["epoch"] = epoch + batch / len(bucket_manager)
         unet.train()
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
