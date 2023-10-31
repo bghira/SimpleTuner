@@ -210,14 +210,6 @@ class CosineAnnealingWarmRestarts(LRScheduler):
                 self.T_cur = epoch
         self.last_epoch = epoch
 
-        with _enable_get_lr_call(self):
-            for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
-                param_group, lr = data
-                param_group['lr'] = lr
-                self.print_lr(self.verbose, i, lr, epoch)
-
-        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
-
         class _enable_get_lr_call:
             def __init__(self, o):
                 self.o = o
@@ -233,7 +225,7 @@ class CosineAnnealingWarmRestarts(LRScheduler):
         with _enable_get_lr_call(self):
             for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
                 param_group, lr = data
-                param_group["lr"] = lr
+                param_group['lr'] = lr
                 self.print_lr(self.verbose, i, lr, epoch)
 
-        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
