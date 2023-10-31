@@ -236,3 +236,16 @@ class CosineAnnealingWarmRestarts(LRScheduler):
                 self.print_lr(self.verbose, i, lr, epoch)
 
         self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
+        
+    def print_lr(self, is_verbose, group, lr, epoch=None):
+        """Display the current learning rate.
+        """
+        if is_verbose:
+            if epoch is None:
+                print('Adjusting learning rate'
+                      ' of group {} to {:.8e}.'.format(group, lr))
+            else:
+                epoch_str = ("%.2f" if isinstance(epoch, float) else
+                             "%.5d") % epoch
+                print('Epoch {}: adjusting learning rate'
+                      ' of group {} to {:.8e}.'.format(epoch_str, group, lr))
