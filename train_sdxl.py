@@ -730,7 +730,7 @@ def main():
             eta_min (float, optional) – Minimum learning rate. Default: 0.
 
         """
-        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+        from helpers.training.custom_schedule import CosineAnnealingWarmRestarts
 
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
@@ -738,6 +738,8 @@ def main():
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_epoch=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
         )
     elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
