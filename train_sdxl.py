@@ -1014,11 +1014,11 @@ def main():
             f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
         )
         current_epoch = epoch
-        if args.lr_scheduler == "cosine_annealing_warm_restarts":
-            scheduler_kwargs["epoch"] = epoch + batch / len(bucket_manager)
         unet.train()
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
+            if args.lr_scheduler == "cosine_annealing_warm_restarts":
+                scheduler_kwargs["epoch"] = epoch + step / len(bucket_manager)
             if accelerator.is_main_process:
                 progress_bar.set_description(
                     f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
