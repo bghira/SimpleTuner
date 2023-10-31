@@ -186,23 +186,6 @@ class CosineAnnealingWarmRestarts(LRScheduler):
         ]
 
     def step(self, epoch=None):
-        """Step should be called after every batch update
-
-        Example:
-            >>> # xdoctest: +SKIP("Undefined vars")
-            >>> scheduler = CosineAnnealingWarmRestarts(optimizer, T_0, T_mult)
-            >>> iters = len(dataloader)
-            >>> for epoch in range(20):
-            >>>     for i, sample in enumerate(dataloader):
-            >>>         inputs, labels = sample['inputs'], sample['labels']
-            >>>         optimizer.zero_grad()
-            >>>         outputs = net(inputs)
-            >>>         loss = criterion(outputs, labels)
-            >>>         loss.backward()
-            >>>         optimizer.step()
-            >>>         scheduler.step(epoch + i / iters)
-        """
-
         if epoch is None and self.last_epoch < 0:
             epoch = 0
 
@@ -214,26 +197,26 @@ class CosineAnnealingWarmRestarts(LRScheduler):
                 self.T_i = self.T_i * self.T_mult
         else:
             if epoch < 0:
-                raise ValueError(
-                    "Expected non-negative epoch, but got {}".format(epoch)
-                )
+                raise ValueError("Expected non-negative epoch, but got {}".format(epoch))
             if epoch >= self.T_0:
                 if self.T_mult == 1:
                     self.T_cur = epoch % self.T_0
                 else:
-                    n = int(
-                        math.log(
-                            (epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult
-                        )
-                    )
-                    self.T_cur = epoch - self.T_0 * (self.T_mult**n - 1) / (
-                        self.T_mult - 1
-                    )
+                    n = int(math.log((epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult))
+                    self.T_cur = epoch - self.T_0 * (self.T_mult ** n - 1) / (self.T_mult - 1)
                     self.T_i = self.T_0 * self.T_mult ** (n)
             else:
                 self.T_i = self.T_0
                 self.T_cur = epoch
         self.last_epoch = epoch
+
+        with _enable_get_lr_call(self):
+            for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
+                param_group, lr = data
+                param_group['lr'] = lr
+                self.print_lr(self.verbose, i, lr, epoch)
+
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
         class _enable_get_lr_call:
             def __init__(self, o):
