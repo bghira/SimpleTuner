@@ -735,7 +735,7 @@ def main():
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
             T_0=args.lr_warmup_steps * accelerator.num_processes,
-            T_mult=args.lr_num_cycles,
+            T_mult=1,
             eta_min=args.lr_end,
             last_epoch=-1,
         )
@@ -940,6 +940,11 @@ def main():
         else:
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            custom_balanced_sampler.load_states(
+                state_path=os.path.join(args.output_dir, path, "training_state.json"),
+            )
+            resume_global_step = global_step = int(path.split("-")[1])
+
             # If we use a constant LR, we can update that now.
             if args.lr_scheduler == "constant":
                 lr_scheduler = get_scheduler(
@@ -948,10 +953,6 @@ def main():
                     num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
                 )
 
-            custom_balanced_sampler.load_states(
-                state_path=os.path.join(args.output_dir, path, "training_state.json"),
-            )
-            resume_global_step = global_step = int(path.split("-")[1])
             logger.info(
                 f"Basically, we have resume_global_step {resume_global_step} after considering"
                 f" {num_update_steps_per_epoch} steps per epoch and"
