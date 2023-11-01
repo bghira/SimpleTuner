@@ -895,17 +895,17 @@ def main(args):
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
-                noise = None
+                noise = torch.randn_like(latents)
                 if args.offset_noise:
-                    noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
-                        latents.shape[0], latents.shape[1], 1, 1, device=latents.device
-                    )
+                    if args.noise_offset_probability == 1.0 or random.random() < args.noise_offset_probability:
+                        noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
+                            latents.shape[0], latents.shape[1], 1, 1, device=latents.device
+                        )
                 else:
                     noise = torch.randn_like(latents)
-                if args.input_pertubation:
-                    new_noise = noise + args.input_pertubation * torch.randn_like(noise)
-                elif noise is None:
-                    noise = torch.randn_like(latents)
+                if args.input_perturbation:
+                    if args.input_perturbation_probability == 1.0 or random.random() < args.input_perturbation_probability:
+                        noise = noise + args.input_perturbation * torch.randn_like(noise)
 
                 bsz = latents.shape[0]
                 logger.debug(f"Working on batch size: {bsz}")
@@ -918,12 +918,7 @@ def main(args):
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                if args.input_pertubation:
-                    noisy_latents = noise_scheduler.add_noise(
-                        latents, new_noise, timesteps
-                    )
-                else:
-                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = batch["prompt_embeds"]
