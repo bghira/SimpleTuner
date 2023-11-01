@@ -1059,7 +1059,7 @@ def main():
                 if args.input_perturbation:
                     if args.input_perturbation_probability == 1.0 or random.random() < args.input_perturbation_probability:
                         noise = noise + args.input_perturbation * torch.randn_like(noise)
-                elif noise is None:
+                if noise is None:
                     noise = torch.randn_like(latents)
 
                 bsz = latents.shape[0]
