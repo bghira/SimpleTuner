@@ -759,6 +759,15 @@ def parse_args(input_args=None):
         help="The scale of noise offset. Default: 0.1",
     )
     parser.add_argument(
+        "--noise_offset_probability",
+        type=float,
+        default=0.25,
+        help=(
+            "When training with --offset_noise, the value of --noise_offset will only be applied probabilistically."
+            " The default behaviour is for offset noise (if enabled) to be applied 25 percent of the time."
+        )
+    )
+    parser.add_argument(
         "--validation_guidance",
         type=float,
         default=7.5,
@@ -873,10 +882,19 @@ def parse_args(input_args=None):
         help="Caption dropout probability.",
     )
     parser.add_argument(
-        "--input_pertubation",
+        "--input_perturbation",
         type=float,
         default=0,
         help="The scale of input pretubation. Recommended 0.1.",
+    )
+    parser.add_argument(
+        "--input_perturbation_probability",
+        type=float,
+        default=0.25,
+        help=(
+            "While input perturbation can help with training convergence, having it applied all the time is likely damaging."
+            " When this value is less than 1.0, any perturbed noise will be applied probabilistically. Default: 0.25"
+        )
     )
     parser.add_argument(
         "--delete_unwanted_images",
