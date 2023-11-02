@@ -737,7 +737,7 @@ def main():
             T_0=int(args.lr_warmup_steps * accelerator.num_processes),
             T_mult=int(1),
             eta_min=float(args.lr_end),
-            last_epoch=-1,
+            last_step=-1,
             verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
             == "true",
         )
@@ -954,7 +954,8 @@ def main():
                     optimizer=optimizer,
                     num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
                 )
-
+            if hasattr(lr_scheduler, "last_step"):
+                lr_scheduler.last_step = resume_global_step
             logger.info(
                 f"Basically, we have resume_global_step {resume_global_step} after considering"
                 f" {num_update_steps_per_epoch} steps per epoch and"
