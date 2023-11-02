@@ -1020,7 +1020,7 @@ def main():
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
             if args.lr_scheduler == "cosine_annealing_warm_restarts":
-                scheduler_kwargs["epoch"] = epoch + step / len(bucket_manager)
+                scheduler_kwargs["step"] = global_step
             if accelerator.is_main_process:
                 progress_bar.set_description(
                     f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
@@ -1050,15 +1050,29 @@ def main():
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
                 if args.offset_noise:
-                    if args.noise_offset_probability == 1.0 or random.random() < args.noise_offset_probability:
-                        noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
-                            latents.shape[0], latents.shape[1], 1, 1, device=latents.device
+                    if (
+                        args.noise_offset_probability == 1.0
+                        or random.random() < args.noise_offset_probability
+                    ):
+                        noise = torch.randn_like(
+                            latents
+                        ) + args.noise_offset * torch.randn(
+                            latents.shape[0],
+                            latents.shape[1],
+                            1,
+                            1,
+                            device=latents.device,
                         )
                 else:
                     noise = torch.randn_like(latents)
                 if args.input_perturbation:
-                    if args.input_perturbation_probability == 1.0 or random.random() < args.input_perturbation_probability:
-                        noise = noise + args.input_perturbation * torch.randn_like(noise)
+                    if (
+                        args.input_perturbation_probability == 1.0
+                        or random.random() < args.input_perturbation_probability
+                    ):
+                        noise = noise + args.input_perturbation * torch.randn_like(
+                            noise
+                        )
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
