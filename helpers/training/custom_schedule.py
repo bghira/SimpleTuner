@@ -163,12 +163,17 @@ class CosineAnnealingWarmRestarts(LRScheduler):
         T_mult=1,
         eta_min=0,
         last_step=-1,
+        last_epoch=-1,
         verbose=False,
     ):
         if T_0 <= 0 or not isinstance(T_0, int):
             raise ValueError(f"Expected positive integer T_0, but got {T_0}")
         if T_mult < 1 or not isinstance(T_mult, int):
             raise ValueError(f"Expected integer T_mult >= 1, but got {T_mult}")
+        if last_epoch != -1 and last_step != -1:
+            last_epoch = last_step
+        elif last_epoch != -1 and last_step == -1:
+            last_step = last_epoch
         self.T_0 = T_0
         self.steps_per_epoch = steps_per_epoch
         self.T_i = T_0
