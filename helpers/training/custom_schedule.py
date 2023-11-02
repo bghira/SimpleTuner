@@ -159,7 +159,7 @@ class CosineAnnealingWarmRestarts(LRScheduler):
         self,
         optimizer,
         T_0,
-        steps_per_epoch,
+        steps_per_epoch=-1,
         T_mult=1,
         eta_min=0,
         last_step=-1,
