@@ -383,51 +383,28 @@ def content_to_filename(content, args):
     replacing non-alphanumeric characters and spaces, converting to lowercase,
     removing leading/trailing underscores, and limiting filename length to 128.
     """
-    # Remove URLs
     logger.debug(f"Converting content to filename: {content}")
     filename = str(content)
     image_num_text = ""
     try:
-        if "https" in filename:
-            filename = re.sub(r"https?://\S*", "", filename)
-        if "_" in filename:
-            # Replace non-alphanumeric characters with underscore
-            filename = re.sub(r"[^a-zA-Z0-9]", "_", filename)
-        if "*" in filename:
-            # Remove any '*' character:
-            filename = filename.replace("*", "")
         # Remove anything after ' - Upscaled by'
-        if "Upscaled" in filename:
+        if " - Upscaled by" in filename:
             filename = filename.split(" - Upscaled by", 1)[0]
-        if "- Image #" in filename:
-            # Extract the "Image #" with its number using regex, careful not to grab anything past it.
-            image_num_text = re.search(r"Image #\d+", filename).group(0)
-            image_num_text = f" {image_num_text}"
-            filename = f'{filename.split("- Image #", 1)[0]}{image_num_text}'
-        if "--" in filename:
-            # Remove anything after '--'
-            filename = filename.split("--", 1)[0]
-        if "," in filename:
-            # Remove commas
-            filename = filename.replace(",", "")
-        if '"' in filename:
-            # Remove commas
-            filename = filename.replace('"', "")
-        if "/" in filename:
-            # Remove commas
-            filename = filename.replace("/", "")
-        # Remove > < | . characters:
-        filename = filename.replace(">", "")
-        filename = filename.replace("<", "")
-        filename = filename.replace("|", "")
-        filename = filename.replace(".", "")
+        # Remove URLs
+        filename = re.sub(r"https?://\S*", "", filename)
+        # Extract the "Image #" with its number using regex, careful not to grab anything past it.
+        image_num_match = re.search(r" - Image #\d+", filename)
+        if image_num_match:
+            image_num_text = image_num_match.group(0)
+            filename = filename.replace(image_num_text, "")
+        # Remove anything after '--'
+        filename = filename.split("--", 1)[0]
+        # Replace non-alphanumeric characters with underscore
+        filename = re.sub(r"[^a-zA-Z0-9]", "_", filename)
+        # Re-append the image number text
+        filename += image_num_text
         # Remove leading and trailing underscores
         filename = filename.strip("_")
-
-        # Strip multiple whitespaces, replace with single whitespace
-        filename = re.sub(r"\s+", " ", filename)
-        # Strip surrounding whitespace
-        filename = filename.strip()
         # Convert to lowercase and trim to 251 characters
         filename = filename.lower()[:251] + ".png"
         logger.debug(f"-> Resulting filename: {filename}")
