@@ -387,30 +387,33 @@ def content_to_filename(content, args):
     filename = str(content)
     image_num_text = ""
     try:
-        # Remove anything after ' - Upscaled by'
-        if " - Upscaled by" in filename:
-            filename = filename.split(" - Upscaled by", 1)[0]
-        # Remove URLs
-        filename = re.sub(r"https?://\S*", "", filename)
         # Extract the "Image #" with its number using regex, careful not to grab anything past it.
         image_num_match = re.search(r" - Image #\d+", filename)
         if image_num_match:
-            image_num_text = image_num_match.group(0)
+            image_num_text = image_num_match.group(0).strip()
             filename = filename.replace(image_num_text, "")
+            image_num_text = image_num_text.replace(
+                " - ", "_"
+            )  # Replace spaces and hyphens for consistency
         # Remove anything after '--'
         filename = filename.split("--", 1)[0]
+        # Remove URLs
+        filename = re.sub(r"https?://\S*", "", filename)
         # Replace non-alphanumeric characters with underscore
-        filename = re.sub(r"[^a-zA-Z0-9]", "_", filename)
-        # Re-append the image number text
-        filename += image_num_text
+        filename = re.sub(r"[^a-zA-Z0-9\s]", "_", filename)
         # Remove leading and trailing underscores
         filename = filename.strip("_")
-        # Convert to lowercase and trim to 251 characters
-        filename = filename.lower()[:251] + ".png"
+        # Strip multiple whitespaces, replace with single whitespace
+        filename = re.sub(r"\s+", " ", filename)
+        # Strip surrounding whitespace
+        filename = filename.strip()
+        # Convert to lowercase and limit the length to accommodate the image number and extension
+        max_length = 251 - len(image_num_text) - 4  # 4 for the ".png"
+        filename = (filename.lower()[:max_length] + image_num_text).rstrip("_") + ".png"
         logger.debug(f"-> Resulting filename: {filename}")
         return filename
     except Exception as e:
-        if args.print_nonfatal_errors:
+        if hasattr(args, "print_nonfatal_errors") and args.print_nonfatal_errors:
             logger.error(f"Encountered error processing filename: {e}")
 
 
