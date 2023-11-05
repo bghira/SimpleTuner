@@ -386,6 +386,7 @@ def content_to_filename(content, args):
     # Remove URLs
     logger.debug(f"Converting content to filename: {content}")
     filename = str(content)
+    image_num_text = ""
     try:
         if "https" in filename:
             filename = re.sub(r"https?://\S*", "", filename)
@@ -399,7 +400,10 @@ def content_to_filename(content, args):
         if "Upscaled" in filename:
             filename = filename.split(" - Upscaled by", 1)[0]
         if "- Image #" in filename:
-            filename = filename.split("- Image #", 1)[0]
+            # Extract the "Image #" with its number using regex, careful not to grab anything past it.
+            image_num_text = re.search(r"Image #\d+", filename).group(0)
+            image_num_text = f" {image_num_text}"
+            filename = f'{filename.split("- Image #", 1)[0]}{image_num_text}'
         if "--" in filename:
             # Remove anything after '--'
             filename = filename.split("--", 1)[0]
