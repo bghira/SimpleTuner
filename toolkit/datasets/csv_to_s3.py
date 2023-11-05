@@ -560,11 +560,7 @@ def fetch_data(data, args, uri_column):
         if (
             hasattr(args, "midjourney_data_checks")
             and args.midjourney_data_checks
-            and (
-                "image #" not in row[args.caption_field].lower()
-                or "upscaled" in row[args.caption_field].lower()
-                or "(fast)" in row[args.caption_field].lower()
-            )
+            and "image #" not in row[args.caption_field].lower()
         ):
             # Midjourney's upscaler sucks. We only want single images, non-tiled.
             logger.debug(f"Skipping: {row[args.caption_field]}")
