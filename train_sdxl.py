@@ -244,8 +244,8 @@ def main():
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
 
-    if args.scale_lr:
-        logger.info(f"Scaling learning rate ({args.learning_rate}), due to --scale_lr")
+    if args.lr_scale:
+        logger.info(f"Scaling learning rate ({args.learning_rate}), due to --lr_scale")
         args.learning_rate = (
             args.learning_rate
             * args.gradient_accumulation_steps
@@ -730,21 +730,23 @@ def main():
             eta_min (float, optional) – Minimum learning rate. Default: 0.
 
         """
-        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+        from helpers.training.custom_schedule import CosineAnnealingWarmRestarts
 
         lr_scheduler = CosineAnnealingWarmRestarts(
             optimizer=optimizer,
-            T_0=args.lr_warmup_steps * accelerator.num_processes,
-            T_mult=args.lr_num_cycles,
-            eta_min=args.learning_rate_end,
-            last_epoch=-1,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
         )
     elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
             num_training_steps=args.max_train_steps * accelerator.num_processes,
-            lr_end=args.learning_rate_end,
+            lr_end=args.lr_end,
             power=args.lr_power,
             last_epoch=-1,
         )
@@ -765,7 +767,10 @@ def main():
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
         ema_unet = EMAModel(
-            unet.parameters(), model_cls=UNet2DConditionModel, model_config=unet.config
+            unet.parameters(),
+            model_cls=UNet2DConditionModel,
+            model_config=unet.config,
+            decay=args.ema_decay,
         )
         logger.info("EMA model creation complete.")
 
@@ -850,6 +855,8 @@ def main():
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
     )
+    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     # Afterwards we recalculate our number of training epochs
@@ -914,7 +921,6 @@ def main():
     lr = 0.0
     global_step = 0
     first_epoch = 0
-    resume_step = 0
     resume_global_step = 0
     scheduler_kwargs = {}
     accelerator.wait_for_everyone()
@@ -942,8 +948,18 @@ def main():
                 state_path=os.path.join(args.output_dir, path, "training_state.json"),
             )
             resume_global_step = global_step = int(path.split("-")[1])
+
+            # If we use a constant LR, we can update that now.
+            if args.lr_scheduler == "constant":
+                lr_scheduler = get_scheduler(
+                    "constant",
+                    optimizer=optimizer,
+                    num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+                )
+            if hasattr(lr_scheduler, "last_step"):
+                lr_scheduler.last_step = resume_global_step
             logger.info(
-                f"Basically, we have resume_step {resume_step} after considering"
+                f"Basically, we have resume_global_step {resume_global_step} after considering"
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
@@ -1003,11 +1019,11 @@ def main():
             f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
         )
         current_epoch = epoch
-        if args.lr_scheduler == "cosine_annealing_warm_restarts":
-            scheduler_kwargs["epoch"] = epoch
         unet.train()
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
+            if args.lr_scheduler == "cosine_annealing_warm_restarts":
+                scheduler_kwargs["step"] = global_step
             if accelerator.is_main_process:
                 progress_bar.set_description(
                     f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
@@ -1035,17 +1051,31 @@ def main():
                 latents = batch["latent_batch"].to(dtype=weight_dtype)
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
-                noise = None
+                noise = torch.randn_like(latents)
                 if args.offset_noise:
-                    noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
-                        latents.shape[0], latents.shape[1], 1, 1, device=latents.device
-                    )
+                    if (
+                        args.noise_offset_probability == 1.0
+                        or random.random() < args.noise_offset_probability
+                    ):
+                        noise = torch.randn_like(
+                            latents
+                        ) + args.noise_offset * torch.randn(
+                            latents.shape[0],
+                            latents.shape[1],
+                            1,
+                            1,
+                            device=latents.device,
+                        )
                 else:
                     noise = torch.randn_like(latents)
-                if args.input_pertubation:
-                    new_noise = noise + args.input_pertubation * torch.randn_like(noise)
-                elif noise is None:
-                    noise = torch.randn_like(latents)
+                if args.input_perturbation:
+                    if (
+                        args.input_perturbation_probability == 1.0
+                        or random.random() < args.input_perturbation_probability
+                    ):
+                        noise = noise + args.input_perturbation * torch.randn_like(
+                            noise
+                        )
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
@@ -1062,12 +1092,7 @@ def main():
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                if args.input_pertubation:
-                    noisy_latents = noise_scheduler.add_noise(
-                        latents, new_noise, timesteps
-                    )
-                else:
-                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                 # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
@@ -1196,6 +1221,7 @@ def main():
                     )
                 logs = {
                     "train_loss": train_loss,
+                    "optimization_loss": loss,
                     "learning_rate": lr,
                     "epoch": epoch,
                 }

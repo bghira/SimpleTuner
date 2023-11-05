@@ -226,7 +226,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--prepend_instance_prompt] [--only_instance_prompt]
                      [--conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
-                     [--input_pertubation INPUT_PERTUBATION]
+                     [--input_perturbation INPUT_PERTURBATION]
                      [--delete_unwanted_images] [--delete_problematic_images]
                      [--offset_noise] [--learning_rate_end LEARNING_RATE_END]
 
@@ -679,7 +679,7 @@ options:
                         https://arxiv.org/abs/2211.09800.
   --caption_dropout_probability CAPTION_DROPOUT_PROBABILITY
                         Caption dropout probability.
-  --input_pertubation INPUT_PERTUBATION
+  --input_perturbation INPUT_PERTURBATION
                         The scale of input pretubation. Recommended 0.1.
   --delete_unwanted_images
                         If set, will delete images that are not of a minimum

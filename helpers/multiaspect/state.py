@@ -1,4 +1,5 @@
 import json, os, multiprocessing, logging
+from multiprocessing.managers import DictProxy
 
 logger = logging.getLogger("BucketStateManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -25,7 +26,7 @@ class BucketStateManager:
             return {key: self.deep_convert_dict(value) for key, value in d.items()}
         elif isinstance(d, list):
             return [self.deep_convert_dict(value) for value in d]
-        elif isinstance(d, multiprocessing.managers.DictProxy):
+        elif isinstance(d, DictProxy):
             return self.deep_convert_dict(dict(d))
         else:
             return d

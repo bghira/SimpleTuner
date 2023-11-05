@@ -410,6 +410,7 @@ class VAECache:
                 logging.error(
                     f"An error occurred in a future: {e}, file {e.__traceback__.tb_frame}, {e.__traceback__.tb_lineno}"
                 )
+                completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
     def process_buckets(self, bucket_manager):

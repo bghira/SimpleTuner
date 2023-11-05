@@ -457,7 +457,7 @@ def parse_args(input_args=None):
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
-        "--scale_lr",
+        "--lr_scale",
         action="store_true",
         default=False,
         help="Scale the learning rate by the number of GPUs, gradient accumulation steps, and batch size.",
@@ -493,6 +493,15 @@ def parse_args(input_args=None):
         "--use_ema",
         action="store_true",
         help="Whether to use EMA (exponential moving average) model.",
+    )
+    parser.add_argument(
+        "--ema_decay",
+        type=float,
+        default=0.995,
+        help=(
+            "The closer to 0.9999 this gets, the less updates will occur over time. Setting it to a lower value, such as 0.990,"
+            " will allow greater influence of later updates."
+        ),
     )
     parser.add_argument(
         "--non_ema_revision",
@@ -750,6 +759,15 @@ def parse_args(input_args=None):
         help="The scale of noise offset. Default: 0.1",
     )
     parser.add_argument(
+        "--noise_offset_probability",
+        type=float,
+        default=0.25,
+        help=(
+            "When training with --offset_noise, the value of --noise_offset will only be applied probabilistically."
+            " The default behaviour is for offset noise (if enabled) to be applied 25 percent of the time."
+        )
+    )
+    parser.add_argument(
         "--validation_guidance",
         type=float,
         default=7.5,
@@ -864,10 +882,19 @@ def parse_args(input_args=None):
         help="Caption dropout probability.",
     )
     parser.add_argument(
-        "--input_pertubation",
+        "--input_perturbation",
         type=float,
         default=0,
         help="The scale of input pretubation. Recommended 0.1.",
+    )
+    parser.add_argument(
+        "--input_perturbation_probability",
+        type=float,
+        default=0.25,
+        help=(
+            "While input perturbation can help with training convergence, having it applied all the time is likely damaging."
+            " When this value is less than 1.0, any perturbed noise will be applied probabilistically. Default: 0.25"
+        )
     )
     parser.add_argument(
         "--delete_unwanted_images",
@@ -895,7 +922,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--learning_rate_end",
+        "--lr_end",
         type=str,
         default="4e-7",
         help="A polynomial learning rate will end up at this value after the specified number of warmup steps.",

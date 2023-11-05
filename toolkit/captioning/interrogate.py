@@ -8,8 +8,8 @@ from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
 
 # Directory where the images are located
-input_directory_path = "/notebooks/datasets/laion-high-resolution/downloaded_images"
-output_dir = "/notebooks/datasets/laion"
+input_directory_path = "/datasets/pexels"
+output_dir = "/datasets/captioned_pexels"
 caption_strategy = "text"
 
 
@@ -45,7 +45,9 @@ def interrogator(
     clip_model_name="ViT-H-14/laion2b_s32b_b79k", blip_model="blip2-flan-t5-xl"
 ):
     # Create an Interrogator instance with the latest CLIP model for Stable Diffusion 2.1
-    conf = Config(clip_model_name=clip_model_name)
+    conf = Config(
+        clip_model_name=clip_model_name, clip_offload=True, caption_offload=True
+    )
     conf.caption_model_name = blip_model
     ci = Interrogator(conf)
     return ci

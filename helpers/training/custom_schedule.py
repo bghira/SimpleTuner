@@ -1,5 +1,6 @@
 from torch.optim.lr_scheduler import LambdaLR
-import torch
+import torch, math, warnings
+from torch.optim.lr_scheduler import LRScheduler
 
 
 def generate_timestep_weights(args, num_timesteps):
@@ -29,9 +30,9 @@ def generate_timestep_weights(args, num_timesteps):
         return weights
     if args.timestep_bias_multiplier <= 0:
         return ValueError(
-            'The parameter --timestep_bias_multiplier is not intended to be used to disable the training of specific timesteps.'
-            ' If it was intended to disable timestep bias, use `--timestep_bias_strategy none` instead.'
-            ' A timestep bias multiplier less than or equal to 0 is not allowed.'
+            "The parameter --timestep_bias_multiplier is not intended to be used to disable the training of specific timesteps."
+            " If it was intended to disable timestep bias, use `--timestep_bias_strategy none` instead."
+            " A timestep bias multiplier less than or equal to 0 is not allowed."
         )
 
     # Apply the bias
@@ -123,3 +124,125 @@ def enforce_zero_terminal_snr(betas):
 
 def patch_scheduler_betas(scheduler):
     scheduler.betas = enforce_zero_terminal_snr(scheduler.betas)
+
+
+class CosineAnnealingWarmRestarts(LRScheduler):
+    r"""Set the learning rate of each parameter group using a cosine annealing
+    schedule, where :math:`\eta_{max}` is set to the initial lr, :math:`T_{cur}`
+    is the number of epochs since the last restart and :math:`T_{i}` is the number
+    of epochs between two warm restarts in SGDR:
+
+    .. math::
+        \eta_t = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 +
+        \cos\left(\frac{T_{cur}}{T_{i}}\pi\right)\right)
+
+    When :math:`T_{cur}=T_{i}`, set :math:`\eta_t = \eta_{min}`.
+    When :math:`T_{cur}=0` after restart, set :math:`\eta_t=\eta_{max}`.
+
+    It has been proposed in
+    `SGDR: Stochastic Gradient Descent with Warm Restarts`_.
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        T_0 (int): Number of iterations for the first restart.
+        T_mult (int, optional): A factor increases :math:`T_{i}` after a restart. Default: 1.
+        eta_min (float, optional): Minimum learning rate. Default: 0.
+        last_epoch (int, optional): The index of last epoch. Default: -1.
+        verbose (bool): If ``True``, prints a message to stdout for
+            each update. Default: ``False``.
+
+    .. _SGDR\: Stochastic Gradient Descent with Warm Restarts:
+        https://arxiv.org/abs/1608.03983
+    """
+
+    def __init__(
+        self,
+        optimizer,
+        T_0,
+        steps_per_epoch=-1,
+        T_mult=1,
+        eta_min=0,
+        last_step=-1,
+        last_epoch=-1,
+        verbose=False,
+    ):
+        if T_0 <= 0 or not isinstance(T_0, int):
+            raise ValueError(f"Expected positive integer T_0, but got {T_0}")
+        if T_mult < 1 or not isinstance(T_mult, int):
+            raise ValueError(f"Expected integer T_mult >= 1, but got {T_mult}")
+        if last_epoch != -1 and last_step != -1:
+            last_epoch = last_step
+        elif last_epoch != -1 and last_step == -1:
+            last_step = last_epoch
+        self.T_0 = T_0
+        self.steps_per_epoch = steps_per_epoch
+        self.T_i = T_0
+        self.T_mult = T_mult
+        self.eta_min = eta_min
+        self.T_cur = last_step
+        super().__init__(optimizer, last_step, verbose)
+
+    def get_lr(self):
+        lrs = [
+            self.eta_min
+            + (base_lr - self.eta_min)
+            * (1 + math.cos(math.pi * self.T_cur / self.T_i))
+            / 2
+            for base_lr in self.base_lrs
+        ]
+        return lrs
+
+    def step(self, step=None):
+        if step is None and self.last_epoch < 0:
+            step = 0
+
+        if step is None:
+            step = self.last_epoch + 1
+            self.T_cur = (step // self.steps_per_epoch) + (
+                step % self.steps_per_epoch
+            ) / self.steps_per_epoch
+        else:
+            self.T_cur = (step // self.steps_per_epoch) + (
+                step % self.steps_per_epoch
+            ) / self.steps_per_epoch
+
+        if self.T_cur >= self.T_i:
+            self.T_cur = self.T_cur - self.T_i
+            self.T_i = self.T_i * self.T_mult
+
+        self.last_epoch = step
+
+        class _enable_get_lr_call:
+            def __init__(self, o):
+                self.o = o
+
+            def __enter__(self):
+                self.o._get_lr_called_within_step = True
+                return self
+
+            def __exit__(self, type, value, traceback):
+                self.o._get_lr_called_within_step = False
+                return self
+
+        with _enable_get_lr_call(self):
+            for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
+                param_group, lr = data
+                param_group["lr"] = math.floor(lr * 1e9) / 1e9
+                self.print_lr(self.verbose, i, lr, step)
+
+        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+
+    def print_lr(self, is_verbose, group, lr, epoch=None):
+        """Display the current learning rate."""
+        if is_verbose:
+            if epoch is None:
+                print(
+                    "Adjusting learning rate"
+                    " of group {} to {:.8e}.".format(group, lr)
+                )
+            else:
+                epoch_str = ("%.2f" if isinstance(epoch, float) else "%.5d") % epoch
+                print(
+                    "Epoch {}: adjusting learning rate"
+                    " of group {} to {:.8e}.".format(epoch_str, group, lr)
+                )
