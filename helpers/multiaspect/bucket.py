@@ -42,6 +42,7 @@ class BucketManager:
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
+        self.metadata_update_interval = metadata_update_interval
 
     def __len__(self):
         """
