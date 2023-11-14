@@ -26,6 +26,7 @@ class BucketManager:
         resolution: float,
         resolution_type: str,
         delete_problematic_images: bool = False,
+        metadata_update_interval: int = 3600,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -212,7 +213,7 @@ class BucketManager:
 
         for worker in workers:
             worker.start()
-
+        last_write_time = time.time()
         with tqdm(
             desc="Generating aspect bucket cache",
             total=len(new_files),
@@ -221,6 +222,13 @@ class BucketManager:
             miniters=int(len(new_files) / 100),
         ) as pbar:
             while any(worker.is_alive() for worker in workers):
+                current_time = time.time()
+                if current_time - last_write_time >= self.metadata_update_interval:
+                    self.instance_images_path.update(new_files)
+                    self._save_cache()
+                    self.save_image_metadata()
+                    last_write_time = current_time
+
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
                 while not aspect_ratio_bucket_indices_queue.empty():
