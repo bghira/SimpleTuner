@@ -834,6 +834,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--metadata_update_interval",
+        type=int,
+        default=3600,
+        help=(
+            "When generating the aspect bucket indicies, we want to save it every X seconds."
+            " The default is to save it every 1 hour, such that progress is not lost on clusters"
+            " where runtime is limited to 6-hour increments (e.g. the JUWELS Supercomputer)."
+            " The minimum value is 60 seconds."
+        )
+    )
+    parser.add_argument(
         "--debug_aspect_buckets",
         action="store_true",
         help="If set, will print excessive debugging for aspect bucket operations.",
@@ -1014,4 +1025,7 @@ def parse_args(input_args=None):
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
+    
+    if args.metadata_update_interval < 60:
+        raise ValueError("Metadata update interval must be at least 60 seconds.")
     return args
