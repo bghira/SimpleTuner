@@ -241,7 +241,9 @@ class BucketManager:
                         self.set_metadata_by_filepath(
                             filepath=filepath, metadata=meta, update_json=False
                         )
-                if current_time - last_write_time >= self.metadata_update_interval:
+                processing_duration = current_time - last_write_time
+                if processing_duration >= self.metadata_update_interval:
+                    logger.debug(f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists.")
                     self.instance_images_path.update(new_files)
                     self._save_cache()
                     self.save_image_metadata()
