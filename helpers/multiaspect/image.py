@@ -43,7 +43,6 @@ class MultiaspectImage:
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
         delete_problematic_images: bool = False,
-        center_crop: bool = False
     ):
         try:
             image_metadata = {}
