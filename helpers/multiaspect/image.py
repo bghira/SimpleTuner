@@ -52,7 +52,7 @@ class MultiaspectImage:
                 # Apply EXIF transforms
                 image_metadata["original_size"] = image.size
                 image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image, bucket_manager.resolution, bucket_manager.resolution_type, center_crop
+                    image, bucket_manager.resolution, bucket_manager.resolution_type
                 )
                 image_metadata["crop_coordinates"] = crop_coordinates
                 image_metadata["target_size"] = image.size
@@ -82,7 +82,7 @@ class MultiaspectImage:
         return aspect_ratio_bucket_indices
 
     @staticmethod
-    def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel", center_crop: bool = False):
+    def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel"):
         """Prepare an image for training.
 
         Args:
