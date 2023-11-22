@@ -126,13 +126,16 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
         if StateTracker.get_args().center_crop:
+            if original_width < target_width or original_height < target_height:
+                # Upscale if the original image is smaller than the target size
+                image = MultiaspectImage._resize_image(image, target_width, target_height)
             image, crop_coordinates = MultiaspectImage._crop_center(
                 image, resolution, resolution
             )
-            target_height, target_width = resolution, resolution
         else:
-            crop_coordinates = (0, 0)
+            # Resize unconditionally if center cropping is not enabled
             image = MultiaspectImage._resize_image(image, target_width, target_height)
+            crop_coordinates = (0, 0)
 
         return image, crop_coordinates
 
