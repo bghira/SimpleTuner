@@ -43,6 +43,7 @@ class MultiaspectImage:
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
         delete_problematic_images: bool = False,
+        center_crop: bool = False
     ):
         try:
             image_metadata = {}
@@ -51,7 +52,7 @@ class MultiaspectImage:
                 # Apply EXIF transforms
                 image_metadata["original_size"] = image.size
                 image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image, bucket_manager.resolution, bucket_manager.resolution_type
+                    image, bucket_manager.resolution, bucket_manager.resolution_type, center_crop
                 )
                 image_metadata["crop_coordinates"] = crop_coordinates
                 image_metadata["target_size"] = image.size
@@ -81,7 +82,7 @@ class MultiaspectImage:
         return aspect_ratio_bucket_indices
 
     @staticmethod
-    def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel"):
+    def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel", center_crop: bool = False):
         """Prepare an image for training.
 
         Args:
@@ -126,8 +127,9 @@ class MultiaspectImage:
 
         if StateTracker.get_args().center_crop:
             image, crop_coordinates = MultiaspectImage._crop_center(
-                image, target_width, target_height
+                image, resolution, resolution
             )
+            target_height, target_width = resolution, resolution
         else:
             crop_coordinates = (0, 0)
             image = MultiaspectImage._resize_image(image, target_width, target_height)
