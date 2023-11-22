@@ -158,6 +158,7 @@ class BucketManager:
         """
         local_aspect_ratio_bucket_indices = {}
         local_metadata_updates = {}
+        processed_file_count = 0
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
@@ -168,10 +169,19 @@ class BucketManager:
                     metadata_updates=local_metadata_updates,
                     delete_problematic_images=self.delete_problematic_images,
                 )
+                processed_file_count += 1
             tqdm_queue.put(1)
-        if aspect_ratio_bucket_indices_queue is not None:
+            if processed_file_count % 500 == 0:
+                # Send updates to queues and reset the local dictionaries
+                if aspect_ratio_bucket_indices_queue is not None:
+                    aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+                metadata_updates_queue.put(local_metadata_updates)
+                local_aspect_ratio_bucket_indices = {}
+                local_metadata_updates = {}
+        if aspect_ratio_bucket_indices_queue is not None and local_aspect_ratio_bucket_indices:
             aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
-        metadata_updates_queue.put(local_metadata_updates)
+        if local_metadata_updates:
+            metadata_updates_queue.put(local_metadata_updates)
 
     def compute_aspect_ratio_bucket_indices(self):
         """
