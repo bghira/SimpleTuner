@@ -248,6 +248,8 @@ class BucketManager:
                     self._save_cache()
                     self.save_image_metadata()
                     last_write_time = current_time
+                else:
+                    logger.debug(f"Skipping metadata update after {processing_duration} seconds because we expect an update every {self.metadata_update_interval} seconds.")
 
                 time.sleep(0.1)
 
