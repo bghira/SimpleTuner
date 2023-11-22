@@ -286,6 +286,7 @@ def main():
         resolution=args.resolution,
         resolution_type=args.resolution_type,
         batch_size=args.train_batch_size,
+        metadata_update_interval=args.metadata_update_interval,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),

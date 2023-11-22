@@ -26,6 +26,7 @@ class BucketManager:
         resolution: float,
         resolution_type: str,
         delete_problematic_images: bool = False,
+        metadata_update_interval: int = 3600,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -41,6 +42,7 @@ class BucketManager:
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
+        self.metadata_update_interval = metadata_update_interval
 
     def __len__(self):
         """
@@ -139,6 +141,7 @@ class BucketManager:
         files,
         aspect_ratio_bucket_indices_queue,
         metadata_updates_queue,
+        written_files_queue,
         existing_files_set,
         data_backend,
     ):
@@ -156,6 +159,8 @@ class BucketManager:
         """
         local_aspect_ratio_bucket_indices = {}
         local_metadata_updates = {}
+        processed_file_list = set()
+        processed_file_count = 0
         for file in files:
             if str(file) not in existing_files_set:
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
@@ -166,10 +171,23 @@ class BucketManager:
                     metadata_updates=local_metadata_updates,
                     delete_problematic_images=self.delete_problematic_images,
                 )
+                processed_file_count += 1
+                processed_file_list.add(file)
             tqdm_queue.put(1)
-        if aspect_ratio_bucket_indices_queue is not None:
+            if processed_file_count % 500 == 0:
+                # Send updates to queues and reset the local dictionaries
+                if aspect_ratio_bucket_indices_queue is not None:
+                    aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+                if written_files_queue is not None:
+                    written_files_queue.put(processed_file_list)
+                metadata_updates_queue.put(local_metadata_updates)
+                local_aspect_ratio_bucket_indices = {}
+                local_metadata_updates = {}
+                processed_file_list = set()
+        if aspect_ratio_bucket_indices_queue is not None and local_aspect_ratio_bucket_indices:
             aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
-        metadata_updates_queue.put(local_metadata_updates)
+        if local_metadata_updates:
+            metadata_updates_queue.put(local_metadata_updates)
 
     def compute_aspect_ratio_bucket_indices(self):
         """
@@ -191,6 +209,7 @@ class BucketManager:
         files_split = np.array_split(new_files, num_cpus)
 
         metadata_updates_queue = Queue()
+        written_files_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
@@ -203,6 +222,7 @@ class BucketManager:
                     file_shard,
                     aspect_ratio_bucket_indices_queue,
                     metadata_updates_queue,
+                    written_files_queue,
                     existing_files_set,
                     self.data_backend,
                 ),
@@ -212,7 +232,8 @@ class BucketManager:
 
         for worker in workers:
             worker.start()
-
+        last_write_time = time.time()
+        written_files = set()
         with tqdm(
             desc="Generating aspect bucket cache",
             total=len(new_files),
@@ -221,6 +242,7 @@ class BucketManager:
             miniters=int(len(new_files) / 100),
         ) as pbar:
             while any(worker.is_alive() for worker in workers):
+                current_time = time.time()
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
                 while not aspect_ratio_bucket_indices_queue.empty():
@@ -238,6 +260,18 @@ class BucketManager:
                         self.set_metadata_by_filepath(
                             filepath=filepath, metadata=meta, update_json=False
                         )
+                # Process the written files queue
+                while not written_files_queue.empty():
+                    written_files_batch = written_files_queue.get()
+                    written_files.update(written_files_batch)  # Use update for sets
+
+                processing_duration = current_time - last_write_time
+                if processing_duration >= self.metadata_update_interval:
+                    logger.debug(f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists.")
+                    self.instance_images_path.update(written_files)
+                    self._save_cache()
+                    self.save_image_metadata()
+                    last_write_time = current_time
 
                 time.sleep(0.1)
 
@@ -524,6 +558,7 @@ class BucketManager:
                     tqdm_queue,
                     file_shard,
                     None,  # Passing None to indicate we don't want to update the buckets
+                    None,   # Passing None to indicate we don't want to update the written files list
                     metadata_updates_queue,
                     existing_files_set,
                     self.data_backend,
