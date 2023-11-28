@@ -436,10 +436,6 @@ def main(args):
             **extra_optimizer_args,
         )
 
-    optimizer = optimizer_class(
-        params_to_optimize,
-        **extra_optimizer_args,
-    )
     # Create a DataBackend, so that we can access our dataset.
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
