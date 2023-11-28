@@ -125,22 +125,21 @@ def enforce_zero_terminal_snr(betas):
 def patch_scheduler_betas(scheduler):
     scheduler.betas = enforce_zero_terminal_snr(scheduler.betas)
 
+class _enable_get_lr_call:
+    def __init__(self, o):
+        self.o = o
 
-class CosineAnnealingWarmRestarts(LRScheduler):
-    r"""Set the learning rate of each parameter group using a cosine annealing
-    schedule, where :math:`\eta_{max}` is set to the initial lr, :math:`T_{cur}`
-    is the number of epochs since the last restart and :math:`T_{i}` is the number
-    of epochs between two warm restarts in SGDR:
+    def __enter__(self):
+        self.o._get_lr_called_within_step = True
+        return self
 
-    .. math::
-        \eta_t = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 +
-        \cos\left(\frac{T_{cur}}{T_{i}}\pi\right)\right)
+    def __exit__(self, type, value, traceback):
+        self.o._get_lr_called_within_step = False
+        return self
 
-    When :math:`T_{cur}=T_{i}`, set :math:`\eta_t = \eta_{min}`.
-    When :math:`T_{cur}=0` after restart, set :math:`\eta_t=\eta_{max}`.
-
-    It has been proposed in
-    `SGDR: Stochastic Gradient Descent with Warm Restarts`_.
+class Cosine(LRScheduler):
+    r"""Use a cosine schedule for the learning rate, without restarts.
+    This makes a nice and pretty chart on the tensorboard.
 
     Args:
         optimizer (Optimizer): Wrapped optimizer.
@@ -212,24 +211,125 @@ class CosineAnnealingWarmRestarts(LRScheduler):
 
         self.last_epoch = step
 
-        class _enable_get_lr_call:
-            def __init__(self, o):
-                self.o = o
-
-            def __enter__(self):
-                self.o._get_lr_called_within_step = True
-                return self
-
-            def __exit__(self, type, value, traceback):
-                self.o._get_lr_called_within_step = False
-                return self
-
         with _enable_get_lr_call(self):
             for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
                 param_group, lr = data
                 param_group["lr"] = math.floor(lr * 1e9) / 1e9
                 self.print_lr(self.verbose, i, lr, step)
 
+        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+
+    def print_lr(self, is_verbose, group, lr, epoch=None):
+        """Display the current learning rate."""
+        if is_verbose:
+            if epoch is None:
+                print(
+                    "Adjusting learning rate"
+                    " of group {} to {:.8e}.".format(group, lr)
+                )
+            else:
+                epoch_str = ("%.2f" if isinstance(epoch, float) else "%.5d") % epoch
+                print(
+                    "Epoch {}: adjusting learning rate"
+                    " of group {} to {:.8e}.".format(epoch_str, group, lr)
+                )
+
+class CosineAnnealingHardRestarts(LRScheduler):
+    r"""Set the learning rate of each parameter group using a cosine annealing
+    schedule, where :math:`\eta_{max}` is set to the initial lr, :math:`T_{cur}`
+    is the number of epochs since the last restart and :math:`T_{i}` is the number
+    of epochs between two warm restarts in SGDR:
+
+    .. math::
+        \eta_t = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 +
+        \cos\left(\frac{T_{cur}}{T_{i}}\pi\right)\right)
+
+    When :math:`T_{cur}=T_{i}`, set :math:`\eta_t = \eta_{min}`.
+    When :math:`T_{cur}=0` after restart, set :math:`\eta_t=\eta_{max}`.
+
+    It has been proposed in
+    `SGDR: Stochastic Gradient Descent with Warm Restarts`_.
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        T_0 (int): Number of iterations for the first restart.
+        T_mult (int, optional): A factor increases :math:`T_{i}` after a restart. Default: 1.
+        eta_min (float, optional): Minimum learning rate. Default: 0.
+        last_epoch (int, optional): The index of last epoch. Default: -1.
+        verbose (bool): If ``True``, prints a message to stdout for
+            each update. Default: ``False``.
+
+    .. _SGDR\: Stochastic Gradient Descent with Warm Restarts:
+        https://arxiv.org/abs/1608.03983
+    """
+
+    def __init__(
+        self,
+        optimizer,
+        T_0,
+        steps_per_epoch=-1,
+        T_mult=1,
+        eta_min=0,
+        last_step=-1,
+        last_epoch=-1,
+        verbose=False,
+    ):
+        if T_0 <= 0 or not isinstance(T_0, int):
+            raise ValueError(f"Expected positive integer T_0, but got {T_0}")
+        if T_mult < 1 or not isinstance(T_mult, int):
+            raise ValueError(f"Expected integer T_mult >= 1, but got {T_mult}")
+        if last_epoch != -1 and last_step != -1:
+            last_epoch = last_step
+        elif last_epoch != -1 and last_step == -1:
+            last_step = last_epoch
+        self.T_0 = T_0
+        self.steps_per_epoch = steps_per_epoch
+        self.T_i = T_0
+        self.T_mult = T_mult
+        self.eta_min = eta_min
+        self.T_cur = last_step
+        super().__init__(optimizer, last_step, verbose)
+
+    def get_lr(self):
+        lrs = [
+            self.eta_min
+            + (base_lr - self.eta_min)
+            * (1 + math.cos(math.pi * self.T_cur / self.T_i))
+            / 2
+            for base_lr in self.base_lrs
+        ]
+        return lrs
+
+    def step(self, step=None):
+        # Check if the step argument is provided, if not, increment the last_step counter
+        if step is None:
+            step = self.last_step + 1
+
+        # Calculate T_cur: This represents the current step within the current cycle
+        # % operator ensures T_cur is always within the range of the current cycle
+        self.T_cur = step % self.steps_per_epoch
+
+        # Check if T_cur has reached the end of the current cycle (T_i)
+        # If so, it's time for a warm restart
+        if self.T_cur >= self.T_i:
+            self.T_cur = 0  # Reset T_cur to start a new cycle
+            self.T_i *= self.T_mult  # Increase the length of the next cycle
+
+        # Update the last step with the current step
+        self.last_step = step
+
+        # This context manager ensures that the learning rate is updated correctly
+        with _enable_get_lr_call(self):
+            # Loop through each parameter group and its corresponding learning rate
+            for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
+                param_group, lr = data
+                # Update the learning rate for this parameter group
+                # We use math.floor to truncate the precision to avoid numerical issues
+                param_group["lr"] = math.floor(lr * 1e9) / 1e9
+                # Print the updated learning rate if verbose mode is enabled
+                self.print_lr(self.verbose, i, lr, step)
+
+        # Update the last learning rate values for each parameter group
         self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
 
     def print_lr(self, is_verbose, group, lr, epoch=None):

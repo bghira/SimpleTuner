@@ -722,18 +722,22 @@ def main():
     elif args.use_adafactor_optimizer:
         # Use the AdafactorScheduler.
         lr_scheduler = AdafactorSchedule(optimizer)
-    elif args.lr_scheduler == "cosine_annealing_warm_restarts":
-        """
-        optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
+    elif args.lr_scheduler == "cosine_with_restarts":
+        from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
-            T_0 (int) – Number of iterations for the first restart.
-            T_mult (int, optional) – A factor increases Ti after a restart. Default: 1.
-            eta_min (float, optional) – Minimum learning rate. Default: 0.
+        lr_scheduler = CosineAnnealingHardRestarts(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
+    elif args.lr_scheduler == "cosine":
+        from helpers.training.custom_schedule import Cosine
 
-        """
-        from helpers.training.custom_schedule import CosineAnnealingWarmRestarts
-
-        lr_scheduler = CosineAnnealingWarmRestarts(
+        lr_scheduler = Cosine(
             optimizer=optimizer,
             T_0=int(args.lr_warmup_steps * accelerator.num_processes),
             T_mult=int(1),
@@ -1023,7 +1027,7 @@ def main():
         unet.train()
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
-            if args.lr_scheduler == "cosine_annealing_warm_restarts":
+            if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
             if accelerator.is_main_process:
                 progress_bar.set_description(

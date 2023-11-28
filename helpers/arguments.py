@@ -465,10 +465,12 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="polynomial",
+        default="cosine",
+        choices=[
+            "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"
+        ],
         help=(
-            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
-            ' "constant", "constant_with_warmup"]'
+            'The scheduler type to use. Default: cosine'
         ),
     )
     parser.add_argument(
