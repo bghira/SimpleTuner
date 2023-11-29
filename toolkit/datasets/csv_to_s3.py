@@ -523,7 +523,7 @@ def process_git_lfs_images(args, s3_client):
             upload_local_image_to_s3(image_path, args, s3_client)
 
 def process_local_folder_images(args, s3_client, existing_files: list):
-    """Scan the local folder directory for image files and upload them."""
+    """Scan the local folder directory for image files, apply checks, and upload them."""
     if not os.path.exists(args.local_folder):
         logger.error(f"Local folder '{args.local_folder}' does not exist.")
         return
@@ -534,7 +534,29 @@ def process_local_folder_images(args, s3_client, existing_files: list):
             if str(image_path) in existing_files:
                 logger.debug(f"Skipping already processed file: {image_path}")
                 continue
-            upload_local_image_to_s3(str(image_path), args, s3_client)
+            image = Image.open(image_path)
+            width, height = image.size
+
+            # Check minimum resolution
+            if (args.minimum_resolution > 0 and 
+                (width < args.minimum_resolution or height < args.minimum_resolution)):
+                continue
+
+            # Check luminance if required
+            if args.min_luminance is not None or args.max_luminance is not None:
+                luminance = calculate_luminance(image)
+                if args.min_luminance is not None and luminance < args.min_luminance:
+                    continue
+                if args.max_luminance is not None and luminance > args.max_luminance:
+                    continue
+
+            # Resize image for condition if required
+            image = resize_for_condition_image(image, args.condition_image_size)
+            temp_path = os.path.join(args.temporary_folder, os.path.basename(image_path))
+            image.save(temp_path, format="PNG")
+            image.close()
+            # Upload to S3
+            upload_local_image_to_s3(temp_path, args, s3_client)
 
 def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""
