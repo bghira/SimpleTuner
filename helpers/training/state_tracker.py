@@ -20,6 +20,7 @@ class StateTracker:
     vaecache = None
     embedcache = None
     accelerator = None
+    bucket_manager = None
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -144,6 +145,14 @@ class StateTracker:
     @classmethod
     def get_vae_dtype(cls):
         return cls.vae_dtype
+
+    @classmethod
+    def set_bucket_manager(cls, bucket_manager):
+        cls.bucket_manager = bucket_manager
+
+    @classmethod
+    def get_bucket_manager(cls):
+        return cls.bucket_manager
 
     @classmethod
     def set_weight_dtype(cls, weight_dtype):
