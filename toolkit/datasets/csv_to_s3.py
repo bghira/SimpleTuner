@@ -202,6 +202,11 @@ def parse_args():
     )
     # Script-specific arguments
     parser.add_argument(
+        "--local_folder",
+        type=str,
+        help="Location of local folder containing images to upload.",
+    )
+    parser.add_argument(
         "--parquet_folder", type=str, help="Location of the Parquet files."
     )
     parser.add_argument("--csv_folder", type=str, help="Location of the CSV files.")
@@ -323,8 +328,6 @@ def parse_args():
 
 
 # Additional functions for handling diverse input datasets
-
-
 def get_uri_column(df):
     if "url" in df.columns:
         return "url"
@@ -519,6 +522,19 @@ def process_git_lfs_images(args, s3_client):
         for image_path in Path(repo_path).rglob(f"*{ext}"):
             upload_local_image_to_s3(image_path, args, s3_client)
 
+def process_local_folder_images(args, s3_client, existing_files: list):
+    """Scan the local folder directory for image files and upload them."""
+    if not os.path.exists(args.local_folder):
+        logger.error(f"Local folder '{args.local_folder}' does not exist.")
+        return
+
+    image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
+    for ext in image_exts:
+        for image_path in Path(args.local_folder).rglob(f"*{ext}"):
+            if str(image_path) in existing_files:
+                logger.debug(f"Skipping already processed file: {image_path}")
+                continue
+            upload_local_image_to_s3(str(image_path), args, s3_client)
 
 def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""
@@ -533,7 +549,6 @@ def fetch_and_upload_image(info, args):
 
 def fetch_data(data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
-    s3_client = initialize_s3_client(args)
     to_fetch = {}
     for row in data:
         new_filename = content_to_filename(row[args.caption_field], args)
@@ -571,6 +586,11 @@ def main():
     existing_files = []
     existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
     logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
+
+    # Process and upload images from the local folder
+    if args.local_folder:
+        process_local_folder_images(args, s3_client, existing_files)
+
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):
