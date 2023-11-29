@@ -443,7 +443,7 @@ class BucketManager:
         Check if an image meets the resolution requirements.
         """
         if image is None and image_path is not None:
-            metadata = BucketManager.get_metadata_by_filepath(
+            metadata = StateTracker.get_bucket_manager().get_metadata_by_filepath(
                 image_path
             )  # Adjusted to call class method
             if metadata is None:
