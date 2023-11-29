@@ -43,6 +43,8 @@ class MultiaspectImage:
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
         delete_problematic_images: bool = False,
+        minimum_image_size: int = None,
+        resolution_type: str = "pixel"
     ):
         try:
             image_metadata = {}
@@ -62,6 +64,17 @@ class MultiaspectImage:
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
                 )
+                if not BucketManager.meets_resolution_requirements(
+                    image=image,
+                    minimum_image_size=minimum_image_size,
+                    resolution_type=resolution_type,
+                    image=None
+                ):
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
+                    )
+                    return aspect_ratio_bucket_indices
+
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(aspect_ratio)] = []
@@ -124,7 +137,7 @@ class MultiaspectImage:
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
-        if StateTracker.get_args().center_crop:
+        if StateTracker.get_args().crop:
             if original_width < target_width or original_height < target_height:
                 # Upscale if the original image is smaller than the target size
                 image = MultiaspectImage._resize_image(image, target_width, target_height)

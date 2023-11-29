@@ -378,19 +378,21 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--minimum_image_size",
         type=int,
-        default=768,
+        default=None,
         help=(
             "The minimum resolution for both sides of input images."
             " If --delete_unwanted_images is set, images smaller than this will be DELETED."
+            " The default value is None, which means no minimum resolution is enforced."
+            " If this option is not provided, it is possible that images will be destructively resized, harming model performance."
         ),
     )
     parser.add_argument(
-        "--center_crop",
+        "--crop",
         default=False,
-        action="store_true",
+        type=bool,
         help=(
-            "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
-            " cropped. The images will be resized to the resolution first before cropping. If training SDXL,"
+            "Whether to crop the input images to the resolution. If not set, the images will be randomly"
+            " cropped. The images will not be resized to the resolution first before cropping. If training SDXL,"
             " the VAE cache and aspect bucket cache will need to be (re)built so they include crop coordinates."
         ),
     )

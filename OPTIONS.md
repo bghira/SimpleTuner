@@ -175,7 +175,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--seed_for_each_device SEED_FOR_EACH_DEVICE]
                      [--resolution RESOLUTION]
                      [--resolution_type {pixel,area}]
-                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--center_crop]
+                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crop]
                      [--train_text_encoder]
                      [--train_batch_size TRAIN_BATCH_SIZE]
                      [--num_train_epochs NUM_TRAIN_EPOCHS]
@@ -454,7 +454,7 @@ options:
                         The minimum resolution for both sides of input images.
                         If --delete_unwanted_images is set, images smaller
                         than this will be DELETED.
-  --center_crop         Whether to center crop the input images to the
+  --crop                Whether to center crop the input images to the
                         resolution. If not set, the images will be randomly
                         cropped. The images will be resized to the resolution
                         first before cropping. If training SDXL, the VAE cache

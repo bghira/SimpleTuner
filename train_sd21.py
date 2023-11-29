@@ -479,6 +479,7 @@ def main(args):
         batch_size=args.train_batch_size,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
+        minimum_image_size=args.minimum_image_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
@@ -552,7 +553,6 @@ def main(args):
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
-        minimum_image_size=args.minimum_image_size,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
@@ -773,6 +773,7 @@ def main(args):
         resolution_type=args.resolution_type,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
+        minimum_image_size=args.minimum_image_size
     )
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)

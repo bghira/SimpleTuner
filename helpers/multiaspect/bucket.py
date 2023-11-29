@@ -4,6 +4,7 @@ from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
 import json, logging, os, time
 from multiprocessing import Manager
+from PIL import Image
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
@@ -27,6 +28,7 @@ class BucketManager:
         resolution_type: str,
         delete_problematic_images: bool = False,
         metadata_update_interval: int = 3600,
+        minimum_image_size: int = None,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -43,6 +45,7 @@ class BucketManager:
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
         self.metadata_update_interval = metadata_update_interval
+        self.minimum_image_size = minimum_image_size
 
     def __len__(self):
         """
@@ -170,6 +173,8 @@ class BucketManager:
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
                     delete_problematic_images=self.delete_problematic_images,
+                    minimum_image_size=self.minimum_image_size,
+                    resolution_type=self.resolution_type,
                 )
                 processed_file_count += 1
                 processed_file_list.add(file)
@@ -177,14 +182,19 @@ class BucketManager:
             if processed_file_count % 500 == 0:
                 # Send updates to queues and reset the local dictionaries
                 if aspect_ratio_bucket_indices_queue is not None:
-                    aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+                    aspect_ratio_bucket_indices_queue.put(
+                        local_aspect_ratio_bucket_indices
+                    )
                 if written_files_queue is not None:
                     written_files_queue.put(processed_file_list)
                 metadata_updates_queue.put(local_metadata_updates)
                 local_aspect_ratio_bucket_indices = {}
                 local_metadata_updates = {}
                 processed_file_list = set()
-        if aspect_ratio_bucket_indices_queue is not None and local_aspect_ratio_bucket_indices:
+        if (
+            aspect_ratio_bucket_indices_queue is not None
+            and local_aspect_ratio_bucket_indices
+        ):
             aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
         if local_metadata_updates:
             metadata_updates_queue.put(local_metadata_updates)
@@ -267,7 +277,9 @@ class BucketManager:
 
                 processing_duration = current_time - last_write_time
                 if processing_duration >= self.metadata_update_interval:
-                    logger.debug(f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists.")
+                    logger.debug(
+                        f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
+                    )
                     self.instance_images_path.update(written_files)
                     self._save_cache()
                     self.save_image_metadata()
@@ -380,14 +392,86 @@ class BucketManager:
 
     def _enforce_min_bucket_size(self):
         """
-        Remove buckets that have fewer samples than batch_size.
+        Remove buckets that have fewer samples than batch_size and enforce minimum image size constraints.
         """
-        for bucket, images in list(
-            self.aspect_ratio_bucket_indices.items()
-        ):  # Make a list of items to iterate
-            if len(images) < self.batch_size:
-                del self.aspect_ratio_bucket_indices[bucket]
-                logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
+        for bucket in list(
+            self.aspect_ratio_bucket_indices.keys()
+        ):  # Safe iteration over keys
+            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            self._prune_small_buckets(bucket)
+            self._enforce_resolution_constraints(bucket)
+            # We do this twice in case there were any new contenders for being too small.
+            self._prune_small_buckets(bucket)
+
+    def _prune_small_buckets(self, bucket):
+        """
+        Remove buckets with fewer images than the batch size.
+        """
+        if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            del self.aspect_ratio_bucket_indices[bucket]
+            logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
+
+    def _enforce_resolution_constraints(self, bucket):
+        """
+        Enforce resolution constraints on images in a bucket.
+        """
+        if self.minimum_image_size is not None:
+            logger.info(
+                f"Enforcing minimum image size of {self.minimum_image_size}."
+                "This could take a while for very-large datasets."
+            )
+            images = self.aspect_ratio_bucket_indices[bucket]
+            self.aspect_ratio_bucket_indices[bucket] = [
+                img
+                for img in images
+                if BucketManager.meets_resolution_requirements(
+                    image_path=img,
+                    minimum_image_size=self.minimum_image_size,
+                    resolution_type=self.resolution_type,
+                    image=None,
+                )
+            ]
+
+    @staticmethod
+    def meets_resolution_requirements(
+        image_path: str = None,
+        image: Image = None,
+        minimum_image_size: int = None,
+        resolution_type: str = None,
+    ):
+        """
+        Check if an image meets the resolution requirements.
+        """
+        if image is None and image_path is not None:
+            metadata = BucketManager.get_metadata_by_filepath(
+                image_path
+            )  # Adjusted to call class method
+            if metadata is None:
+                logger.warning(f"Metadata not found for image {image_path}.")
+                return False
+            width, height = metadata["original_size"]
+        elif image is not None:
+            width, height = image.size
+        else:
+            # Unexpected condition
+            raise ValueError(
+                f"meets_resolution_requirements expects an image_path"
+                f" ({image_path}) or Image object ({image}), but received neither."
+            )
+
+        if minimum_image_size is None:
+            return True
+
+        if resolution_type == "pixel":
+            return minimum_image_size > width or minimum_image_size > height
+        elif resolution_type == "area":
+            # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
+            minimum_image_size = minimum_image_size * 1_000_000
+            return minimum_image_size > width * height
+        else:
+            raise ValueError(
+                f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {resolution_type}"
+            )
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
         """
@@ -558,7 +642,7 @@ class BucketManager:
                     tqdm_queue,
                     file_shard,
                     None,  # Passing None to indicate we don't want to update the buckets
-                    None,   # Passing None to indicate we don't want to update the written files list
+                    None,  # Passing None to indicate we don't want to update the written files list
                     metadata_updates_queue,
                     existing_files_set,
                     self.data_backend,
