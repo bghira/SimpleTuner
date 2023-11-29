@@ -832,7 +832,7 @@ def main():
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
-        minimum_image_size=args.minimum_image_size
+        minimum_image_size=args.minimum_image_size,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
         cache_dir=args.cache_dir_vae,
