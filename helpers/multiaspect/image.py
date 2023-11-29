@@ -68,7 +68,6 @@ class MultiaspectImage:
                     image=image,
                     minimum_image_size=minimum_image_size,
                     resolution_type=resolution_type,
-                    image=None
                 ):
                     logger.debug(
                         f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
