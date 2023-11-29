@@ -37,6 +37,7 @@ class VAECache:
         process_queue_size: int = 16,
         vae_batch_size: int = 4,
         resolution_type: str = "pixel",
+        minimum_image_size: int = None
     ):
         self.data_backend = data_backend
         self.vae = vae
@@ -44,6 +45,7 @@ class VAECache:
         self.cache_dir = cache_dir
         self.resolution = resolution
         self.resolution_type = resolution_type
+        self.minium_image_size = minimum_image_size
         self.data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
@@ -53,6 +55,7 @@ class VAECache:
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
+
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -296,6 +299,16 @@ class VAECache:
                 filepath, image = self.process_queue.get()
                 filepaths.extend(filepath)
                 self.debug_log(f"Processing {filepath}")
+                if self.minimum_image_size is not None:
+                    if not BucketManager.meets_resolution_requirements(
+                        image_path=filepath,
+                        minimum_image_size=self.minimum_image_size,
+                        resolution_type=self.resolution_type
+                    ):
+                        self.debug_log(
+                            f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
+                        )
+                        continue
                 image, crop_coordinates = MultiaspectImage.prepare_image(
                     image, self.resolution, self.resolution_type
                 )

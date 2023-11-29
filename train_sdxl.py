@@ -284,6 +284,7 @@ def main():
         data_backend=data_backend,
         accelerator=accelerator,
         resolution=args.resolution,
+        minimum_image_size=args.minimum_image_size,
         resolution_type=args.resolution_type,
         batch_size=args.train_batch_size,
         metadata_update_interval=args.metadata_update_interval,
@@ -441,7 +442,6 @@ def main():
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
-        minimum_image_size=args.minimum_image_size,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
@@ -832,6 +832,7 @@ def main():
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
+        minimum_image_size=args.minimum_image_size
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
         cache_dir=args.cache_dir_vae,
