@@ -296,6 +296,7 @@ def main():
         ),
         delete_problematic_images=args.delete_problematic_images or False,
     )
+    StateTracker.set_bucket_manager(bucket_manager)
     if bucket_manager.has_single_underfilled_bucket():
         raise Exception(
             f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
