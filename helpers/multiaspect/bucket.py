@@ -46,6 +46,7 @@ class BucketManager:
         self.delete_problematic_images = delete_problematic_images
         self.metadata_update_interval = metadata_update_interval
         self.minimum_image_size = minimum_image_size
+        self.image_metadata_loaded = False
 
     def __len__(self):
         """
@@ -445,7 +446,7 @@ class BucketManager:
         if image is None and image_path is not None:
             metadata = StateTracker.get_bucket_manager().get_metadata_by_filepath(
                 image_path
-            )  # Adjusted to call class method
+            )
             if metadata is None:
                 logger.warning(f"Metadata not found for image {image_path}.")
                 return False
@@ -597,14 +598,19 @@ class BucketManager:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
+        if not self.image_metadata_loaded:
+            self.load_image_metadata()
         return self.image_metadata.get(filepath, None)
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
         self.image_metadata = {}
+        self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
             cache_data_raw = self.data_backend.read(self.metadata_file)
             self.image_metadata = json.loads(cache_data_raw)
+            self.image_metadata_loaded = True
+            
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
