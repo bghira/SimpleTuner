@@ -4,6 +4,7 @@ import requests
 
 logger = logging.getLogger("Captioner")
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Process images and generate captions."
@@ -28,6 +29,15 @@ def parse_args():
         help="Strategy for saving captions.",
     )
     parser.add_argument(
+        "--filter_list",
+        type=str,
+        default=None,
+        help=(
+            "Path to a txt file containing terms or sentence fragments to filter out."
+            " These will be removed from the final caption."
+        ),
+    )
+    parser.add_argument(
         "--save_interval",
         type=int,
         default=100,
@@ -35,6 +45,11 @@ def parse_args():
     )
     return parser.parse_args()
 
+def load_filter_list(filter_list_path):
+    if filter_list_path and os.path.exists(filter_list_path):
+        with open(filter_list_path, 'r') as file:
+            return [line.strip() for line in file if line.strip()]
+    return []
 
 def eval_image(
     image: Image,
@@ -59,12 +74,14 @@ def eval_image(
         return tokenizer.decode(outputs[0])
 
 
-def content_to_filename(content):
+def content_to_filename(content, filter_terms):
     """
-    Function to convert content to filename by stripping everything after '--',
+    Function to convert content to filename by stripping specified terms,
     replacing non-alphanumeric characters and spaces, converting to lowercase,
     removing leading/trailing underscores, and limiting filename length to 128.
     """
+    for term in filter_terms:
+        content = content.replace(term, "")
     # Split on '--' and take the first part
     content = content.split("--")[0]
 
@@ -103,6 +120,7 @@ def process_directory(
     caption_strategy,
     save_interval,
     progress_file,
+    filter_terms
 ):
     processed_file_counter = 0
 
@@ -134,7 +152,7 @@ def process_directory(
                     logging.info(f"Best match for {filename}: {best_match}")
                     # Save based on caption strategy
                     new_filename = (
-                        content_to_filename(best_match)
+                        content_to_filename(best_match, filter_terms)
                         if caption_strategy == "filename"
                         else filename
                     )
@@ -199,6 +217,15 @@ def main():
         with open(progress_file, "r") as f:
             processed_files = set(f.read().splitlines())
 
+    # Load a list of "filter terms". This is a text file that might look like:
+    #
+    # The image showcases a
+    # closeup image of a
+    # anotherterm
+    #
+    # Each filter term should be on its own line. The entire contents of the row will be removed.
+    filter_terms = load_filter_list(args.filter_list)
+
     # Process directory
     process_directory(
         args.input_dir,
@@ -209,6 +236,7 @@ def main():
         args.caption_strategy,
         args.save_interval,
         progress_file,
+        filter_terms
     )
 
     # Save progress
