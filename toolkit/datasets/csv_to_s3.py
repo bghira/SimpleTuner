@@ -13,6 +13,8 @@ import requests
 import re
 import shutil
 from botocore.config import Config
+from multiprocessing import Pool
+from tqdm import tqdm
 
 # Constants
 conn_timeout = 6
@@ -521,42 +523,53 @@ def process_git_lfs_images(args, s3_client):
     for ext in image_exts:
         for image_path in Path(repo_path).rglob(f"*{ext}"):
             upload_local_image_to_s3(image_path, args, s3_client)
-
 def process_local_folder_images(args, s3_client, existing_files: list):
-    """Scan the local folder directory for image files, apply checks, and upload them."""
+    """Scan the local folder directory for image files, apply checks, and upload them in parallel."""
     if not os.path.exists(args.local_folder):
         logger.error(f"Local folder '{args.local_folder}' does not exist.")
         return
 
     image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
-    for ext in image_exts:
-        for image_path in Path(args.local_folder).rglob(f"*{ext}"):
-            if str(image_path) in existing_files:
-                logger.debug(f"Skipping already processed file: {image_path}")
-                continue
-            image = Image.open(image_path)
-            width, height = image.size
+    all_images = [image_path for ext in image_exts for image_path in Path(args.local_folder).rglob(f"*{ext}")]
+    
+    # Filter out already processed files
+    images_to_process = [image_path for image_path in all_images if str(image_path) not in existing_files]
 
-            # Check minimum resolution
-            if (args.minimum_resolution > 0 and 
-                (width < args.minimum_resolution or height < args.minimum_resolution)):
-                continue
+    # Using Pool for parallel processing
+    with Pool(processes=args.num_workers) as pool:
+        list(tqdm(pool.imap(process_and_upload, [(image_path, args) for image_path in images_to_process]), total=len(images_to_process)))
 
-            # Check luminance if required
-            if args.min_luminance is not None or args.max_luminance is not None:
-                luminance = calculate_luminance(image)
-                if args.min_luminance is not None and luminance < args.min_luminance:
-                    continue
-                if args.max_luminance is not None and luminance > args.max_luminance:
-                    continue
+def process_and_upload(image_path_args):
+    image_path, args = image_path_args
+    """Process and upload a single image."""
+    # Place your existing logic here for processing a single image and uploading it to S3.
+    # For example:
+    image = Image.open(image_path)
+    width, height = image.size
 
-            # Resize image for condition if required
-            image = resize_for_condition_image(image, args.condition_image_size)
-            temp_path = os.path.join(args.temporary_folder, os.path.basename(image_path))
-            image.save(temp_path, format="PNG")
-            image.close()
-            # Upload to S3
-            upload_local_image_to_s3(temp_path, args, s3_client)
+    # Check minimum resolution
+    if (args.minimum_resolution > 0 and 
+        (width < args.minimum_resolution or height < args.minimum_resolution)):
+        continue
+
+    # Check luminance if required
+    if args.min_luminance is not None or args.max_luminance is not None:
+        luminance = calculate_luminance(image)
+        if args.min_luminance is not None and luminance < args.min_luminance:
+            continue
+        if args.max_luminance is not None and luminance > args.max_luminance:
+            continue
+
+    # Reinitialize S3 client for each process
+    s3_client = initialize_s3_client(args)
+
+    # Resize image for condition if required
+    image = resize_for_condition_image(image, args.condition_image_size)
+    temp_path = os.path.join(args.temporary_folder, os.path.basename(image_path))
+    image.save(temp_path, format="PNG")
+    image.close()
+    # Upload to S3
+    upload_local_image_to_s3(temp_path, args, s3_client)
 
 def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""
