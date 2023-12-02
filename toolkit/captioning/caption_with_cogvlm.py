@@ -44,6 +44,12 @@ def parse_args():
         default=100,
         help="Interval to save progress (number of files processed).",
     )
+    parser.add_argument(
+        "--delete_after_caption",
+        action="store_true",
+        default=False,
+        help="Delete *input* image files after captioning."
+    )
     return parser.parse_args()
 
 def load_filter_list(filter_list_path):
@@ -113,6 +119,7 @@ def content_to_filename(content, filter_terms):
 
 
 def process_directory(
+    args,
     image_dir,
     output_dir,
     model,
@@ -139,6 +146,7 @@ def process_directory(
         full_filepath = os.path.join(image_dir, filename)
         if os.path.isdir(full_filepath):
             process_directory(
+                args,
                 full_filepath,
                 output_dir,
                 model,
@@ -169,6 +177,9 @@ def process_directory(
                         counter += 1
 
                     image.save(new_filepath)
+                    # Remove the original file if args.delete_after_caption
+                    if args.delete_after_caption:
+                        os.remove(full_filepath)
 
                 if caption_strategy == "text":
                     with open(new_filepath + ".txt", "w") as f:
@@ -229,6 +240,7 @@ def main():
 
     # Process directory
     process_directory(
+        args,
         args.input_dir,
         args.output_dir,
         model,
