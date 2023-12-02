@@ -119,7 +119,7 @@ class BucketManager:
             )
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
 
-    def _save_cache(self):
+    def _save_cache(self, enforce_constraints: bool = False):
         """
         Save cache data to file.
         """
@@ -282,7 +282,7 @@ class BucketManager:
                         f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
                     )
                     self.instance_images_path.update(written_files)
-                    self._save_cache()
+                    self._save_cache(enforce_constraints=False)
                     self.save_image_metadata()
                     last_write_time = current_time
 
@@ -292,8 +292,8 @@ class BucketManager:
             worker.join()
 
         self.instance_images_path.update(new_files)
-        self._save_cache()
         self.save_image_metadata()
+        self._save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1):
@@ -681,6 +681,6 @@ class BucketManager:
         for worker in workers:
             worker.join()
 
-        self._save_cache()
         self.save_image_metadata()
+        self._save_cache(enforce_constraints=True)
         logger.info("Completed metadata update.")
