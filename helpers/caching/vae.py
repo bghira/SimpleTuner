@@ -298,7 +298,7 @@ class VAECache:
             qlen = self.process_queue.qsize()
             for idx in range(0, qlen):
                 filepath, image = self.process_queue.get()
-                filepaths.extend(filepath)
+                filepaths.append(filepath)
                 self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
                     if not BucketManager.meets_resolution_requirements(
