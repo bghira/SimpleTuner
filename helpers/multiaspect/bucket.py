@@ -469,7 +469,9 @@ class BucketManager:
         elif resolution_type == "area":
             # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
             if minimum_image_size > 5:
-                raise ValueError(f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5.")
+                raise ValueError(
+                    f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
+                )
             minimum_image_size = minimum_image_size * 1_000_000
             return minimum_image_size <= width * height
         else:
@@ -613,7 +615,6 @@ class BucketManager:
             cache_data_raw = self.data_backend.read(self.metadata_file)
             self.image_metadata = json.loads(cache_data_raw)
             self.image_metadata_loaded = True
-            
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""

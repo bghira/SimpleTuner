@@ -45,7 +45,7 @@ class VAECache:
         self.cache_dir = cache_dir
         self.resolution = resolution
         self.resolution_type = resolution_type
-        self.minium_image_size = minimum_image_size
+        self.minimum_image_size = minimum_image_size
         self.data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
