@@ -550,15 +550,15 @@ def process_and_upload(image_path_args):
     # Check minimum resolution
     if (args.minimum_resolution > 0 and 
         (width < args.minimum_resolution or height < args.minimum_resolution)):
-        continue
+        return None
 
     # Check luminance if required
     if args.min_luminance is not None or args.max_luminance is not None:
         luminance = calculate_luminance(image)
         if args.min_luminance is not None and luminance < args.min_luminance:
-            continue
+            return None
         if args.max_luminance is not None and luminance > args.max_luminance:
-            continue
+            return None
 
     # Reinitialize S3 client for each process
     s3_client = initialize_s3_client(args)
