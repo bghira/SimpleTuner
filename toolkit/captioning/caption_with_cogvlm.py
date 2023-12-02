@@ -1,4 +1,5 @@
 import os, torch, logging, xformers, accelerate, re, random, argparse
+from tqdm.auto import tqdm
 from PIL import Image
 import requests
 
@@ -192,8 +193,8 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # Ensure output directory exists
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
     logger.info("Loading CogVLM model. This should only occur once.")
     from transformers import AutoModelForCausalLM, LlamaTokenizer
 
