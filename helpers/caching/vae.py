@@ -7,6 +7,7 @@ from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+from helpers.multiaspect.bucket import BucketManager
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
