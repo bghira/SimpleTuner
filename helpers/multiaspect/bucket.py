@@ -420,7 +420,7 @@ class BucketManager:
         if self.minimum_image_size is not None:
             logger.info(
                 f"Enforcing minimum image size of {self.minimum_image_size}."
-                "This could take a while for very-large datasets."
+                " This could take a while for very-large datasets."
             )
             images = self.aspect_ratio_bucket_indices[bucket]
             self.aspect_ratio_bucket_indices[bucket] = [
@@ -465,11 +465,11 @@ class BucketManager:
             return True
 
         if resolution_type == "pixel":
-            return minimum_image_size >= width and minimum_image_size >= height
+            return minimum_image_size <= width and minimum_image_size <= height
         elif resolution_type == "area":
             # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
             minimum_image_size = minimum_image_size * 1_000_000
-            return minimum_image_size >= width * height
+            return minimum_image_size <= width * height
         else:
             raise ValueError(
                 f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {resolution_type}"
