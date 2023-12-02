@@ -468,6 +468,8 @@ class BucketManager:
             return minimum_image_size <= width and minimum_image_size <= height
         elif resolution_type == "area":
             # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
+            if minimum_image_size > 5:
+                raise ValueError(f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5.")
             minimum_image_size = minimum_image_size * 1_000_000
             return minimum_image_size <= width * height
         else:
