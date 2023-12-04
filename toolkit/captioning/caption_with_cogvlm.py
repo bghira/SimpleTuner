@@ -254,7 +254,7 @@ def main():
     )
 
     # Save progress
-    with open(progress_file, "w") as f:
+    with open(progress_file, "w", encoding='utf-8') as f:
         f.writelines("\n".join(processed_files))
 
 
