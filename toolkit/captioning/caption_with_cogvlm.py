@@ -85,7 +85,7 @@ def content_to_filename(content, filter_terms):
     """
     Function to convert content to filename by stripping specified terms,
     replacing non-alphanumeric characters and spaces, converting to lowercase,
-    removing leading/trailing underscores, and limiting filename length to 128.
+    removing leading/trailing underscores, and limiting filename length to 230.
     """
     for term in filter_terms:
         content = content.replace(term, "")
@@ -110,9 +110,9 @@ def content_to_filename(content, filter_terms):
     if cleaned_content == "":
         cleaned_content = f"midjourney_{random.randint(0, 1000000)}"
 
-    # Limit filename length to 128
+    # Limit filename length to 230
     cleaned_content = (
-        cleaned_content[:128] if len(cleaned_content) > 128 else cleaned_content
+        cleaned_content[:230] if len(cleaned_content) > 230 else cleaned_content
     )
 
     return cleaned_content + ".png"
@@ -154,7 +154,7 @@ def process_directory(
                 processed_files,
                 caption_strategy,
             )
-        elif filename.lower().endswith((".jpg", ".png")):
+        elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
             try:
                 with Image.open(full_filepath) as image:
                     best_match = eval_image(image, model, tokenizer)
