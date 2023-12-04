@@ -182,8 +182,9 @@ def process_directory(
                         os.remove(full_filepath)
 
                 if caption_strategy == "text":
-                    with open(new_filepath + ".txt", "w") as f:
+                    with open(new_filepath + ".txt", "w", encoding='utf-8') as f:
                         f.write(best_match)
+
 
             except Exception as e:
                 logging.error(f"Error processing {filename}: {str(e)}")
@@ -191,11 +192,11 @@ def process_directory(
         processed_file_counter += 1
         # Save progress at specified intervals
         if processed_file_counter % save_interval == 0:
-            with open(progress_file, "w") as f:
+            with open(progress_file, "w", encoding='utf-8') as f:
                 f.writelines("\n".join(processed_files))
 
     # Save remaining progress
-    with open(progress_file, "w") as f:
+    with open(progress_file, "w", encoding='utf-8') as f:
         f.writelines("\n".join(processed_files))
 
 
