@@ -652,8 +652,8 @@ class BucketManager:
                     tqdm_queue,
                     file_shard,
                     None,  # Passing None to indicate we don't want to update the buckets
-                    None,  # Passing None to indicate we don't want to update the written files list
                     metadata_updates_queue,
+                    None,  # Passing None to indicate we don't want to update the written files list
                     existing_files_set,
                     self.data_backend,
                 ),
