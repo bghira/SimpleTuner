@@ -186,7 +186,7 @@ if ! [ -z "$MIN_SNR_GAMMA" ]; then
 fi
 
 export GRADIENT_ARG="--use_gradient_checkpointing"
-if [ -z "$USE_GRADIENT_CHECKPOINTING" ] || [[ "$USE_GRADIENT_CHECKPOINTING" == "false" ]]; then
+if ! [ -z "$USE_GRADIENT_CHECKPOINTING" ] && [[ "$USE_GRADIENT_CHECKPOINTING" == "false" ]]; then
     export GRADIENT_ARG=""
 fi
 
