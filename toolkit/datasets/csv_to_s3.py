@@ -13,6 +13,8 @@ import requests
 import re
 import shutil
 from botocore.config import Config
+from multiprocessing import Pool
+from tqdm import tqdm
 
 # Constants
 conn_timeout = 6
@@ -89,7 +91,7 @@ def resize_for_condition_image(input_image: Image, resolution: int):
         H = resolution
     msg = f"{msg} {W}x{H}."
     logger.debug(msg)
-    img = input_image.resize((W, H), resample=Image.BICUBIC)
+    img = input_image.resize((W, H), resample=Image.LANCZOS)
     return img
 
 
@@ -201,6 +203,11 @@ def parse_args():
         help="Read timeout in seconds.",
     )
     # Script-specific arguments
+    parser.add_argument(
+        "--local_folder",
+        type=str,
+        help="Location of local folder containing images to upload.",
+    )
     parser.add_argument(
         "--parquet_folder", type=str, help="Location of the Parquet files."
     )
@@ -323,8 +330,6 @@ def parse_args():
 
 
 # Additional functions for handling diverse input datasets
-
-
 def get_uri_column(df):
     if "url" in df.columns:
         return "url"
@@ -520,6 +525,71 @@ def process_git_lfs_images(args, s3_client):
             upload_local_image_to_s3(image_path, args, s3_client)
 
 
+def process_local_folder_images(args, s3_client, existing_files: list):
+    """Scan the local folder directory for image files, apply checks, and upload them in parallel."""
+    if not os.path.exists(args.local_folder):
+        logger.error(f"Local folder '{args.local_folder}' does not exist.")
+        return
+
+    image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
+    all_images = [
+        image_path
+        for ext in image_exts
+        for image_path in Path(args.local_folder).rglob(f"*{ext}")
+    ]
+
+    # Filter out already processed files
+    images_to_process = [
+        image_path for image_path in all_images if str(image_path) not in existing_files
+    ]
+
+    # Using Pool for parallel processing
+    with Pool(processes=args.num_workers) as pool:
+        list(
+            tqdm(
+                pool.imap(
+                    process_and_upload,
+                    [(image_path, args) for image_path in images_to_process],
+                ),
+                total=len(images_to_process),
+            )
+        )
+
+
+def process_and_upload(image_path_args):
+    image_path, args = image_path_args
+    """Process and upload a single image."""
+    # Place your existing logic here for processing a single image and uploading it to S3.
+    # For example:
+    image = Image.open(image_path)
+    width, height = image.size
+
+    # Check minimum resolution
+    if args.minimum_resolution > 0 and (
+        width < args.minimum_resolution or height < args.minimum_resolution
+    ):
+        return None
+
+    # Check luminance if required
+    if args.min_luminance is not None or args.max_luminance is not None:
+        luminance = calculate_luminance(image)
+        if args.min_luminance is not None and luminance < args.min_luminance:
+            return None
+        if args.max_luminance is not None and luminance > args.max_luminance:
+            return None
+
+    # Reinitialize S3 client for each process
+    s3_client = initialize_s3_client(args)
+
+    # Resize image for condition if required
+    image = resize_for_condition_image(image, args.condition_image_size)
+    temp_path = os.path.join(args.temporary_folder, os.path.basename(image_path))
+    image.save(temp_path, format="PNG")
+    image.close()
+    # Upload to S3
+    upload_local_image_to_s3(temp_path, args, s3_client)
+
+
 def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""
     try:
@@ -533,7 +603,6 @@ def fetch_and_upload_image(info, args):
 
 def fetch_data(data, args, uri_column):
     """Function to fetch all images specified in data and upload them to S3."""
-    s3_client = initialize_s3_client(args)
     to_fetch = {}
     for row in data:
         new_filename = content_to_filename(row[args.caption_field], args)
@@ -571,6 +640,11 @@ def main():
     existing_files = []
     existing_files = list_all_s3_objects(s3_client, args.aws_bucket_name)
     logger.info(f"Found {len(existing_files)} existing files in the S3 bucket.")
+
+    # Process and upload images from the local folder
+    if args.local_folder:
+        process_local_folder_images(args, s3_client, existing_files)
+
     if args.git_lfs_repo:
         repo_path = os.path.join(args.temporary_folder, "git-lfs-repo")
         if not os.path.exists(repo_path):

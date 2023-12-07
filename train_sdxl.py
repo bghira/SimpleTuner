@@ -284,6 +284,7 @@ def main():
         data_backend=data_backend,
         accelerator=accelerator,
         resolution=args.resolution,
+        minimum_image_size=args.minimum_image_size,
         resolution_type=args.resolution_type,
         batch_size=args.train_batch_size,
         metadata_update_interval=args.metadata_update_interval,
@@ -295,6 +296,7 @@ def main():
         ),
         delete_problematic_images=args.delete_problematic_images or False,
     )
+    StateTracker.set_bucket_manager(bucket_manager)
     if bucket_manager.has_single_underfilled_bucket():
         raise Exception(
             f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
@@ -441,7 +443,6 @@ def main():
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
-        minimum_image_size=args.minimum_image_size,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
@@ -722,18 +723,22 @@ def main():
     elif args.use_adafactor_optimizer:
         # Use the AdafactorScheduler.
         lr_scheduler = AdafactorSchedule(optimizer)
-    elif args.lr_scheduler == "cosine_annealing_warm_restarts":
-        """
-        optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
+    elif args.lr_scheduler == "cosine_with_restarts":
+        from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
-            T_0 (int) – Number of iterations for the first restart.
-            T_mult (int, optional) – A factor increases Ti after a restart. Default: 1.
-            eta_min (float, optional) – Minimum learning rate. Default: 0.
+        lr_scheduler = CosineAnnealingHardRestarts(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
+    elif args.lr_scheduler == "cosine":
+        from helpers.training.custom_schedule import Cosine
 
-        """
-        from helpers.training.custom_schedule import CosineAnnealingWarmRestarts
-
-        lr_scheduler = CosineAnnealingWarmRestarts(
+        lr_scheduler = Cosine(
             optimizer=optimizer,
             T_0=int(args.lr_warmup_steps * accelerator.num_processes),
             T_mult=int(1),
@@ -828,6 +833,7 @@ def main():
         delete_problematic_images=args.delete_problematic_images,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
+        minimum_image_size=args.minimum_image_size,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
         cache_dir=args.cache_dir_vae,
@@ -1023,7 +1029,7 @@ def main():
         unet.train()
         current_epoch_step = 0
         for step, batch in enumerate(train_dataloader):
-            if args.lr_scheduler == "cosine_annealing_warm_restarts":
+            if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
             if accelerator.is_main_process:
                 progress_bar.set_description(

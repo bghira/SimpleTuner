@@ -132,7 +132,7 @@ def _resize_for_condition_image(input_image: Image, resolution: int):
         H = resolution
     msg = f"{msg} {W}x{H}."
     logging.info(msg)
-    img = input_image.resize((W, H), resample=Image.BICUBIC)
+    img = input_image.resize((W, H), resample=Image.LANCZOS)
     return img
 
 

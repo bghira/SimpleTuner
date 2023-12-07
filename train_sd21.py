@@ -44,7 +44,7 @@ from helpers.training.custom_schedule import (
 )
 from helpers.training.model_freeze import freeze_entire_component, freeze_text_encoder
 import numpy as np
-import torch
+import torch, accelerate
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
@@ -307,7 +307,63 @@ def main(args):
         "weight_decay": args.adam_weight_decay,
         "eps": args.adam_epsilon,
     }
-    if args.use_8bit_adam:
+    use_deepspeed_optimizer = False
+    use_deepspeed_scheduler = False
+    if (
+        hasattr(accelerator.state, "deepspeed_plugin")
+        and accelerator.state.deepspeed_plugin is not None
+    ):
+        offload_param = accelerator.state.deepspeed_plugin.deepspeed_config[
+            "zero_optimization"
+        ]["offload_param"]
+        accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"][
+            "offload_param"
+        ]["pin_memory"] = False
+        if offload_param["device"] == "nvme":
+            if offload_param["nvme_path"] == "none":
+                if args.offload_param_path is None:
+                    raise ValueError(
+                        f"DeepSpeed is using {offload_param['device']} but nvme_path is not specified."
+                    )
+                else:
+                    accelerator.state.deepspeed_plugin.deepspeed_config[
+                        "zero_optimization"
+                    ]["offload_param"]["nvme_path"] = args.offload_param_path
+            logger.info(
+                f"Using DeepSpeed NVMe offload at {accelerator.state.deepspeed_plugin.deepspeed_config['zero_optimization']['offload_param']['nvme_path']}."
+            )
+
+        use_deepspeed_optimizer = True
+        if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
+                "type": "AdamW",
+                "params": {
+                    "lr": args.learning_rate,
+                    "betas": [args.adam_beta1, args.adam_beta2],
+                    "eps": args.adam_epsilon,
+                    "weight_decay": args.adam_weight_decay,
+                },
+            }
+
+        use_deepspeed_scheduler = True
+        if "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            accelerator.state.deepspeed_plugin.deepspeed_config["scheduler"] = {
+                "type": "WarmupLR",
+                "params": {
+                    "warmup_min_lr": 0,
+                    "warmup_max_lr": args.learning_rate,
+                    "warmup_num_steps": args.lr_warmup_steps,
+                },
+            }
+    # Initialize the optimizer
+    if use_deepspeed_optimizer:
+        logger.info("Using DeepSpeed optimizer.")
+        optimizer_class = accelerate.utils.DummyOptim
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["eps"] = args.adam_epsilon
+        extra_optimizer_args["weight_decay"] = args.adam_weight_decay
+    elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
             import bitsandbytes as bnb
@@ -343,7 +399,13 @@ def main(args):
             extra_optimizer_args["lr"] = args.learning_rate
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        from transformers import Adafactor
+        try:
+            from transformers.optimization import Adafactor, AdafactorSchedule
+        except ImportError:
+            raise ImportError(
+                "Please install the latest transformers library to make use of Adafactor optimizer."
+                "You can do so by running `pip install transformers`, or, `poetry install` from the SimpleTuner directory."
+            )
 
         optimizer_class = Adafactor
         extra_optimizer_args = {}
@@ -360,10 +422,20 @@ def main(args):
         if args.train_text_encoder
         else unet.parameters()
     )
-    optimizer = optimizer_class(
-        params_to_optimize,
-        **extra_optimizer_args,
-    )
+    if use_deepspeed_optimizer:
+        logger.info(
+            f"Creating DeepSpeed optimizer"
+        )
+        optimizer = optimizer_class(params_to_optimize)
+    else:
+        logger.info(
+            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
+        )
+        optimizer = optimizer_class(
+            params_to_optimize,
+            **extra_optimizer_args,
+        )
+
     # Create a DataBackend, so that we can access our dataset.
     if args.data_backend == "local":
         from helpers.data_backend.local import LocalDataBackend
@@ -407,6 +479,7 @@ def main(args):
         batch_size=args.train_batch_size,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
+        minimum_image_size=args.minimum_image_size,
         cache_file=os.path.join(
             args.instance_data_dir, "aspect_ratio_bucket_indices.json"
         ),
@@ -416,6 +489,7 @@ def main(args):
         apply_dataset_padding=args.apply_dataset_padding or False,
         delete_problematic_images=args.delete_problematic_images or False,
     )
+    StateTracker.set_bucket_manager(bucket_manager)
     if bucket_manager.has_single_underfilled_bucket():
         raise Exception(
             f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
@@ -480,7 +554,6 @@ def main(args):
         state_path=args.state_path,
         debug_aspect_buckets=args.debug_aspect_buckets,
         delete_unwanted_images=args.delete_unwanted_images,
-        minimum_image_size=args.minimum_image_size,
         resolution=args.resolution,
         resolution_type=args.resolution_type,
     )
@@ -574,24 +647,39 @@ def main(args):
             f"Overriding max_train_steps to {args.max_train_steps} = {args.num_train_epochs} * {num_update_steps_per_epoch}"
         )
         overrode_max_train_steps = True
+    if use_deepspeed_scheduler:
+        logger.info(f"Using DeepSpeed learning rate scheduler")
+        lr_scheduler = accelerate.utils.DummyScheduler(
+            optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.lr_warmup_steps,
+        )
+    elif args.use_adafactor_optimizer:
+        # Use the AdafactorScheduler.
+        lr_scheduler = AdafactorSchedule(optimizer)
+    elif args.lr_scheduler == "cosine_with_restarts":
+        from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
-    if args.lr_scheduler == "cosine_annealing_warm_restarts":
-        """
-        optimizer, T_0, T_mult=1, eta_min=0, last_epoch=- 1, verbose=False
-
-            T_0 (int) – Number of iterations for the first restart.
-            T_mult (int, optional) – A factor increases Ti after a restart. Default: 1.
-            eta_min (float, optional) – Minimum learning rate. Default: 0.
-
-        """
-        from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-
-        lr_scheduler = CosineAnnealingWarmRestarts(
+        lr_scheduler = CosineAnnealingHardRestarts(
             optimizer=optimizer,
-            T_0=args.lr_warmup_steps * accelerator.num_processes,
-            T_mult=args.lr_num_cycles,
-            eta_min=args.lr_end,
-            last_epoch=-1,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
+    elif args.lr_scheduler == "cosine":
+        from helpers.training.custom_schedule import Cosine
+
+        lr_scheduler = Cosine(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
         )
     elif args.lr_scheduler == "polynomial":
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
@@ -686,6 +774,7 @@ def main(args):
         resolution_type=args.resolution_type,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
+        minimum_image_size=args.minimum_image_size
     )
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
@@ -856,7 +945,7 @@ def main(args):
             f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
         )
         current_epoch = epoch
-        if args.lr_scheduler == "cosine_annealing_warm_restarts":
+        if args.lr_scheduler == "cosine_with_restarts":
             scheduler_kwargs["epoch"] = epoch
 
         unet.train()

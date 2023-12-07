@@ -7,8 +7,8 @@ from helpers.training.custom_schedule import (
     patch_scheduler_betas,
 )
 
-class TestPolynomialDecayWithWarmup(unittest.TestCase):
 
+class TestPolynomialDecayWithWarmup(unittest.TestCase):
     def test_polynomial_decay_schedule_with_warmup(self):
         optimizer = optim.SGD([torch.randn(2, 2, requires_grad=True)], lr=0.1)
         scheduler = get_polynomial_decay_schedule_with_warmup(
@@ -22,19 +22,15 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
             last_lr = round(scheduler.get_last_lr()[0], 2)
             optimizer.step()
             scheduler.step()
-        self.assertAlmostEqual(
-            last_lr, ranges[-1], places=3
-        )
+        self.assertAlmostEqual(last_lr, ranges[-1], places=3)
 
         # Test decay
         for step in range(len(ranges), 100):
             optimizer.step()
             scheduler.step()
         # Implement your decay formula here to check
-        expected_lr = 1e-7  
-        self.assertAlmostEqual(
-            scheduler.get_last_lr()[0], expected_lr, places=4
-        )
+        expected_lr = 1e-7
+        self.assertAlmostEqual(scheduler.get_last_lr()[0], expected_lr, places=4)
 
     def test_enforce_zero_terminal_snr(self):
         betas = torch.tensor([0.9, 0.8, 0.7])
@@ -57,7 +53,7 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
 
         final_beta = scheduler.betas[-1]
         self.assertEqual(final_beta, 1.0)
-        
+
 
 if __name__ == "__main__":
     unittest.main()

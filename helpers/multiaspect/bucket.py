@@ -4,6 +4,7 @@ from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
 import json, logging, os, time
 from multiprocessing import Manager
+from PIL import Image
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
@@ -27,6 +28,7 @@ class BucketManager:
         resolution_type: str,
         delete_problematic_images: bool = False,
         metadata_update_interval: int = 3600,
+        minimum_image_size: int = None,
     ):
         self.accelerator = accelerator
         self.data_backend = data_backend
@@ -43,6 +45,8 @@ class BucketManager:
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
         self.metadata_update_interval = metadata_update_interval
+        self.minimum_image_size = minimum_image_size
+        self.image_metadata_loaded = False
 
     def __len__(self):
         """
@@ -115,12 +119,13 @@ class BucketManager:
             )
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
 
-    def _save_cache(self):
+    def _save_cache(self, enforce_constraints: bool = False):
         """
         Save cache data to file.
         """
         # Prune any buckets that have fewer samples than batch_size
-        self._enforce_min_bucket_size()
+        if enforce_constraints:
+            self._enforce_min_bucket_size()
         # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
@@ -170,6 +175,8 @@ class BucketManager:
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
                     delete_problematic_images=self.delete_problematic_images,
+                    minimum_image_size=self.minimum_image_size,
+                    resolution_type=self.resolution_type,
                 )
                 processed_file_count += 1
                 processed_file_list.add(file)
@@ -177,14 +184,19 @@ class BucketManager:
             if processed_file_count % 500 == 0:
                 # Send updates to queues and reset the local dictionaries
                 if aspect_ratio_bucket_indices_queue is not None:
-                    aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
+                    aspect_ratio_bucket_indices_queue.put(
+                        local_aspect_ratio_bucket_indices
+                    )
                 if written_files_queue is not None:
                     written_files_queue.put(processed_file_list)
                 metadata_updates_queue.put(local_metadata_updates)
                 local_aspect_ratio_bucket_indices = {}
                 local_metadata_updates = {}
                 processed_file_list = set()
-        if aspect_ratio_bucket_indices_queue is not None and local_aspect_ratio_bucket_indices:
+        if (
+            aspect_ratio_bucket_indices_queue is not None
+            and local_aspect_ratio_bucket_indices
+        ):
             aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
         if local_metadata_updates:
             metadata_updates_queue.put(local_metadata_updates)
@@ -267,9 +279,11 @@ class BucketManager:
 
                 processing_duration = current_time - last_write_time
                 if processing_duration >= self.metadata_update_interval:
-                    logger.debug(f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists.")
+                    logger.debug(
+                        f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
+                    )
                     self.instance_images_path.update(written_files)
-                    self._save_cache()
+                    self._save_cache(enforce_constraints=False)
                     self.save_image_metadata()
                     last_write_time = current_time
 
@@ -279,8 +293,8 @@ class BucketManager:
             worker.join()
 
         self.instance_images_path.update(new_files)
-        self._save_cache()
         self.save_image_metadata()
+        self._save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1):
@@ -380,14 +394,90 @@ class BucketManager:
 
     def _enforce_min_bucket_size(self):
         """
-        Remove buckets that have fewer samples than batch_size.
+        Remove buckets that have fewer samples than batch_size and enforce minimum image size constraints.
         """
-        for bucket, images in list(
-            self.aspect_ratio_bucket_indices.items()
-        ):  # Make a list of items to iterate
-            if len(images) < self.batch_size:
-                del self.aspect_ratio_bucket_indices[bucket]
-                logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
+        for bucket in list(
+            self.aspect_ratio_bucket_indices.keys()
+        ):  # Safe iteration over keys
+            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            self._prune_small_buckets(bucket)
+            self._enforce_resolution_constraints(bucket)
+            # We do this twice in case there were any new contenders for being too small.
+            self._prune_small_buckets(bucket)
+
+    def _prune_small_buckets(self, bucket):
+        """
+        Remove buckets with fewer images than the batch size.
+        """
+        if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+            del self.aspect_ratio_bucket_indices[bucket]
+            logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
+
+    def _enforce_resolution_constraints(self, bucket):
+        """
+        Enforce resolution constraints on images in a bucket.
+        """
+        if self.minimum_image_size is not None:
+            logger.info(
+                f"Enforcing minimum image size of {self.minimum_image_size}."
+                " This could take a while for very-large datasets."
+            )
+            images = self.aspect_ratio_bucket_indices[bucket]
+            self.aspect_ratio_bucket_indices[bucket] = [
+                img
+                for img in images
+                if BucketManager.meets_resolution_requirements(
+                    image_path=img,
+                    minimum_image_size=self.minimum_image_size,
+                    resolution_type=self.resolution_type,
+                    image=None,
+                )
+            ]
+
+    @staticmethod
+    def meets_resolution_requirements(
+        image_path: str = None,
+        image: Image = None,
+        minimum_image_size: int = None,
+        resolution_type: str = None,
+    ):
+        """
+        Check if an image meets the resolution requirements.
+        """
+        if image is None and image_path is not None:
+            metadata = StateTracker.get_bucket_manager().get_metadata_by_filepath(
+                image_path
+            )
+            if metadata is None:
+                logger.warning(f"Metadata not found for image {image_path}.")
+                return False
+            width, height = metadata["original_size"]
+        elif image is not None:
+            width, height = image.size
+        else:
+            # Unexpected condition
+            raise ValueError(
+                f"meets_resolution_requirements expects an image_path"
+                f" ({image_path}) or Image object ({image}), but received neither."
+            )
+
+        if minimum_image_size is None:
+            return True
+
+        if resolution_type == "pixel":
+            return minimum_image_size <= width and minimum_image_size <= height
+        elif resolution_type == "area":
+            # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
+            if minimum_image_size > 5:
+                raise ValueError(
+                    f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
+                )
+            minimum_image_size = minimum_image_size * 1_000_000
+            return minimum_image_size <= width * height
+        else:
+            raise ValueError(
+                f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {resolution_type}"
+            )
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
         """
@@ -513,14 +603,18 @@ class BucketManager:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
+        if not self.image_metadata_loaded:
+            self.load_image_metadata()
         return self.image_metadata.get(filepath, None)
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
         self.image_metadata = {}
+        self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
             cache_data_raw = self.data_backend.read(self.metadata_file)
             self.image_metadata = json.loads(cache_data_raw)
+            self.image_metadata_loaded = True
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
@@ -558,8 +652,8 @@ class BucketManager:
                     tqdm_queue,
                     file_shard,
                     None,  # Passing None to indicate we don't want to update the buckets
-                    None,   # Passing None to indicate we don't want to update the written files list
                     metadata_updates_queue,
+                    None,  # Passing None to indicate we don't want to update the written files list
                     existing_files_set,
                     self.data_backend,
                 ),
@@ -591,6 +685,6 @@ class BucketManager:
         for worker in workers:
             worker.join()
 
-        self._save_cache()
         self.save_image_metadata()
+        self._save_cache(enforce_constraints=True)
         logger.info("Completed metadata update.")

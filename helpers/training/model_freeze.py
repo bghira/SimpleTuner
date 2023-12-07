@@ -1,7 +1,8 @@
 import logging, os
 
-logger = logging.getLogger('ModelFreeze')
+logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
 
 def freeze_entire_component(component):
     for name, param in component.named_parameters():

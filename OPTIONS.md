@@ -90,12 +90,18 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--learning_rate`
 
 - **What**: Initial learning rate after potential warmup.
-- **Why**: The learning rate designates how much the weights and biases are nudged on each optimisation step. A minimal value might be as low as `4e-7` and a maximal value would likely be as high as `1e-6`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema` and `--lr_warmup_steps`.
+- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value might be as low as `4e-7` and a maximal value would likely be as high as `1e-5`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
+
+### `--lr_scheduler`
+
+- **What**: How to scale the learning rate over time.
+- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, polynomial, linear
+- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low).
 
 ### `--snr_gamma`
 
 - **What**: Utilising min-SNR weighted loss factor.
-- **Why**: Though it does not currently work with zero terminal SNR models, min-SNR on an epsilon / offset noise model can greatly assist with convergence. Value recommended by the original paper is **5** but you can use values as low as **1** or as high as **20**.
+- **Why**: Minimum SNR gamma weights the loss factor of a timestep by its position in the schedule. Overly noisy timesteps have their contributions reduced, and less-noisy timesteps have it increased. Value recommended by the original paper is **5** but you can use values as low as **1** or as high as **20**, typically seen as the maximum value - beyond a value of 20, the math does not change things much. A value of **1** is the strongest.
 
 ---
 
@@ -169,8 +175,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--seed_for_each_device SEED_FOR_EACH_DEVICE]
                      [--resolution RESOLUTION]
                      [--resolution_type {pixel,area}]
-                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--center_crop]
-                     [--train_text_encoder]
+                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crop CROP]
+                     [--crop_style {center,centre,corner,random}]
+                     [--crop_aspect {square,preserve}] [--train_text_encoder]
                      [--train_batch_size TRAIN_BATCH_SIZE]
                      [--num_train_epochs NUM_TRAIN_EPOCHS]
                      [--max_train_steps MAX_TRAIN_STEPS]
@@ -179,11 +186,12 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
                      [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
                      [--gradient_checkpointing]
-                     [--learning_rate LEARNING_RATE] [--scale_lr]
-                     [--lr_scheduler LR_SCHEDULER]
+                     [--learning_rate LEARNING_RATE] [--lr_scale]
+                     [--lr_scheduler {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                      [--lr_warmup_steps LR_WARMUP_STEPS]
                      [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                     [--use_ema] [--non_ema_revision NON_EMA_REVISION]
+                     [--use_ema] [--ema_decay EMA_DECAY]
+                     [--non_ema_revision NON_EMA_REVISION]
                      [--offload_param_path OFFLOAD_PARAM_PATH]
                      [--use_8bit_adam] [--use_adafactor_optimizer]
                      [--use_dadapt_optimizer]
@@ -212,6 +220,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--local_rank LOCAL_RANK]
                      [--enable_xformers_memory_efficient_attention]
                      [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
+                     [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
                      [--validation_guidance VALIDATION_GUIDANCE]
                      [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
                      [--validation_randomize]
@@ -220,15 +229,18 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                      [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                      [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
-                     [--print_filenames] [--debug_aspect_buckets]
-                     [--debug_dataset_loader] [--freeze_encoder]
+                     [--print_filenames]
+                     [--metadata_update_interval METADATA_UPDATE_INTERVAL]
+                     [--debug_aspect_buckets] [--debug_dataset_loader]
+                     [--freeze_encoder]
                      [--text_encoder_limit TEXT_ENCODER_LIMIT]
                      [--prepend_instance_prompt] [--only_instance_prompt]
                      [--conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                      [--input_perturbation INPUT_PERTURBATION]
+                     [--input_perturbation_probability INPUT_PERTURBATION_PROBABILITY]
                      [--delete_unwanted_images] [--delete_problematic_images]
-                     [--offset_noise] [--learning_rate_end LEARNING_RATE_END]
+                     [--offset_noise] [--lr_end LR_END]
 
 The following SimpleTuner command-line options are available:
 
@@ -442,13 +454,33 @@ options:
   --minimum_image_size MINIMUM_IMAGE_SIZE
                         The minimum resolution for both sides of input images.
                         If --delete_unwanted_images is set, images smaller
-                        than this will be DELETED.
-  --center_crop         Whether to center crop the input images to the
-                        resolution. If not set, the images will be randomly
-                        cropped. The images will be resized to the resolution
-                        first before cropping. If training SDXL, the VAE cache
-                        and aspect bucket cache will need to be (re)built so
-                        they include crop coordinates.
+                        than this will be DELETED. The default value is None,
+                        which means no minimum resolution is enforced. If this
+                        option is not provided, it is possible that images
+                        will be destructively upsampled, harming model
+                        performance.
+  --crop CROP           Whether to crop the input images to the resolution. If
+                        not set, the images will be downsampled instead. When
+                        cropping is enabled, the images will not be resized
+                        before cropping. If training SDXL, the VAE cache and
+                        aspect bucket cache will need to be (re)built so they
+                        include crop coordinates.
+  --crop_style {center,centre,corner,random}
+                        When --crop is provided, a crop style may be defined
+                        that designates which part of an image to crop to. The
+                        old behaviour was to crop to the lower right corner,
+                        but this isn't always ideal for training. The default
+                        is 'random', which will locate a random segment of the
+                        image matching the given resolution.
+  --crop_aspect {square,preserve}
+                        When --crop is supplied, the default behaviour is to
+                        crop to square images, which greatly simplifies aspect
+                        bucketing. However, --crop_aspect may be set to
+                        'preserve', which will crop based on the
+                        --resolution_type value. If --resolution_type=area,
+                        the crop will be equal to the target pixel area. If
+                        --resolution_type=pixel, the crop will have the
+                        smaller edge equal to the value of --resolution.
   --train_text_encoder  (SD 2.x only) Whether to train the text encoder. If
                         set, the text encoder should be float32 precision.
   --train_batch_size TRAIN_BATCH_SIZE
@@ -484,12 +516,10 @@ options:
   --learning_rate LEARNING_RATE
                         Initial learning rate (after the potential warmup
                         period) to use.
-  --scale_lr            Scale the learning rate by the number of GPUs,
+  --lr_scale            Scale the learning rate by the number of GPUs,
                         gradient accumulation steps, and batch size.
-  --lr_scheduler LR_SCHEDULER
-                        The scheduler type to use. Choose between ["linear",
-                        "cosine", "cosine_with_restarts", "polynomial",
-                        "constant", "constant_with_warmup"]
+  --lr_scheduler {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}
+                        The scheduler type to use. Default: cosine
   --lr_warmup_steps LR_WARMUP_STEPS
                         Number of steps for the warmup in the lr scheduler.
   --lr_num_cycles LR_NUM_CYCLES
@@ -497,6 +527,10 @@ options:
                         cosine_with_restarts scheduler.
   --lr_power LR_POWER   Power factor of the polynomial scheduler.
   --use_ema             Whether to use EMA (exponential moving average) model.
+  --ema_decay EMA_DECAY
+                        The closer to 0.9999 this gets, the less updates will
+                        occur over time. Setting it to a lower value, such as
+                        0.990, will allow greater influence of later updates.
   --non_ema_revision NON_EMA_REVISION
                         Revision of pretrained non-ema model identifier. Must
                         be a branch, tag or git identifier of the local or
@@ -622,6 +656,11 @@ options:
                         enerated/torch.optim.Optimizer.zero_grad.html
   --noise_offset NOISE_OFFSET
                         The scale of noise offset. Default: 0.1
+  --noise_offset_probability NOISE_OFFSET_PROBABILITY
+                        When training with --offset_noise, the value of
+                        --noise_offset will only be applied probabilistically.
+                        The default behaviour is for offset noise (if enabled)
+                        to be applied 25 percent of the time.
   --validation_guidance VALIDATION_GUIDANCE
                         CFG value for validation images. Default: 7.5
   --validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE
@@ -656,6 +695,13 @@ options:
   --print_filenames     If any image files are stopping the process eg. due to
                         corruption or truncation, this will help identify
                         which is at fault.
+  --metadata_update_interval METADATA_UPDATE_INTERVAL
+                        When generating the aspect bucket indicies, we want to
+                        save it every X seconds. The default is to save it
+                        every 1 hour, such that progress is not lost on
+                        clusters where runtime is limited to 6-hour increments
+                        (e.g. the JUWELS Supercomputer). The minimum value is
+                        60 seconds.
   --debug_aspect_buckets
                         If set, will print excessive debugging for aspect
                         bucket operations.
@@ -681,6 +727,12 @@ options:
                         Caption dropout probability.
   --input_perturbation INPUT_PERTURBATION
                         The scale of input pretubation. Recommended 0.1.
+  --input_perturbation_probability INPUT_PERTURBATION_PROBABILITY
+                        While input perturbation can help with training
+                        convergence, having it applied all the time is likely
+                        damaging. When this value is less than 1.0, any
+                        perturbed noise will be applied probabilistically.
+                        Default: 0.25
   --delete_unwanted_images
                         If set, will delete images that are not of a minimum
                         size to save on disk space for large training runs.
@@ -694,7 +746,5 @@ options:
   --offset_noise        Fine-tuning against a modified noise See:
                         https://www.crosslabs.org//blog/diffusion-with-offset-
                         noise for more information.
-  --learning_rate_end LEARNING_RATE_END
-                        A polynomial learning rate will end up at this value
+  --lr_end LR_END       A polynomial learning rate will end up at this value
                         after the specified number of warmup steps.
-```
