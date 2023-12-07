@@ -86,6 +86,45 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
             )
 
+def log_validations(
+    # ... [existing parameters],
+):
+    if accelerator.is_main_process:
+        # ... [existing logging and initial setup code]
+
+        use_ema = args.use_ema and hasattr(args, "validation_style") and StateTracker.get_args().validation_style == "compare"
+
+        if validation_type == "validation" and use_ema:
+            # Store the UNet parameters temporarily for EMA
+            ema_unet.store(unet.parameters())
+
+            # Run inference with base UNet
+            base_model_results = run_inference(pipeline, validation_prompts, args, embed_cache, prompt_handler)
+
+            # Load EMA parameters for second inference
+            ema_unet.copy_to(unet.parameters())
+            pipeline.unet = accelerator.unwrap_model(unet)
+            ema_model_results = run_inference(pipeline, validation_prompts, args, embed_cache, prompt_handler)
+
+            # Restore original UNet parameters
+            ema_unet.restore(unet.parameters())
+
+            # Combine and save side-by-side images
+            combined_images = combine_images_side_by_side(base_model_results, ema_model_results)
+            save_validation_images(combined_images, global_step, val_save_dir)
+
+            # Optionally log to wandb or other trackers
+            log_to_trackers(accelerator, combined_images, validation_shortnames, global_step)
+
+        elif validation_type == "validation":
+            # Run inference normally for non-compare mode
+            validation_images = run_inference(pipeline, validation_prompts, args, embed_cache, prompt_handler)
+            save_validation_images(validation_images, global_step, val_save_dir)
+            log_to_trackers(accelerator, validation_images, validation_shortnames, global_step)
+
+        # ... [cleanup and other code]
+
+# ... [rest of your code]
 
 def log_validations(
     logger,
