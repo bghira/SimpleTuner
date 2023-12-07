@@ -185,7 +185,7 @@ if ! [ -z "$MIN_SNR_GAMMA" ]; then
     export SNR_GAMMA_ARG="--snr_gamma=${MIN_SNR_GAMMA}"
 fi
 
-export GRADIENT_ARG="--use_gradient_checkpointing"
+export GRADIENT_ARG="--gradient_checkpointing"
 if ! [ -z "$USE_GRADIENT_CHECKPOINTING" ] && [[ "$USE_GRADIENT_CHECKPOINTING" == "false" ]]; then
     export GRADIENT_ARG=""
 fi
