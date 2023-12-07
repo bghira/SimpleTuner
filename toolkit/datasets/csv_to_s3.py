@@ -91,7 +91,7 @@ def resize_for_condition_image(input_image: Image, resolution: int):
         H = resolution
     msg = f"{msg} {W}x{H}."
     logger.debug(msg)
-    img = input_image.resize((W, H), resample=Image.BICUBIC)
+    img = input_image.resize((W, H), resample=Image.LANCZOS)
     return img
 
 
@@ -523,6 +523,8 @@ def process_git_lfs_images(args, s3_client):
     for ext in image_exts:
         for image_path in Path(repo_path).rglob(f"*{ext}"):
             upload_local_image_to_s3(image_path, args, s3_client)
+
+
 def process_local_folder_images(args, s3_client, existing_files: list):
     """Scan the local folder directory for image files, apply checks, and upload them in parallel."""
     if not os.path.exists(args.local_folder):
@@ -530,14 +532,29 @@ def process_local_folder_images(args, s3_client, existing_files: list):
         return
 
     image_exts = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
-    all_images = [image_path for ext in image_exts for image_path in Path(args.local_folder).rglob(f"*{ext}")]
-    
+    all_images = [
+        image_path
+        for ext in image_exts
+        for image_path in Path(args.local_folder).rglob(f"*{ext}")
+    ]
+
     # Filter out already processed files
-    images_to_process = [image_path for image_path in all_images if str(image_path) not in existing_files]
+    images_to_process = [
+        image_path for image_path in all_images if str(image_path) not in existing_files
+    ]
 
     # Using Pool for parallel processing
     with Pool(processes=args.num_workers) as pool:
-        list(tqdm(pool.imap(process_and_upload, [(image_path, args) for image_path in images_to_process]), total=len(images_to_process)))
+        list(
+            tqdm(
+                pool.imap(
+                    process_and_upload,
+                    [(image_path, args) for image_path in images_to_process],
+                ),
+                total=len(images_to_process),
+            )
+        )
+
 
 def process_and_upload(image_path_args):
     image_path, args = image_path_args
@@ -548,8 +565,9 @@ def process_and_upload(image_path_args):
     width, height = image.size
 
     # Check minimum resolution
-    if (args.minimum_resolution > 0 and 
-        (width < args.minimum_resolution or height < args.minimum_resolution)):
+    if args.minimum_resolution > 0 and (
+        width < args.minimum_resolution or height < args.minimum_resolution
+    ):
         return None
 
     # Check luminance if required
@@ -570,6 +588,7 @@ def process_and_upload(image_path_args):
     image.close()
     # Upload to S3
     upload_local_image_to_s3(temp_path, args, s3_client)
+
 
 def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""

@@ -47,7 +47,7 @@ def _resize_for_condition_image(self, input_image: Image, resolution: int):
     W *= k
     H = int(round(H / 64.0)) * 64
     W = int(round(W / 64.0)) * 64
-    img = input_image.resize((W, H), resample=Image.BICUBIC)
+    img = input_image.resize((W, H), resample=Image.LANCZOS)
     return img
 
 

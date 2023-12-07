@@ -137,7 +137,7 @@ def main():
         args.aws_bucket_name,
         num_workers=args.num_workers,
         search_pattern=args.search_pattern,
-        older_than_date=args.older_than_date
+        older_than_date=args.older_than_date,
     )
 
 
