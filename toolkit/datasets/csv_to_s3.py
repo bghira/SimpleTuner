@@ -561,7 +561,10 @@ def process_and_upload(image_path_args):
     """Process and upload a single image."""
     # Place your existing logic here for processing a single image and uploading it to S3.
     # For example:
-    image = Image.open(image_path)
+    try:
+        image = Image.open(image_path)
+    except Exception:
+        return None
     width, height = image.size
 
     # Check minimum resolution
