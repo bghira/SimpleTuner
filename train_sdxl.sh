@@ -89,6 +89,10 @@ if [ -z "${VALIDATION_GUIDANCE_RESCALE}" ]; then
     printf "VALIDATION_GUIDANCE_RESCALE not set, exiting.\n"
     exit 1
 fi
+if [ -z "${VALIDATION_RESOLUTION}" ]; then
+    printf "VALIDATION_RESOLUTION not set, defaulting to RESOLUTION.\n"
+    export VALIDATION_RESOLUTION=$RESOLUTION
+fi
 if [ -z "${LEARNING_RATE}" ]; then
     printf "LEARNING_RATE not set, exiting.\n"
     exit 1
@@ -129,6 +133,68 @@ if [ -z "$LR_WARMUP_STEPS" ]; then
     printf "LR_WARMUP_STEPS not set, defaulting to 0.\n"
     export LR_WARMUP_STEPS=0
 fi
+if [ -z "$VALIDATION_NEGATIVE_PROMPT" ]; then
+    printf "VALIDATION_NEGATIVE_PROMPT not set, defaulting to empty.\n"
+    export VALIDATION_NEGATIVE_PROMPT=""
+fi
+
+if [ -z "$VALIDATION_SEED" ]; then
+    printf "VALIDATION_SEED is unset, randomising validation seeds.\n"
+    export VALIDATION_ARGS="--validation_randomize"
+else
+    export VALIDATION_ARGS="--validation_seed=${VALIDATION_SEED}"
+fi
+if [ -z "$VAE_BATCH_SIZE" ]; then
+    printf "VAE_BATCH_SIZE not set, defaulting to 1. This may slow down VAE caching.\n"
+    export VAE_BATCH_SIZE=1
+fi
+if [ -z "$METADATA_UPDATE_INTERVAL" ]; then
+    printf "METADATA_UPDATE_INTERVAL not set, defaulting to 120 seconds.\n"
+    export METADATA_UPDATE_INTERVAL=120
+fi
+
+export DELETE_ARGS=""
+if ! [ -z "$DELETE_SMALL_IMAGES" ] && [ $DELETE_SMALL_IMAGES -eq 1 ]; then
+    export DELETE_ARGS="${DELETE_ARGS} --delete_unwanted_images"
+fi
+if ! [ -z "$DELETE_ERRORED_IMAGES" ] && [ $DELETE_ERRORED_IMAGES -eq 1 ]; then
+    export DELETE_ARGS="${DELETE_ARGS} --delete_problematic_images"
+fi
+
+if [ -z "$VALIDATION_NUM_INFERENCE_STEPS" ]; then
+    printf "VALIDATION_NUM_INFERENCE_STEPS not set, defaulting to 15.\n"
+    export VALIDATION_NUM_INFERENCE_STEPS=15
+fi
+
+if [ -z "$TRAINING_SCHEDULER_TIMESTEP_SPACING" ]; then
+    printf "TRAINING_SCHEDULER_TIMESTEP_SPACING not set, defaulting to 'trailing'.\n"
+    export TRAINING_SCHEDULER_TIMESTEP_SPACING='trailing'
+fi
+if [ -z "$INFERENCE_SCHEDULER_TIMESTEP_SPACING" ]; then
+    printf "INFERENCE_SCHEDULER_TIMESTEP_SPACING not set, defaulting to 'trailing'.\n"
+    export INFERENCE_SCHEDULER_TIMESTEP_SPACING='trailing'
+fi
+
+export XFORMERS_ARG="--enable_xformers_memory_efficient_attention"
+if ! [ -z "$USE_XFORMERS" ] && [[ "$USE_XFORMERS" == "false" ]]; then
+    export XFORMERS_ARG=""
+fi
+
+export SNR_GAMMA_ARG=""
+if ! [ -z "$MIN_SNR_GAMMA" ]; then
+    export SNR_GAMMA_ARG="--snr_gamma=${SNR_GAMMA}"
+fi
+
+export GRADIENT_ARG="--use_gradient_checkpointing"
+if [ -z "$USE_GRADIENT_CHECKPOINTING" ] || [[ "$USE_GRADIENT_CHECKPOINTING" == "false" ]]; then
+    export GRADIENT_ARG=""
+fi
+
+if [ -z "$GRADIENT_ACCUMULATION_STEPS" ]; then
+    printf "GRADIENT_ACCUMULATION_STEPS not set, defaulting to 1.\n"
+    export GRADIENT_ACCUMULATION_STEPS=1
+fi
+
 if [ -z "${PROTECT_JUPYTER_FOLDERS}" ]; then
     # We had no value for protecting the folders, so we nuke them!
     echo "Deleting Jupyter notebook folders in 5 seconds if you do not cancel out."
@@ -153,18 +219,19 @@ fi
 # Run the training script.
 
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train_sdxl.py \
---pretrained_model_name_or_path="${MODEL_NAME}" \
---resume_from_checkpoint="${RESUME_CHECKPOINT}" \
---num_train_epochs=${NUM_EPOCHS} --max_train_steps=${MAX_NUM_STEPS} \
+--pretrained_model_name_or_path="${MODEL_NAME}" "${XFORMERS_ARG}" "${GRADIENT_ARG}" --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
+--resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} \
+--num_train_epochs=${NUM_EPOCHS} --max_train_steps=${MAX_NUM_STEPS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \
 --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
 --instance_data_dir="${INSTANCE_DIR}" --seen_state_path="${SEEN_STATE_PATH}" --state_path="${STATE_PATH}" --output_dir="${OUTPUT_DIR}" \
+--inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
 ${DEBUG_EXTRA_ARGS}	--mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
 --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
---validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 \
+--validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
 --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
 --resolution_type="${RESOLUTION_TYPE}" \
 --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
 --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
---validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}"
+--validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}"
 
 exit 0
