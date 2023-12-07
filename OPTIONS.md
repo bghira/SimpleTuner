@@ -175,8 +175,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--seed_for_each_device SEED_FOR_EACH_DEVICE]
                      [--resolution RESOLUTION]
                      [--resolution_type {pixel,area}]
-                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crop]
-                     [--train_text_encoder]
+                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crop CROP]
+                     [--crop_style {center,centre,corner,random}]
+                     [--crop_aspect {square,preserve}] [--train_text_encoder]
                      [--train_batch_size TRAIN_BATCH_SIZE]
                      [--num_train_epochs NUM_TRAIN_EPOCHS]
                      [--max_train_steps MAX_TRAIN_STEPS]
@@ -453,13 +454,33 @@ options:
   --minimum_image_size MINIMUM_IMAGE_SIZE
                         The minimum resolution for both sides of input images.
                         If --delete_unwanted_images is set, images smaller
-                        than this will be DELETED.
-  --crop                Whether to center crop the input images to the
-                        resolution. If not set, the images will be randomly
-                        cropped. The images will be resized to the resolution
-                        first before cropping. If training SDXL, the VAE cache
-                        and aspect bucket cache will need to be (re)built so
-                        they include crop coordinates.
+                        than this will be DELETED. The default value is None,
+                        which means no minimum resolution is enforced. If this
+                        option is not provided, it is possible that images
+                        will be destructively upsampled, harming model
+                        performance.
+  --crop CROP           Whether to crop the input images to the resolution. If
+                        not set, the images will be downsampled instead. When
+                        cropping is enabled, the images will not be resized
+                        before cropping. If training SDXL, the VAE cache and
+                        aspect bucket cache will need to be (re)built so they
+                        include crop coordinates.
+  --crop_style {center,centre,corner,random}
+                        When --crop is provided, a crop style may be defined
+                        that designates which part of an image to crop to. The
+                        old behaviour was to crop to the lower right corner,
+                        but this isn't always ideal for training. The default
+                        is 'random', which will locate a random segment of the
+                        image matching the given resolution.
+  --crop_aspect {square,preserve}
+                        When --crop is supplied, the default behaviour is to
+                        crop to square images, which greatly simplifies aspect
+                        bucketing. However, --crop_aspect may be set to
+                        'preserve', which will crop based on the
+                        --resolution_type value. If --resolution_type=area,
+                        the crop will be equal to the target pixel area. If
+                        --resolution_type=pixel, the crop will have the
+                        smaller edge equal to the value of --resolution.
   --train_text_encoder  (SD 2.x only) Whether to train the text encoder. If
                         set, the text encoder should be float32 precision.
   --train_batch_size TRAIN_BATCH_SIZE
@@ -727,4 +748,3 @@ options:
                         noise for more information.
   --lr_end LR_END       A polynomial learning rate will end up at this value
                         after the specified number of warmup steps.
-```

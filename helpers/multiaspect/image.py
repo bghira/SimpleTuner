@@ -3,7 +3,7 @@ from helpers.image_manipulation.brightness import calculate_luminance
 from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-import logging, os
+import logging, os, random
 from math import sqrt
 from helpers.training.state_tracker import StateTracker
 
@@ -22,19 +22,6 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def _crop_center(img: Image, target_width: int, target_height: int) -> Image:
-        """
-        Crop img to the target width and height, retaining the center of the img.
-        """
-        width, height = img.size
-        left = (width - target_width) / 2
-        top = (height - target_height) / 2
-        right = (width + target_width) / 2
-        bottom = (height + target_height) / 2
-
-        return img.crop((left, top, right, bottom)), (left, top)
-
-    @staticmethod
     def process_for_bucket(
         data_backend,
         bucket_manager,
@@ -44,7 +31,7 @@ class MultiaspectImage:
         metadata_updates=None,
         delete_problematic_images: bool = False,
         minimum_image_size: int = None,
-        resolution_type: str = "pixel"
+        resolution_type: str = "pixel",
     ):
         try:
             image_metadata = {}
@@ -94,31 +81,23 @@ class MultiaspectImage:
 
     @staticmethod
     def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel"):
-        """Prepare an image for training.
-
-        Args:
-            image (Image): A Pillow image.
-            resolution (float): A float for the image size.
-            resolution_type (str, optional): Whether to use the size as pixel edge or area. If area, the image will be resized overall area. Defaults to "pixel".
-
-        Raises:
-            Exception: _description_
-
-        Returns:
-            _type_: (Image, (cLeft, cTop))
-        """
         if not hasattr(image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(image)}"
             )
+
         # Strip transparency
         image = image.convert("RGB")
+
         # Rotate, maybe.
         logger.debug(f"Processing image filename: {image}")
         logger.debug(f"Image size before EXIF transform: {image.size}")
         image = exif_transpose(image)
         logger.debug(f"Image size after EXIF transform: {image.size}")
+
         original_width, original_height = image.size
+
+        # Calculate new size
         if resolution_type == "pixel":
             (
                 target_width,
@@ -136,19 +115,66 @@ class MultiaspectImage:
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
+        crop_style = StateTracker.get_args().crop_style
+        crop_aspect = StateTracker.get_args().crop_aspect
+
         if StateTracker.get_args().crop:
-            if original_width < target_width or original_height < target_height:
-                # Upscale if the original image is smaller than the target size
-                image = MultiaspectImage._resize_image(image, target_width, target_height)
-            image, crop_coordinates = MultiaspectImage._crop_center(
-                image, resolution, resolution
+            crop_width, crop_height = (
+                (resolution, resolution)
+                if crop_aspect == "square"
+                else (target_width, target_height)
             )
+
+            if crop_style == "corner":
+                image, crop_coordinates = MultiaspectImage._crop_corner(
+                    image, crop_width, crop_height
+                )
+            elif crop_style in ["centre", "center"]:
+                image, crop_coordinates = MultiaspectImage._crop_center(
+                    image, crop_width, crop_height
+                )
+            elif crop_style == "random":
+                image, crop_coordinates = MultiaspectImage._crop_random(
+                    image, crop_width, crop_height
+                )
+            else:
+                raise ValueError(f"Unknown crop style: {crop_style}")
         else:
-            # Resize unconditionally if center cropping is not enabled
+            # Resize unconditionally if cropping is not enabled
             image = MultiaspectImage._resize_image(image, target_width, target_height)
             crop_coordinates = (0, 0)
 
         return image, crop_coordinates
+
+    @staticmethod
+    def _crop_corner(image, target_width, target_height):
+        """Crop the image from the bottom-right corner."""
+        original_width, original_height = image.size
+        left = max(0, original_width - target_width)
+        top = max(0, original_height - target_height)
+        right = original_width
+        bottom = original_height
+        return image.crop((left, top, right, bottom)), (left, top)
+
+    @staticmethod
+    def _crop_center(image, target_width, target_height):
+        """Crop the image from the center."""
+        original_width, original_height = image.size
+        left = (original_width - target_width) / 2
+        top = (original_height - target_height) / 2
+        right = (original_width + target_width) / 2
+        bottom = (original_height + target_height) / 2
+        return image.crop((left, top, right, bottom)), (left, top)
+
+    @staticmethod
+    def _crop_random(image, target_width, target_height):
+        """Crop the image from a random position."""
+        original_width, original_height = image.size
+        left = random.randint(0, max(0, original_width - target_width))
+        top = random.randint(0, max(0, original_height - target_height))
+        right = left + target_width
+        bottom = top + target_height
+        return image.crop((left, top, right, bottom)), (left, top)
 
     @staticmethod
     def _round_to_nearest_multiple(value, multiple):
@@ -172,7 +198,7 @@ class MultiaspectImage:
             return input_image
         msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
         logger.debug(msg)
-        return input_image.resize((target_width, target_height), resample=Image.BICUBIC)
+        return input_image.resize((target_width, target_height), resample=Image.LANCZOS)
 
     @staticmethod
     def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: float):

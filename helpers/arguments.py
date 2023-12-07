@@ -383,7 +383,7 @@ def parse_args(input_args=None):
             "The minimum resolution for both sides of input images."
             " If --delete_unwanted_images is set, images smaller than this will be DELETED."
             " The default value is None, which means no minimum resolution is enforced."
-            " If this option is not provided, it is possible that images will be destructively resized, harming model performance."
+            " If this option is not provided, it is possible that images will be destructively upsampled, harming model performance."
         ),
     )
     parser.add_argument(
@@ -391,9 +391,30 @@ def parse_args(input_args=None):
         default=False,
         type=bool,
         help=(
-            "Whether to crop the input images to the resolution. If not set, the images will be randomly"
-            " cropped. The images will not be resized to the resolution first before cropping. If training SDXL,"
+            "Whether to crop the input images to the resolution. If not set, the images will be downsampled"
+            " instead. When cropping is enabled, the images will not be resized before cropping. If training SDXL,"
             " the VAE cache and aspect bucket cache will need to be (re)built so they include crop coordinates."
+        ),
+    )
+    parser.add_argument(
+        "--crop_style",
+        default="random",
+        choices=["center", "centre", "corner", "random"],
+        help=(
+            "When --crop is provided, a crop style may be defined that designates which part of an image to crop to."
+            " The old behaviour was to crop to the lower right corner, but this isn't always ideal for training."
+            " The default is 'random', which will locate a random segment of the image matching the given resolution."
+        ),
+    )
+    parser.add_argument(
+        "--crop_aspect",
+        default="square",
+        choices=["square", "preserve"],
+        help=(
+            "When --crop is supplied, the default behaviour is to crop to square images, which greatly simplifies aspect bucketing."
+            " However, --crop_aspect may be set to 'preserve', which will crop based on the --resolution_type value."
+            " If --resolution_type=area, the crop will be equal to the target pixel area. If --resolution_type=pixel,"
+            " the crop will have the smaller edge equal to the value of --resolution."
         ),
     )
     parser.add_argument(
@@ -469,11 +490,14 @@ def parse_args(input_args=None):
         type=str,
         default="cosine",
         choices=[
-            "linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"
+            "linear",
+            "cosine",
+            "cosine_with_restarts",
+            "polynomial",
+            "constant",
+            "constant_with_warmup",
         ],
-        help=(
-            'The scheduler type to use. Default: cosine'
-        ),
+        help=("The scheduler type to use. Default: cosine"),
     )
     parser.add_argument(
         "--lr_warmup_steps",
@@ -769,7 +793,7 @@ def parse_args(input_args=None):
         help=(
             "When training with --offset_noise, the value of --noise_offset will only be applied probabilistically."
             " The default behaviour is for offset noise (if enabled) to be applied 25 percent of the time."
-        )
+        ),
     )
     parser.add_argument(
         "--validation_guidance",
@@ -846,7 +870,7 @@ def parse_args(input_args=None):
             " The default is to save it every 1 hour, such that progress is not lost on clusters"
             " where runtime is limited to 6-hour increments (e.g. the JUWELS Supercomputer)."
             " The minimum value is 60 seconds."
-        )
+        ),
     )
     parser.add_argument(
         "--debug_aspect_buckets",
@@ -909,7 +933,7 @@ def parse_args(input_args=None):
         help=(
             "While input perturbation can help with training convergence, having it applied all the time is likely damaging."
             " When this value is less than 1.0, any perturbed noise will be applied probabilistically. Default: 0.25"
-        )
+        ),
     )
     parser.add_argument(
         "--delete_unwanted_images",
@@ -1029,7 +1053,7 @@ def parse_args(input_args=None):
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
-    
+
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
     return args

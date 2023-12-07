@@ -125,6 +125,7 @@ def enforce_zero_terminal_snr(betas):
 def patch_scheduler_betas(scheduler):
     scheduler.betas = enforce_zero_terminal_snr(scheduler.betas)
 
+
 class _enable_get_lr_call:
     def __init__(self, o):
         self.o = o
@@ -136,6 +137,7 @@ class _enable_get_lr_call:
     def __exit__(self, type, value, traceback):
         self.o._get_lr_called_within_step = False
         return self
+
 
 class Cosine(LRScheduler):
     r"""Use a cosine schedule for the learning rate, without restarts.
@@ -233,6 +235,7 @@ class Cosine(LRScheduler):
                     "Epoch {}: adjusting learning rate"
                     " of group {} to {:.8e}.".format(epoch_str, group, lr)
                 )
+
 
 class CosineAnnealingHardRestarts(LRScheduler):
     r"""Set the learning rate of each parameter group using a cosine annealing
