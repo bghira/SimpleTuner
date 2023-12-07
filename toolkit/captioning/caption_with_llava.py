@@ -1,8 +1,8 @@
-import os, torch, logging, xformers, accelerate, re, random
+import os, logging, re, random, argparse, json, torch
 from PIL import Image
-from clip_interrogator import Config, Interrogator, LabelTable, load_list
+from tqdm import tqdm
+import requests
 
-from llava.model.builder import load_pretrained_model
 from llava.constants import (
     IMAGE_TOKEN_INDEX,
     DEFAULT_IMAGE_TOKEN,
@@ -17,8 +17,7 @@ from llava.mm_utils import (
     KeywordsStoppingCriteria,
 )
 from llava.conversation import conv_templates, SeparatorStyle
-
-import requests
+from llava.model.builder import load_pretrained_model
 
 logger = logging.getLogger("Captioner")
 
@@ -28,6 +27,7 @@ output_dir = "/notebooks/datasets/caption_output"
 caption_strategy = "filename"
 
 
+# Function to load LLaVA model
 def load_llava_model(model_path: str = "liuhaotian/llava-v1.5-7b"):
     tokenizer, model, image_processor, context_len = load_pretrained_model(
         model_path=model_path,
@@ -37,6 +37,7 @@ def load_llava_model(model_path: str = "liuhaotian/llava-v1.5-7b"):
     return tokenizer, model, image_processor, context_len
 
 
+# Function to evaluate the model
 def eval_model(args, tokenizer, model, image_processor, context_len):
     qs = args.query
     image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
@@ -110,11 +111,11 @@ def eval_model(args, tokenizer, model, image_processor, context_len):
 
 
 def process_and_evaluate_image(
-    image_path,
+    image_path: str,
     tokenizer,
     model,
     image_processor,
-    context_len,
+    context_len: int,
     model_path: str = "liuhaotian/llava-v1.5-7b",
     prompt: str = "Describe what the hand is doing.",
 ):
@@ -145,6 +146,7 @@ def process_and_evaluate_image(
     return eval_model(llava_args, tokenizer, model, image_processor, context_len)
 
 
+# Function to convert content to filename
 def content_to_filename(content):
     """
     Function to convert content to filename by stripping everything after '--',
@@ -169,20 +171,30 @@ def content_to_filename(content):
     cleaned_content = (
         cleaned_content[:128] if len(cleaned_content) > 128 else cleaned_content
     )
-    
+
     return cleaned_content + ".png"
 
 
-def process_directory(image_dir="images", model=None, context_len: int = 77):
-    if model is None:
-        logger.info("Loading LLaVA model. This should only occur once.")
-        tokenizer, model, image_processor, context_len = load_llava_model()
-        logger.info("Completed loading model.")
+# Main processing function with progress saving
+def process_directory(
+    image_dir, output_dir, progress_file, model, tokenizer, image_processor, context_len
+):
+    # Load progress if exists
+    if os.path.exists(progress_file):
+        with open(progress_file, "r") as file:
+            processed_files = json.load(file)
+    else:
+        processed_files = {}
 
-    for filename in os.listdir(image_dir):
+    for filename in tqdm(os.listdir(image_dir), desc="Processing Images"):
         full_filepath = os.path.join(image_dir, filename)
+        if filename in processed_files:
+            continue
+
         if os.path.isdir(full_filepath):
-            process_directory(full_filepath, model)
+            process_directory(
+                full_filepath, model, context_len
+            )  # Recursive call for directories
         elif filename.lower().endswith((".jpg", ".png")):
             try:
                 with Image.open(full_filepath) as image:
@@ -213,15 +225,54 @@ def process_directory(image_dir="images", model=None, context_len: int = 77):
                     with open(new_filepath + ".txt", "w") as f:
                         f.write(best_match)
 
+                # Update progress
+                processed_files[filename] = best_match
+                with open(progress_file, "w") as file:
+                    json.dump(processed_files, file)
+
             except Exception as e:
                 logging.error(f"Error processing {filename}: {str(e)}")
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(description="Image Captioning with LLaVA model")
+    parser.add_argument(
+        "--input_dir", type=str, required=True, help="Input directory path"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, required=True, help="Output directory path"
+    )
+    parser.add_argument(
+        "--model_path", type=str, default="liuhaotian/llava-v1.5-7b", help="Model path"
+    )
+    parser.add_argument(
+        "--progress_file",
+        type=str,
+        default="progress.json",
+        help="File to save progress",
+    )
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO)
 
     # Ensure output directory exists
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
-    process_directory(input_directory_path)
+    # Load model
+    tokenizer, model, image_processor, context_len = load_llava_model(args.model_path)
+
+    # Process directory
+    process_directory(
+        args.input_dir,
+        args.output_dir,
+        args.progress_file,
+        model,
+        tokenizer,
+        image_processor,
+        context_len,
+    )
+
+
+if __name__ == "__main__":
+    main()
