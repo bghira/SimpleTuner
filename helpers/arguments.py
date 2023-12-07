@@ -687,6 +687,16 @@ def parse_args(input_args=None):
         help="This should be a path to the JSON file containing your prompt library. See user_prompt_library.json.example.",
     )
     parser.add_argument(
+        "--validation_negative_prompt",
+        type=str,
+        default="blurry, cropped, ugly",
+        help=(
+            "When validating images, a negative prompt may be used to guide the model away from certain features."
+            " When this value is set to --validation_negative_prompt='', no negative guidance will be applied."
+            " Default: blurry, cropped, ugly"
+        )
+    )
+    parser.add_argument(
         "--num_validation_images",
         type=int,
         default=1,

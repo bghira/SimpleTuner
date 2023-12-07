@@ -65,7 +65,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
             ) = embed_cache.compute_embeddings_for_sdxl_prompts(
-                ["blurry, cropped, ugly"], is_validation=True
+                [StateTracker.get_args().validation_negative_prompt], is_validation=True
             )
             return (
                 validation_prompts,
@@ -76,7 +76,7 @@ def prepare_validation_prompt_list(args, embed_cache):
         elif model_type == "legacy":
             validation_negative_prompt_embeds = (
                 embed_cache.compute_embeddings_for_legacy_prompts(
-                    ["blurry, cropped, ugly"]
+                    [StateTracker.get_args().validation_negative_prompt]
                 )
             )
 
