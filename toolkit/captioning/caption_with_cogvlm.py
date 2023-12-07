@@ -48,15 +48,17 @@ def parse_args():
         "--delete_after_caption",
         action="store_true",
         default=False,
-        help="Delete *input* image files after captioning."
+        help="Delete *input* image files after captioning.",
     )
     return parser.parse_args()
 
+
 def load_filter_list(filter_list_path):
     if filter_list_path and os.path.exists(filter_list_path):
-        with open(filter_list_path, 'r') as file:
+        with open(filter_list_path, "r") as file:
             return [line.strip() for line in file if line.strip()]
     return []
+
 
 def eval_image(
     image: Image,
@@ -128,7 +130,7 @@ def process_directory(
     caption_strategy,
     save_interval,
     progress_file,
-    filter_terms
+    filter_terms,
 ):
     processed_file_counter = 0
 
@@ -182,9 +184,8 @@ def process_directory(
                         os.remove(full_filepath)
 
                 if caption_strategy == "text":
-                    with open(new_filepath + ".txt", "w", encoding='utf-8') as f:
+                    with open(new_filepath + ".txt", "w", encoding="utf-8") as f:
                         f.write(best_match)
-
 
             except Exception as e:
                 logging.error(f"Error processing {filename}: {str(e)}")
@@ -192,11 +193,11 @@ def process_directory(
         processed_file_counter += 1
         # Save progress at specified intervals
         if processed_file_counter % save_interval == 0:
-            with open(progress_file, "w", encoding='utf-8') as f:
+            with open(progress_file, "w", encoding="utf-8") as f:
                 f.writelines("\n".join(processed_files))
 
     # Save remaining progress
-    with open(progress_file, "w", encoding='utf-8') as f:
+    with open(progress_file, "w", encoding="utf-8") as f:
         f.writelines("\n".join(processed_files))
 
 
@@ -250,11 +251,11 @@ def main():
         args.caption_strategy,
         args.save_interval,
         progress_file,
-        filter_terms
+        filter_terms,
     )
 
     # Save progress
-    with open(progress_file, "w", encoding='utf-8') as f:
+    with open(progress_file, "w", encoding="utf-8") as f:
         f.writelines("\n".join(processed_files))
 
 
