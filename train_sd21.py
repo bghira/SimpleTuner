@@ -765,6 +765,7 @@ def main(args):
     vaecache = VAECache(
         vae=vae,
         accelerator=accelerator,
+        bucket_manager=bucket_manager,
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
         delete_problematic_images=args.delete_problematic_images,
@@ -784,7 +785,7 @@ def main(args):
 
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
-        vaecache.process_buckets(bucket_manager=bucket_manager)
+        vaecache.process_buckets()
         accelerator.wait_for_everyone()
 
     if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:

@@ -828,6 +828,7 @@ def main():
     vaecache = VAECache(
         vae=vae,
         accelerator=accelerator,
+        bucket_manager=bucket_manager,
         data_backend=data_backend,
         instance_data_root=args.instance_data_dir,
         delete_problematic_images=args.delete_problematic_images,
@@ -855,7 +856,7 @@ def main():
 
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
-        vaecache.process_buckets(bucket_manager=bucket_manager)
+        vaecache.process_buckets()
         accelerator.wait_for_everyone()
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
