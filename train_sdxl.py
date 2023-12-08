@@ -1107,21 +1107,7 @@ def main():
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
-                if (
-                    args.caption_dropout_probability is not None
-                    and args.caption_dropout_probability > 0
-                ):
-                    # When using caption dropout, we will use the null embed instead of prompt embeds.
-                    # The chance of this happening is dictated by the caption_dropout_probability.
-                    if random.random() < args.caption_dropout_probability:
-                        training_logger.debug(f"Caption dropout triggered.")
-                        (
-                            batch["prompt_embeds_all"],
-                            batch["add_text_embeds_all"],
-                        ) = embed_cache.compute_embeddings_for_sdxl_prompts([""])
 
-                # Conditioning dropout to support classifier-free guidance during inference. For more details
-                # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
