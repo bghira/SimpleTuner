@@ -1,10 +1,9 @@
-import torch, logging
+import torch, logging, concurrent.futures, numpy as np
 from os import environ
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.brightness import calculate_batch_luminance
 from accelerate.logging import get_logger
-import concurrent.futures
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO"))
@@ -123,15 +122,23 @@ def compute_prompt_embeddings(captions):
 
 
 def gather_conditional_size_features(examples, latents, weight_dtype):
-    batch_time_ids_list = [
-        compute_time_ids(
+    batch_time_ids_list = []
+
+    for idx, example in enumerate(examples):
+        # Compute time IDs for all examples
+        time_ids = compute_time_ids(
             original_size=tuple(example["original_size"]),
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
             weight_dtype=weight_dtype,
         )
-        for idx, example in enumerate(examples)
-    ]
+
+        # Overwrite with zeros if conditioning is to be dropped
+        if example["drop_conditioning"]:
+            time_ids = torch.zeros_like(time_ids)
+
+        batch_time_ids_list.append(time_ids)
+
     return torch.stack(batch_time_ids_list, dim=0)
 
 
@@ -149,6 +156,23 @@ def collate_fn(batch):
         )
     debug_log("Begin collate_fn on batch")
     examples = batch[0]
+
+    # SDXL Dropout
+    dropout_probability = StateTracker.get_args().caption_dropout_probability
+    examples = batch[0]
+
+    # Randomly drop captions/conditioning based on dropout_probability
+    for example in examples:
+        if (
+            dropout_probability > 0
+            and dropout_probability is not None
+            and np.random.rand() < dropout_probability
+        ):
+            example["instance_prompt_text"] = ""  # Drop caption
+            example["drop_conditioning"] = True  # Flag to drop conditioning
+        else:
+            example["drop_conditioning"] = False
+
     debug_log("Collect luminance values")
     batch_luminance = [example["luminance"] for example in examples]
     # average it
@@ -160,7 +184,7 @@ def collate_fn(batch):
     debug_log("Check latents")
     check_latent_shapes(latent_batch, filepaths)
 
-    # Extract the captions from the examples.
+    # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
     captions = [example["instance_prompt_text"] for example in examples]
     debug_log("Pull cached text embeds")
