@@ -57,6 +57,7 @@ class VAECache:
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
+        self.bucket_manager = bucket_manager
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
