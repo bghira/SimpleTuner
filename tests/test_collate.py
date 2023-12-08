@@ -3,8 +3,11 @@ from unittest.mock import patch, MagicMock
 import numpy as np
 import torch
 
-from helpers.training.collate import collate_fn  # Adjust this import according to your project structure
+from helpers.training.collate import (
+    collate_fn,
+)  # Adjust this import according to your project structure
 from helpers.training.state_tracker import StateTracker  # Adjust imports as needed
+
 
 class TestCollateFn(unittest.TestCase):
     def setUp(self):
@@ -16,21 +19,28 @@ class TestCollateFn(unittest.TestCase):
                 "luminance": 0.5,
                 "original_size": (100, 100),
                 "image_data": MagicMock(),
-                "crop_coordinates": [0, 0, 100, 100]
+                "crop_coordinates": [0, 0, 100, 100],
             },
             # Add more examples as needed
         ]
         # Mock StateTracker.get_args() to return a mock object with required attributes
         StateTracker.set_args(MagicMock(caption_dropout_probability=0.5))
 
-    @patch('helpers.training.collate.compute_latents')
-    @patch('helpers.training.collate.compute_prompt_embeddings')
-    @patch('helpers.training.collate.gather_conditional_size_features')
+    @patch("helpers.training.collate.compute_latents")
+    @patch("helpers.training.collate.compute_prompt_embeddings")
+    @patch("helpers.training.collate.gather_conditional_size_features")
     def test_collate_fn(self, mock_gather, mock_compute_embeds, mock_compute_latents):
         # Mock the responses from the compute functions
-        mock_compute_latents.return_value = torch.randn(2, 512)  # Adjust dimensions as needed
-        mock_compute_embeds.return_value = (torch.randn(2, 768), torch.randn(2, 768))  # Example embeddings
-        mock_gather.return_value = torch.tensor([[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]])
+        mock_compute_latents.return_value = torch.randn(
+            2, 512
+        )  # Adjust dimensions as needed
+        mock_compute_embeds.return_value = (
+            torch.randn(2, 768),
+            torch.randn(2, 768),
+        )  # Example embeddings
+        mock_gather.return_value = torch.tensor(
+            [[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]
+        )
 
         # Call collate_fn with a mock batch
         result = collate_fn([self.mock_batch])
@@ -47,5 +57,6 @@ class TestCollateFn(unittest.TestCase):
 
     # You can add more test methods to cover different aspects like different dropout probabilities, edge cases, etc.
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

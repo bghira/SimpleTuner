@@ -1122,8 +1122,6 @@ def main():
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
-                if args.conditioning_dropout_probability is not None:
-                    pass
                 training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
