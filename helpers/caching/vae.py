@@ -28,6 +28,7 @@ class VAECache:
         self,
         vae,
         accelerator,
+        bucket_manager: BucketManager,
         instance_data_root: str,
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
@@ -56,6 +57,7 @@ class VAECache:
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
+        self.bucket_manager = bucket_manager
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -284,6 +286,7 @@ class VAECache:
                 )
             filepaths.append(output_file)
             latents.append(latent_vector)
+        self.bucket_manager.save_image_metadata()
         self.data_backend.write_batch(filepaths, latents)
 
     def _process_images_in_batch(self) -> None:
@@ -316,6 +319,14 @@ class VAECache:
                     self.accelerator.device, dtype=self.vae.dtype
                 )
                 self.vae_input_queue.put((pixel_values, filepath))
+                # Update the crop_coordinates in the metadata document
+                bucket_manager = StateTracker.get_bucket_manager()
+                bucket_manager.set_metadata_attribute_by_filepath(
+                    filepath=filepath,
+                    attribute="crop_coordinates",
+                    value=crop_coordinates,
+                    update_json=False
+                )
                 self.debug_log(f"Completed processing {filepath}")
         except Exception as e:
             logger.error(f"Error processing images {filepaths}: {e}")
@@ -426,10 +437,10 @@ class VAECache:
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
 
-    def process_buckets(self, bucket_manager):
+    def process_buckets(self):
         futures = []
         processed_images = self._list_cached_images()
-        aspect_bucket_cache = bucket_manager.read_cache().copy()
+        aspect_bucket_cache = self.bucket_manager.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
         do_shuffle = (

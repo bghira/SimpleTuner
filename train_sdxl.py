@@ -828,6 +828,7 @@ def main():
     vaecache = VAECache(
         vae=vae,
         accelerator=accelerator,
+        bucket_manager=bucket_manager,
         data_backend=data_backend,
         instance_data_root=args.instance_data_dir,
         delete_problematic_images=args.delete_problematic_images,
@@ -855,7 +856,7 @@ def main():
 
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
-        vaecache.process_buckets(bucket_manager=bucket_manager)
+        vaecache.process_buckets()
         accelerator.wait_for_everyone()
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -1122,8 +1123,6 @@ def main():
                 # Conditioning dropout to support classifier-free guidance during inference. For more details
                 # check out the section 3.2.1 of the original paper https://arxiv.org/abs/2211.09800.
                 add_text_embeds = batch["add_text_embeds"]
-                if args.conditioning_dropout_probability is not None:
-                    pass
                 training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":

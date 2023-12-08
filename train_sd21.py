@@ -423,9 +423,7 @@ def main(args):
         else unet.parameters()
     )
     if use_deepspeed_optimizer:
-        logger.info(
-            f"Creating DeepSpeed optimizer"
-        )
+        logger.info(f"Creating DeepSpeed optimizer")
         optimizer = optimizer_class(params_to_optimize)
     else:
         logger.info(
@@ -767,6 +765,7 @@ def main(args):
     vaecache = VAECache(
         vae=vae,
         accelerator=accelerator,
+        bucket_manager=bucket_manager,
         instance_data_root=args.instance_data_dir,
         data_backend=data_backend,
         delete_problematic_images=args.delete_problematic_images,
@@ -774,7 +773,7 @@ def main(args):
         resolution_type=args.resolution_type,
         vae_batch_size=args.vae_batch_size,
         write_batch_size=args.write_batch_size,
-        minimum_image_size=args.minimum_image_size
+        minimum_image_size=args.minimum_image_size,
     )
     StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
@@ -786,7 +785,7 @@ def main(args):
 
     if "vae" not in args.skip_file_discovery:
         vaecache.split_cache_between_processes()
-        vaecache.process_buckets(bucket_manager=bucket_manager)
+        vaecache.process_buckets()
         accelerator.wait_for_everyone()
 
     if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
@@ -986,15 +985,29 @@ def main(args):
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
                 if args.offset_noise:
-                    if args.noise_offset_probability == 1.0 or random.random() < args.noise_offset_probability:
-                        noise = torch.randn_like(latents) + args.noise_offset * torch.randn(
-                            latents.shape[0], latents.shape[1], 1, 1, device=latents.device
+                    if (
+                        args.noise_offset_probability == 1.0
+                        or random.random() < args.noise_offset_probability
+                    ):
+                        noise = torch.randn_like(
+                            latents
+                        ) + args.noise_offset * torch.randn(
+                            latents.shape[0],
+                            latents.shape[1],
+                            1,
+                            1,
+                            device=latents.device,
                         )
                 else:
                     noise = torch.randn_like(latents)
                 if args.input_perturbation:
-                    if args.input_perturbation_probability == 1.0 or random.random() < args.input_perturbation_probability:
-                        noise = noise + args.input_perturbation * torch.randn_like(noise)
+                    if (
+                        args.input_perturbation_probability == 1.0
+                        or random.random() < args.input_perturbation_probability
+                    ):
+                        noise = noise + args.input_perturbation * torch.randn_like(
+                            noise
+                        )
 
                 bsz = latents.shape[0]
                 logger.debug(f"Working on batch size: {bsz}")

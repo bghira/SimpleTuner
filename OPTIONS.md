@@ -210,6 +210,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--validation_prompt VALIDATION_PROMPT]
                      [--validation_prompt_library]
                      [--user_prompt_library USER_PROMPT_LIBRARY]
+                     [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
                      [--num_validation_images NUM_VALIDATION_IMAGES]
                      [--validation_steps VALIDATION_STEPS]
                      [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
@@ -235,7 +236,6 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--freeze_encoder]
                      [--text_encoder_limit TEXT_ENCODER_LIMIT]
                      [--prepend_instance_prompt] [--only_instance_prompt]
-                     [--conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                      [--input_perturbation INPUT_PERTURBATION]
                      [--input_perturbation_probability INPUT_PERTURBATION_PROBABILITY]
@@ -602,6 +602,12 @@ options:
   --user_prompt_library USER_PROMPT_LIBRARY
                         This should be a path to the JSON file containing your
                         prompt library. See user_prompt_library.json.example.
+  --validation_negative_prompt VALIDATION_NEGATIVE_PROMPT
+                        When validating images, a negative prompt may be used
+                        to guide the model away from certain features. When
+                        this value is set to --validation_negative_prompt='',
+                        no negative guidance will be applied. Default: blurry,
+                        cropped, ugly
   --num_validation_images NUM_VALIDATION_IMAGES
                         Number of images that should be generated during
                         validation with `validation_prompt`.
@@ -719,12 +725,15 @@ options:
   --only_instance_prompt
                         Use the instance prompt instead of the caption from
                         filename.
-  --conditioning_dropout_probability CONDITIONING_DROPOUT_PROBABILITY
-                        Conditioning dropout probability. Experimental. See
-                        section 3.2.1 in the paper:
-                        https://arxiv.org/abs/2211.09800.
   --caption_dropout_probability CAPTION_DROPOUT_PROBABILITY
-                        Caption dropout probability.
+                        Caption dropout will randomly drop captions and, for
+                        SDXL, size conditioning inputs based on this
+                        probability. When set to a value of 0.1, it will drop
+                        approximately 10 percent of the inputs. Maximum
+                        recommended value is probably less than 0.5, or 50
+                        percent of the inputs. Maximum technical value is 1.0.
+                        The default is to use zero caption dropout, though for
+                        better generalisation, a value of 0.1 is recommended.
   --input_perturbation INPUT_PERTURBATION
                         The scale of input pretubation. Recommended 0.1.
   --input_perturbation_probability INPUT_PERTURBATION_PROBABILITY
@@ -748,3 +757,4 @@ options:
                         noise for more information.
   --lr_end LR_END       A polynomial learning rate will end up at this value
                         after the specified number of warmup steps.
+```
