@@ -20,7 +20,7 @@ class StateTracker:
     vaecache = None
     embedcache = None
     accelerator = None
-    bucket_manager = None
+    bucket_managers = []
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -148,11 +148,11 @@ class StateTracker:
 
     @classmethod
     def set_bucket_manager(cls, bucket_manager):
-        cls.bucket_manager = bucket_manager
+        cls.bucket_managers.append(bucket_manager)
 
     @classmethod
-    def get_bucket_manager(cls):
-        return cls.bucket_manager
+    def get_bucket_managers(cls):
+        return cls.bucket_managers
 
     @classmethod
     def set_weight_dtype(cls, weight_dtype):
@@ -185,3 +185,11 @@ class StateTracker:
     @classmethod
     def get_embedcache(cls):
         return cls.embedcache
+
+    @classmethod
+    def get_metadata_by_filepath(cls, filepath):
+        for bucket_manager in cls.get_bucket_managers():
+            metadata = bucket_manager.get_metadata_by_filepath(filepath)
+            if metadata is not None:
+                return metadata
+        return None

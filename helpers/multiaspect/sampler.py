@@ -7,6 +7,7 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
 logger = get_logger(
@@ -38,6 +39,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         minimum_image_size: int = None,
         resolution: int = 1024,
         resolution_type: str = "pixel",
+        caption_strategy: str = "filename",
+        use_captions=True,
+        prepend_instance_prompt=False,
     ):
         """
         Initializes the sampler with provided settings.
@@ -64,6 +68,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.minimum_image_size = minimum_image_size
         self.resolution = resolution
         self.resolution_type = resolution_type
+        self.use_captions = use_captions
+        self.caption_strategy = caption_strategy
+        self.prepend_instance_prompt = prepend_instance_prompt
         self.load_states(
             state_path=state_path,
         )
@@ -308,17 +315,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(
                 f"Begin analysing sample. We have {len(to_yield)} images to yield."
             )
-            crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
-                image_path, "crop_coordinates"
-            )
-            if crop_coordinates is None:
+            image_metadata = self.bucket_manager.get_metadata_by_filepath(image_path)
+            if "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
             self.debug_log(
                 f"Image {image_path} is considered valid. Adding to yield list."
             )
-            to_yield.append({"image_path": image_path})
+            image_metadata["image_path"] = image_path
+
+            # Use the magic prompt handler to retrieve the captions.
+            image_metadata["instance_prompt_text"] = PromptHandler.magic_prompt(
+                data_backend=self.data_backend,
+                image_path=image_metadata["image_path"],
+                caption_strategy=self.caption_strategy,
+                use_captions=self.use_captions,
+                prepend_instance_prompt=self.prepend_instance_prompt,
+            )
+
+            to_yield.append(image_metadata)
             self.debug_log(
                 f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
