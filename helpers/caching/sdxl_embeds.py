@@ -198,10 +198,15 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
+                    self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
                         add_text_embeds = add_text_embeds.to(self.accelerator.device)
-                    self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
+                    else:
+                        del prompt_embeds
+                        del add_text_embeds
+                        del pooled_prompt_embeds
+                        continue
 
                 prompt_embeds_all.append(prompt_embeds)
                 add_text_embeds_all.append(add_text_embeds)
