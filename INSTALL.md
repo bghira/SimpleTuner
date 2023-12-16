@@ -25,7 +25,7 @@ Alternatively, Pytorch Nightly may be used (Torch 2.1) with Xformers 0.0.21dev (
 
 ```bash
 pip3 install --pre torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
-pip3 install --pre https://github.com/facebookresearch/xformers.git@main\#egg=xformers
+pip3 install --pre git+https://github.com/facebookresearch/xformers.git@main#egg=xformers
 ```
 
 If the egg install for Xformers does not work, try including `xformers` on the first line, and run only that:
