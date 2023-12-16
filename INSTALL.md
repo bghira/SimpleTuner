@@ -6,7 +6,7 @@
 git clone https://github.com/bghira/SimpleTuner --branch release
 python -m venv .venv
 pip3 install -U poetry pip
-poetry install
+poetry install --no-root
 ```
 
 You will need to install some Linux-specific dependencies (Ubuntu is used here):
