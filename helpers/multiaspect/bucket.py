@@ -409,7 +409,10 @@ class BucketManager:
         """
         Remove buckets with fewer images than the batch size.
         """
-        if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+        if (
+            bucket in self.aspect_ratio_bucket_indices
+            and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
+        ):
             del self.aspect_ratio_bucket_indices[bucket]
             logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
 
