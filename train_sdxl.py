@@ -1153,8 +1153,9 @@ def main():
                     # This is discussed in Section 4.2 of the same paper.
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
+                    snr_divisor = snr
                     if noise_scheduler.config.prediction_type == "v_prediction":
-                        snr = snr + 1
+                        snr_divisor = snr + 1
 
                     training_logger.debug(
                         f"Calculating MSE loss weights using SNR as divisor"
@@ -1164,7 +1165,7 @@ def main():
                             [snr, args.snr_gamma * torch.ones_like(timesteps)],
                             dim=1,
                         ).min(dim=1)[0]
-                        / snr
+                        / snr_divisor
                     )
 
                     # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.

@@ -422,6 +422,11 @@ class BucketManager:
                 f"Enforcing minimum image size of {self.minimum_image_size}."
                 " This could take a while for very-large datasets."
             )
+            if bucket not in self.aspect_ratio_bucket_indices:
+                logger.debug(
+                    f"Bucket {bucket} was already removed due to insufficient samples."
+                )
+                return
             images = self.aspect_ratio_bucket_indices[bucket]
             self.aspect_ratio_bucket_indices[bucket] = [
                 img
