@@ -377,7 +377,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--minimum_image_size",
-        type=int,
+        type=float,
         default=None,
         help=(
             "The minimum resolution for both sides of input images."
@@ -927,7 +927,7 @@ def parse_args(input_args=None):
             " When set to a value of 0.1, it will drop approximately 10 percent of the inputs."
             " Maximum recommended value is probably less than 0.5, or 50 percent of the inputs. Maximum technical value is 1.0."
             " The default is to use zero caption dropout, though for better generalisation, a value of 0.1 is recommended."
-        )
+        ),
     )
     parser.add_argument(
         "--input_perturbation",
