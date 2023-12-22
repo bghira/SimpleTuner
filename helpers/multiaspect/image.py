@@ -112,6 +112,11 @@ class MultiaspectImage:
             ) = MultiaspectImage.calculate_new_size_by_pixel_area(
                 original_width, original_height, resolution
             )
+            # Convert 'resolution' to pixels from megapixels
+            resolution = resolution / 1e6
+            logging.debug(
+                f"After area resize, our image will be {target_width}x{target_height} with an overridden resolution of {resolution} pixels."
+            )
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
