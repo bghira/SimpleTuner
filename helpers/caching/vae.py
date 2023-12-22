@@ -251,6 +251,9 @@ class VAECache:
         elif len(uncached_images) > 0:
             # Only process images not found in cache
             with torch.no_grad():
+                # Debug log the size of each image:
+                for image in uncached_images:
+                    self.debug_log(f"Image size: {image.size()}")
                 processed_images = torch.stack(uncached_images).to(
                     self.accelerator.device, dtype=torch.bfloat16
                 )
@@ -325,7 +328,7 @@ class VAECache:
                     filepath=filepath,
                     attribute="crop_coordinates",
                     value=crop_coordinates,
-                    update_json=False
+                    update_json=False,
                 )
                 self.debug_log(f"Completed processing {filepath}")
         except Exception as e:
