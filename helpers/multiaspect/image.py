@@ -113,7 +113,7 @@ class MultiaspectImage:
                 original_width, original_height, resolution
             )
             # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-            resolution = resolution * 1e6
+            resolution = resolution * 1e3
             logging.debug(
                 f"After area resize, our image will be {target_width}x{target_height} with an overridden resolution of {resolution} pixels."
             )
