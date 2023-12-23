@@ -70,18 +70,22 @@ class VAECache:
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
-        test_filepath = (
+        test_filepath_png = (
             f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[0])[0]}.png"
         )
-        if str(self.cache_dir) in test_filepath:
+        if str(self.cache_dir) in test_filepath_png:
             # replace cache_dir with instance_data_root:
-            test_filepath = test_filepath.replace(
+            test_filepath_png = test_filepath_png.replace(
                 self.cache_dir, self.instance_data_root
             )
-        elif str(self.instance_data_root) not in test_filepath:
-            test_filepath = os.path.join(self.instance_data_root, test_filepath)
+        elif str(self.instance_data_root) not in test_filepath_png:
+            test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
 
-        return test_filepath
+        test_filepath_jpg = (
+            f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[0])[0]}.jpg"
+        )
+
+        return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
         if self.data_backend.exists(self.generate_vae_cache_filename(filepath)[0]):
@@ -155,19 +159,24 @@ class VAECache:
         self.debug_log(
             f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
         )
-        cache_filenames = {
-            (file, self.generate_vae_cache_filename(file)[0])
+
+        # Convert cache filenames to their corresponding image filenames
+        existing_image_filenames = {
+            os.path.splitext(self._image_filename_from_vaecache_filename(cache_file))[0]
+            for cache_file in existing_cache_files
+        }
+
+        # Identify unprocessed files
+        unprocessed_files = [
+            file
             for file in all_image_files
-        }
+            if os.path.splitext(file)[0] not in existing_image_filenames
+        ]
+
         self.debug_log(
-            f"discover_unprocessed_files found {len(cache_filenames)} cache filenames (truncated): {list(cache_filenames)[:5]}"
+            f"discover_unprocessed_files found {len(unprocessed_files)} unprocessed files (truncated): {list(unprocessed_files)[:5]}"
         )
-        unprocessed_files = {
-            f"{os.path.splitext(file[0])[0]}.png"
-            for file in cache_filenames
-            if file[0] not in existing_cache_files
-        }
-        return list(unprocessed_files)
+        return unprocessed_files
 
     def _reduce_bucket(
         self,
@@ -283,7 +292,12 @@ class VAECache:
         logger.debug(f"We have {qlen} latents to write to disk.")
         for idx in range(0, qlen):
             output_file, filepath, latent_vector = self.write_queue.get()
-            if os.path.splitext(output_file)[1] == ".png":
+            file_extension = os.path.splitext(output_file)[1]
+            if (
+                file_extension == ".png"
+                or file_extension == ".jpg"
+                or file_extension == ".jpeg"
+            ):
                 raise ValueError(
                     f"Cannot write a latent embedding to an image path, {output_file}"
                 )
@@ -469,12 +483,16 @@ class VAECache:
                     leave=False,
                 ):
                     filepath = self._process_raw_filepath(raw_filepath)
-                    test_filepath = self._image_filename_from_vaecache_filename(
-                        filepath
-                    )
-                    if test_filepath not in self.local_unprocessed_files:
+                    (
+                        test_filepath_png,
+                        test_filepath_jpg,
+                    ) = self._image_filename_from_vaecache_filename(filepath)
+                    if (
+                        test_filepath_png not in self.local_unprocessed_files
+                        and test_filepath_jpg not in self.local_unprocessed_files
+                    ):
                         self.debug_log(
-                            f"Skipping {test_filepath} because it is not in local unprocessed files"
+                            f"Skipping {raw_filepath} because it is not in local unprocessed files"
                         )
                         continue
                     try:
