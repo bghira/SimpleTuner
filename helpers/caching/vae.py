@@ -162,9 +162,9 @@ class VAECache:
 
         # Convert cache filenames to their corresponding image filenames
         existing_image_filenames = {
-            os.path.splitext(self._image_filename_from_vaecache_filename(cache_file))[
-                0
-            ][0]
+            os.path.splitext(
+                self._image_filename_from_vaecache_filename(cache_file)[0]
+            )[0]
             for cache_file in existing_cache_files
         }
 
