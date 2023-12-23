@@ -36,6 +36,11 @@ class MultiaspectImage:
         try:
             image_metadata = {}
             image_data = data_backend.read(image_path_str)
+            if image_data is None:
+                logger.debug(
+                    f"Image {image_path_str} was not found on the backend. Skipping image."
+                )
+                return aspect_ratio_bucket_indices
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
                 image_metadata["original_size"] = image.size
@@ -72,7 +77,7 @@ class MultiaspectImage:
             import traceback
 
             logger.error(f"Error processing image: {e}")
-            logging.debug(f"Error traceback: {traceback.format_exc()}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
             if delete_problematic_images:
                 logger.error(f"Deleting image.")
