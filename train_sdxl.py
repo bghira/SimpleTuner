@@ -26,8 +26,7 @@ from helpers.legacy.validation import prepare_validation_prompt_list, log_valida
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.sampler import MultiAspectSampler
-
-# from helpers.multiaspect.factory import configure_multi_dataset
+from helpers.multiaspect.factory import configure_multi_dataset
 from helpers.training.state_tracker import StateTracker
 from helpers.training.collate import collate_fn
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
