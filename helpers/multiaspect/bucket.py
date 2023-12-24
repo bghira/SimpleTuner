@@ -18,6 +18,7 @@ logger.setLevel(target_level)
 class BucketManager:
     def __init__(
         self,
+        id: str,
         instance_data_root: str,
         cache_file: str,
         metadata_file: str,
@@ -30,6 +31,11 @@ class BucketManager:
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
     ):
+        self.id = id
+        if self.id != data_backend.id:
+            raise ValueError(
+                f"BucketManager ID ({self.id}) must match the DataBackend ID ({data_backend.id})."
+            )
         self.accelerator = accelerator
         self.data_backend = data_backend
         self.batch_size = batch_size
@@ -434,7 +440,7 @@ class BucketManager:
             self.aspect_ratio_bucket_indices[bucket] = [
                 img
                 for img in images
-                if BucketManager.meets_resolution_requirements(
+                if self.meets_resolution_requirements(
                     image_path=img,
                     minimum_image_size=self.minimum_image_size,
                     resolution_type=self.resolution_type,
@@ -442,8 +448,8 @@ class BucketManager:
                 )
             ]
 
-    @staticmethod
     def meets_resolution_requirements(
+        self,
         image_path: str = None,
         image: Image = None,
         minimum_image_size: int = None,
@@ -453,9 +459,7 @@ class BucketManager:
         Check if an image meets the resolution requirements.
         """
         if image is None and image_path is not None:
-            metadata = StateTracker.get_bucket_manager().get_metadata_by_filepath(
-                image_path
-            )
+            metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
                 logger.warning(f"Metadata not found for image {image_path}.")
                 return False

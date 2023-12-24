@@ -10,8 +10,9 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 
 class LocalDataBackend(BaseDataBackend):
-    def __init__(self, accelerator):
+    def __init__(self, accelerator, id: str):
         self.accelerator = accelerator
+        self.id = id
 
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""

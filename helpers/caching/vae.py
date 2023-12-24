@@ -26,6 +26,7 @@ class VAECache:
 
     def __init__(
         self,
+        id: str,
         vae,
         accelerator,
         bucket_manager: BucketManager,
@@ -41,6 +42,11 @@ class VAECache:
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
     ):
+        self.id = id
+        if data_backend.id != id:
+            raise ValueError(
+                f"VAECache received incorrect data_backend: {data_backend}"
+            )
         self.data_backend = data_backend
         self.vae = vae
         self.accelerator = accelerator
@@ -322,7 +328,7 @@ class VAECache:
                 filepaths.append(filepath)
                 self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
-                    if not BucketManager.meets_resolution_requirements(
+                    if not self.bucket_manager.meets_resolution_requirements(
                         image_path=filepath,
                         minimum_image_size=self.minimum_image_size,
                         resolution_type=self.resolution_type,
@@ -339,8 +345,7 @@ class VAECache:
                 )
                 self.vae_input_queue.put((pixel_values, filepath))
                 # Update the crop_coordinates in the metadata document
-                bucket_manager = StateTracker.get_bucket_manager()
-                bucket_manager.set_metadata_attribute_by_filepath(
+                self.bucket_manager.set_metadata_attribute_by_filepath(
                     filepath=filepath,
                     attribute="crop_coordinates",
                     value=crop_coordinates,

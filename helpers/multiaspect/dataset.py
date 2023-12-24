@@ -15,9 +15,11 @@ class MultiAspectDataset(Dataset):
 
     def __init__(
         self,
+        id: str,
         datasets: list,
         print_names=False,
     ):
+        self.id = id
         self.datasets = datasets
         self.print_names = print_names
 
@@ -28,10 +30,10 @@ class MultiAspectDataset(Dataset):
     def __getitem__(self, image_tuple):
         output_data = []
         for sample in image_tuple:
+            image_metadata = sample
             logger.debug(
                 f"Running __getitem__ for {image_metadata['image_path']} inside Dataloader."
             )
-            image_metadata = sample
 
             if (
                 image_metadata["original_size"] is None

@@ -56,7 +56,7 @@ class MultiaspectImage:
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
                 )
-                if not StateTracker.get_bucket_manager().meets_resolution_requirements(
+                if not bucket_manager.meets_resolution_requirements(
                     image=image,
                     minimum_image_size=minimum_image_size,
                     resolution_type=resolution_type,

@@ -23,25 +23,16 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
-from helpers.multiaspect.dataset import MultiAspectDataset
-from helpers.multiaspect.bucket import BucketManager
-from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.multiaspect.factory import configure_multi_dataset
 from helpers.training.state_tracker import StateTracker
-from helpers.training.collate import collate_fn
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
-
+from helpers.data_backend.factory import configure_multi_databackend
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
-from helpers.image_manipulation.brightness import (
-    calculate_luminance,
-)
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
 )
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.training.multi_process import rank_info
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
@@ -255,81 +246,7 @@ def main():
         )
 
     # Create a DataBackend, so that we can access our dataset.
-    if args.data_backend == "local":
-        from helpers.data_backend.local import LocalDataBackend
-
-        data_backend = LocalDataBackend(accelerator=accelerator)
-        if not os.path.exists(args.instance_data_dir):
-            raise FileNotFoundError(
-                f"Instance {args.instance_data_dir} images root doesn't exist. Cannot continue."
-            )
-    elif args.data_backend == "aws":
-        from helpers.data_backend.aws import S3DataBackend
-
-        data_backend = S3DataBackend(
-            bucket_name=args.aws_bucket_name,
-            accelerator=accelerator,
-            region_name=args.aws_region_name,
-            endpoint_url=args.aws_endpoint_url,
-            aws_access_key_id=args.aws_access_key_id,
-            aws_secret_access_key=args.aws_secret_access_key,
-        )
-    else:
-        raise ValueError(f"Unsupported data backend: {args.data_backend}")
-
-    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    bucket_manager = BucketManager(
-        instance_data_root=args.instance_data_dir,
-        data_backend=data_backend,
-        accelerator=accelerator,
-        resolution=args.resolution,
-        minimum_image_size=args.minimum_image_size,
-        resolution_type=args.resolution_type,
-        batch_size=args.train_batch_size,
-        metadata_update_interval=args.metadata_update_interval,
-        cache_file=os.path.join(
-            args.instance_data_dir, "aspect_ratio_bucket_indices.json"
-        ),
-        metadata_file=os.path.join(
-            args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
-        ),
-        delete_problematic_images=args.delete_problematic_images or False,
-    )
-    StateTracker.set_bucket_manager(bucket_manager)
-    if bucket_manager.has_single_underfilled_bucket():
-        raise Exception(
-            f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
-            " You have to reduce your batch size, or increase your dataset size."
-        )
-    if "aspect" not in args.skip_file_discovery:
-        if accelerator.is_local_main_process:
-            bucket_manager.refresh_buckets(rank_info())
-    accelerator.wait_for_everyone()
-    bucket_manager.reload_cache()
-    # Now split the contents of these buckets between all processes
-    bucket_manager.split_buckets_between_processes(
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-    )
-
-    # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
-    def print_bucket_info(bucket_manager):
-        # Print table header
-        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
-
-        # Print separator
-        print("-" * 30)
-
-        # Print each bucket's information
-        for bucket in bucket_manager.aspect_ratio_bucket_indices:
-            image_count = len(bucket_manager.aspect_ratio_bucket_indices[bucket])
-            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
-
-    print_bucket_info(bucket_manager)
-
-    if len(bucket_manager) == 0:
-        raise Exception(
-            "No images were discovered by the bucket manager in the dataset."
-        )
+    configure_multi_databackend(args, accelerator)
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -417,35 +334,6 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
 
-    # Data loader
-    train_dataset = MultiAspectDataset(
-        print_names=args.print_filenames or False,
-        datasets=configure_multi_dataset(
-            args, accelerator
-        ),  # We need to store the list of datasets inside the MAD so that it knows their lengths.
-    )
-    logger.info("Creating aspect bucket sampler")
-    custom_balanced_sampler = MultiAspectSampler(
-        bucket_manager=bucket_manager,
-        data_backend=data_backend,
-        accelerator=accelerator,
-        batch_size=args.train_batch_size,
-        seen_images_path=args.seen_state_path,
-        state_path=args.state_path,
-        debug_aspect_buckets=args.debug_aspect_buckets,
-        delete_unwanted_images=args.delete_unwanted_images,
-        resolution=args.resolution,
-        resolution_type=args.resolution_type,
-    )
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=1,  # The sample handles batching
-        shuffle=False,  # The sampler handles shuffling
-        sampler=custom_balanced_sampler,
-        collate_fn=lambda examples: collate_fn(examples),
-        num_workers=0,
-        persistent_workers=False,
-    )
     prompt_handler = None
     if not args.disable_compel:
         prompt_handler = PromptHandler(
@@ -479,14 +367,8 @@ def main():
 
     if "text" not in args.skip_file_discovery:
         logger.info(f"Pre-computing text embeds / updating cache.")
-        with accelerator.main_process_first():
-            all_captions = PromptHandler.get_all_captions(
-                data_backend=data_backend,
-                instance_data_root=args.instance_data_dir,
-                prepend_instance_prompt=args.prepend_instance_prompt or False,
-                use_captions=not args.only_instance_prompt,
-            )
-            StateTracker.set_caption_files(all_captions)
+        # Captions are extracted from datasets during `configure_multi_databackend(...)`
+        all_captions = StateTracker.get_caption_files()
         if accelerator.is_main_process:
             embed_cache.compute_embeddings_for_sdxl_prompts(
                 all_captions, return_concat=False
@@ -814,41 +696,9 @@ def main():
     else:
         logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
-    logger.info(f"Loaded VAE into VRAM.")
-    logger.info(f"Pre-computing VAE latent space.")
-    vaecache = VAECache(
-        vae=vae,
-        accelerator=accelerator,
-        bucket_manager=bucket_manager,
-        data_backend=data_backend,
-        instance_data_root=args.instance_data_dir,
-        delete_problematic_images=args.delete_problematic_images,
-        resolution=args.resolution,
-        resolution_type=args.resolution_type,
-        minimum_image_size=args.minimum_image_size,
-        vae_batch_size=args.vae_batch_size,
-        write_batch_size=args.write_batch_size,
-        cache_dir=args.cache_dir_vae,
-    )
-    StateTracker.set_vaecache(vaecache)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-
-    if accelerator.is_local_main_process:
-        vaecache.discover_all_files()
-    accelerator.wait_for_everyone()
-
-    if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
-        bucket_manager.scan_for_metadata()
-    accelerator.wait_for_everyone()
-    if not accelerator.is_main_process:
-        bucket_manager.load_image_metadata()
-    accelerator.wait_for_everyone()
-
-    if "vae" not in args.skip_file_discovery:
-        vaecache.split_cache_between_processes()
-        vaecache.process_buckets()
-        accelerator.wait_for_everyone()
+    logger.info(f"Loaded VAE into VRAM.")
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(

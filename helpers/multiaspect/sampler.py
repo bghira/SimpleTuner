@@ -28,6 +28,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def __init__(
         self,
+        id: str,
         bucket_manager: BucketManager,
         data_backend: BaseDataBackend,
         accelerator,
@@ -46,6 +47,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Initializes the sampler with provided settings.
         Parameters:
+        - id: An identifier to link this with its VAECache and DataBackend objects.
         - bucket_manager: An initialised instance of BucketManager.
         - batch_size: Number of samples to draw per batch.
         - seen_images_path: Path to store the seen images.
@@ -54,6 +56,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - delete_unwanted_images: Flag to decide whether to delete unwanted (small) images or just remove from the bucket.
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
+        self.id = id
+        if self.id != data_backend.id or self.id != bucket_manager.id:
+            raise ValueError(
+                f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and BucketManager ID ({bucket_manager.id})."
+            )
         self.rank_info = rank_info()
         self.accelerator = accelerator
         self.bucket_manager = bucket_manager

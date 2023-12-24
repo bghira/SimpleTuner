@@ -1,7 +1,29 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
 
-import json, os
+from helpers.multiaspect.bucket import BucketManager
+from helpers.multiaspect.dataset import MultiAspectDataset
+from helpers.multiaspect.sampler import MultiAspectSampler
+from helpers.prompts import PromptHandler
+from helpers.caching.vae import VAECache
+from helpers.training.multi_process import rank_info
+from helpers.training.collate import collate_fn
+from helpers.training.state_tracker import StateTracker
+
+import json, os, torch
+
+
+def print_bucket_info(bucket_manager):
+    # Print table header
+    print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
+
+    # Print separator
+    print("-" * 30)
+
+    # Print each bucket's information
+    for bucket in bucket_manager.aspect_ratio_bucket_indices:
+        image_count = len(bucket_manager.aspect_ratio_bucket_indices[bucket])
+        print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
 def configure_multi_databackend(args: dict, accelerator):
@@ -22,24 +44,190 @@ def configure_multi_databackend(args: dict, accelerator):
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
-    data_backends = []
+    data_backends = {}
+    all_captions = []
     for backend in data_backend_config:
+        # For each backend, we will create a dict to store all of its components in.
+        if "id" not in backend:
+            raise ValueError(
+                "No identifier was given for one more of your data backends. Add a unique 'id' field to each one."
+            )
+        init_backend = {"id": backend["id"]}
         if backend["type"] == "local":
-            data_backends.append(get_local_backend(accelerator))
+            init_backend["data_backend"] = get_local_backend(
+                accelerator, init_backend["id"]
+            )
+            init_backend["instance_data_root"] = backend["instance_data_dir"]
         elif backend["type"] == "aws":
             check_aws_config(backend)
-            data_backends.append(
-                get_aws_backend(
-                    aws_bucket_name=backend["aws_bucket_name"],
-                    aws_region_name=backend["aws_region_name"],
-                    aws_endpoint_url=backend["aws_endpoint_url"],
-                    aws_access_key_id=backend["aws_access_key_id"],
-                    aws_secret_access_key=backend["aws_secret_access_key"],
-                    accelerator=accelerator,
-                )
+            init_backend["data_backend"] = get_aws_backend(
+                identifier=init_backend["id"],
+                aws_bucket_name=backend["aws_bucket_name"],
+                aws_region_name=backend["aws_region_name"],
+                aws_endpoint_url=backend["aws_endpoint_url"],
+                aws_access_key_id=backend["aws_access_key_id"],
+                aws_secret_access_key=backend["aws_secret_access_key"],
+                accelerator=accelerator,
             )
+            # S3 buckets use the aws_data_prefix as their prefix/ for all data.
+            init_backend["instance_data_root"] = backend["aws_data_prefix"]
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
+
+        init_backend["bucket_manager"] = BucketManager(
+            id=init_backend["id"],
+            instance_data_root=init_backend["instance_data_root"],
+            data_backend=init_backend["data_backend"],
+            accelerator=accelerator,
+            resolution=backend["resolution"] or args.resolution,
+            minimum_image_size=backend["minimum_image_size"] or args.minimum_image_size,
+            resolution_type=backend["resolution_type"] or args.resolution_type,
+            batch_size=args.train_batch_size,
+            metadata_update_interval=backend["metadata_update_interval"]
+            or args.metadata_update_interval,
+            cache_file=os.path.join(
+                init_backend["instance_data_root"], "aspect_ratio_bucket_indices.json"
+            ),
+            metadata_file=os.path.join(
+                init_backend["instance_data_root"], "aspect_ratio_bucket_metadata.json"
+            ),
+            delete_problematic_images=args.delete_problematic_images or False,
+        )
+        if init_backend["bucket_manager"].has_single_underfilled_bucket():
+            raise Exception(
+                f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
+                f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
+            )
+        if "aspect" not in args.skip_file_discovery:
+            if accelerator.is_local_main_process:
+                init_backend["bucket_manager"].refresh_buckets(rank_info())
+        accelerator.wait_for_everyone()
+        init_backend["bucket_manager"].reload_cache()
+        # Now split the contents of these buckets between all processes
+        init_backend["bucket_manager"].split_buckets_between_processes(
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
+        )
+
+        print_bucket_info(init_backend["bucket_manager"])
+        if len(init_backend["bucket_manager"]) == 0:
+            raise Exception(
+                "No images were discovered by the bucket manager in the dataset."
+            )
+
+        use_captions = True
+        if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
+            use_captions = False
+        elif args.only_instance_prompt:
+            use_captions = False
+        caption_strategy = args.caption_strategy
+        if "caption_strategy" in backend:
+            caption_strategy = backend["caption_strategy"]
+        init_backend["train_dataset"] = MultiAspectDataset(
+            id=init_backend["id"],
+            bucket_manager=init_backend["bucket_manager"],
+            data_backend=init_backend["data_backend"],
+            instance_data_root=init_backend["instance_data_root"],
+            accelerator=accelerator,
+            size=backend["resolution"] or args.resolution,
+            size_type=backend["resolution_type"] or args.resolution_type,
+            print_names=args.print_filenames or False,
+            prepend_instance_prompt=backend["prepend_instance_prompt"]
+            or args.prepend_instance_prompt
+            or False,
+            use_captions=use_captions,
+            use_precomputed_token_ids=True,
+            debug_dataset_loader=args.debug_dataset_loader,
+            caption_strategy=caption_strategy,
+        )
+
+        # full filename path:
+        seen_state_path = args.seen_state_path
+        # split the filename by extension, append init_backend["id"] to the end of the filename, reassemble with extension:
+        seen_state_path = ".".join(
+            seen_state_path.split(".")[:-1]
+            + [init_backend["id"], seen_state_path.split(".")[-1]]
+        )
+        state_path = args.state_path
+        state_path = ".".join(
+            state_path.split(".")[:-1] + [init_backend["id"], state_path.split(".")[-1]]
+        )
+
+        init_backend["sampler"] = MultiAspectSampler(
+            id=init_backend["id"],
+            bucket_manager=init_backend["bucket_manager"],
+            data_backend=init_backend["data_backend"],
+            accelerator=accelerator,
+            batch_size=args.train_batch_size,
+            seen_images_path=backend["seen_state_path"] or seen_state_path,
+            state_path=backend["state_path"] or state_path,
+            debug_aspect_buckets=args.debug_aspect_buckets,
+            delete_unwanted_images=backend["delete_unwanted_images"]
+            or args.delete_unwanted_images,
+            resolution=backend["resolution"] or args.resolution,
+            resolution_type=backend["resolution_type"] or args.resolution_type,
+        )
+
+        init_backend["train_dataloader"] = torch.utils.data.DataLoader(
+            init_backend["train_dataset"],
+            batch_size=1,  # The sampler handles batching
+            shuffle=False,  # The sampler handles shuffling
+            sampler=init_backend["sampler"],
+            collate_fn=lambda examples: collate_fn(examples),
+            num_workers=0,
+            persistent_workers=False,
+        )
+
+        with accelerator.main_process_first():
+            all_captions.append(
+                PromptHandler.get_all_captions(
+                    data_backend=init_backend["data_backend"],
+                    instance_data_root=init_backend["instance_data_root"],
+                    prepend_instance_prompt=backend["prepend_instance_prompt"]
+                    or args.prepend_instance_prompt
+                    or False,
+                    use_captions=use_captions,
+                )
+            )
+
+        logger.info(f"Pre-computing VAE latent space.")
+        init_backend["vaecache"] = VAECache(
+            id=init_backend["id"],
+            vae=StateTracker.get_vae(),
+            accelerator=accelerator,
+            bucket_manager=init_backend["bucket_manager"],
+            data_backend=init_backend["data_backend"],
+            instance_data_root=init_backend["instance_data_root"],
+            delete_problematic_images=backend["delete_problematic_images"]
+            or args.delete_problematic_images,
+            resolution=backend["resolution"] or args.resolution,
+            resolution_type=backend["resolution_type"] or args.resolution_type,
+            minimum_image_size=backend["minimum_image_size"] or args.minimum_image_size,
+            vae_batch_size=args.vae_batch_size,
+            write_batch_size=args.write_batch_size,
+            cache_dir=backend["cache_dir_vae"] or args.cache_dir_vae,
+        )
+
+        if accelerator.is_local_main_process:
+            init_backend["vaecache"].discover_all_files()
+        accelerator.wait_for_everyone()
+
+        if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
+            init_backend["bucket_manager"].scan_for_metadata()
+        accelerator.wait_for_everyone()
+        if not accelerator.is_main_process:
+            init_backend["bucket_manager"].load_image_metadata()
+        accelerator.wait_for_everyone()
+
+        if "vae" not in args.skip_file_discovery:
+            init_backend["vaecache"].split_cache_between_processes()
+            init_backend["vaecache"].process_buckets()
+            accelerator.wait_for_everyone()
+
+        StateTracker.register_backend(init_backend)
+
+    # After configuring all backends, register their captions.
+    StateTracker.set_caption_files(all_captions)
+
     if len(data_backends) == 0:
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
@@ -47,16 +235,17 @@ def configure_multi_databackend(args: dict, accelerator):
     return data_backends
 
 
-def get_local_backend(accelerator) -> LocalDataBackend:
+def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
     """
     Get a local disk backend.
 
     Args:
         accelerator (Accelerator): A Huggingface Accelerate object.
+        identifier (str): An identifier that links this data backend to its other components.
     Returns:
         LocalDataBackend: A LocalDataBackend object.
     """
-    return LocalDataBackend(accelerator=accelerator)
+    return LocalDataBackend(accelerator=accelerator, id=identifier)
 
 
 def check_aws_config(backend: dict) -> None:
@@ -87,8 +276,10 @@ def get_aws_backend(
     aws_access_key_id: str,
     aws_secret_access_key: str,
     accelerator,
+    identifier: str,
 ) -> S3DataBackend:
     return S3DataBackend(
+        id=identifier,
         bucket_name=aws_bucket_name,
         accelerator=accelerator,
         region_name=aws_region_name,
