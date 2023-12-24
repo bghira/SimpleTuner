@@ -21,7 +21,7 @@ class StateTracker:
     embedcache = None
     accelerator = None
     bucket_managers = []
-    backends = {}
+    data_backends = {}
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -116,18 +116,22 @@ class StateTracker:
         return len(list(cls.all_caption_files.keys())) > 0
 
     @classmethod
-    def register_backend(cls, data_backend):
-        cls.backends[data_backend["id"]] = data_backend
+    def register_data_backend(cls, data_backend):
+        cls.data_backends[data_backend["id"]] = data_backend
 
     @classmethod
     def get_data_backend(cls, id: str):
-        return cls.backends[id]
+        return cls.data_backends[id]
+
+    @classmethod
+    def get_data_backends(cls):
+        return cls.data_backends
 
     @classmethod
     def get_bucket_manager(cls, id: str):
-        for bucket_manager in cls.bucket_managers:
-            if bucket_manager.id == id:
-                return bucket_manager
+        for data_backend in cls.data_backends:
+            if data_backend["id"] == id:
+                return data_backend["bucket_manager"]
         return None
 
     @classmethod

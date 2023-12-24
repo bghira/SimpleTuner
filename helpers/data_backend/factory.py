@@ -10,7 +10,10 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch
+import json, os, torch, logging
+
+logger = logging.getLogger("DataBackendFactory")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def print_bucket_info(bucket_manager):
@@ -44,7 +47,6 @@ def configure_multi_databackend(args: dict, accelerator):
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
-    data_backends = {}
     all_captions = []
     for backend in data_backend_config:
         # For each backend, we will create a dict to store all of its components in.
@@ -79,12 +81,15 @@ def configure_multi_databackend(args: dict, accelerator):
             instance_data_root=init_backend["instance_data_root"],
             data_backend=init_backend["data_backend"],
             accelerator=accelerator,
-            resolution=backend["resolution"] or args.resolution,
-            minimum_image_size=backend["minimum_image_size"] or args.minimum_image_size,
-            resolution_type=backend["resolution_type"] or args.resolution_type,
+            resolution=backend.get("resolution", args.resolution),
+            minimum_image_size=backend.get(
+                "minimum_image_size", args.minimum_image_size
+            ),
+            resolution_type=backend.get("resolution_type", args.resolution_type),
             batch_size=args.train_batch_size,
-            metadata_update_interval=backend["metadata_update_interval"]
-            or args.metadata_update_interval,
+            metadata_update_interval=backend.get(
+                "metadata_update_interval", args.metadata_update_interval
+            ),
             cache_file=os.path.join(
                 init_backend["instance_data_root"], "aspect_ratio_bucket_indices.json"
             ),
@@ -119,25 +124,9 @@ def configure_multi_databackend(args: dict, accelerator):
             use_captions = False
         elif args.only_instance_prompt:
             use_captions = False
-        caption_strategy = args.caption_strategy
-        if "caption_strategy" in backend:
-            caption_strategy = backend["caption_strategy"]
         init_backend["train_dataset"] = MultiAspectDataset(
             id=init_backend["id"],
-            bucket_manager=init_backend["bucket_manager"],
-            data_backend=init_backend["data_backend"],
-            instance_data_root=init_backend["instance_data_root"],
-            accelerator=accelerator,
-            size=backend["resolution"] or args.resolution,
-            size_type=backend["resolution_type"] or args.resolution_type,
-            print_names=args.print_filenames or False,
-            prepend_instance_prompt=backend["prepend_instance_prompt"]
-            or args.prepend_instance_prompt
-            or False,
-            use_captions=use_captions,
-            use_precomputed_token_ids=True,
-            debug_dataset_loader=args.debug_dataset_loader,
-            caption_strategy=caption_strategy,
+            datasets=[init_backend["bucket_manager"]],
         )
 
         # full filename path:
@@ -158,13 +147,19 @@ def configure_multi_databackend(args: dict, accelerator):
             data_backend=init_backend["data_backend"],
             accelerator=accelerator,
             batch_size=args.train_batch_size,
-            seen_images_path=backend["seen_state_path"] or seen_state_path,
-            state_path=backend["state_path"] or state_path,
+            seen_images_path=backend.get("seen_state_path", seen_state_path),
+            state_path=backend.get("state_path", state_path),
             debug_aspect_buckets=args.debug_aspect_buckets,
-            delete_unwanted_images=backend["delete_unwanted_images"]
-            or args.delete_unwanted_images,
-            resolution=backend["resolution"] or args.resolution,
-            resolution_type=backend["resolution_type"] or args.resolution_type,
+            delete_unwanted_images=backend.get(
+                "delete_unwanted_images", args.delete_unwanted_images
+            ),
+            resolution=backend.get("resolution", args.resolution),
+            resolution_type=backend.get("resolution_type", args.resolution_type),
+            caption_strategy=backend.get("caption_strategy", args.caption_strategy),
+            use_captions=use_captions,
+            prepend_instance_prompt=backend.get(
+                "prepend_instance_prompt", args.prepend_instance_prompt
+            ),
         )
 
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
@@ -178,13 +173,13 @@ def configure_multi_databackend(args: dict, accelerator):
         )
 
         with accelerator.main_process_first():
-            all_captions.append(
+            all_captions.extend(
                 PromptHandler.get_all_captions(
                     data_backend=init_backend["data_backend"],
                     instance_data_root=init_backend["instance_data_root"],
-                    prepend_instance_prompt=backend["prepend_instance_prompt"]
-                    or args.prepend_instance_prompt
-                    or False,
+                    prepend_instance_prompt=backend.get(
+                        "prepend_instance_prompt", args.prepend_instance_prompt
+                    ),
                     use_captions=use_captions,
                 )
             )
@@ -197,14 +192,17 @@ def configure_multi_databackend(args: dict, accelerator):
             bucket_manager=init_backend["bucket_manager"],
             data_backend=init_backend["data_backend"],
             instance_data_root=init_backend["instance_data_root"],
-            delete_problematic_images=backend["delete_problematic_images"]
-            or args.delete_problematic_images,
-            resolution=backend["resolution"] or args.resolution,
-            resolution_type=backend["resolution_type"] or args.resolution_type,
-            minimum_image_size=backend["minimum_image_size"] or args.minimum_image_size,
+            delete_problematic_images=backend.get(
+                "delete_problematic_images", args.delete_problematic_images
+            ),
+            resolution=backend.get("resolution", args.resolution),
+            resolution_type=backend.get("resolution_type", args.resolution_type),
+            minimum_image_size=backend.get(
+                "minimum_image_size", args.minimum_image_size
+            ),
             vae_batch_size=args.vae_batch_size,
             write_batch_size=args.write_batch_size,
-            cache_dir=backend["cache_dir_vae"] or args.cache_dir_vae,
+            cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
         )
 
         if accelerator.is_local_main_process:
@@ -223,16 +221,16 @@ def configure_multi_databackend(args: dict, accelerator):
             init_backend["vaecache"].process_buckets()
             accelerator.wait_for_everyone()
 
-        StateTracker.register_backend(init_backend)
+        StateTracker.register_data_backend(init_backend)
 
     # After configuring all backends, register their captions.
     StateTracker.set_caption_files(all_captions)
 
-    if len(data_backends) == 0:
+    if len(StateTracker.get_data_backends()) == 0:
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
-    return data_backends
+    return StateTracker.get_data_backends()
 
 
 def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:

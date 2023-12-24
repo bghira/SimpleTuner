@@ -245,9 +245,6 @@ def main():
             * accelerator.num_processes
         )
 
-    # Create a DataBackend, so that we can access our dataset.
-    configure_multi_databackend(args, accelerator)
-
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -333,6 +330,34 @@ def main():
     vae.requires_grad_(False)
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
+    # Move vae, unet and text_encoder to device and cast to weight_dtype
+    # The VAE is in float32 to avoid NaN losses.
+    vae_dtype = torch.float32
+    if hasattr(args, "vae_dtype"):
+        logger.info(
+            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
+        )
+        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+        if args.vae_dtype == "bf16":
+            vae_dtype = torch.bfloat16
+        elif args.vae_dtype == "fp16":
+            vae_dtype = torch.float16
+        elif args.vae_dtype == "fp32":
+            vae_dtype = torch.float32
+        elif args.vae_dtype == "none" or args.vae_dtype == "default":
+            vae_dtype = torch.float32
+    if args.pretrained_vae_model_name_or_path is not None:
+        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    else:
+        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    StateTracker.set_vae_dtype(vae_dtype)
+    StateTracker.set_vae(vae)
+    logger.info(f"Loaded VAE into VRAM.")
+
+    # Create a DataBackend, so that we can access our dataset.
+    configure_multi_databackend(args, accelerator)
 
     prompt_handler = None
     if not args.disable_compel:
@@ -421,7 +446,13 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps
+        sum(
+            [
+                len(backend["bucket_manager"])
+                for _, backend in StateTracker.get_data_backends().items()
+            ]
+        )
+        / args.gradient_accumulation_steps
     )
     if args.max_train_steps is None or args.max_train_steps == 0:
         if args.num_train_epochs is None or args.num_train_epochs == 0:
@@ -665,44 +696,25 @@ def main():
 
     # Prepare everything with our `accelerator`.
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+    train_dataloaders = []
+    for _, backend in StateTracker.get_data_backends().items():
+        train_dataloaders.append(backend["train_dataloader"])
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
-        unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(
-            unet, train_dataloader, lr_scheduler, optimizer
-        )
+        results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
+        unet = results[0]
+        lr_scheduler = results[1]
+        optimizer = results[2]
+        # The rest of the entries are dataloaders:
+        train_dataloaders = results[3:]
         if args.use_ema:
             logger.info("Moving EMA model weights to accelerator...")
             ema_unet.to(accelerator.device, dtype=weight_dtype)
 
-    # Move vae, unet and text_encoder to device and cast to weight_dtype
-    # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.float32
-    if hasattr(args, "vae_dtype"):
-        logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
-        )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            vae_dtype = torch.float16
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.float32
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    StateTracker.set_vae_dtype(vae_dtype)
-    StateTracker.set_vae(vae)
-    logger.info(f"Loaded VAE into VRAM.")
-
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps
+        sum([len(dataloader) for dataloader in train_dataloaders])
+        / args.gradient_accumulation_steps
     )
     if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
         lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
@@ -720,12 +732,6 @@ def main():
     if accelerator.is_main_process:
         # Copy args into public_args:
         public_args = copy.deepcopy(args)
-        # Remove the args that we don't want to track:
-        del public_args.aws_access_key_id
-        del public_args.aws_secret_access_key
-        del public_args.aws_bucket_name
-        del public_args.aws_region_name
-        del public_args.aws_endpoint_url
         # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
         public_args_hash = hashlib.md5(
             json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
@@ -751,7 +757,8 @@ def main():
 
         del vae
         vae = None
-        vaecache.vae = None
+        for _, backend in StateTracker.get_data_backends().items():
+            backend["vaecache"].vae = None
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -793,9 +800,12 @@ def main():
         else:
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
-            custom_balanced_sampler.load_states(
-                state_path=os.path.join(args.output_dir, path, "training_state.json"),
-            )
+            for _, backend in StateTracker.get_data_backends().items():
+                backend["sampler"].load_states(
+                    state_path=os.path.join(
+                        args.output_dir, path, "training_state.json"
+                    ),
+                )
             resume_global_step = global_step = int(path.split("-")[1])
 
             # If we use a constant LR, we can update that now.
@@ -812,10 +822,16 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
-    custom_balanced_sampler.log_state()
+    for _, backend in StateTracker.get_data_backends().items():
+        backend["sampler"].log_state()
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
-    first_epoch = custom_balanced_sampler.current_epoch
+    first_epoch = max(
+        [
+            backend["sampler"].current_epoch
+            for backend in StateTracker.get_data_backends()
+        ]
+    )
     if first_epoch > 1:
         steps_to_remove = first_epoch * num_update_steps_per_epoch
         total_steps_remaining_at_start -= steps_to_remove
@@ -829,8 +845,11 @@ def main():
         )
 
     logger.info("***** Running training *****")
+    total_num_batches = len(
+        [backend["train_dataset"] for backend in StateTracker.get_data_backends()]
+    )
     logger.info(
-        f"  Num batches = {len(train_dataset)} ({len(train_dataset) * args.train_batch_size} samples)"
+        f"  Num batches = {total_num_batches} ({total_num_batches * args.train_batch_size} samples)"
     )
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Current Epoch = {first_epoch}")
@@ -1138,9 +1157,12 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state(
-                            state_path=os.path.join(save_path, "training_state.json"),
-                        )
+                        for backend in StateTracker.get_data_backends():
+                            backend["sampler"].save_state(
+                                state_path=os.path.join(
+                                    save_path, "training_state.json"
+                                ),
+                            )
                         logger.info(f"Saved state to {save_path}")
 
             logs = {

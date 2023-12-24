@@ -8,6 +8,7 @@ from tests.helpers.data import MockDataBackend
 class TestBucketManager(unittest.TestCase):
     def setUp(self):
         self.data_backend = MockDataBackend()
+        self.data_backend.id = "foo"
         self.accelerator = Mock()
         self.data_backend.exists = Mock(return_value=True)
         self.data_backend.write = Mock(return_value=True)
@@ -25,6 +26,7 @@ class TestBucketManager(unittest.TestCase):
         ), patch("pathlib.Path.exists", return_value=True):
             with self.assertLogs("BucketManager", level="WARNING"):
                 self.bucket_manager = BucketManager(
+                    id="foo",
                     instance_data_root=self.instance_data_root,
                     cache_file=self.cache_file,
                     metadata_file=self.metadata_file,

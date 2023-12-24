@@ -6,9 +6,18 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class BucketStateManager:
-    def __init__(self, state_path, seen_images_path):
-        self.state_path = state_path
+    def __init__(self, id: str, state_path, seen_images_path):
+        self.id = id
+        self.state_path = self.mangle_state_path(state_path)
+        # seen_images_path is pre-mangled by the dataset factory
         self.seen_images_path = seen_images_path
+
+    def mangle_state_path(self, state_path):
+        # When saving the state, it goes into the checkpoint dir.
+        # However, we need to save a single state for each data backend.
+        # Thus, we split the state_path from its extension, add self.id to the end of the name, and rejoin:
+        filename, ext = os.path.splitext(state_path)
+        return f"{filename}-{self.id}{ext}"
 
     def load_seen_images(self):
         if os.path.exists(self.seen_images_path):
@@ -35,6 +44,8 @@ class BucketStateManager:
         final_state = state
         if state_path is None:
             state_path = self.state_path
+        else:
+            state_path = self.mangle_state_path(state_path)
         logger.debug(f"Type of state: {type(state)}")
         final_state = self.deep_convert_dict(state)
         logger.info(f"Saving trainer state to {state_path}")

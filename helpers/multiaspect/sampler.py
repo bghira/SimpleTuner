@@ -101,7 +101,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def load_states(self, state_path: str):
         try:
-            self.state_manager = BucketStateManager(state_path, self.seen_images_path)
+            self.state_manager = BucketStateManager(
+                self.id, state_path, self.seen_images_path
+            )
             self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state()
         except Exception as e:

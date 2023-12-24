@@ -10,7 +10,8 @@
         "prepend_instance_prompt": false,
         "instance_prompt": "cat girls",
         "only_instance_prompt": false,
-        "caption_strategy": "filename"
+        "caption_strategy": "filename",
+        "cache_dir_vae": "cache_prefix"
     },
     {
         "id": "another-special-name-for-another-backend",
@@ -20,6 +21,7 @@
         "aws_endpoint_url": "https://foo.bar/",
         "aws_access_key_id": "wpz-764e9734523434",
         "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
-        "aws_data_prefix": ""
+        "aws_data_prefix": "",
+        "cache_dir_vae": "/path/to/cache/dir"
     }
 ]
