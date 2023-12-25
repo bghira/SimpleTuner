@@ -339,7 +339,7 @@ class VAECache:
                         )
                         continue
                 image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image, self.resolution, self.resolution_type
+                    image, self.resolution, self.resolution_type, self.id
                 )
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
