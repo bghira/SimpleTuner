@@ -1161,6 +1161,7 @@ def main():
                         )
                         accelerator.save_state(save_path)
                         for _, backend in StateTracker.get_data_backends().items():
+                            logger.debug(f"Backend: {backend}")
                             backend["sampler"].save_state(
                                 state_path=os.path.join(
                                     save_path, "training_state.json"
