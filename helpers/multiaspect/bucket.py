@@ -2,7 +2,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
-import json, logging, os, time
+import json, logging, os, time, re
 from multiprocessing import Manager
 from PIL import Image
 from tqdm import tqdm
@@ -18,6 +18,7 @@ logger.setLevel(target_level)
 class BucketManager:
     def __init__(
         self,
+        id: str,
         instance_data_root: str,
         cache_file: str,
         metadata_file: str,
@@ -30,6 +31,11 @@ class BucketManager:
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
     ):
+        self.id = id
+        if self.id != data_backend.id:
+            raise ValueError(
+                f"BucketManager ID ({self.id}) must match the DataBackend ID ({data_backend.id})."
+            )
         self.accelerator = accelerator
         self.data_backend = data_backend
         self.batch_size = batch_size
@@ -66,14 +72,14 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files = (
-            StateTracker.get_image_files()
-            or StateTracker.set_image_files(
-                self.data_backend.list_files(
-                    instance_data_root=self.instance_data_root,
-                    str_pattern="*.[jJpP][pPnN][gG]",
-                )
-            )
+        all_image_files = StateTracker.get_image_files(
+            data_backend_id=self.data_backend.id
+        ) or StateTracker.set_image_files(
+            self.data_backend.list_files(
+                instance_data_root=self.instance_data_root,
+                str_pattern="*.[jJpP][pPnN][gG]",
+            ),
+            data_backend_id=self.data_backend.id,
         )
         # Log an excerpt of the all_image_files:
         logger.debug(
@@ -117,9 +123,11 @@ class BucketManager:
             self.aspect_ratio_bucket_indices = cache_data.get(
                 "aspect_ratio_bucket_indices", {}
             )
+            self.config = cache_data.get("config", {})
+            logger.debug(f"Setting config to {self.config}")
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
 
-    def _save_cache(self, enforce_constraints: bool = False):
+    def save_cache(self, enforce_constraints: bool = False):
         """
         Save cache data to file.
         """
@@ -133,9 +141,13 @@ class BucketManager:
         }
         # Encode the cache as JSON.
         cache_data = {
+            "config": StateTracker.get_data_backend_config(
+                data_backend_id=self.data_backend.id
+            ),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
             "instance_images_path": [str(path) for path in self.instance_images_path],
         }
+        logger.debug(f"save_cache has config to write: {cache_data['config']}")
         cache_data_str = json.dumps(cache_data)
         # Use our DataBackend to write the cache file.
         self.data_backend.write(self.cache_file, cache_data_str)
@@ -283,7 +295,7 @@ class BucketManager:
                         f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
                     )
                     self.instance_images_path.update(written_files)
-                    self._save_cache(enforce_constraints=False)
+                    self.save_cache(enforce_constraints=False)
                     self.save_image_metadata()
                     last_write_time = current_time
 
@@ -294,7 +306,7 @@ class BucketManager:
 
         self.instance_images_path.update(new_files)
         self.save_image_metadata()
-        self._save_cache(enforce_constraints=True)
+        self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1):
@@ -317,6 +329,7 @@ class BucketManager:
             # Trim the list to a length that's divisible by the effective batch size
             num_batches = len(images) // effective_batch_size
             trimmed_images = images[: num_batches * effective_batch_size]
+            logger.debug(f"Trimmed from {len(images)} to {len(trimmed_images)}")
 
             with self.accelerator.split_between_processes(
                 trimmed_images, apply_padding=False
@@ -376,7 +389,7 @@ class BucketManager:
                 img for img in images if img in existing_files
             ]
         # Save the updated cache
-        self._save_cache()
+        self.save_cache()
 
     def refresh_buckets(self, rank: int = None):
         """
@@ -386,7 +399,7 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        existing_files = StateTracker.get_image_files()
+        existing_files = StateTracker.get_image_files(data_backend_id=self.id)
 
         # Update bucket indices to remove entries that no longer exist
         self.update_buckets_with_existing_files(existing_files)
@@ -434,7 +447,7 @@ class BucketManager:
             self.aspect_ratio_bucket_indices[bucket] = [
                 img
                 for img in images
-                if BucketManager.meets_resolution_requirements(
+                if self.meets_resolution_requirements(
                     image_path=img,
                     minimum_image_size=self.minimum_image_size,
                     resolution_type=self.resolution_type,
@@ -442,8 +455,8 @@ class BucketManager:
                 )
             ]
 
-    @staticmethod
     def meets_resolution_requirements(
+        self,
         image_path: str = None,
         image: Image = None,
         minimum_image_size: int = None,
@@ -453,9 +466,7 @@ class BucketManager:
         Check if an image meets the resolution requirements.
         """
         if image is None and image_path is not None:
-            metadata = StateTracker.get_bucket_manager().get_metadata_by_filepath(
-                image_path
-            )
+            metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
                 logger.warning(f"Metadata not found for image {image_path}.")
                 return False
@@ -506,7 +517,7 @@ class BucketManager:
         else:
             logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
-        self._save_cache()
+        self.save_cache()
 
     def handle_small_image(
         self, image_path: str, bucket: str, delete_unwanted_images: bool
@@ -694,5 +705,107 @@ class BucketManager:
             worker.join()
 
         self.save_image_metadata()
-        self._save_cache(enforce_constraints=True)
+        self.save_cache(enforce_constraints=True)
         logger.info("Completed metadata update.")
+
+    def handle_vae_cache_inconsistencies(self, vae_cache, vae_cache_behavior: str):
+        """
+        Handles inconsistencies between the aspect buckets and the VAE cache.
+
+        Args:
+            vae_cache: The VAECache object.
+            vae_cache_behavior (str): Behavior for handling inconsistencies ('sync' or 'recreate').
+        """
+        if vae_cache_behavior not in ["sync", "recreate"]:
+            raise ValueError("Invalid VAE cache behavior specified.")
+
+        for cache_file, cache_content in vae_cache.scan_cache_contents():
+            if vae_cache_behavior == "sync":
+                # Sync aspect buckets with the cache
+                expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
+                    self._get_aspect_ratio_from_tensor(cache_content)
+                )
+                self._modify_cache_entry_bucket(cache_file, expected_bucket)
+
+            elif vae_cache_behavior == "recreate":
+                # Delete the cache file if it doesn't match the aspect bucket indices
+                if self.is_cache_inconsistent(cache_file, cache_content):
+                    self.data_backend.delete(cache_file)
+
+        # Update any state or metadata post-processing
+        self.save_cache()
+
+    def is_cache_inconsistent(self, cache_file, cache_content):
+        """
+        Check if a cache file's content is inconsistent with the aspect ratio bucket indices.
+
+        Args:
+            cache_file (str): The cache file path.
+            cache_content: The content of the cache file (PyTorch Tensor).
+
+        Returns:
+            bool: True if the cache file is inconsistent, False otherwise.
+        """
+        actual_aspect_ratio = self._get_aspect_ratio_from_tensor(cache_content)
+        expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
+            actual_aspect_ratio
+        )
+        logger.debug(
+            f"Expected bucket for {cache_file}: {expected_bucket} vs actual {actual_aspect_ratio}"
+        )
+
+        # Extract the base filename without the extension
+        base_filename = os.path.splitext(os.path.basename(cache_file))[0]
+        base_filename_png = os.path.join(
+            self.instance_data_root, f"{base_filename}.png"
+        )
+        base_filename_jpg = os.path.join(
+            self.instance_data_root, f"{base_filename}.jpg"
+        )
+        # Check if the base filename is in the correct bucket
+        if any(
+            base_filename_png in self.aspect_ratio_bucket_indices.get(bucket, set())
+            for bucket in [expected_bucket, str(expected_bucket)]
+        ):
+            logger.debug(f"File {base_filename} is in the correct bucket.")
+            return False
+        if any(
+            base_filename_jpg in self.aspect_ratio_bucket_indices.get(bucket, set())
+            for bucket in [expected_bucket, str(expected_bucket)]
+        ):
+            logger.debug(f"File {base_filename} is in the correct bucket.")
+            return False
+        logger.debug(f"File {base_filename} was not found in the correct place.")
+        return True
+
+    def _get_aspect_ratio_from_tensor(self, tensor):
+        """
+        Calculate the aspect ratio from a PyTorch Tensor.
+
+        Args:
+            tensor (torch.Tensor): The tensor representing the image.
+
+        Returns:
+            float: The aspect ratio of the image.
+        """
+        if tensor.dim() < 3:
+            raise ValueError(
+                "Tensor does not have enough dimensions to determine aspect ratio."
+            )
+        # Assuming tensor is in CHW format (channel, height, width)
+        _, height, width = tensor.size()
+        return width / height
+
+    def _modify_cache_entry_bucket(self, cache_file, expected_bucket):
+        """
+        Update the bucket indices based on the cache file's actual aspect ratio.
+
+        Args:
+            cache_file (str): The cache file path.
+            expected_bucket (str): The bucket that the cache file should belong to.
+        """
+        for bucket, files in self.aspect_ratio_bucket_indices.items():
+            if cache_file in files and str(bucket) != str(expected_bucket):
+                files.remove(cache_file)
+                self.aspect_ratio_bucket_indices[expected_bucket].append(cache_file)
+                break

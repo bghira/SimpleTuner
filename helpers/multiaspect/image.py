@@ -45,18 +45,23 @@ class MultiaspectImage:
                 # Apply EXIF transforms
                 image_metadata["original_size"] = image.size
                 image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image, bucket_manager.resolution, bucket_manager.resolution_type
+                    image,
+                    bucket_manager.resolution,
+                    bucket_manager.resolution_type,
+                    data_backend.id,
                 )
                 image_metadata["crop_coordinates"] = crop_coordinates
                 image_metadata["target_size"] = image.size
                 # Round to avoid excessive unique buckets
-                aspect_ratio = round(image.width / image.height, aspect_ratio_rounding)
+                aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                    image, aspect_ratio_rounding
+                )
                 image_metadata["aspect_ratio"] = aspect_ratio
                 image_metadata["luminance"] = calculate_luminance(image)
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
                 )
-                if not StateTracker.get_bucket_manager().meets_resolution_requirements(
+                if not bucket_manager.meets_resolution_requirements(
                     image=image,
                     minimum_image_size=minimum_image_size,
                     resolution_type=resolution_type,
@@ -85,7 +90,9 @@ class MultiaspectImage:
         return aspect_ratio_bucket_indices
 
     @staticmethod
-    def prepare_image(image: Image, resolution: float, resolution_type: str = "pixel"):
+    def prepare_image(
+        image: Image, resolution: float, resolution_type: str = "pixel", id: str = "foo"
+    ):
         if not hasattr(image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(image)}"
@@ -127,10 +134,17 @@ class MultiaspectImage:
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
-        crop_style = StateTracker.get_args().crop_style
-        crop_aspect = StateTracker.get_args().crop_aspect
+        crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
+            "crop", StateTracker.get_args().crop
+        )
+        crop_style = StateTracker.get_data_backend_config(data_backend_id=id).get(
+            "crop_style", StateTracker.get_args().crop_style
+        )
+        crop_aspect = StateTracker.get_data_backend_config(data_backend_id=id).get(
+            "crop_aspect", StateTracker.get_args().crop_aspect
+        )
 
-        if StateTracker.get_args().crop:
+        if crop:
             crop_width, crop_height = (
                 (resolution, resolution)
                 if crop_aspect == "square"
@@ -242,3 +256,32 @@ class MultiaspectImage:
         H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 64)
 
         return W_new, H_new
+
+    @staticmethod
+    def calculate_image_aspect_ratio(image, rounding: int = 2):
+        """
+        Calculate the aspect ratio of an image and round it to a specified precision.
+
+        Args:
+            image (PIL.Image): The image to calculate the aspect ratio for.
+            rounding (int): The number of decimal places to round the aspect ratio to.
+
+        Returns:
+            float: The rounded aspect ratio of the image.
+        """
+        aspect_ratio = round(image.width / image.height, rounding)
+        return aspect_ratio
+
+    @staticmethod
+    def determine_bucket_for_aspect_ratio(aspect_ratio, rounding: int = 2):
+        """
+        Determine the correct bucket for a given aspect ratio.
+
+        Args:
+            aspect_ratio (float): The aspect ratio of an image.
+
+        Returns:
+            str: The bucket corresponding to the aspect ratio.
+        """
+        # The logic for determining the bucket can be based on the aspect ratio directly
+        return str(round(aspect_ratio, rounding))

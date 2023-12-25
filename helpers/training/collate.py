@@ -81,10 +81,12 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def fetch_latent(fp):
+def fetch_latent(fp, data_backend_id: str):
     """Worker method to fetch latent for a single image."""
-    debug_log(" -> pull latents from cache")
-    latent = StateTracker.get_vaecache().retrieve_from_cache(fp)
+    debug_log(
+        f" -> pull latents for fp {fp} from cache via data backend {data_backend_id}"
+    )
+    latent = StateTracker.get_vaecache(id=data_backend_id).retrieve_from_cache(fp)
 
     # Move to CPU and pin memory if it's not on the GPU
     debug_log(" -> push latents to GPU via pinned memory")
@@ -92,10 +94,12 @@ def fetch_latent(fp):
     return latent
 
 
-def compute_latents(filepaths):
+def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        latents = list(executor.map(fetch_latent, filepaths))
+        latents = list(
+            executor.map(fetch_latent, filepaths, [data_backend_id] * len(filepaths))
+        )
 
     # Validate shapes
     test_shape = latents[0].shape
@@ -111,11 +115,20 @@ def compute_latents(filepaths):
 
 def compute_prompt_embeddings(captions):
     debug_log(" -> get embed from cache")
-    (
-        prompt_embeds_all,
-        add_text_embeds_all,
-    ) = StateTracker.get_embedcache().compute_embeddings_for_sdxl_prompts(captions)
-    debug_log(" -> concat embeds")
+    embedcache = StateTracker.get_embedcache()
+    if embedcache.model_type == "sdxl":
+        (
+            prompt_embeds_all,
+            add_text_embeds_all,
+        ) = embedcache.compute_embeddings_for_sdxl_prompts(captions)
+        debug_log(" -> concat embeds")
+    else:
+        debug_log(" -> concat embeds")
+        prompt_embeds_all = embedcache.compute_embeddings_for_legacy_prompts(captions)[
+            0
+        ]
+        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+        return prompt_embeds_all, None
     prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
     add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
     return prompt_embeds_all, add_text_embeds_all
@@ -155,7 +168,6 @@ def collate_fn(batch):
             "This trainer is not designed to handle multiple batches in a single collate."
         )
     debug_log("Begin collate_fn on batch")
-    examples = batch[0]
 
     # SDXL Dropout
     dropout_probability = StateTracker.get_args().caption_dropout_probability
@@ -163,6 +175,7 @@ def collate_fn(batch):
 
     # Randomly drop captions/conditioning based on dropout_probability
     for example in examples:
+        data_backend_id = example["data_backend_id"]
         if (
             dropout_probability > 0
             and dropout_probability is not None
@@ -180,7 +193,7 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
-    latent_batch = compute_latents(filepaths)
+    latent_batch = compute_latents(filepaths, data_backend_id)
     debug_log("Check latents")
     check_latent_shapes(latent_batch, filepaths)
 
@@ -189,12 +202,13 @@ def collate_fn(batch):
     captions = [example["instance_prompt_text"] for example in examples]
     debug_log("Pull cached text embeds")
     prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
-
-    debug_log("Compute and stack SDXL time ids")
-    batch_time_ids = gather_conditional_size_features(
-        examples, latent_batch, StateTracker.get_weight_dtype()
-    )
-    debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
+    batch_time_ids = None
+    if add_text_embeds_all is not None:
+        debug_log("Compute and stack SDXL time ids")
+        batch_time_ids = gather_conditional_size_features(
+            examples, latent_batch, StateTracker.get_weight_dtype()
+        )
+        debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
 
     return {
         "latent_batch": latent_batch,

@@ -10,8 +10,9 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 
 class LocalDataBackend(BaseDataBackend):
-    def __init__(self, accelerator):
+    def __init__(self, accelerator, id: str):
         self.accelerator = accelerator
+        self.id = id
 
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
@@ -31,7 +32,7 @@ class LocalDataBackend(BaseDataBackend):
                 logger.debug(f"Writing a torch file to disk.")
                 return self.torch_save(data, file)
             elif isinstance(data, str):
-                logger.debug(f"Writing a string to disk: {data}")
+                logger.debug(f"Writing a string to disk as {filepath}: {data}")
                 data = data.encode("utf-8")
             else:
                 logger.debug(
@@ -46,6 +47,7 @@ class LocalDataBackend(BaseDataBackend):
     def delete(self, filepath):
         """Delete the specified file."""
         if os.path.exists(filepath):
+            logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
         else:
             raise FileNotFoundError(f"{filepath} not found.")
@@ -55,7 +57,9 @@ class LocalDataBackend(BaseDataBackend):
 
     def exists(self, filepath):
         """Check if the file exists."""
-        return os.path.exists(filepath)
+        result = os.path.exists(filepath)
+        logger.debug(f"Checking if {filepath} exists = {result}")
+        return result
 
     def open_file(self, filepath, mode):
         """Open the file in the specified mode."""

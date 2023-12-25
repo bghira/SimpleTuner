@@ -17,14 +17,17 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.accelerator = MagicMock()
         self.accelerator.log = MagicMock()
         self.bucket_manager = Mock(spec=BucketManager)
+        self.bucket_manager.id = "foo"
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
         self.bucket_manager.seen_images = {}
         self.data_backend = MockDataBackend()
+        self.data_backend.id = "foo"
         self.batch_size = 2
         self.seen_images_path = "/some/fake/seen_images.json"
         self.state_path = "/some/fake/state.json"
 
         self.sampler = MultiAspectSampler(
+            id="foo",
             bucket_manager=self.bucket_manager,
             data_backend=self.data_backend,
             accelerator=self.accelerator,

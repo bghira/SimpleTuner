@@ -26,6 +26,7 @@ class VAECache:
 
     def __init__(
         self,
+        id: str,
         vae,
         accelerator,
         bucket_manager: BucketManager,
@@ -41,6 +42,11 @@ class VAECache:
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
     ):
+        self.id = id
+        if data_backend.id != id:
+            raise ValueError(
+                f"VAECache received incorrect data_backend: {data_backend}"
+            )
         self.data_backend = data_backend
         self.vae = vae
         self.accelerator = accelerator
@@ -112,23 +118,24 @@ class VAECache:
 
     def discover_all_files(self, directory: str = None):
         """Identify all files in a directory."""
-        all_image_files = (
-            StateTracker.get_image_files()
-            or StateTracker.set_image_files(
-                self.data_backend.list_files(
-                    instance_data_root=self.instance_data_root,
-                    str_pattern="*.[jJpP][pPnN][gG]",
-                )
-            )
+        all_image_files = StateTracker.get_image_files(
+            data_backend_id=self.id
+        ) or StateTracker.set_image_files(
+            self.data_backend.list_files(
+                instance_data_root=self.instance_data_root,
+                str_pattern="*.[jJpP][pPnN][gG]",
+            ),
+            data_backend_id=self.id,
         )
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
-            StateTracker.get_vae_cache_files()
+            StateTracker.get_vae_cache_files(data_backend_id=self.id)
             or StateTracker.set_vae_cache_files(
                 self.data_backend.list_files(
                     instance_data_root=self.cache_dir,
                     str_pattern="*.pt",
-                )
+                ),
+                data_backend_id=self.id,
             )
         )
         self.debug_log(
@@ -141,7 +148,7 @@ class VAECache:
         Return a set of filenames (without the .pt extension) that have been processed.
         """
         # Extract array of tuple into just, an array of files:
-        pt_files = StateTracker.get_vae_cache_files()
+        pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
         logging.debug(
@@ -151,8 +158,8 @@ class VAECache:
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
-        all_image_files = StateTracker.get_image_files()
-        existing_cache_files = StateTracker.get_vae_cache_files()
+        all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
+        existing_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         self.debug_log(
             f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
         )
@@ -217,10 +224,14 @@ class VAECache:
             f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
         )
         # Use the accelerator to split the data
+
         with self.accelerator.split_between_processes(
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
+        self.debug_log(
+            f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
+        )
         # Print the first 5 as a debug log:
         self.debug_log(
             f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
@@ -248,6 +259,12 @@ class VAECache:
             for i, filename in enumerate(full_filenames)
             if not self.data_backend.exists(filename)
         ]
+        logger.debug(
+            f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
+        )
+        logger.debug(
+            f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
+        )
         uncached_images = [images[i] for i in uncached_image_indices]
 
         if len(uncached_image_indices) > 0 and load_from_cache:
@@ -322,7 +339,7 @@ class VAECache:
                 filepaths.append(filepath)
                 self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
-                    if not BucketManager.meets_resolution_requirements(
+                    if not self.bucket_manager.meets_resolution_requirements(
                         image_path=filepath,
                         minimum_image_size=self.minimum_image_size,
                         resolution_type=self.resolution_type,
@@ -332,15 +349,14 @@ class VAECache:
                         )
                         continue
                 image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image, self.resolution, self.resolution_type
+                    image, self.resolution, self.resolution_type, self.id
                 )
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
                 self.vae_input_queue.put((pixel_values, filepath))
                 # Update the crop_coordinates in the metadata document
-                bucket_manager = StateTracker.get_bucket_manager()
-                bucket_manager.set_metadata_attribute_by_filepath(
+                self.bucket_manager.set_metadata_attribute_by_filepath(
                     filepath=filepath,
                     attribute="crop_coordinates",
                     value=crop_coordinates,
@@ -583,3 +599,24 @@ class VAECache:
                 except Exception as e:
                     logger.error(f"Fatal error when processing bucket {bucket}: {e}")
                     continue
+
+    def scan_cache_contents(self):
+        """
+        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents.
+
+        This is likely a very expensive operation for extra-large cloud datasets, but it could save time and
+        computational resources if finding a problem with surgical precision can prevent the need for removing
+        all cache entries in a dataset for a complete rebuild.
+
+        Yields:
+            Tuple[str, Any]: A tuple containing the file path and its contents.
+        """
+        try:
+            all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+            for cache_file in all_cache_files:
+                full_path = os.path.join(self.cache_dir, cache_file)
+                cache_content = self._read_from_storage(full_path)
+                yield (full_path, cache_content)
+        except Exception as e:
+            logger.error(f"Error in scan_cache_contents: {e}")
+            logging.debug(f"Error traceback: {traceback.format_exc()}")

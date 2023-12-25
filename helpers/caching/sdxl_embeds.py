@@ -8,7 +8,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 class TextEmbeddingCache:
-    prompts = None
+    prompts = {}
 
     def __init__(
         self,
@@ -28,7 +28,7 @@ class TextEmbeddingCache:
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def create_hash(self, caption):
-        return hashlib.md5(caption.encode()).hexdigest()
+        return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)
@@ -43,7 +43,7 @@ class TextEmbeddingCache:
             padding="max_length",
             max_length=tokenizer.model_max_length,
             return_tensors="pt",
-        ).input_ids
+        ).input_ids.to(text_encoder.device)
         output = text_encoder(input_tokens)[0]
         logger.debug(f"Legacy prompt shape: {output.shape}")
         logger.debug(f"Legacy prompt encoded: {output}")
