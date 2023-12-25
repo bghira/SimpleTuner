@@ -87,7 +87,7 @@ class TestBucketManager(unittest.TestCase):
         self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
         self.bucket_manager.instance_images_path = ["image1", "image2"]
         with patch.object(self.data_backend, "write") as mock_write:
-            self.bucket_manager._save_cache()
+            self.bucket_manager.save_cache()
         mock_write.assert_called_once()
 
     # Add more tests for other methods as needed

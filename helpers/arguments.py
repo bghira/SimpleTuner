@@ -149,6 +149,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--vae_cache_behaviour",
+        type=str,
+        choices=["recreate", "sync"],
+        default="recreate",
+        help=(
+            "When a mismatched latent vector is detected, a scan will be initiated to locate inconsistencies and resolve them."
+            " The default setting 'recreate' will delete any inconsistent cache entries and rebuild it."
+            " Alternatively, 'sync' will update the bucket configuration so that the image is in a bucket that matches its latent size."
+            " The recommended behaviour is to use the default value and allow the cache to be recreated."
+        ),
+    )
+    parser.add_argument(
         "--keep_vae_loaded",
         action="store_true",
         default=False,
@@ -197,6 +209,18 @@ def parse_args(input_args=None):
             " from scanning it at startup, by preserving the cache files that we generate. Be careful when using this,"
             " as, switching datasets can result in the preserved cache being used, which would be problematic."
             " Currently, cache is not stored in the dataset itself but rather, locally. This may change in a future release."
+        ),
+    )
+    parser.add_argument(
+        "--override_dataset_config",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, the dataset's config will not be checked against the live backend config."
+            " This is useful if you want to simply update the behaviour of an existing dataset,"
+            " but the recommendation is to not change the dataset configuration after caching has begun,"
+            " as most options cannot be changed without unexpected behaviour later on. Additionally, it prevents"
+            " accidentally loading an SDXL configuration on a SD 2.x model and vice versa."
         ),
     )
     parser.add_argument(

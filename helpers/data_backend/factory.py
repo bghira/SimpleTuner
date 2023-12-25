@@ -20,10 +20,24 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
+    else:
+        output["config"]["crop"] = args.crop
     if "crop_aspect" in backend:
         output["config"]["crop_aspect"] = backend["crop_aspect"]
+    else:
+        output["config"]["crop_aspect"] = args.crop_aspect
     if "crop_style" in backend:
         output["config"]["crop_style"] = backend["crop_style"]
+    else:
+        output["config"]["crop_style"] = args.crop_style
+    if "resolution" in backend:
+        output["config"]["resolution"] = backend["resolution"]
+    else:
+        output["config"]["resolution"] = args.resolution
+    if "resolution_type" in backend:
+        output["config"]["resolution_type"] = backend["resolution_type"]
+    else:
+        output["config"]["resolution_type"] = args.resolution_type
 
     return output
 
@@ -111,6 +125,13 @@ def configure_multi_databackend(args: dict, accelerator):
             ),
             delete_problematic_images=args.delete_problematic_images or False,
         )
+        logger.debug(
+            f"Loaded previous data backend config: {init_backend['bucket_manager'].config}"
+        )
+        StateTracker.set_data_backend_config(
+            data_backend_id=init_backend["id"],
+            config=init_backend["bucket_manager"].config,
+        )
         if init_backend["bucket_manager"].has_single_underfilled_bucket():
             raise Exception(
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
@@ -125,6 +146,31 @@ def configure_multi_databackend(args: dict, accelerator):
         init_backend["bucket_manager"].split_buckets_between_processes(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
         )
+
+        # Check if there is an existing 'config' in the bucket_manager.config
+        if init_backend["bucket_manager"].config != {}:
+            logger.debug(
+                f"Found existing config: {init_backend['bucket_manager'].config}"
+            )
+            # Check if any values differ between the 'backend' values and the 'config' values:
+            for key, _ in init_backend["bucket_manager"].config.items():
+                logger.debug(f"Checking config key: {key}")
+                if (
+                    key in backend
+                    and init_backend["bucket_manager"].config[key] != backend[key]
+                ):
+                    if not args.override_dataset_config:
+                        raise Exception(
+                            f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
+                            f"\n-> Expected value {key}={init_backend['bucket_manager'].config[key]} differs from current value={backend[key]}."
+                            f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
+                            f"\n{init_backend['bucket_manager'].config}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Overriding config value {key}={init_backend['bucket_manager'].config[key]} with {backend[key]}"
+                        )
+                        init_backend["bucket_manager"].config[key] = backend[key]
 
         print_bucket_info(init_backend["bucket_manager"])
         if len(init_backend["bucket_manager"]) == 0:
@@ -222,8 +268,25 @@ def configure_multi_databackend(args: dict, accelerator):
             init_backend["vaecache"].discover_all_files()
         accelerator.wait_for_everyone()
 
-        if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
+        if (
+            "metadata" not in args.skip_file_discovery
+            and accelerator.is_main_process
+            and backend.get("scan_for_errors", False)
+        ):
+            logger.info(
+                f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
+            )
+            init_backend["bucket_manager"].handle_vae_cache_inconsistencies(
+                vae_cache=init_backend["vaecache"],
+                vae_cache_behavior=backend.get(
+                    "vae_cache_behaviour", args.vae_cache_behaviour
+                ),
+            )
             init_backend["bucket_manager"].scan_for_metadata()
+        elif not backend.get("scan_for_errors", False):
+            logger.info(
+                f"Skipping error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to True in the dataset config to enable this if your training runs into mismatched latent dimensions."
+            )
         accelerator.wait_for_everyone()
         if not accelerator.is_main_process:
             init_backend["bucket_manager"].load_image_metadata()
@@ -235,6 +298,7 @@ def configure_multi_databackend(args: dict, accelerator):
             accelerator.wait_for_everyone()
 
         StateTracker.register_data_backend(init_backend)
+        init_backend["bucket_manager"].save_cache()
 
     # After configuring all backends, register their captions.
     StateTracker.set_caption_files(all_captions)

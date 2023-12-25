@@ -32,7 +32,7 @@ class LocalDataBackend(BaseDataBackend):
                 logger.debug(f"Writing a torch file to disk.")
                 return self.torch_save(data, file)
             elif isinstance(data, str):
-                logger.debug(f"Writing a string to disk: {data}")
+                logger.debug(f"Writing a string to disk as {filepath}: {data}")
                 data = data.encode("utf-8")
             else:
                 logger.debug(
@@ -47,6 +47,7 @@ class LocalDataBackend(BaseDataBackend):
     def delete(self, filepath):
         """Delete the specified file."""
         if os.path.exists(filepath):
+            logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
         else:
             raise FileNotFoundError(f"{filepath} not found.")

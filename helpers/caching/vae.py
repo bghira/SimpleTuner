@@ -599,3 +599,24 @@ class VAECache:
                 except Exception as e:
                     logger.error(f"Fatal error when processing bucket {bucket}: {e}")
                     continue
+
+    def scan_cache_contents(self):
+        """
+        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents.
+
+        This is likely a very expensive operation for extra-large cloud datasets, but it could save time and
+        computational resources if finding a problem with surgical precision can prevent the need for removing
+        all cache entries in a dataset for a complete rebuild.
+
+        Yields:
+            Tuple[str, Any]: A tuple containing the file path and its contents.
+        """
+        try:
+            all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+            for cache_file in all_cache_files:
+                full_path = os.path.join(self.cache_dir, cache_file)
+                cache_content = self._read_from_storage(full_path)
+                yield (full_path, cache_content)
+        except Exception as e:
+            logger.error(f"Error in scan_cache_contents: {e}")
+            logging.debug(f"Error traceback: {traceback.format_exc()}")

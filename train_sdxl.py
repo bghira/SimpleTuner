@@ -357,7 +357,13 @@ def main():
     logger.info(f"Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
-    configure_multi_databackend(args, accelerator)
+    try:
+        configure_multi_databackend(args, accelerator)
+    except Exception as e:
+        logging.error(f"{e}")
+        import sys
+
+        sys.exit(0)
 
     prompt_handler = None
     if not args.disable_compel:

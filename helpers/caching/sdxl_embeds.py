@@ -28,7 +28,7 @@ class TextEmbeddingCache:
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def create_hash(self, caption):
-        return hashlib.md5(caption.encode()).hexdigest()
+        return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
 
     def save_to_cache(self, filename, embeddings):
         torch.save(embeddings, filename)

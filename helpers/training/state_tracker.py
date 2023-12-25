@@ -144,6 +144,12 @@ class StateTracker:
         return cls.data_backends.get(data_backend_id, {}).get("config", {})
 
     @classmethod
+    def set_data_backend_config(cls, data_backend_id: str, config: dict):
+        if data_backend_id not in cls.data_backends:
+            cls.data_backends[data_backend_id] = {}
+        cls.data_backends[data_backend_id]["config"] = config
+
+    @classmethod
     def get_data_backends(cls):
         return cls.data_backends
 
