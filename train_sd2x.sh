@@ -57,4 +57,4 @@ train_sd21.py \
 --state_path="${STATE_PATH}" \
 --caption_dropout_probability="${CAPTION_DROPOUT_PROBABILITY}" \
 --caption_strategy="${CAPTION_STRATEGY}" \
---data_backend="${DATA_BACKEND}" ${TRAINER_EXTRA_ARGS}
+--data_backend_config="${DATALOADER_CONFIG}" ${TRAINER_EXTRA_ARGS}

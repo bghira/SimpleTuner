@@ -27,7 +27,6 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
-from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
@@ -92,7 +91,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.20.0.dev0")
+check_min_version("0.25.0.dev0")
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -1161,7 +1160,7 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        for backend in StateTracker.get_data_backends():
+                        for _, backend in StateTracker.get_data_backends().items():
                             backend["sampler"].save_state(
                                 state_path=os.path.join(
                                     save_path, "training_state.json"

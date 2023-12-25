@@ -39,6 +39,7 @@ export MODEL_NAME="stabilityai/stable-diffusion-2-1"
 export BASE_DIR="/notebooks/datasets"
 export INSTANCE_DIR="${BASE_DIR}/training_data"
 export OUTPUT_DIR="${BASE_DIR}/models"
+export DATALOADER_CONFIG="multidatabackend_sd2x.json"
 
 # Some data that we generate will be cached here.
 export STATE_PATH="${BASE_DIR}/training_state.json"
