@@ -36,6 +36,17 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
 - **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration.
 
+### `--override_dataset_config`
+
+- **What**: When provided, will allow SimpleTuner to ignore differences between the cached config inside the dataset and the current values.
+- **Why**: When SimplerTuner is run for the first time on a dataset, it will create a cache document containing information about everything in that dataset. This includes the dataset config, including its "crop" and "resolution" related configuration values. Changing these arbitrarily or by accident could result in your training jobs crashing randomly, so it's highly recommended to not use this parameter, and instead resolve the differences you'd like to apply in your dataset some other way.
+
+
+### `--vae_cache_behaviour`
+
+- **What**: Configure the behaviour of the integrity scan check.
+- **Why**: A dataset could have incorrect settings applied at multiple points of training, eg. if you accidentally delete the `.json` cache files from your dataset and switch the data backend config to use square images rather than aspect-crops. This will result in an inconsistent data cache, which can be corrected by setting `scan_for_errors` to `true` in your `multidatabackend.json` configuration file. When this scan runs, it relies on the setting of `--vae_cache_behaviour` to determine how to resolve the inconsistency: `recreate` (the default) will remove the offending cache entry so that it can be recreated, and `sync` will update the bucket metadata to reflect the reality of the real training sample. Recommended value: `recreate`.
+
 ---
 
 ## 🌈 Image and Text Processing
@@ -166,10 +177,13 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--timestep_bias_end TIMESTEP_BIAS_END]
                      [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
                      [--rescale_betas_zero_snr] [--vae_dtype VAE_DTYPE]
-                     [--vae_batch_size VAE_BATCH_SIZE] [--keep_vae_loaded]
+                     [--vae_batch_size VAE_BATCH_SIZE]
+                     [--vae_cache_behaviour {recreate,sync}]
+                     [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] --instance_data_dir
                      INSTANCE_DATA_DIR [--preserve_data_backend_cache]
+                     [--override_dataset_config]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
@@ -331,6 +345,16 @@ options:
                         issues, but if you are at that point of contention,
                         it's possible that your GPU has too little RAM.
                         Default: 4.
+  --vae_cache_behaviour {recreate,sync}
+                        When a mismatched latent vector is detected, a scan
+                        will be initiated to locate inconsistencies and
+                        resolve them. The default setting 'recreate' will
+                        delete any inconsistent cache entries and rebuild it.
+                        Alternatively, 'sync' will update the bucket
+                        configuration so that the image is in a bucket that
+                        matches its latent size. The recommended behaviour is
+                        to use the default value and allow the cache to be
+                        recreated.
   --keep_vae_loaded     If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the
                         forward pass.
@@ -367,6 +391,16 @@ options:
                         Currently, cache is not stored in the dataset itself
                         but rather, locally. This may change in a future
                         release.
+  --override_dataset_config
+                        When provided, the dataset's config will not be
+                        checked against the live backend config. This is
+                        useful if you want to simply update the behaviour of
+                        an existing dataset, but the recommendation is to not
+                        change the dataset configuration after caching has
+                        begun, as most options cannot be changed without
+                        unexpected behaviour later on. Additionally, it
+                        prevents accidentally loading an SDXL configuration on
+                        a SD 2.x model and vice versa.
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache.
