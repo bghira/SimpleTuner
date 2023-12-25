@@ -457,9 +457,8 @@ def main(args):
     logging.info("Moving VAE to GPU..")
     # Move vae and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
-    if not args.train_text_encoder:
-        logging.info("Moving text encoder to GPU..")
-        text_encoder.to(accelerator.device, dtype=weight_dtype)
+    logging.info("Moving text encoder to GPU..")
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
     if args.use_ema:
         logger.info("Moving EMA model weights to accelerator...")
         ema_unet.to(accelerator.device, dtype=weight_dtype)
@@ -537,10 +536,11 @@ def main(args):
         model_type="legacy",
         prompt_handler=prompt_handler,
     )
+    StateTracker.set_embedcache(embed_cache)
     if "text" not in args.skip_file_discovery:
         logger.info(f"Pre-computing text embeds / updating cache.")
         all_captions = StateTracker.get_caption_files()
-        embed_cache.compute_embeddings_for_legacy_prompts()
+        embed_cache.compute_embeddings_for_legacy_prompts(return_concat=False)
     with accelerator.main_process_first():
         (
             validation_prompts,
@@ -685,11 +685,6 @@ def main(args):
         # Copy args into public_args:
         public_args = copy.deepcopy(args)
         # Remove the args that we don't want to track:
-        del public_args.aws_access_key_id
-        del public_args.aws_secret_access_key
-        del public_args.aws_bucket_name
-        del public_args.aws_region_name
-        del public_args.aws_endpoint_url
         project_name = args.tracker_project_name or "simpletuner-training"
         tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
         public_args_hash = hashlib.md5(

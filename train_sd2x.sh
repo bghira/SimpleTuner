@@ -41,7 +41,7 @@ train_sd21.py \
 --train_batch_size="${TRAIN_BATCH_SIZE}" \
 --seed "${TRAINING_SEED}" \
 --learning_rate="${LEARNING_RATE}" \
---learning_rate_end="${LEARNING_RATE_END}" \
+--lr_end="${LEARNING_RATE_END}" \
 --lr_scheduler="${LR_SCHEDULE}" \
 --num_train_epochs="${NUM_EPOCHS}" \
 --mixed_precision="${MIXED_PRECISION}" \

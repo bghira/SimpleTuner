@@ -323,6 +323,7 @@ class BucketManager:
             # Trim the list to a length that's divisible by the effective batch size
             num_batches = len(images) // effective_batch_size
             trimmed_images = images[: num_batches * effective_batch_size]
+            logger.debug(f"Trimmed from {len(images)} to {len(trimmed_images)}")
 
             with self.accelerator.split_between_processes(
                 trimmed_images, apply_padding=False
