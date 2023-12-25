@@ -30,6 +30,7 @@ export NUM_EPOCHS=25
 
 # Location of training data.
 export BASE_DIR="/notebooks/datasets"
+export DATALOADER_CONFIG="multidatabackend.json"
 export INSTANCE_DIR="${BASE_DIR}/training_data"
 export OUTPUT_DIR="${BASE_DIR}/models"
 # By default, images will be resized so their SMALLER EDGE is 1024 pixels, maintaining aspect ratio.

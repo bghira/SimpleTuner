@@ -8,12 +8,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ## 🌟 Core Model Configuration
 
-### `--data_backend_config`
-
-- **What**: Path to your SimpleTuner dataset configuration.
-- **Why**: Multiple datasets on different storage medium may be combined into a single training session.
-- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration.
-
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
@@ -36,10 +30,11 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Folder containing the training data.
 - **Why**: Designates where your training images and other data are stored.
 
-### `--data_backend`
+### `--data_backend_config`
 
-- **What**: Specifies the data storage backend, either 'local' or 'aws'.
-- **Why**: Allows for seamless switching between local and cloud storage.
+- **What**: Path to your SimpleTuner dataset configuration.
+- **Why**: Multiple datasets on different storage medium may be combined into a single training session.
+- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration.
 
 ---
 
@@ -48,7 +43,7 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--resolution`
 
 - **What**: Input image resolution. Can be expressed as pixels, or megapixels.
-- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. If you use 1024px, the images may become very large and use an excessive amount of VRAM. The best mileage tends to be a 768 or 800 pixel base resolution, although 512px resolution training can really pay off with SDXL in particular.
+- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. It is recommended use a value of 1.0 if also using `--resolution_type=area`. When using `--resolution_type=pixel` and `--resolution=1024px`, the images may become very large and use an excessive amount of VRAM. The recommended configuration is to combine `--resolution_type=area` with `--resolution=1` (or lower - .25 would be a 512px model with data bucketing).
 
 ### `--resolution_type`
 
@@ -64,6 +59,21 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`
 - **Why**: Determines how captions are generated for training images. `textfile` will use the contents of a `.txt` file with the same filename as the image, and `filename` will apply some cleanup to the filename before using it as the caption.
+
+### `--crop`
+
+- **What**: When `--crop=true` is supplied, SimpleTuner will crop all (new) images in the training dataset. It will not re-process old images.
+- **Why**: Training on cropped images seems to result in better fine detail learning, especially on SDXL models.
+
+### `--crop_style`
+
+- **What**: When `--crop=true`, the trainer may be instructed to crop in different ways.
+- **Why**: The `crop_style` option can be set to `center` (or `centre`) for a classic centre-crop, `corner` to elect for the lowest-right corner, and `random` for a random image slice. Default: random.
+
+### `--crop_aspect`
+
+- **What**: When using `--crop=true`, the `--crop_aspect` option may be supplied with a value of `square` or `preserve`.
+- **Why**: The default crop behaviour is to crop all images to a square aspect ratio, but when `--crop_aspect=preserve` is supplied, the trainer will crop images to a size matching their original aspect ratio. This may help to keep multi-resolution support, but it may also harm training quality. Your mileage may vary.
 
 ---
 
