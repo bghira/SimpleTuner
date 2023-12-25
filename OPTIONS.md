@@ -8,6 +8,12 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ## 🌟 Core Model Configuration
 
+### `--data_backend_config`
+
+- **What**: Path to your SimpleTuner dataset configuration.
+- **Why**: Multiple datasets on different storage medium may be combined into a single training session.
+- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
@@ -155,16 +161,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--revision REVISION] --instance_data_dir
                      INSTANCE_DATA_DIR [--preserve_data_backend_cache]
                      [--cache_dir_text CACHE_DIR_TEXT]
-                     [--cache_dir_vae CACHE_DIR_VAE]
-                     [--data_backend {local,aws}]
-                     [--write_batch_size WRITE_BATCH_SIZE]
-                     [--aws_config_file AWS_CONFIG_FILE]
-                     [--aws_bucket_name AWS_BUCKET_NAME]
-                     [--aws_bucket_image_prefix AWS_BUCKET_IMAGE_PREFIX]
-                     [--aws_endpoint_url AWS_ENDPOINT_URL]
-                     [--aws_region_name AWS_REGION_NAME]
-                     [--aws_access_key_id AWS_ACCESS_KEY_ID]
-                     [--aws_secret_access_key AWS_SECRET_ACCESS_KEY]
+                     [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
+                     DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
                      [--cache_dir CACHE_DIR]
                      [--cache_clear_validation_prompts]
                      [--seen_state_path SEEN_STATE_PATH]
@@ -366,13 +364,12 @@ options:
                         This is the path to a local directory that will
                         contain your VAE outputs. Unlike the text embed cache,
                         your VAE latents will be stored in the AWS data
-                        backend. If the AWS backend is in use, this will be a
-                        prefix for the bucket's VAE cache entries.
-  --data_backend {local,aws}
-                        The data backend to use. Choose between ['local',
-                        'aws']. Default: local. If using AWS, you must set the
-                        AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
-                        environment variables.
+                        backend. Each backend can have its own value, but if
+                        that is not provided, this will be the default value.
+  --data_backend_config DATA_BACKEND_CONFIG
+                        The relative or fully-qualified path for your data
+                        backend config. See multidatabackend.json.example for
+                        an example.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -381,29 +378,6 @@ options:
                         objects are written. This mostly applies to S3, but
                         some shared server filesystems may benefit as well,
                         eg. Ceph. Default: 64.
-  --aws_config_file AWS_CONFIG_FILE
-                        Path to the AWS configuration file in JSON format.
-                        Config key names are the same as SimpleTuner option
-                        counterparts.
-  --aws_bucket_name AWS_BUCKET_NAME
-                        The AWS bucket name to use.
-  --aws_bucket_image_prefix AWS_BUCKET_IMAGE_PREFIX
-                        Instead of using --instance_data_dir, AWS S3 relies on
-                        aws_bucket_*_prefix parameters. When provided, this
-                        parameter will be prepended to the image path.
-  --aws_endpoint_url AWS_ENDPOINT_URL
-                        The AWS server to use. If not specified, will use the
-                        default server for the region specified. For Wasabi,
-                        use https://s3.wasabisys.com.
-  --aws_region_name AWS_REGION_NAME
-                        The AWS region to use. If not specified, will use the
-                        default region for the server specified. For example,
-                        if you specify 's3.amazonaws.com', the default region
-                        will be 'us-east-1'.
-  --aws_access_key_id AWS_ACCESS_KEY_ID
-                        The AWS access key ID.
-  --aws_secret_access_key AWS_SECRET_ACCESS_KEY
-                        The AWS secret access key.
   --cache_dir CACHE_DIR
                         The directory where the downloaded models and datasets
                         will be stored.
