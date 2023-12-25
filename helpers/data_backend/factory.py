@@ -20,10 +20,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
-    if "crop_aspect" in args:
-        output["config"]["crop_aspect"] = args.crop_aspect
-    if "crop_style" in args:
-        output["config"]["crop_style"] = args.crop_style
+    if "crop_aspect" in backend:
+        output["config"]["crop_aspect"] = backend["crop_aspect"]
+    if "crop_style" in backend:
+        output["config"]["crop_style"] = backend["crop_style"]
+
+    return output
 
 
 def print_bucket_info(bucket_manager):
@@ -64,6 +66,7 @@ def configure_multi_databackend(args: dict, accelerator):
             raise ValueError(
                 "No identifier was given for one more of your data backends. Add a unique 'id' field to each one."
             )
+        # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
