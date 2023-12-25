@@ -1,0 +1,27 @@
+[
+    {
+        "id": "something-special-to-remember-by",
+        "type": "local",
+        "instance_data_dir": "/path/to/data/tree",
+        "crop": false,
+        "resolution": 1.0,
+        "resolution_type": "area",
+        "minimum_image_size": 1.0,
+        "prepend_instance_prompt": false,
+        "instance_prompt": "cat girls",
+        "only_instance_prompt": false,
+        "caption_strategy": "filename",
+        "cache_dir_vae": "cache_prefix"
+    },
+    {
+        "id": "another-special-name-for-another-backend",
+        "type": "aws",
+        "aws_bucket_name": "something-yummy",
+        "aws_region_name": null,
+        "aws_endpoint_url": "https://foo.bar/",
+        "aws_access_key_id": "wpz-764e9734523434",
+        "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+        "aws_data_prefix": "",
+        "cache_dir_vae": "/path/to/cache/dir"
+    }
+]

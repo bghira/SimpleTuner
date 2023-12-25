@@ -14,6 +14,7 @@ class TestMultiAspectDataset(unittest.TestCase):
         self.bucket_manager = Mock(spec=BucketManager)
         self.bucket_manager.__len__ = Mock(return_value=10)
         self.image_metadata = {
+            "image_path": "fake_image_path",
             "original_size": (16, 8),
             "crop_coordinates": (0, 0),
             "target_size": (16, 8),
@@ -28,18 +29,14 @@ class TestMultiAspectDataset(unittest.TestCase):
         # Mock the Path.exists method to return True
         with patch("pathlib.Path.exists", return_value=True):
             self.dataset = MultiAspectDataset(
-                instance_data_root=self.instance_data_root,
-                accelerator=self.accelerator,
-                bucket_manager=self.bucket_manager,
-                data_backend=self.data_backend,
+                id="foo",
+                datasets=[range(10)],
             )
 
     def test_init_invalid_instance_data_root(self):
         MultiAspectDataset(
-            instance_data_root="/invalid/path",
-            accelerator=self.accelerator,
-            bucket_manager=self.bucket_manager,
-            data_backend=self.data_backend,
+            id="foo",
+            datasets=[range(10)],
         )
 
     def test_len(self):
@@ -54,7 +51,19 @@ class TestMultiAspectDataset(unittest.TestCase):
             # Create a blank canvas:
             mock_image = Image.new(mode="RGB", size=(16, 8))
             mock_image_open.return_value = mock_image
-            target = tuple([{"image_path": self.image_path, "image_data": mock_image}])
+            target = tuple(
+                [
+                    {
+                        "image_path": self.image_path,
+                        "image_data": mock_image,
+                        "instance_prompt_text": "fake_prompt_text",
+                        "original_size": (16, 8),
+                        "target_size": (16, 8),
+                        "aspect_ratio": 1.0,
+                        "luminance": 0.5,
+                    }
+                ]
+            )
             examples = self.dataset.__getitem__(target)
         # Grab the size of the first image:
         example = examples[0]
@@ -70,12 +79,7 @@ class TestMultiAspectDataset(unittest.TestCase):
 
         with self.assertRaises(Exception):
             with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
-                self.dataset.__getitem__(self.image_path)
-
-    def test_getitem_not_in_training_state(self):
-        input_data = tuple([{"image_path": self.image_path}])
-        example = self.dataset.__getitem__(input_data)
-        self.assertIsNotNone(example)
+                self.dataset.__getitem__(self.image_metadata)
 
 
 if __name__ == "__main__":

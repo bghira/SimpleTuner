@@ -23,24 +23,16 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
-from helpers.multiaspect.dataset import MultiAspectDataset
-from helpers.multiaspect.bucket import BucketManager
-from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.training.state_tracker import StateTracker
-from helpers.training.collate import collate_fn
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
-
-from helpers.caching.vae import VAECache
+from helpers.data_backend.factory import configure_multi_databackend
+from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
-from helpers.image_manipulation.brightness import (
-    calculate_luminance,
-)
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
 )
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.training.multi_process import rank_info
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
@@ -99,7 +91,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.20.0.dev0")
+check_min_version("0.25.0.dev0")
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -253,85 +245,6 @@ def main():
             * accelerator.num_processes
         )
 
-    # Create a DataBackend, so that we can access our dataset.
-    if args.data_backend == "local":
-        from helpers.data_backend.local import LocalDataBackend
-
-        data_backend = LocalDataBackend(accelerator=accelerator)
-        if not os.path.exists(args.instance_data_dir):
-            raise FileNotFoundError(
-                f"Instance {args.instance_data_root} images root doesn't exist. Cannot continue."
-            )
-    elif args.data_backend == "aws":
-        from helpers.data_backend.aws import S3DataBackend
-
-        data_backend = S3DataBackend(
-            bucket_name=args.aws_bucket_name,
-            accelerator=accelerator,
-            region_name=args.aws_region_name,
-            endpoint_url=args.aws_endpoint_url,
-            aws_access_key_id=args.aws_access_key_id,
-            aws_secret_access_key=args.aws_secret_access_key,
-        )
-    else:
-        raise ValueError(f"Unsupported data backend: {args.data_backend}")
-
-    # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
-    # Bucket manager. We keep the aspect config in the dataset so that switching datasets is simpler.
-    bucket_manager = BucketManager(
-        instance_data_root=args.instance_data_dir,
-        data_backend=data_backend,
-        accelerator=accelerator,
-        resolution=args.resolution,
-        minimum_image_size=args.minimum_image_size,
-        resolution_type=args.resolution_type,
-        batch_size=args.train_batch_size,
-        metadata_update_interval=args.metadata_update_interval,
-        cache_file=os.path.join(
-            args.instance_data_dir, "aspect_ratio_bucket_indices.json"
-        ),
-        metadata_file=os.path.join(
-            args.instance_data_dir, "aspect_ratio_bucket_metadata.json"
-        ),
-        delete_problematic_images=args.delete_problematic_images or False,
-    )
-    StateTracker.set_bucket_manager(bucket_manager)
-    if bucket_manager.has_single_underfilled_bucket():
-        raise Exception(
-            f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
-            " You have to reduce your batch size, or increase your dataset size."
-        )
-    if "aspect" not in args.skip_file_discovery:
-        if accelerator.is_local_main_process:
-            bucket_manager.refresh_buckets(rank_info())
-    accelerator.wait_for_everyone()
-    bucket_manager.reload_cache()
-    # Now split the contents of these buckets between all processes
-    bucket_manager.split_buckets_between_processes(
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-    )
-
-    # Now, let's print the total of each bucket, along with the current rank, so that we might catch debug info:
-    def print_bucket_info(bucket_manager):
-        # Print table header
-        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
-
-        # Print separator
-        print("-" * 30)
-
-        # Print each bucket's information
-        for bucket in bucket_manager.aspect_ratio_bucket_indices:
-            image_count = len(bucket_manager.aspect_ratio_bucket_indices[bucket])
-            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
-
-    print_bucket_info(bucket_manager)
-
-    if len(bucket_manager) == 0:
-        raise Exception(
-            "No images were discovered by the bucket manager in the dataset."
-        )
-
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -417,44 +330,41 @@ def main():
     vae.requires_grad_(False)
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
+    # Move vae, unet and text_encoder to device and cast to weight_dtype
+    # The VAE is in float32 to avoid NaN losses.
+    vae_dtype = torch.float32
+    if hasattr(args, "vae_dtype"):
+        logger.info(
+            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
+        )
+        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+        if args.vae_dtype == "bf16":
+            vae_dtype = torch.bfloat16
+        elif args.vae_dtype == "fp16":
+            vae_dtype = torch.float16
+        elif args.vae_dtype == "fp32":
+            vae_dtype = torch.float32
+        elif args.vae_dtype == "none" or args.vae_dtype == "default":
+            vae_dtype = torch.float32
+    if args.pretrained_vae_model_name_or_path is not None:
+        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    else:
+        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    StateTracker.set_vae_dtype(vae_dtype)
+    StateTracker.set_vae(vae)
+    logger.info(f"Loaded VAE into VRAM.")
 
-    # Data loader
-    train_dataset = MultiAspectDataset(
-        bucket_manager=bucket_manager,
-        data_backend=data_backend,
-        instance_data_root=args.instance_data_dir,
-        accelerator=accelerator,
-        size=args.resolution,
-        size_type=args.resolution_type,
-        print_names=args.print_filenames or False,
-        prepend_instance_prompt=args.prepend_instance_prompt or False,
-        use_captions=not args.only_instance_prompt or False,
-        use_precomputed_token_ids=True,
-        debug_dataset_loader=args.debug_dataset_loader,
-        caption_strategy=args.caption_strategy,
-    )
-    logger.info("Creating aspect bucket sampler")
-    custom_balanced_sampler = MultiAspectSampler(
-        bucket_manager=bucket_manager,
-        data_backend=data_backend,
-        accelerator=accelerator,
-        batch_size=args.train_batch_size,
-        seen_images_path=args.seen_state_path,
-        state_path=args.state_path,
-        debug_aspect_buckets=args.debug_aspect_buckets,
-        delete_unwanted_images=args.delete_unwanted_images,
-        resolution=args.resolution,
-        resolution_type=args.resolution_type,
-    )
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=1,  # The sample handles batching
-        shuffle=False,  # The sampler handles shuffling
-        sampler=custom_balanced_sampler,
-        collate_fn=lambda examples: collate_fn(examples),
-        num_workers=0,
-        persistent_workers=False,
-    )
+    # Create a DataBackend, so that we can access our dataset.
+    try:
+        configure_multi_databackend(args, accelerator)
+    except Exception as e:
+        logging.error(f"{e}")
+        import sys
+
+        sys.exit(0)
+
     prompt_handler = None
     if not args.disable_compel:
         prompt_handler = PromptHandler(
@@ -488,14 +398,8 @@ def main():
 
     if "text" not in args.skip_file_discovery:
         logger.info(f"Pre-computing text embeds / updating cache.")
-        with accelerator.main_process_first():
-            all_captions = PromptHandler.get_all_captions(
-                data_backend=data_backend,
-                instance_data_root=args.instance_data_dir,
-                prepend_instance_prompt=args.prepend_instance_prompt or False,
-                use_captions=not args.only_instance_prompt,
-            )
-            StateTracker.set_caption_files(all_captions)
+        # Captions are extracted from datasets during `configure_multi_databackend(...)`
+        all_captions = StateTracker.get_caption_files()
         if accelerator.is_main_process:
             embed_cache.compute_embeddings_for_sdxl_prompts(
                 all_captions, return_concat=False
@@ -548,7 +452,13 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps
+        sum(
+            [
+                len(backend["bucket_manager"])
+                for _, backend in StateTracker.get_data_backends().items()
+            ]
+        )
+        / args.gradient_accumulation_steps
     )
     if args.max_train_steps is None or args.max_train_steps == 0:
         if args.num_train_epochs is None or args.num_train_epochs == 0:
@@ -792,76 +702,25 @@ def main():
 
     # Prepare everything with our `accelerator`.
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+    train_dataloaders = []
+    for _, backend in StateTracker.get_data_backends().items():
+        train_dataloaders.append(backend["train_dataloader"])
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
-        unet, train_dataloader, lr_scheduler, optimizer = accelerator.prepare(
-            unet, train_dataloader, lr_scheduler, optimizer
-        )
+        results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
+        unet = results[0]
+        lr_scheduler = results[1]
+        optimizer = results[2]
+        # The rest of the entries are dataloaders:
+        train_dataloaders = results[3:]
         if args.use_ema:
             logger.info("Moving EMA model weights to accelerator...")
             ema_unet.to(accelerator.device, dtype=weight_dtype)
 
-    # Move vae, unet and text_encoder to device and cast to weight_dtype
-    # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.float32
-    if hasattr(args, "vae_dtype"):
-        logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
-        )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            vae_dtype = torch.float16
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.float32
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    logger.info(f"Loaded VAE into VRAM.")
-    logger.info(f"Pre-computing VAE latent space.")
-    vaecache = VAECache(
-        vae=vae,
-        accelerator=accelerator,
-        bucket_manager=bucket_manager,
-        data_backend=data_backend,
-        instance_data_root=args.instance_data_dir,
-        delete_problematic_images=args.delete_problematic_images,
-        resolution=args.resolution,
-        resolution_type=args.resolution_type,
-        minimum_image_size=args.minimum_image_size,
-        vae_batch_size=args.vae_batch_size,
-        write_batch_size=args.write_batch_size,
-        cache_dir=args.cache_dir_vae,
-    )
-    StateTracker.set_vaecache(vaecache)
-    StateTracker.set_vae_dtype(vae_dtype)
-    StateTracker.set_vae(vae)
-
-    if accelerator.is_local_main_process:
-        vaecache.discover_all_files()
-    accelerator.wait_for_everyone()
-
-    if "metadata" not in args.skip_file_discovery and accelerator.is_main_process:
-        bucket_manager.scan_for_metadata()
-    accelerator.wait_for_everyone()
-    if not accelerator.is_main_process:
-        bucket_manager.load_image_metadata()
-    accelerator.wait_for_everyone()
-
-    if "vae" not in args.skip_file_discovery:
-        vaecache.split_cache_between_processes()
-        vaecache.process_buckets()
-        accelerator.wait_for_everyone()
-
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(
-        len(train_dataloader) / args.gradient_accumulation_steps
+        sum([len(dataloader) for dataloader in train_dataloaders])
+        / args.gradient_accumulation_steps
     )
     if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
         lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
@@ -879,12 +738,6 @@ def main():
     if accelerator.is_main_process:
         # Copy args into public_args:
         public_args = copy.deepcopy(args)
-        # Remove the args that we don't want to track:
-        del public_args.aws_access_key_id
-        del public_args.aws_secret_access_key
-        del public_args.aws_bucket_name
-        del public_args.aws_region_name
-        del public_args.aws_endpoint_url
         # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
         public_args_hash = hashlib.md5(
             json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
@@ -910,7 +763,8 @@ def main():
 
         del vae
         vae = None
-        vaecache.vae = None
+        for _, backend in StateTracker.get_data_backends().items():
+            backend["vaecache"].vae = None
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -952,9 +806,12 @@ def main():
         else:
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
-            custom_balanced_sampler.load_states(
-                state_path=os.path.join(args.output_dir, path, "training_state.json"),
-            )
+            for _, backend in StateTracker.get_data_backends().items():
+                backend["sampler"].load_states(
+                    state_path=os.path.join(
+                        args.output_dir, path, "training_state.json"
+                    ),
+                )
             resume_global_step = global_step = int(path.split("-")[1])
 
             # If we use a constant LR, we can update that now.
@@ -971,10 +828,16 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
-    custom_balanced_sampler.log_state()
+    for _, backend in StateTracker.get_data_backends().items():
+        backend["sampler"].log_state()
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
-    first_epoch = custom_balanced_sampler.current_epoch
+    first_epoch = max(
+        [
+            backend["sampler"].current_epoch
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
+    )
     if first_epoch > 1:
         steps_to_remove = first_epoch * num_update_steps_per_epoch
         total_steps_remaining_at_start -= steps_to_remove
@@ -988,8 +851,14 @@ def main():
         )
 
     logger.info("***** Running training *****")
+    total_num_batches = len(
+        [
+            backend["train_dataset"]
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
+    )
     logger.info(
-        f"  Num batches = {len(train_dataset)} ({len(train_dataset) * args.train_batch_size} samples)"
+        f"  Num batches = {total_num_batches} ({total_num_batches * args.train_batch_size} samples)"
     )
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Current Epoch = {first_epoch}")
@@ -1029,7 +898,7 @@ def main():
         current_epoch = epoch
         unet.train()
         current_epoch_step = 0
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in random_dataloader_iterator(train_dataloaders):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
             if accelerator.is_main_process:
@@ -1297,9 +1166,13 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         accelerator.save_state(save_path)
-                        custom_balanced_sampler.save_state(
-                            state_path=os.path.join(save_path, "training_state.json"),
-                        )
+                        for _, backend in StateTracker.get_data_backends().items():
+                            logger.debug(f"Backend: {backend}")
+                            backend["sampler"].save_state(
+                                state_path=os.path.join(
+                                    save_path, "training_state.json"
+                                ),
+                            )
                         logger.info(f"Saved state to {save_path}")
 
             logs = {

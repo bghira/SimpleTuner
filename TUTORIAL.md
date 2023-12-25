@@ -158,6 +158,11 @@ Here's a breakdown of what each environment variable does:
 
 #### General Settings
 
+- `DATALOADER_CONFIG`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
+  - One or more datasets can be configured, but it's not necessary to use multiple.
+  - Some config options that have an equivalent commandline option name can be omitted, in favour of the global option
+  - Some config options are mandatory, but errors will emit for those on startup. Feel free to experiment.
+  - Each dataset can have its own crop and resolution config.
 - `TRAINING_SEED`: You may set a numeric value here and it will make your training reproducible to that seed across all other given settings.
   - You may wish to set this to -1 so that your training is absolutely random, which prevents overfitting to a given seed.
 - `RESUME_CHECKPOINT`: Specifies which checkpoint to resume from. "latest" will pick the most recent one.

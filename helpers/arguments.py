@@ -149,6 +149,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--vae_cache_behaviour",
+        type=str,
+        choices=["recreate", "sync"],
+        default="recreate",
+        help=(
+            "When a mismatched latent vector is detected, a scan will be initiated to locate inconsistencies and resolve them."
+            " The default setting 'recreate' will delete any inconsistent cache entries and rebuild it."
+            " Alternatively, 'sync' will update the bucket configuration so that the image is in a bucket that matches its latent size."
+            " The recommended behaviour is to use the default value and allow the cache to be recreated."
+        ),
+    )
+    parser.add_argument(
         "--keep_vae_loaded",
         action="store_true",
         default=False,
@@ -200,6 +212,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--override_dataset_config",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, the dataset's config will not be checked against the live backend config."
+            " This is useful if you want to simply update the behaviour of an existing dataset,"
+            " but the recommendation is to not change the dataset configuration after caching has begun,"
+            " as most options cannot be changed without unexpected behaviour later on. Additionally, it prevents"
+            " accidentally loading an SDXL configuration on a SD 2.x model and vice versa."
+        ),
+    )
+    parser.add_argument(
         "--cache_dir_text",
         type=str,
         default="cache",
@@ -214,17 +238,17 @@ def parse_args(input_args=None):
         help=(
             "This is the path to a local directory that will contain your VAE outputs."
             " Unlike the text embed cache, your VAE latents will be stored in the AWS data backend."
-            " If the AWS backend is in use, this will be a prefix for the bucket's VAE cache entries."
+            " Each backend can have its own value, but if that is not provided, this will be the default value."
         ),
     )
     parser.add_argument(
-        "--data_backend",
+        "--data_backend_config",
         type=str,
-        default="local",
-        choices=["local", "aws"],
+        default=None,
+        required=True,
         help=(
-            "The data backend to use. Choose between ['local', 'aws']. Default: local."
-            " If using AWS, you must set the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables."
+            "The relative or fully-qualified path for your data backend config."
+            " See multidatabackend.json.example for an example."
         ),
     )
     parser.add_argument(
@@ -236,60 +260,6 @@ def parse_args(input_args=None):
             " In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written."
             " This mostly applies to S3, but some shared server filesystems may benefit as well, eg. Ceph. Default: 64."
         ),
-    )
-    parser.add_argument(
-        "--aws_config_file",
-        type=str,
-        default=None,
-        help=(
-            "Path to the AWS configuration file in JSON format."
-            " Config key names are the same as SimpleTuner option counterparts."
-        ),
-    )
-    parser.add_argument(
-        "--aws_bucket_name",
-        type=str,
-        default=None,
-        help="The AWS bucket name to use.",
-    )
-    parser.add_argument(
-        "--aws_bucket_image_prefix",
-        type=str,
-        default="",
-        help=(
-            "Instead of using --instance_data_dir, AWS S3 relies on aws_bucket_*_prefix parameters."
-            " When provided, this parameter will be prepended to the image path."
-        ),
-    )
-    parser.add_argument(
-        "--aws_endpoint_url",
-        type=str,
-        default=None,
-        help=(
-            "The AWS server to use. If not specified, will use the default server for the region specified."
-            " For Wasabi, use https://s3.wasabisys.com."
-        ),
-    )
-    parser.add_argument(
-        "--aws_region_name",
-        type=str,
-        default="us-east-1",
-        help=(
-            "The AWS region to use. If not specified, will use the default region for the server specified."
-            " For example, if you specify 's3.amazonaws.com', the default region will be 'us-east-1'."
-        ),
-    )
-    parser.add_argument(
-        "--aws_access_key_id",
-        type=str,
-        default=None,
-        help="The AWS access key ID.",
-    )
-    parser.add_argument(
-        "--aws_secret_access_key",
-        type=str,
-        default=None,
-        help="The AWS secret access key.",
     )
     parser.add_argument(
         "--cache_dir",
@@ -1000,50 +970,19 @@ def parse_args(input_args=None):
     if args.non_ema_revision is None:
         args.non_ema_revision = args.revision
 
-    if args.aws_config_file is not None:
-        try:
-            with open(args.aws_config_file, "r") as f:
-                aws_config = json.load(f)
-        except Exception as e:
-            raise ValueError(f"Could not load AWS config file: {e}")
-        if not isinstance(aws_config, dict):
-            raise ValueError("AWS config file must be a JSON object.")
-        args.aws_bucket_name = aws_config.get("aws_bucket_name", args.aws_bucket_name)
-        args.aws_bucket_image_prefix = aws_config.get("aws_bucket_image_prefix", "")
-        args.aws_endpoint_url = aws_config.get(
-            "aws_endpoint_url", args.aws_endpoint_url
-        )
-        args.aws_region_name = aws_config.get("aws_region_name", args.aws_region_name)
-        args.aws_access_key_id = aws_config.get(
-            "aws_access_key_id", args.aws_access_key_id
-        )
-        args.aws_secret_access_key = aws_config.get(
-            "aws_secret_access_key", args.aws_secret_access_key
-        )
     if args.cache_dir is None or args.cache_dir == "":
         args.cache_dir = os.path.join(args.output_dir, "cache")
-    if args.data_backend == "aws":
-        if args.aws_bucket_name is None:
-            raise ValueError("Must specify an AWS bucket name.")
-        if args.aws_endpoint_url is None and args.aws_region_name is None:
-            raise ValueError("Must specify an AWS endpoint URL or region name.")
-        if args.aws_access_key_id is None:
-            raise ValueError("Must specify an AWS access key ID.")
-        if args.aws_secret_access_key is None:
-            raise ValueError("Must specify an AWS secret access key.")
-        # Override the instance data dir with the bucket image prefix.
-        args.instance_data_dir = args.aws_bucket_image_prefix
-    else:
-        if args.cache_dir_vae is None or args.cache_dir_vae == "":
-            args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
-        if args.cache_dir_text is None or args.cache_dir_text == "":
-            args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-        for target_dir in [
-            Path(args.cache_dir),
-            Path(args.cache_dir_vae),
-            Path(args.cache_dir_text),
-        ]:
-            os.makedirs(target_dir, exist_ok=True)
+
+    if args.cache_dir_vae is None or args.cache_dir_vae == "":
+        args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
+    if args.cache_dir_text is None or args.cache_dir_text == "":
+        args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
+    for target_dir in [
+        Path(args.cache_dir),
+        Path(args.cache_dir_vae),
+        Path(args.cache_dir_text),
+    ]:
+        os.makedirs(target_dir, exist_ok=True)
     logger.info(f"VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
 

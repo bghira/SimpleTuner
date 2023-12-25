@@ -42,6 +42,7 @@ class S3DataBackend(BaseDataBackend):
 
     def __init__(
         self,
+        id: str,
         bucket_name,
         accelerator,
         region_name="us-east-1",
@@ -53,6 +54,7 @@ class S3DataBackend(BaseDataBackend):
         read_retry_interval: int = 5,
         write_retry_interval: int = 5,
     ):
+        self.id = id
         self.accelerator = accelerator
         self.bucket_name = bucket_name
         self.read_retry_limit = read_retry_limit

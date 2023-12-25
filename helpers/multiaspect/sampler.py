@@ -7,6 +7,7 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
 logger = get_logger(
@@ -27,6 +28,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def __init__(
         self,
+        id: str,
         bucket_manager: BucketManager,
         data_backend: BaseDataBackend,
         accelerator,
@@ -38,10 +40,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         minimum_image_size: int = None,
         resolution: int = 1024,
         resolution_type: str = "pixel",
+        caption_strategy: str = "filename",
+        use_captions=True,
+        prepend_instance_prompt=False,
     ):
         """
         Initializes the sampler with provided settings.
         Parameters:
+        - id: An identifier to link this with its VAECache and DataBackend objects.
         - bucket_manager: An initialised instance of BucketManager.
         - batch_size: Number of samples to draw per batch.
         - seen_images_path: Path to store the seen images.
@@ -50,6 +56,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - delete_unwanted_images: Flag to decide whether to delete unwanted (small) images or just remove from the bucket.
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
+        self.id = id
+        if self.id != data_backend.id or self.id != bucket_manager.id:
+            raise ValueError(
+                f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and BucketManager ID ({bucket_manager.id})."
+            )
         self.rank_info = rank_info()
         self.accelerator = accelerator
         self.bucket_manager = bucket_manager
@@ -64,6 +75,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.minimum_image_size = minimum_image_size
         self.resolution = resolution
         self.resolution_type = resolution_type
+        self.use_captions = use_captions
+        self.caption_strategy = caption_strategy
+        self.prepend_instance_prompt = prepend_instance_prompt
         self.load_states(
             state_path=state_path,
         )
@@ -87,7 +101,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def load_states(self, state_path: str):
         try:
-            self.state_manager = BucketStateManager(state_path, self.seen_images_path)
+            self.state_manager = BucketStateManager(
+                self.id, state_path, self.seen_images_path
+            )
             self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state()
         except Exception as e:
@@ -106,11 +122,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return list(
             self.bucket_manager.aspect_ratio_bucket_indices.keys()
         )  # These keys are a float value, eg. 1.78.
-
-    def retrieve_vae_cache(self):
-        if self.vae_cache is None:
-            self.vae_cache = StateTracker.get_vaecache()
-        return self.vae_cache
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
@@ -308,17 +319,27 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(
                 f"Begin analysing sample. We have {len(to_yield)} images to yield."
             )
-            crop_coordinates = self.bucket_manager.get_metadata_attribute_by_filepath(
-                image_path, "crop_coordinates"
-            )
-            if crop_coordinates is None:
+            image_metadata = self.bucket_manager.get_metadata_by_filepath(image_path)
+            if "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
             self.debug_log(
                 f"Image {image_path} is considered valid. Adding to yield list."
             )
-            to_yield.append({"image_path": image_path})
+            image_metadata["data_backend_id"] = self.id
+            image_metadata["image_path"] = image_path
+
+            # Use the magic prompt handler to retrieve the captions.
+            image_metadata["instance_prompt_text"] = PromptHandler.magic_prompt(
+                data_backend=self.data_backend,
+                image_path=image_metadata["image_path"],
+                caption_strategy=self.caption_strategy,
+                use_captions=self.use_captions,
+                prepend_instance_prompt=self.prepend_instance_prompt,
+            )
+
+            to_yield.append(image_metadata)
             self.debug_log(
                 f"Completed analysing sample. We have {len(to_yield)} images to yield."
             )
@@ -450,4 +471,4 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return f"{ratio_width}:{ratio_height}"
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info}{msg}", main_process_only=False)
+        logger.debug(f"{self.rank_info} (id: {self.id}) {msg}", main_process_only=False)

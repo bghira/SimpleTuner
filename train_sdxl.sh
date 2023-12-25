@@ -180,6 +180,13 @@ if ! [ -z "$USE_XFORMERS" ] && [[ "$USE_XFORMERS" == "false" ]]; then
     export XFORMERS_ARG=""
 fi
 
+if [ -z "$DATALOADER_CONFIG" ]; then
+    printf "DATALOADER_CONFIG not set, cannot continue. See multidatabackend.json.example.\n"
+fi
+if ! [ -f "$DATALOADER_CONFIG" ]; then
+    printf "DATALOADER_CONFIG file %s not found, cannot continue.\n" "${DATALOADER_CONFIG}"
+fi
+
 export SNR_GAMMA_ARG=""
 if ! [ -z "$MIN_SNR_GAMMA" ]; then
     export SNR_GAMMA_ARG="--snr_gamma=${MIN_SNR_GAMMA}"
@@ -219,8 +226,8 @@ fi
 # Run the training script.
 
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train_sdxl.py \
---pretrained_model_name_or_path="${MODEL_NAME}" "${XFORMERS_ARG}" "${GRADIENT_ARG}" --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
---resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} \
+--pretrained_model_name_or_path="${MODEL_NAME}" ${XFORMERS_ARG} ${GRADIENT_ARG} --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
+--resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} --data_backend_config="${DATALOADER_CONFIG}" \
 --num_train_epochs=${NUM_EPOCHS} --max_train_steps=${MAX_NUM_STEPS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \
 --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
 --instance_data_dir="${INSTANCE_DIR}" --seen_state_path="${SEEN_STATE_PATH}" --state_path="${STATE_PATH}" --output_dir="${OUTPUT_DIR}" \

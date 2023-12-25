@@ -30,10 +30,22 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Folder containing the training data.
 - **Why**: Designates where your training images and other data are stored.
 
-### `--data_backend`
+### `--data_backend_config`
 
-- **What**: Specifies the data storage backend, either 'local' or 'aws'.
-- **Why**: Allows for seamless switching between local and cloud storage.
+- **What**: Path to your SimpleTuner dataset configuration.
+- **Why**: Multiple datasets on different storage medium may be combined into a single training session.
+- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration.
+
+### `--override_dataset_config`
+
+- **What**: When provided, will allow SimpleTuner to ignore differences between the cached config inside the dataset and the current values.
+- **Why**: When SimplerTuner is run for the first time on a dataset, it will create a cache document containing information about everything in that dataset. This includes the dataset config, including its "crop" and "resolution" related configuration values. Changing these arbitrarily or by accident could result in your training jobs crashing randomly, so it's highly recommended to not use this parameter, and instead resolve the differences you'd like to apply in your dataset some other way.
+
+
+### `--vae_cache_behaviour`
+
+- **What**: Configure the behaviour of the integrity scan check.
+- **Why**: A dataset could have incorrect settings applied at multiple points of training, eg. if you accidentally delete the `.json` cache files from your dataset and switch the data backend config to use square images rather than aspect-crops. This will result in an inconsistent data cache, which can be corrected by setting `scan_for_errors` to `true` in your `multidatabackend.json` configuration file. When this scan runs, it relies on the setting of `--vae_cache_behaviour` to determine how to resolve the inconsistency: `recreate` (the default) will remove the offending cache entry so that it can be recreated, and `sync` will update the bucket metadata to reflect the reality of the real training sample. Recommended value: `recreate`.
 
 ---
 
@@ -42,7 +54,7 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--resolution`
 
 - **What**: Input image resolution. Can be expressed as pixels, or megapixels.
-- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. If you use 1024px, the images may become very large and use an excessive amount of VRAM. The best mileage tends to be a 768 or 800 pixel base resolution, although 512px resolution training can really pay off with SDXL in particular.
+- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. It is recommended use a value of 1.0 if also using `--resolution_type=area`. When using `--resolution_type=pixel` and `--resolution=1024px`, the images may become very large and use an excessive amount of VRAM. The recommended configuration is to combine `--resolution_type=area` with `--resolution=1` (or lower - .25 would be a 512px model with data bucketing).
 
 ### `--resolution_type`
 
@@ -58,6 +70,21 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`
 - **Why**: Determines how captions are generated for training images. `textfile` will use the contents of a `.txt` file with the same filename as the image, and `filename` will apply some cleanup to the filename before using it as the caption.
+
+### `--crop`
+
+- **What**: When `--crop=true` is supplied, SimpleTuner will crop all (new) images in the training dataset. It will not re-process old images.
+- **Why**: Training on cropped images seems to result in better fine detail learning, especially on SDXL models.
+
+### `--crop_style`
+
+- **What**: When `--crop=true`, the trainer may be instructed to crop in different ways.
+- **Why**: The `crop_style` option can be set to `center` (or `centre`) for a classic centre-crop, `corner` to elect for the lowest-right corner, and `random` for a random image slice. Default: random.
+
+### `--crop_aspect`
+
+- **What**: When using `--crop=true`, the `--crop_aspect` option may be supplied with a value of `square` or `preserve`.
+- **Why**: The default crop behaviour is to crop all images to a square aspect ratio, but when `--crop_aspect=preserve` is supplied, the trainer will crop images to a size matching their original aspect ratio. This may help to keep multi-resolution support, but it may also harm training quality. Your mileage may vary.
 
 ---
 
@@ -150,21 +177,16 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
                      [--timestep_bias_end TIMESTEP_BIAS_END]
                      [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
                      [--rescale_betas_zero_snr] [--vae_dtype VAE_DTYPE]
-                     [--vae_batch_size VAE_BATCH_SIZE] [--keep_vae_loaded]
+                     [--vae_batch_size VAE_BATCH_SIZE]
+                     [--vae_cache_behaviour {recreate,sync}]
+                     [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] --instance_data_dir
                      INSTANCE_DATA_DIR [--preserve_data_backend_cache]
+                     [--override_dataset_config]
                      [--cache_dir_text CACHE_DIR_TEXT]
-                     [--cache_dir_vae CACHE_DIR_VAE]
-                     [--data_backend {local,aws}]
-                     [--write_batch_size WRITE_BATCH_SIZE]
-                     [--aws_config_file AWS_CONFIG_FILE]
-                     [--aws_bucket_name AWS_BUCKET_NAME]
-                     [--aws_bucket_image_prefix AWS_BUCKET_IMAGE_PREFIX]
-                     [--aws_endpoint_url AWS_ENDPOINT_URL]
-                     [--aws_region_name AWS_REGION_NAME]
-                     [--aws_access_key_id AWS_ACCESS_KEY_ID]
-                     [--aws_secret_access_key AWS_SECRET_ACCESS_KEY]
+                     [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
+                     DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
                      [--cache_dir CACHE_DIR]
                      [--cache_clear_validation_prompts]
                      [--seen_state_path SEEN_STATE_PATH]
@@ -323,6 +345,16 @@ options:
                         issues, but if you are at that point of contention,
                         it's possible that your GPU has too little RAM.
                         Default: 4.
+  --vae_cache_behaviour {recreate,sync}
+                        When a mismatched latent vector is detected, a scan
+                        will be initiated to locate inconsistencies and
+                        resolve them. The default setting 'recreate' will
+                        delete any inconsistent cache entries and rebuild it.
+                        Alternatively, 'sync' will update the bucket
+                        configuration so that the image is in a bucket that
+                        matches its latent size. The recommended behaviour is
+                        to use the default value and allow the cache to be
+                        recreated.
   --keep_vae_loaded     If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the
                         forward pass.
@@ -359,6 +391,16 @@ options:
                         Currently, cache is not stored in the dataset itself
                         but rather, locally. This may change in a future
                         release.
+  --override_dataset_config
+                        When provided, the dataset's config will not be
+                        checked against the live backend config. This is
+                        useful if you want to simply update the behaviour of
+                        an existing dataset, but the recommendation is to not
+                        change the dataset configuration after caching has
+                        begun, as most options cannot be changed without
+                        unexpected behaviour later on. Additionally, it
+                        prevents accidentally loading an SDXL configuration on
+                        a SD 2.x model and vice versa.
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache.
@@ -366,13 +408,12 @@ options:
                         This is the path to a local directory that will
                         contain your VAE outputs. Unlike the text embed cache,
                         your VAE latents will be stored in the AWS data
-                        backend. If the AWS backend is in use, this will be a
-                        prefix for the bucket's VAE cache entries.
-  --data_backend {local,aws}
-                        The data backend to use. Choose between ['local',
-                        'aws']. Default: local. If using AWS, you must set the
-                        AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
-                        environment variables.
+                        backend. Each backend can have its own value, but if
+                        that is not provided, this will be the default value.
+  --data_backend_config DATA_BACKEND_CONFIG
+                        The relative or fully-qualified path for your data
+                        backend config. See multidatabackend.json.example for
+                        an example.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -381,29 +422,6 @@ options:
                         objects are written. This mostly applies to S3, but
                         some shared server filesystems may benefit as well,
                         eg. Ceph. Default: 64.
-  --aws_config_file AWS_CONFIG_FILE
-                        Path to the AWS configuration file in JSON format.
-                        Config key names are the same as SimpleTuner option
-                        counterparts.
-  --aws_bucket_name AWS_BUCKET_NAME
-                        The AWS bucket name to use.
-  --aws_bucket_image_prefix AWS_BUCKET_IMAGE_PREFIX
-                        Instead of using --instance_data_dir, AWS S3 relies on
-                        aws_bucket_*_prefix parameters. When provided, this
-                        parameter will be prepended to the image path.
-  --aws_endpoint_url AWS_ENDPOINT_URL
-                        The AWS server to use. If not specified, will use the
-                        default server for the region specified. For Wasabi,
-                        use https://s3.wasabisys.com.
-  --aws_region_name AWS_REGION_NAME
-                        The AWS region to use. If not specified, will use the
-                        default region for the server specified. For example,
-                        if you specify 's3.amazonaws.com', the default region
-                        will be 'us-east-1'.
-  --aws_access_key_id AWS_ACCESS_KEY_ID
-                        The AWS access key ID.
-  --aws_secret_access_key AWS_SECRET_ACCESS_KEY
-                        The AWS secret access key.
   --cache_dir CACHE_DIR
                         The directory where the downloaded models and datasets
                         will be stored.
