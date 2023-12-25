@@ -118,23 +118,24 @@ class VAECache:
 
     def discover_all_files(self, directory: str = None):
         """Identify all files in a directory."""
-        all_image_files = (
-            StateTracker.get_image_files()
-            or StateTracker.set_image_files(
-                self.data_backend.list_files(
-                    instance_data_root=self.instance_data_root,
-                    str_pattern="*.[jJpP][pPnN][gG]",
-                )
-            )
+        all_image_files = StateTracker.get_image_files(
+            data_backend_id=self.id
+        ) or StateTracker.set_image_files(
+            self.data_backend.list_files(
+                instance_data_root=self.instance_data_root,
+                str_pattern="*.[jJpP][pPnN][gG]",
+            ),
+            data_backend_id=self.id,
         )
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
-            StateTracker.get_vae_cache_files()
+            StateTracker.get_vae_cache_files(data_backend_id=self.id)
             or StateTracker.set_vae_cache_files(
                 self.data_backend.list_files(
                     instance_data_root=self.cache_dir,
                     str_pattern="*.pt",
-                )
+                ),
+                data_backend_id=self.id,
             )
         )
         self.debug_log(
@@ -147,7 +148,7 @@ class VAECache:
         Return a set of filenames (without the .pt extension) that have been processed.
         """
         # Extract array of tuple into just, an array of files:
-        pt_files = StateTracker.get_vae_cache_files()
+        pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
         logging.debug(
@@ -157,8 +158,8 @@ class VAECache:
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
-        all_image_files = StateTracker.get_image_files()
-        existing_cache_files = StateTracker.get_vae_cache_files()
+        all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
+        existing_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         self.debug_log(
             f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
         )

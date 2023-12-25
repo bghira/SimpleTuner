@@ -26,6 +26,7 @@ from helpers.legacy.validation import prepare_validation_prompt_list, log_valida
 from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.data_backend.factory import configure_multi_databackend
+from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.caching.vae import VAECache
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.training.custom_schedule import (
@@ -829,7 +830,7 @@ def main():
     first_epoch = max(
         [
             backend["sampler"].current_epoch
-            for backend in StateTracker.get_data_backends()
+            for _, backend in StateTracker.get_data_backends().items()
         ]
     )
     if first_epoch > 1:
@@ -846,7 +847,10 @@ def main():
 
     logger.info("***** Running training *****")
     total_num_batches = len(
-        [backend["train_dataset"] for backend in StateTracker.get_data_backends()]
+        [
+            backend["train_dataset"]
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
     )
     logger.info(
         f"  Num batches = {total_num_batches} ({total_num_batches * args.train_batch_size} samples)"
@@ -889,7 +893,7 @@ def main():
         current_epoch = epoch
         unet.train()
         current_epoch_step = 0
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in random_dataloader_iterator(train_dataloaders):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
             if accelerator.is_main_process:

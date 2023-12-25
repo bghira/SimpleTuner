@@ -123,11 +123,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.bucket_manager.aspect_ratio_bucket_indices.keys()
         )  # These keys are a float value, eg. 1.78.
 
-    def retrieve_vae_cache(self):
-        if self.vae_cache is None:
-            self.vae_cache = StateTracker.get_vaecache()
-        return self.vae_cache
-
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
         image_path = random.choice(
@@ -332,6 +327,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(
                 f"Image {image_path} is considered valid. Adding to yield list."
             )
+            image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
             # Use the magic prompt handler to retrieve the captions.
@@ -475,4 +471,4 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return f"{ratio_width}:{ratio_height}"
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info}{msg}", main_process_only=False)
+        logger.debug(f"{self.rank_info} (id: {self.id}) {msg}", main_process_only=False)

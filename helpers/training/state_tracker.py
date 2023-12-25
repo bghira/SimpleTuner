@@ -11,8 +11,8 @@ class StateTracker:
     # Class variables
     has_training_started = False
     calculate_luminance = False
-    all_image_files = None
-    all_vae_cache_files = None
+    all_image_files = {}
+    all_vae_cache_files = {}
     all_caption_files = None
 
     # Backend entities for retrieval
@@ -52,45 +52,57 @@ class StateTracker:
             json.dump(data, f)
 
     @classmethod
-    def set_image_files(cls, raw_file_list):
-        if cls.all_image_files is not None:
-            cls.all_image_files.clear()
+    def set_image_files(cls, raw_file_list: list, data_backend_id: str):
+        if cls.all_image_files[data_backend_id] is not None:
+            cls.all_image_files[data_backend_id].clear()
         else:
-            cls.all_image_files = {}
+            cls.all_image_files[data_backend_id] = {}
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
-                cls.all_image_files[image] = False
-        cls._save_to_disk("all_image_files", cls.all_image_files)
-        logger.debug(f"set_image_files found {len(cls.all_image_files)} images.")
-        return cls.all_image_files
-
-    @classmethod
-    def get_image_files(cls):
-        if not cls.all_image_files:
-            cls.all_image_files = cls._load_from_disk("all_image_files")
-        return cls.all_image_files
-
-    @classmethod
-    def set_vae_cache_files(cls, raw_file_list):
-        if cls.all_vae_cache_files is not None:
-            cls.all_vae_cache_files.clear()
-        else:
-            cls.all_vae_cache_files = {}
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
-            for image in files:
-                cls.all_vae_cache_files[path.basename(image)] = False
-        cls._save_to_disk("all_vae_cache_files", cls.all_vae_cache_files)
+                cls.all_image_files[data_backend_id][image] = False
+        cls._save_to_disk(
+            "all_image_files_{}".format(data_backend_id),
+            cls.all_image_files[data_backend_id],
+        )
         logger.debug(
-            f"set_vae_cache_files found {len(cls.all_vae_cache_files)} images."
+            f"set_image_files found {len(cls.all_image_files[data_backend_id])} images."
+        )
+        return cls.all_image_files[data_backend_id]
+
+    @classmethod
+    def get_image_files(cls, data_backend_id: str):
+        if data_backend_id not in cls.all_image_files:
+            cls.all_image_files[data_backend_id] = cls._load_from_disk(
+                "all_image_files_{}".format(data_backend_id)
+            )
+        return cls.all_image_files[data_backend_id]
+
+    @classmethod
+    def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
+        if cls.all_vae_cache_files[data_backend_id] is not None:
+            cls.all_vae_cache_files[data_backend_id].clear()
+        else:
+            cls.all_vae_cache_files[data_backend_id] = {}
+        for subdirectory_list in raw_file_list:
+            _, _, files = subdirectory_list
+            for image in files:
+                cls.all_vae_cache_files[data_backend_id][path.basename(image)] = False
+        cls._save_to_disk(
+            "all_vae_cache_files_{}".format(data_backend_id),
+            cls.all_vae_cache_files[data_backend_id],
+        )
+        logger.debug(
+            f"set_vae_cache_files found {len(cls.all_vae_cache_files[data_backend_id])} images."
         )
 
     @classmethod
-    def get_vae_cache_files(cls):
-        if not cls.all_vae_cache_files:
-            cls.all_vae_cache_files = cls._load_from_disk("all_vae_cache_files")
-        return cls.all_vae_cache_files
+    def get_vae_cache_files(cls: list, data_backend_id: str):
+        if data_backend_id not in cls.all_vae_cache_files:
+            cls.all_vae_cache_files[data_backend_id] = cls._load_from_disk(
+                "all_vae_cache_files_{}".format(data_backend_id)
+            )
+        return cls.all_vae_cache_files[data_backend_id]
 
     @classmethod
     def set_caption_files(cls, caption_files):
@@ -104,18 +116,6 @@ class StateTracker:
         return cls.all_caption_files
 
     @classmethod
-    def has_image_files_loaded(cls):
-        return len(list(cls.all_image_files.keys())) > 0
-
-    @classmethod
-    def has_vae_cache_files_loaded(cls):
-        return len(list(cls.all_vae_cache_files.keys())) > 0
-
-    @classmethod
-    def has_caption_files_loaded(cls):
-        return len(list(cls.all_caption_files.keys())) > 0
-
-    @classmethod
     def register_data_backend(cls, data_backend):
         cls.data_backends[data_backend["id"]] = data_backend
 
@@ -126,13 +126,6 @@ class StateTracker:
     @classmethod
     def get_data_backends(cls):
         return cls.data_backends
-
-    @classmethod
-    def get_bucket_manager(cls, id: str):
-        for data_backend in cls.data_backends:
-            if data_backend["id"] == id:
-                return data_backend["bucket_manager"]
-        return None
 
     @classmethod
     def set_accelerator(cls, accelerator):
@@ -159,10 +152,6 @@ class StateTracker:
         return cls.vae_dtype
 
     @classmethod
-    def set_bucket_manager(cls, bucket_manager):
-        cls.bucket_managers.append(bucket_manager)
-
-    @classmethod
     def get_bucket_managers(cls):
         return cls.bucket_managers
 
@@ -187,8 +176,8 @@ class StateTracker:
         cls.vaecache = vaecache
 
     @classmethod
-    def get_vaecache(cls):
-        return cls.vaecache
+    def get_vaecache(cls, id: str):
+        return cls.data_backends[id]["vaecache"]
 
     @classmethod
     def set_embedcache(cls, embedcache):

@@ -10,7 +10,7 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging
+import json, os, torch, logging, random
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -315,3 +315,29 @@ def get_dataset(args: dict, accelerator) -> list:
                 accelerator=accelerator,
             )
         ]
+
+
+def random_dataloader_iterator(dataloaders):
+    """
+    Create an iterator that yields batches from multiple dataloaders randomly.
+
+    Args:
+        dataloaders (list): A list of DataLoader objects.
+
+    Yields:
+        A batch from one of the dataloaders chosen randomly.
+    """
+    # Create iterators for each dataloader
+    iterators = [iter(dataloader) for dataloader in dataloaders]
+    step = 0
+    while iterators:
+        # Randomly select a dataloader iterator
+        step += 1
+        chosen_iter = random.choice(iterators)
+
+        try:
+            # Yield a batch from the chosen dataloader
+            yield (step, next(chosen_iter))
+        except StopIteration:
+            # If the chosen iterator is exhausted, remove it from the list
+            iterators.remove(chosen_iter)

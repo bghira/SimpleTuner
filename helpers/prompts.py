@@ -301,7 +301,9 @@ class PromptHandler:
         data_backend: BaseDataBackend,
     ) -> list:
         captions = []
-        all_image_files = StateTracker.get_image_files() or data_backend.list_files(
+        all_image_files = StateTracker.get_image_files(
+            data_backend_id=data_backend.id
+        ) or data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:

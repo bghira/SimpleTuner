@@ -81,10 +81,10 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def fetch_latent(fp):
+def fetch_latent(fp, data_backend_id: str):
     """Worker method to fetch latent for a single image."""
-    debug_log(" -> pull latents from cache")
-    latent = StateTracker.get_vaecache().retrieve_from_cache(fp)
+    debug_log(f" -> pull latents from cache via data backend {data_backend_id}")
+    latent = StateTracker.get_vaecache(id=data_backend_id).retrieve_from_cache(fp)
 
     # Move to CPU and pin memory if it's not on the GPU
     debug_log(" -> push latents to GPU via pinned memory")
@@ -92,10 +92,12 @@ def fetch_latent(fp):
     return latent
 
 
-def compute_latents(filepaths):
+def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        latents = list(executor.map(fetch_latent, filepaths))
+        latents = list(
+            executor.map(fetch_latent, filepaths, [data_backend_id] * len(filepaths))
+        )
 
     # Validate shapes
     test_shape = latents[0].shape
@@ -155,7 +157,6 @@ def collate_fn(batch):
             "This trainer is not designed to handle multiple batches in a single collate."
         )
     debug_log("Begin collate_fn on batch")
-    examples = batch[0]
 
     # SDXL Dropout
     dropout_probability = StateTracker.get_args().caption_dropout_probability
@@ -163,6 +164,7 @@ def collate_fn(batch):
 
     # Randomly drop captions/conditioning based on dropout_probability
     for example in examples:
+        data_backend_id = example["data_backend_id"]
         if (
             dropout_probability > 0
             and dropout_probability is not None
@@ -180,7 +182,7 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
-    latent_batch = compute_latents(filepaths)
+    latent_batch = compute_latents(filepaths, data_backend_id)
     debug_log("Check latents")
     check_latent_shapes(latent_batch, filepaths)
 

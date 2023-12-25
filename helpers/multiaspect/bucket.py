@@ -72,14 +72,14 @@ class BucketManager:
         Returns:
             list: A list of new files.
         """
-        all_image_files = (
-            StateTracker.get_image_files()
-            or StateTracker.set_image_files(
-                self.data_backend.list_files(
-                    instance_data_root=self.instance_data_root,
-                    str_pattern="*.[jJpP][pPnN][gG]",
-                )
-            )
+        all_image_files = StateTracker.get_image_files(
+            data_backend_id=self.data_backend.id
+        ) or StateTracker.set_image_files(
+            self.data_backend.list_files(
+                instance_data_root=self.instance_data_root,
+                str_pattern="*.[jJpP][pPnN][gG]",
+            ),
+            data_backend_id=self.data_backend.id,
         )
         # Log an excerpt of the all_image_files:
         logger.debug(
@@ -392,7 +392,7 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
-        existing_files = StateTracker.get_image_files()
+        existing_files = StateTracker.get_image_files(data_backend_id=self.id)
 
         # Update bucket indices to remove entries that no longer exist
         self.update_buckets_with_existing_files(existing_files)
