@@ -16,6 +16,16 @@ logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
+def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
+    output = {"id": backend["id"], "config": {}}
+    if "crop" in backend:
+        output["config"]["crop"] = backend["crop"]
+    if "crop_aspect" in args:
+        output["config"]["crop_aspect"] = args.crop_aspect
+    if "crop_style" in args:
+        output["config"]["crop_style"] = args.crop_style
+
+
 def print_bucket_info(bucket_manager):
     # Print table header
     print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
@@ -54,7 +64,7 @@ def configure_multi_databackend(args: dict, accelerator):
             raise ValueError(
                 "No identifier was given for one more of your data backends. Add a unique 'id' field to each one."
             )
-        init_backend = {"id": backend["id"]}
+        init_backend = init_backend_config(backend, args, accelerator)
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"]

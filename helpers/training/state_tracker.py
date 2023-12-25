@@ -124,6 +124,10 @@ class StateTracker:
         return cls.data_backends[id]
 
     @classmethod
+    def get_data_backend_config(cls, id: str):
+        return cls.data_backends[id]["config"]
+
+    @classmethod
     def get_data_backends(cls):
         return cls.data_backends
 
