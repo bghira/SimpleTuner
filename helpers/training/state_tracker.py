@@ -39,14 +39,14 @@ class StateTracker:
 
         # Glob the directory for "all_image_files.*.json" and "all_vae_cache_files.*.json", and delete those too
         # This is a workaround for the fact that the cache files are named with the data_backend_id
-        filelist = Path(cls.args.output_dir).glob("all_image_files.*.json")
+        filelist = Path(cls.args.output_dir).glob("all_image_files_*.json")
         for file in filelist:
             try:
                 file.unlink()
             except:
                 pass
 
-        filelist = Path(cls.args.output_dir).glob("all_vae_cache_files.*.json")
+        filelist = Path(cls.args.output_dir).glob("all_vae_cache_files_*.json")
         for file in filelist:
             try:
                 file.unlink()
