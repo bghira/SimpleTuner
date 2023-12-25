@@ -113,7 +113,7 @@ def compute_latents(filepaths, data_backend_id: str):
     return torch.stack(latents)
 
 
-def compute_prompt_embeddings(captions, model_type: str = "sdxl"):
+def compute_prompt_embeddings(captions):
     debug_log(" -> get embed from cache")
     embedcache = StateTracker.get_embedcache()
     if embedcache.model_type == "sdxl":
@@ -127,7 +127,6 @@ def compute_prompt_embeddings(captions, model_type: str = "sdxl"):
         prompt_embeds_all = embedcache.compute_embeddings_for_legacy_prompts(captions)[
             0
         ]
-        print(f"Poop: {prompt_embeds_all}")
         prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
         return prompt_embeds_all, None
     prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
