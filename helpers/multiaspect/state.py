@@ -16,6 +16,8 @@ class BucketStateManager:
         # When saving the state, it goes into the checkpoint dir.
         # However, we need to save a single state for each data backend.
         # Thus, we split the state_path from its extension, add self.id to the end of the name, and rejoin:
+        if self.id in state_path:
+            return state_path
         filename, ext = os.path.splitext(state_path)
         return f"{filename}-{self.id}{ext}"
 
