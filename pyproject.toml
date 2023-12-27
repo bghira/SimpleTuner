@@ -10,10 +10,10 @@ readme = "README.md"
 python = ">=3.9,<3.13"
 torch = "^2.1.0+cu118"
 torchvision = "^0.16.0+cu118"
-diffusers = {git = "https://github.com/huggingface/diffusers"}
+diffusers = "^0.25.0"
 transformers = "^4.31.0"
 datasets = "^2.14.3"
-xformers = "^0.0.22.post7+cu118"
+xformers = {version = ">0.0.23", allow-prereleases = true}
 bitsandbytes = "^0.41.1"
 dadaptation = "^3.1"
 wandb = "^0.15.8"
