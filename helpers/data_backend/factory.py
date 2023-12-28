@@ -434,6 +434,9 @@ def random_dataloader_iterator(dataloaders):
 
         if chosen_index is None:  # No dataloader selected
             # We might have to reset all of the dataloaders here.
+            logger.info(
+                f"No dataloader iterators were available. It's possible they've all been exhausted now."
+            )
             break
 
         chosen_iter = iterators[chosen_index]
@@ -441,7 +444,7 @@ def random_dataloader_iterator(dataloaders):
         try:
             # Yield a batch from the chosen dataloader
             logger.debug(
-                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {chosen_iter['sampler'].current_epoch}"
+                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {iterators[chosen_index]['sampler'].current_epoch}"
             )
             yield (step, next(chosen_iter))
         except StopIteration:
