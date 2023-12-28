@@ -151,7 +151,7 @@ class VAECache:
         pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
-        logging.debug(
+        logger.debug(
             f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
         )
         return results
@@ -365,7 +365,7 @@ class VAECache:
                 self.debug_log(f"Completed processing {filepath}")
         except Exception as e:
             logger.error(f"Error processing images {filepaths}: {e}")
-            logging.debug(f"Error traceback: {traceback.format_exc()}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")
             raise e
 
     def _encode_images_in_batch(self) -> None:
@@ -403,7 +403,7 @@ class VAECache:
                 qlen = self.vae_input_queue.qsize()
         except Exception as e:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
-            logging.debug(f"Error traceback: {traceback.format_exc()}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")
             raise e
 
     def read_images_in_batch(self) -> None:
@@ -553,7 +553,7 @@ class VAECache:
                         raise e
                     except Exception as e:
                         logger.error(f"Error processing image {filepath}: {e}")
-                        logging.debug(f"Error traceback: {traceback.format_exc()}")
+                        logger.debug(f"Error traceback: {traceback.format_exc()}")
                         raise e
 
                     # Now, see if we have any futures to complete, and execute them.
@@ -619,4 +619,4 @@ class VAECache:
                 yield (full_path, cache_content)
         except Exception as e:
             logger.error(f"Error in scan_cache_contents: {e}")
-            logging.debug(f"Error traceback: {traceback.format_exc()}")
+            logger.debug(f"Error traceback: {traceback.format_exc()}")

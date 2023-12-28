@@ -128,7 +128,7 @@ class MultiaspectImage:
             resolution = resolution * 1e3
             # Make resolution a multiple of 64
             resolution = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
-            logging.debug(
+            logger.debug(
                 f"After area resize, our image will be {target_width}x{target_height} with an overridden resolution of {resolution} pixels."
             )
         else:
