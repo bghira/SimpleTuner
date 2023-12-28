@@ -813,7 +813,9 @@ def main():
                     ),
                 )
             resume_global_step = global_step = int(path.split("-")[1])
-
+            StateTracker.set_global_step(resume_global_step)
+            resume_epoch_step = int(resume_global_step % num_update_steps_per_epoch)
+            StateTracker.set_epoch_step(resume_epoch_step)
             # If we use a constant LR, we can update that now.
             if args.lr_scheduler == "constant":
                 lr_scheduler = get_scheduler(
@@ -884,6 +886,7 @@ def main():
     train_loss = 0.0
     step = global_step
     training_luminance_values = []
+    current_epoch_step = None
 
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
@@ -897,10 +900,18 @@ def main():
         )
         current_epoch = epoch
         unet.train()
-        current_epoch_step = 0
+        if current_epoch_step is not None:
+            # We are resetting to the next epoch, if it is not none.
+            current_epoch_step = 0
+        else:
+            # If it's None, we need to calculate the current epoch step based on the current global step.
+            current_epoch_step = global_step % num_update_steps_per_epoch
+
         for step, batch in random_dataloader_iterator(train_dataloaders):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
+                StateTracker.set_global_step(global_step)
+
             if accelerator.is_main_process:
                 progress_bar.set_description(
                     f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
