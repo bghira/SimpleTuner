@@ -408,6 +408,7 @@ def random_dataloader_iterator(dataloaders):
     Yields:
         A batch from one of the dataloaders chosen randomly.
     """
+    global step
     data_backends = StateTracker.get_data_backends()
     iterators = [iter(dataloader) for dataloader in dataloaders]
     initial_probabilities = [
