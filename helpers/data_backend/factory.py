@@ -444,7 +444,7 @@ def random_dataloader_iterator(dataloaders):
         try:
             # Yield a batch from the chosen dataloader
             logger.debug(
-                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {iterators[chosen_index]['sampler'].current_epoch}"
+                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {data_backends[chosen_index]['sampler'].current_epoch}"
             )
             yield (step, next(chosen_iter))
         except StopIteration:
