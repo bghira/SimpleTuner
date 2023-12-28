@@ -10,6 +10,7 @@ logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 class StateTracker:
     # Class variables
     global_step = 0
+    epoch_step = 0
     has_training_started = False
     calculate_luminance = False
     all_image_files = {}
