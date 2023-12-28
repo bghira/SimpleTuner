@@ -444,8 +444,11 @@ def random_dataloader_iterator(dataloaders):
         try:
             # Yield a batch from the chosen dataloader
             logger.debug(
-                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {data_backends[chosen_index]['sampler'].current_epoch}"
+                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {dict(data_backends)[chosen_index]['sampler'].current_epoch}"
             )
+        except Exception as e:
+            logger.error(f"Error logging message: {e}")
+        try:
             yield (step, next(chosen_iter))
         except StopIteration:
             # If the chosen iterator is exhausted, remove it from the list
