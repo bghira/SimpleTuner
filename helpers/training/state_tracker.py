@@ -9,6 +9,7 @@ logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class StateTracker:
     # Class variables
+    global_step = 0
     has_training_started = False
     calculate_luminance = False
     all_image_files = {}
@@ -93,6 +94,22 @@ class StateTracker:
                 "all_image_files_{}".format(data_backend_id)
             )
         return cls.all_image_files[data_backend_id]
+
+    @classmethod
+    def get_global_step(cls):
+        return cls.global_step
+
+    @classmethod
+    def set_global_step(cls, global_step: int):
+        cls.global_step = global_step
+
+    @classmethod
+    def get_epoch_step(cls):
+        return cls.epoch_step
+
+    @classmethod
+    def set_epoch_step(cls, epoch_step: int):
+        cls.epoch_step = epoch_step
 
     @classmethod
     def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):

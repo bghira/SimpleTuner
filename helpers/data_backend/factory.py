@@ -130,12 +130,13 @@ def configure_multi_databackend(args: dict, accelerator):
             ),
             delete_problematic_images=args.delete_problematic_images or False,
         )
-        logger.debug(
-            f"Loaded previous data backend config: {init_backend['bucket_manager'].config}"
-        )
+        prev_config = {}
+        if hasattr(init_backend["bucket_manager"], "config"):
+            prev_config = init_backend["bucket_manager"].config
+        logger.debug(f"Loaded previous data backend config: {prev_config}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
-            config=init_backend["bucket_manager"].config,
+            config=prev_config,
         )
         if init_backend["bucket_manager"].has_single_underfilled_bucket():
             raise Exception(
@@ -153,29 +154,24 @@ def configure_multi_databackend(args: dict, accelerator):
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
-        if init_backend["bucket_manager"].config != {}:
-            logger.debug(
-                f"Found existing config: {init_backend['bucket_manager'].config}"
-            )
+        if prev_config != {}:
+            logger.debug(f"Found existing config: {prev_config}")
             # Check if any values differ between the 'backend' values and the 'config' values:
-            for key, _ in init_backend["bucket_manager"].config.items():
+            for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
-                if (
-                    key in backend
-                    and init_backend["bucket_manager"].config[key] != backend[key]
-                ):
+                if key in backend and prev_config[key] != backend[key]:
                     if not args.override_dataset_config:
                         raise Exception(
                             f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
-                            f"\n-> Expected value {key}={init_backend['bucket_manager'].config[key]} differs from current value={backend[key]}."
+                            f"\n-> Expected value {key}={prev_config[key]} differs from current value={backend[key]}."
                             f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
-                            f"\n{init_backend['bucket_manager'].config}"
+                            f"\n{prev_config}"
                         )
                     else:
                         logger.warning(
-                            f"Overriding config value {key}={init_backend['bucket_manager'].config[key]} with {backend[key]}"
+                            f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
                         )
-                        init_backend["bucket_manager"].config[key] = backend[key]
+                        prev_config[key] = backend[key]
 
         print_bucket_info(init_backend["bucket_manager"])
         if len(init_backend["bucket_manager"]) == 0:
@@ -399,6 +395,9 @@ def get_dataset(args: dict, accelerator) -> list:
         ]
 
 
+step = None
+
+
 def random_dataloader_iterator(dataloaders):
     """
     Create an iterator that yields batches from multiple dataloaders randomly.
@@ -409,17 +408,79 @@ def random_dataloader_iterator(dataloaders):
     Yields:
         A batch from one of the dataloaders chosen randomly.
     """
-    # Create iterators for each dataloader
+    data_backends = StateTracker.get_data_backends()
     iterators = [iter(dataloader) for dataloader in dataloaders]
-    step = 0
+    initial_probabilities = [
+        backend["config"].get("probability", 1) for _, backend in data_backends.items()
+    ]
+    disable_steps = [
+        backend["config"].get("disable_after_epoch_step", float("inf"))
+        for _, backend in data_backends.items()
+    ]
+
+    if step is None:
+        # When step is None, it's because we're resuming.
+        step = StateTracker.get_epoch_step()
+    else:
+        # We are continuing into another epoch here.
+        step = 0
+
     while iterators:
-        # Randomly select a dataloader iterator
         step += 1
-        chosen_iter = random.choice(iterators)
+        chosen_index = select_dataloader_index(
+            step, iterators, initial_probabilities, disable_steps
+        )
+
+        if chosen_index is None:  # No dataloader selected
+            # We might have to reset all of the dataloaders here.
+            break
+
+        chosen_iter = iterators[chosen_index]
 
         try:
             # Yield a batch from the chosen dataloader
+            logger.debug(
+                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {iterators[chosen_index]['sampler'].current_epoch}"
+            )
             yield (step, next(chosen_iter))
         except StopIteration:
             # If the chosen iterator is exhausted, remove it from the list
-            iterators.remove(chosen_iter)
+            iterators.pop(chosen_index)
+            initial_probabilities.pop(chosen_index)
+            disable_steps.pop(chosen_index)
+
+
+def select_dataloader_index(step, iterators, initial_probabilities, disable_steps):
+    """
+    Selects a dataloader index based on the step and adjusted probabilities.
+
+    Args:
+        step (int): Current step in the iteration.
+        iterators (list): List of iterators for the dataloaders.
+        initial_probabilities (list): Initial probabilities for each dataloader.
+        disable_steps (list): Steps at which each dataloader is disabled.
+
+    Returns:
+        int or None: Index of the selected dataloader or None if none are selected.
+    """
+    adjusted_probabilities = []
+    for i, (prob, disable_step) in enumerate(zip(initial_probabilities, disable_steps)):
+        if step > disable_step:
+            adjusted_prob = 0  # Disable the dataloader
+        else:
+            adjusted_prob = max(0, prob * (1 - step / disable_step))
+        adjusted_probabilities.append(adjusted_prob)
+
+    # Randomly select a dataloader based on adjusted probabilities
+    total_prob = sum(adjusted_probabilities)
+    if total_prob == 0:
+        return None
+
+    rnd = random.uniform(0, total_prob)
+    cumulative_prob = 0
+    for i, prob in enumerate(adjusted_probabilities):
+        cumulative_prob += prob
+        if rnd < cumulative_prob:
+            return i
+
+    return None  # Fallback if no dataloader is selected
