@@ -292,9 +292,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         to_yield = []
         for image_path in samples:
-            self.debug_log(
-                f"Begin analysing sample. We have {len(to_yield)} images to yield."
-            )
             image_metadata = self.bucket_manager.get_metadata_by_filepath(image_path)
             if "crop_coordinates" not in image_metadata:
                 raise Exception(
