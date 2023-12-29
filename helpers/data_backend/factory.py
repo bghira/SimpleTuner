@@ -411,6 +411,10 @@ def random_dataloader_iterator(dataloaders):
     global step
     data_backends = StateTracker.get_data_backends()
     iterators = [iter(dataloader) for dataloader in dataloaders]
+    logger.info(f"All available dataloaders (names={list(data_backends)})")
+    logger.info(
+        f"Scanning dataloaders for epoch: {[iterators.index(iterator) for iterator in iterators]}"
+    )
     # Remove any iterators that return true when checking StateTracker.backend_exhausted
     iterators = [
         iterator
@@ -419,6 +423,9 @@ def random_dataloader_iterator(dataloaders):
             list(data_backends)[iterators.index(iterator)]
         )
     ]
+    logger.info(
+        f"Enabled dataloaders for epoch: {[iterators.index(iterator) for iterator in iterators]}"
+    )
     initial_probabilities = [
         backend["config"].get("probability", 1) for _, backend in data_backends.items()
     ]
@@ -464,6 +471,9 @@ def random_dataloader_iterator(dataloaders):
         try:
             yield (step, next(chosen_iter))
         except StopIteration:
+            logger.info(
+                f"Dataset (name={list(data_backends)[chosen_index]}) exhausted. Removing from list."
+            )
             # If the chosen iterator is exhausted, remove it from the list
             iterators.pop(chosen_index)
             initial_probabilities.pop(chosen_index)
