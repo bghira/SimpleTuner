@@ -834,12 +834,7 @@ def main():
         backend["sampler"].log_state()
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
-    first_epoch = max(
-        [
-            backend["sampler"].current_epoch
-            for _, backend in StateTracker.get_data_backends().items()
-        ]
-    )
+    first_epoch = StateTracker.get_epoch()
     if first_epoch > 1:
         steps_to_remove = first_epoch * num_update_steps_per_epoch
         total_steps_remaining_at_start -= steps_to_remove

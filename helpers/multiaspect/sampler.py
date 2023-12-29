@@ -214,31 +214,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         return False
 
-    def _reset_if_not_enough_unseen_images(self):
-        """
-        Reset the seen images if there aren't enough unseen images across all buckets to form a batch.
-        Return True if we reset the seen images, otherwise return False.
-        This is distinctly separate behaviour from change_bucket, which resets based on exhausted buckets.
-        """
-        total_unseen_images = len(self._get_unseen_images())
-        if total_unseen_images < self.batch_size:
-            logger.warning(
-                f"_reset_if_not_enough_unseen_images: total_unseen_images={total_unseen_images}, batch_size={self.batch_size} triggered reset"
-            )
-            self._reset_buckets()
-            return True
-        available_buckets = [
-            bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
-        ]
-        if not available_buckets:
-            logger.warning(
-                f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
-                f" ({len(self.exhausted_buckets)}), resetting"
-            )
-            self._reset_buckets()
-            return True
-        return False
-
     def _get_next_bucket(self):
         """
         Get the next bucket excluding the exhausted ones.
@@ -250,10 +225,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if not available_buckets:
             logger.warning(
                 f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
-                f" ({len(self.exhausted_buckets)}), resetting"
             )
             self._reset_buckets()
             available_buckets = self.buckets
+            raise StopIteration()
 
         self.debug_log(
             f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}"
@@ -445,7 +420,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 )
                 self._reset_buckets()
                 # Exit with nothing, and the epoch is over. Magic.
-                return
+                raise StopIteration()
 
     def __len__(self):
         return sum(

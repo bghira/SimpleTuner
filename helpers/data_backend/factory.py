@@ -411,6 +411,14 @@ def random_dataloader_iterator(dataloaders):
     global step
     data_backends = StateTracker.get_data_backends()
     iterators = [iter(dataloader) for dataloader in dataloaders]
+    # Remove any iterators that return true when checking StateTracker.backend_exhausted
+    iterators = [
+        iterator
+        for iterator in iterators
+        if not StateTracker.backend_exhausted(
+            list(data_backends)[iterators.index(iterator)]
+        )
+    ]
     initial_probabilities = [
         backend["config"].get("probability", 1) for _, backend in data_backends.items()
     ]
@@ -443,9 +451,16 @@ def random_dataloader_iterator(dataloaders):
 
         try:
             # Yield a batch from the chosen dataloader
-            logger.debug(
-                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {data_backends[list(data_backends)[chosen_index]]['sampler'].current_epoch}"
+            backend_current_epoch = data_backends[list(data_backends)[chosen_index]][
+                "sampler"
+            ].current_epoch
+            logger.info(
+                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
             )
+            if backend_current_epoch != StateTracker.get_epoch():
+                raise ValueError(
+                    f"Epoch mismatch: dataloader {chosen_index} is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
+                )
         except Exception as e:
             logger.error(f"Error logging message: {e}")
         try:
@@ -455,6 +470,16 @@ def random_dataloader_iterator(dataloaders):
             iterators.pop(chosen_index)
             initial_probabilities.pop(chosen_index)
             disable_steps.pop(chosen_index)
+            StateTracker.backend_exhausted(list(data_backends)[chosen_index])
+            # Are all backends exhausted? if so, we can return None and it'll move to the next epoch in the main training loop:
+            if len(iterators) == 0:
+                logger.info(
+                    f"All dataloaders exhausted. Moving to next epoch in main training loop."
+                )
+                # Unmark all as exhausted
+                for backend_id in data_backends:
+                    StateTracker.backend_enable(backend_id)
+                return None
 
 
 def select_dataloader_index(step, iterators, initial_probabilities, disable_steps):

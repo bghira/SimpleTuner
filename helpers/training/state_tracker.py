@@ -11,6 +11,7 @@ class StateTracker:
     # Class variables
     global_step = 0
     epoch_step = 0
+    epoch = 0
     has_training_started = False
     calculate_luminance = False
     all_image_files = {}
@@ -24,6 +25,8 @@ class StateTracker:
     accelerator = None
     bucket_managers = []
     data_backends = {}
+    # A list of backend IDs to exhaust.
+    exhausted_backends = []
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -105,12 +108,57 @@ class StateTracker:
         cls.global_step = global_step
 
     @classmethod
+    def get_epoch(cls):
+        return cls.epoch
+
+    @classmethod
+    def set_epoch(cls, epoch: int):
+        cls.epoch = epoch
+
+    @classmethod
     def get_epoch_step(cls):
         return cls.epoch_step
 
     @classmethod
     def set_epoch_step(cls, epoch_step: int):
         cls.epoch_step = epoch_step
+
+    @classmethod
+    def load_training_state(cls, state_path: str):
+        with open(state_path, "r") as f:
+            training_state = json.load(f)
+        cls.set_global_step(training_state["global_step"])
+        cls.set_epoch_step(training_state["epoch_step"])
+        cls.set_epoch(training_state["epoch"])
+        cls.has_training_started = training_state["has_training_started"]
+        cls.calculate_luminance = training_state["calculate_luminance"]
+        cls.all_image_files = training_state["all_image_files"]
+        cls.all_vae_cache_files = training_state["all_vae_cache_files"]
+        cls.all_caption_files = training_state["all_caption_files"]
+
+    @classmethod
+    def save_training_state(cls, state_path: str):
+        training_state = {
+            "global_step": cls.global_step,
+            "epoch_step": cls.epoch_step,
+            "epoch": cls.epoch,
+            "active_backends": cls.data_backends,
+            "exhausted_backends": cls.exhausted_backends,
+        }
+        with open(state_path, "w") as f:
+            json.dump(training_state, f)
+
+    @classmethod
+    def backend_exhausted(cls, data_backend_id: str):
+        cls.exhausted_backends.append(data_backend_id)
+
+    @classmethod
+    def backend_is_exhausted(cls, data_backend_id: str):
+        return data_backend_id in cls.exhausted_backends
+
+    @classmethod
+    def backend_enable(cls, data_backend_id: str):
+        cls.exhausted_backends.remove(data_backend_id)
 
     @classmethod
     def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
