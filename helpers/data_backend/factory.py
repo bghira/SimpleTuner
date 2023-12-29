@@ -400,33 +400,11 @@ step = None
 
 
 def random_dataloader_iterator(dataloaders):
-    """
-    Create an iterator that yields batches from multiple dataloaders randomly.
-
-    Args:
-        dataloaders (list): A list of DataLoader objects.
-
-    Yields:
-        A batch from one of the dataloaders chosen randomly.
-    """
     global step
     data_backends = StateTracker.get_data_backends()
+    iterator_indices = list(range(len(dataloaders)))
     iterators = [iter(dataloader) for dataloader in dataloaders]
-    logger.info(f"All available dataloaders (names={list(data_backends)})")
-    logger.info(
-        f"Scanning dataloaders for epoch: {[iterators.index(iterator) for iterator in iterators]}"
-    )
-    # Remove any iterators that return true when checking StateTracker.backend_status (it is exhausted)
-    iterators = [
-        iterator
-        for iterator in iterators
-        if not StateTracker.backend_status(
-            list(data_backends)[iterators.index(iterator)]
-        )
-    ]
-    logger.info(
-        f"Enabled dataloaders for epoch: {[iterators.index(iterator) for iterator in iterators]}"
-    )
+
     initial_probabilities = [
         backend["config"].get("probability", 1) for _, backend in data_backends.items()
     ]
@@ -436,87 +414,67 @@ def random_dataloader_iterator(dataloaders):
     ]
 
     if step is None:
-        # When step is None, it's because we're resuming.
         step = StateTracker.get_epoch_step()
     else:
-        # We are continuing into another epoch here.
         step = 0
 
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
+
     while iterators:
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
 
         chosen_index = select_dataloader_index(
-            step, iterators, initial_probabilities, disable_steps
+            step, iterator_indices, initial_probabilities, disable_steps
         )
 
-        if chosen_index is None:  # No dataloader selected
-            # We might have to reset all of the dataloaders here.
-            logger.info(
-                f"No dataloader iterators were available. It's possible they've all been exhausted now."
-            )
+        if chosen_index is None:
+            logger.info("No dataloader iterators were available.")
             break
 
-        chosen_iter = iterators[chosen_index]
+        chosen_iter = iterators[iterator_indices.index(chosen_index)]
+        backend_id = list(data_backends)[chosen_index]
 
-        # Integrity checks to ensure we are not oversampling data.
-        backend_current_epoch = data_backends[list(data_backends)[chosen_index]][
-            "sampler"
-        ].current_epoch
-        logger.info(
-            f"Returning batch for step {step} from dataloader {chosen_index} epoch={backend_current_epoch} -> global epoch={StateTracker.get_epoch()}"
-        )
-        if backend_current_epoch != StateTracker.get_epoch():
-            raise ValueError(
-                f"Epoch mismatch: dataloader {chosen_index} is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
-            )
-        # Yield a batch from the chosen dataloader
+        if StateTracker.backend_status(backend_id):
+            logger.info(f"Dataset (name={backend_id}) exhausted. Removing from list.")
+            remove_index = iterator_indices.index(chosen_index)
+            iterator_indices.pop(remove_index)
+            iterators.pop(remove_index)
+            initial_probabilities.pop(remove_index)
+            disable_steps.pop(remove_index)
+            continue
+
         try:
             yield (step, next(chosen_iter))
         except MultiDatasetExhausted:
-            logger.info(
-                f"Dataset (name={list(data_backends)[chosen_index]}) exhausted. Removing from list."
-            )
-            # If the chosen iterator is exhausted, remove it from the list
-            iterators.pop(chosen_index)
-            initial_probabilities.pop(chosen_index)
-            disable_steps.pop(chosen_index)
-            StateTracker.backend_exhausted(list(data_backends)[chosen_index])
-            # Are all backends exhausted? if so, we can return None and it'll move to the next epoch in the main training loop:
-            if len(iterators) == 0:
+            logger.info(f"Dataset (name={backend_id}) exhausted. Removing from list.")
+            remove_index = iterator_indices.index(chosen_index)
+            iterator_indices.pop(remove_index)
+            iterators.pop(remove_index)
+            initial_probabilities.pop(remove_index)
+            disable_steps.pop(remove_index)
+            StateTracker.backend_exhausted(backend_id)
+            if not iterator_indices:
                 logger.info(
-                    f"All dataloaders exhausted. Moving to next epoch in main training loop."
+                    "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
-                # Unmark all as exhausted
                 for backend_id in data_backends:
                     StateTracker.backend_enable(backend_id)
                 return None
 
 
-def select_dataloader_index(step, iterators, initial_probabilities, disable_steps):
-    """
-    Selects a dataloader index based on the step and adjusted probabilities.
-
-    Args:
-        step (int): Current step in the iteration.
-        iterators (list): List of iterators for the dataloaders.
-        initial_probabilities (list): Initial probabilities for each dataloader.
-        disable_steps (list): Steps at which each dataloader is disabled.
-
-    Returns:
-        int or None: Index of the selected dataloader or None if none are selected.
-    """
+def select_dataloader_index(
+    step, iterator_indices, initial_probabilities, disable_steps
+):
     adjusted_probabilities = []
-    for i, (prob, disable_step) in enumerate(zip(initial_probabilities, disable_steps)):
-        if step > disable_step:
-            adjusted_prob = 0  # Disable the dataloader
-        else:
-            adjusted_prob = max(0, prob * (1 - step / disable_step))
+    for i in iterator_indices:
+        prob, disable_step = initial_probabilities[i], disable_steps[i]
+        adjusted_prob = (
+            0 if step > disable_step else max(0, prob * (1 - step / disable_step))
+        )
         adjusted_probabilities.append(adjusted_prob)
 
-    # Randomly select a dataloader based on adjusted probabilities
     total_prob = sum(adjusted_probabilities)
     if total_prob == 0:
         return None
@@ -526,6 +484,6 @@ def select_dataloader_index(step, iterators, initial_probabilities, disable_step
     for i, prob in enumerate(adjusted_probabilities):
         cumulative_prob += prob
         if rnd < cumulative_prob:
-            return i
+            return iterator_indices[i]
 
-    return None  # Fallback if no dataloader is selected
+    return None
