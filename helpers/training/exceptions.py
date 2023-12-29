@@ -1,2 +1,2 @@
-class MultiDatasetStopIteration(Exception):
+class MultiDatasetExhausted(Exception):
     pass

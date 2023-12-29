@@ -1,7 +1,7 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
 
-from helpers.training.exceptions import MultiDatasetStopIteration
+from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
@@ -471,7 +471,7 @@ def random_dataloader_iterator(dataloaders):
         # Yield a batch from the chosen dataloader
         try:
             yield (step, next(chosen_iter))
-        except MultiDatasetStopIteration:
+        except MultiDatasetExhausted:
             logger.info(
                 f"Dataset (name={list(data_backends)[chosen_index]}) exhausted. Removing from list."
             )
