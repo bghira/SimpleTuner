@@ -151,21 +151,21 @@ class VAECache:
         pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
-        logger.debug(
-            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
-        )
+        # logger.debug(
+        #     f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
+        # )
         return results
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
         existing_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-        self.debug_log(
-            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
-        )
-        self.debug_log(
-            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
-        )
+        # self.debug_log(
+        #     f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
+        # )
+        # self.debug_log(
+        #     f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
+        # )
 
         # Convert cache filenames to their corresponding image filenames
         existing_image_filenames = {
@@ -182,9 +182,9 @@ class VAECache:
             if os.path.splitext(file)[0] not in existing_image_filenames
         ]
 
-        self.debug_log(
-            f"discover_unprocessed_files found {len(unprocessed_files)} unprocessed files (truncated): {list(unprocessed_files)[:5]}"
-        )
+        # self.debug_log(
+        #     f"discover_unprocessed_files found {len(unprocessed_files)} unprocessed files (truncated): {list(unprocessed_files)[:5]}"
+        # )
         return unprocessed_files
 
     def _reduce_bucket(
@@ -205,9 +205,9 @@ class VAECache:
                 # )
                 continue
             if f not in self.local_unprocessed_files:
-                self.debug_log(
-                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                )
+                # self.debug_log(
+                #     f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                # )
                 continue
             relevant_files.append(f)
         if do_shuffle:
@@ -220,22 +220,22 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        self.debug_log(
-            f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
-        )
+        # self.debug_log(
+        #     f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
+        # )
         # Use the accelerator to split the data
 
         with self.accelerator.split_between_processes(
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
-        self.debug_log(
-            f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
-        )
-        # Print the first 5 as a debug log:
-        self.debug_log(
-            f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
-        )
+        # self.debug_log(
+        #     f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
+        # )
+        # # Print the first 5 as a debug log:
+        # self.debug_log(
+        #     f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
+        # )
 
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
@@ -259,13 +259,13 @@ class VAECache:
             for i, filename in enumerate(full_filenames)
             if not self.data_backend.exists(filename)
         ]
-        if len(uncached_image_indices) > 0:
-            logger.debug(
-                f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
-            )
-            logger.debug(
-                f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
-            )
+        # if len(uncached_image_indices) > 0:
+        #     logger.debug(
+        #         f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
+        #     )
+        #     logger.debug(
+        #         f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
+        #     )
         uncached_images = [images[i] for i in uncached_image_indices]
 
         if len(uncached_image_indices) > 0 and load_from_cache:
