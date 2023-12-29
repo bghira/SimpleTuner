@@ -164,7 +164,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.buckets = self.load_buckets()
         self.bucket_manager.reset_seen_images()
         self.change_bucket()
-        raise StopIteration()
+        raise MultiDatasetStopIteration()
 
     def _get_unseen_images(self, bucket=None):
         """
@@ -227,7 +227,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             logger.warning(
                 f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
             )
-            # Raise StopIteration
+            # Raise MultiDatasetStopIteration
             self._reset_buckets()
 
         self.debug_log(
@@ -418,7 +418,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 logger.warning(
                     f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
-                # Resetting buckets raises StopIteration
+                # Resetting buckets raises MultiDatasetStopIteration
                 self._reset_buckets()
 
     def __len__(self):
