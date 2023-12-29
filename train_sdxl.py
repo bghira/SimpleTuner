@@ -49,9 +49,9 @@ if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
     target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
 logger.setLevel(target_level)
 training_logger_level = "WARNING"
-if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
+if os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL"):
     training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
-training_logger.setLevel(training_logger_level)
+training_logger.setLevel("training_logger_level")
 
 # Less important logs.
 filelock_logger.setLevel("WARNING")
