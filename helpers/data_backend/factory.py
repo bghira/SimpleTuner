@@ -443,12 +443,8 @@ def random_dataloader_iterator(dataloaders):
 
         try:
             # Yield a batch from the chosen dataloader
-            logger.info(f"Data backends: {data_backends}")
-            logger.info(f"Chosen index: {chosen_index}")
-            logger.info(f"Chosen iterator: {chosen_iter}")
-            logger.info(f"Data backend list: {list(data_backends)}")
             logger.debug(
-                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {list(data_backends)[chosen_index]['sampler'].current_epoch}"
+                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {data_backends[list(data_backends)[chosen_index]]['sampler'].current_epoch}"
             )
         except Exception as e:
             logger.error(f"Error logging message: {e}")
