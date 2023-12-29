@@ -856,7 +856,7 @@ def main():
         )
 
     logger.info("***** Running training *****")
-    total_num_batches = len(
+    total_num_batches = sum(
         [
             backend["train_dataset"]
             for _, backend in StateTracker.get_data_backends().items()
