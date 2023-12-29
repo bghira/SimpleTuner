@@ -7,6 +7,7 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
