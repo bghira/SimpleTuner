@@ -259,12 +259,13 @@ class VAECache:
             for i, filename in enumerate(full_filenames)
             if not self.data_backend.exists(filename)
         ]
-        logger.debug(
-            f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
-        )
-        logger.debug(
-            f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
-        )
+        if len(uncached_image_indices) > 0:
+            logger.debug(
+                f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
+            )
+            logger.debug(
+                f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
+            )
         uncached_images = [images[i] for i in uncached_image_indices]
 
         if len(uncached_image_indices) > 0 and load_from_cache:
