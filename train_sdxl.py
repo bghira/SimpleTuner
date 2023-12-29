@@ -911,9 +911,9 @@ def main():
             current_epoch_step = global_step % num_update_steps_per_epoch
 
         for step, batch in random_dataloader_iterator(train_dataloaders):
+            StateTracker.set_global_step(global_step)
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
-                StateTracker.set_global_step(global_step)
 
             if accelerator.is_main_process:
                 progress_bar.set_description(
