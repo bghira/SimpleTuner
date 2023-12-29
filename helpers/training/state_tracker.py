@@ -137,7 +137,6 @@ class StateTracker:
             "global_step": cls.global_step,
             "epoch_step": cls.epoch_step,
             "epoch": cls.epoch,
-            "active_backends": cls.data_backends,
             "exhausted_backends": cls.exhausted_backends,
         }
         with open(state_path, "w") as f:
