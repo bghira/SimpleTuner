@@ -461,7 +461,7 @@ def random_dataloader_iterator(dataloaders):
             "sampler"
         ].current_epoch
         logger.info(
-            f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
+            f"Returning batch for step {step} from dataloader {chosen_index} epoch={backend_current_epoch} -> global epoch={StateTracker.get_epoch()}"
         )
         if backend_current_epoch != StateTracker.get_epoch():
             raise ValueError(
