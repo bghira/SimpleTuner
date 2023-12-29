@@ -2569,25 +2569,29 @@ files = [
 
 [[package]]
 name = "xformers"
-version = "0.0.24.dev719"
+version = "0.0.23.post1+cu118"
 description = "XFormers: A collection of composable Transformer building blocks."
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "xformers-0.0.24.dev719-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:70035e5c944252c74cd78257c280c68c1373d3036a708068231b4561cc2eb0d5"},
-    {file = "xformers-0.0.24.dev719-cp310-cp310-win_amd64.whl", hash = "sha256:93cb19ec0b8917f4107e88c17bd58cced54316b28c7ba60a623b8869bfa51297"},
-    {file = "xformers-0.0.24.dev719-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:d5c298a9e12d472bf6b082e9b1e99f73af7b5aead7ccb1175c280dbe4443560b"},
-    {file = "xformers-0.0.24.dev719-cp311-cp311-win_amd64.whl", hash = "sha256:6faecfb71c9e66403a94a67c0f1e0ffe93cc153130bc6140ba7f51980013137d"},
-    {file = "xformers-0.0.24.dev719-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:6e509c661083c23028b5a55c0bdec62d68a9e82b59dafc72c546b83248ac2bad"},
-    {file = "xformers-0.0.24.dev719-cp38-cp38-win_amd64.whl", hash = "sha256:59970785aadb55b3b213f7ba9b07c2242fbff2000133408e91426a69b55b89bb"},
-    {file = "xformers-0.0.24.dev719-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:38fa169d0f0b3bda9c0c39ebc8666306d8719f031f2935f89fdae3c3a8152ba9"},
-    {file = "xformers-0.0.24.dev719-cp39-cp39-win_amd64.whl", hash = "sha256:16b06a3393bbc80f6c0996c9b16e873d32dcbd15ea93be1be2b36ebeb9d52fc7"},
-    {file = "xformers-0.0.24.dev719.tar.gz", hash = "sha256:9e407b35bc46d3d76c9510819fd395e990d258b70c71e5d0e3bf0de43504488e"},
+    {file = "xformers-0.0.23.post1+cu118-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:dc5f828dbe187c1bf69d41853a55170d2506ff4c40fc0dfbea3bc7e18daed2e5"},
+    {file = "xformers-0.0.23.post1+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:bb845f1dfe21dec3ccaf2c94adabf46bd604ac5bbfb35379340816914b1ce00a"},
+    {file = "xformers-0.0.23.post1+cu118-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:40930e63a16ca3bc0e12984490a5e74d3a13cbe7a26a23124e4d83205aa69d74"},
+    {file = "xformers-0.0.23.post1+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:8c232bccf88e19de91b545a2b29886c5684bf5d1f7014b6a3d126e481b5e01ee"},
+    {file = "xformers-0.0.23.post1+cu118-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:ab216c008c23c09e0658b760fd683d057178287620ae0a9a2a6e2f2d421348cd"},
+    {file = "xformers-0.0.23.post1+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:6f3102134d300c59d31463cc12aae4864cb8dade2668bcd34198fcfd58ea08f8"},
+    {file = "xformers-0.0.23.post1+cu118-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:0905e12df37c9027e8286c1382d459cae675f10a82d9ddb4a9312f93439583cd"},
+    {file = "xformers-0.0.23.post1+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:103820665654b3e21257b1d5711b9fdda34b4a272f9de4b7c047bc4af292e60c"},
 ]
 
 [package.dependencies]
 numpy = "*"
 torch = "2.1.2"
+
+[package.source]
+type = "legacy"
+url = "https://download.pytorch.org/whl/cu118"
+reference = "pytorch"
 
 [[package]]
 name = "xxhash"
@@ -2811,4 +2815,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "0efa542a47a559500b734342934c519110c416f2b899d274163f992294e112cb"
+content-hash = "53412dd81c0b5d7c71d8d4fc96466a9207fbb072f293bf206a68d8a3fa3fb4b8"

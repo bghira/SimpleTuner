@@ -13,7 +13,7 @@ torchvision = "^0.16.0+cu118"
 diffusers = "^0.25.0"
 transformers = "^4.31.0"
 datasets = "^2.14.3"
-xformers = {version = ">0.0.23", allow-prereleases = true}
+xformers = "^0.0.23.post1+cu118"
 bitsandbytes = "^0.41.1"
 dadaptation = "^3.1"
 wandb = "^0.15.8"
