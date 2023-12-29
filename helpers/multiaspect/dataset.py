@@ -31,10 +31,6 @@ class MultiAspectDataset(Dataset):
         output_data = []
         for sample in image_tuple:
             image_metadata = sample
-            logger.debug(
-                f"Running __getitem__ for {image_metadata['image_path']} inside Dataloader."
-            )
-
             if (
                 image_metadata["original_size"] is None
                 or image_metadata["target_size"] is None

@@ -299,9 +299,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
-            self.debug_log(
-                f"Image {image_path} is considered valid. Adding to yield list."
-            )
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
@@ -315,9 +312,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
 
             to_yield.append(image_metadata)
-            self.debug_log(
-                f"Completed analysing sample. We have {len(to_yield)} images to yield."
-            )
         return to_yield
 
     def _clear_batch_accumulator(self):
