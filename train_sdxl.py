@@ -451,14 +451,14 @@ def main():
         )
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
+    total_num_batches = sum(
+        [
+            len(backend["bucket_manager"])
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
+    )
     num_update_steps_per_epoch = math.ceil(
-        sum(
-            [
-                len(backend["bucket_manager"])
-                for _, backend in StateTracker.get_data_backends().items()
-            ]
-        )
-        / args.gradient_accumulation_steps
+        total_num_batches / args.gradient_accumulation_steps
     )
     if args.max_train_steps is None or args.max_train_steps == 0:
         if args.num_train_epochs is None or args.num_train_epochs == 0:
@@ -718,18 +718,25 @@ def main():
             ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(
-        sum([len(dataloader) for dataloader in train_dataloaders])
-        / args.gradient_accumulation_steps
+    total_num_batches = sum(
+        [
+            len(backend["bucket_manager"])
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
     )
-    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
-        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+    num_update_steps_per_epoch = math.ceil(
+        total_num_batches / args.gradient_accumulation_steps
+    )
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+
+    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
     logger.info(
-        "After all of the heave-ho messing around, we have settled on"
+        "After removing any undesired samples and updating cache entries, we have settled on"
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
