@@ -449,20 +449,18 @@ def random_dataloader_iterator(dataloaders):
 
         chosen_iter = iterators[chosen_index]
 
-        try:
-            # Yield a batch from the chosen dataloader
-            backend_current_epoch = data_backends[list(data_backends)[chosen_index]][
-                "sampler"
-            ].current_epoch
-            logger.info(
-                f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
+        # Integrity checks to ensure we are not oversampling data.
+        backend_current_epoch = data_backends[list(data_backends)[chosen_index]][
+            "sampler"
+        ].current_epoch
+        logger.info(
+            f"Returning batch for step {step} from dataloader {chosen_index} which is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
+        )
+        if backend_current_epoch != StateTracker.get_epoch():
+            raise ValueError(
+                f"Epoch mismatch: dataloader {chosen_index} is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
             )
-            if backend_current_epoch != StateTracker.get_epoch():
-                raise ValueError(
-                    f"Epoch mismatch: dataloader {chosen_index} is on epoch {backend_current_epoch} and our main training is on epoch {StateTracker.get_epoch()}"
-                )
-        except Exception as e:
-            logger.error(f"Error logging message: {e}")
+        # Yield a batch from the chosen dataloader
         try:
             yield (step, next(chosen_iter))
         except StopIteration:
