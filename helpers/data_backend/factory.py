@@ -416,11 +416,11 @@ def random_dataloader_iterator(dataloaders):
     logger.info(
         f"Scanning dataloaders for epoch: {[iterators.index(iterator) for iterator in iterators]}"
     )
-    # Remove any iterators that return true when checking StateTracker.backend_exhausted
+    # Remove any iterators that return true when checking StateTracker.backend_status (it is exhausted)
     iterators = [
         iterator
         for iterator in iterators
-        if not StateTracker.backend_exhausted(
+        if not StateTracker.backend_status(
             list(data_backends)[iterators.index(iterator)]
         )
     ]
