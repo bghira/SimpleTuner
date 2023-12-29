@@ -819,10 +819,8 @@ def main():
                         args.output_dir, path, "training_state.json"
                     ),
                 )
-            resume_global_step = global_step = int(path.split("-")[1])
-            StateTracker.set_global_step(resume_global_step)
-            resume_epoch_step = int(resume_global_step % num_update_steps_per_epoch)
-            StateTracker.set_epoch_step(resume_epoch_step)
+            resume_global_step = global_step = StateTracker.get_global_step()
+
             # If we use a constant LR, we can update that now.
             if args.lr_scheduler == "constant":
                 lr_scheduler = get_scheduler(
@@ -837,8 +835,11 @@ def main():
                 f" {num_update_steps_per_epoch} steps per epoch and"
                 f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
             )
+
+    # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
         backend["sampler"].log_state()
+
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = StateTracker.get_epoch()

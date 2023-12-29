@@ -34,6 +34,15 @@ class SDXLSaveHook:
             else:
                 shutil.copy2(s, d)
 
+        # Write "training_state.json" to the output directory containing the training state
+        training_state = {
+            "global_step": StateTracker.global_step,
+            "epoch_step": StateTracker.epoch_step,
+            "epoch": StateTracker.epoch,
+        }
+        with open(os.path.join(output_dir, "training_state.json"), "w") as f:
+            json.dump(training_state, f)
+
         # Remove the temporary directory
         shutil.rmtree(temporary_dir)
 
@@ -67,11 +76,6 @@ class SDXLSaveHook:
             StateTracker.set_global_step(training_state["global_step"])
             StateTracker.set_epoch_step(training_state["epoch_step"])
             StateTracker.set_epoch(training_state["epoch"])
-            self.has_training_started = training_state["has_training_started"]
-            self.calculate_luminance = training_state["calculate_luminance"]
-            self.all_image_files = training_state["all_image_files"]
-            self.all_vae_cache_files = training_state["all_vae_cache_files"]
-            self.all_caption_files = training_state["all_caption_files"]
         else:
             logger.warning(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
