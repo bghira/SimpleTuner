@@ -11,7 +11,7 @@ class StateTracker:
     # Class variables
     global_step = 0
     epoch_step = 0
-    epoch = 0
+    epoch = 1
     has_training_started = False
     calculate_luminance = False
     all_image_files = {}
