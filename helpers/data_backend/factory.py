@@ -442,8 +442,12 @@ def random_dataloader_iterator(dataloaders):
         # We are continuing into another epoch here.
         step = 0
 
+    gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
     while iterators:
         step += 1
+        epoch_step = int(step / gradient_accumulation_steps)
+        StateTracker.set_epoch_step(epoch_step)
+
         chosen_index = select_dataloader_index(
             step, iterators, initial_probabilities, disable_steps
         )
