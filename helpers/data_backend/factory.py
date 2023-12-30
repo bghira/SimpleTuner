@@ -414,7 +414,7 @@ def random_dataloader_iterator(backends: dict):
         StateTracker.set_epoch_step(epoch_step)
 
         chosen_backend_id = select_dataloader_index(step, backends)
-
+        logger.debug(f"Chosen backend: {chosen_backend_id}")
         if chosen_backend_id is None:
             logger.info("No dataloader iterators were available.")
             break
