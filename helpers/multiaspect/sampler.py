@@ -11,10 +11,6 @@ from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
-logger = get_logger(
-    "MultiAspectSampler", os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
-)
-
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL.PngImagePlugin")
@@ -62,6 +58,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             raise ValueError(
                 f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and BucketManager ID ({bucket_manager.id})."
             )
+        # Update the logger name with the id:
+        self.logger = get_logger(
+            f"MultiAspectSampler-{self.id}",
+            os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"),
+        )
         self.rank_info = rank_info()
         self.accelerator = accelerator
         self.bucket_manager = bucket_manager
@@ -71,7 +72,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.seen_images_path = seen_images_path
         self.state_path = state_path
         if debug_aspect_buckets:
-            logger.setLevel(logging.DEBUG)
+            self.logger.setLevel(logging.DEBUG)
         self.delete_unwanted_images = delete_unwanted_images
         self.minimum_image_size = minimum_image_size
         self.resolution = resolution
@@ -155,7 +156,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"\n-> Unseen images: {self._get_unseen_images()}"
                 f"\n-> Seen images: {self.bucket_manager.seen_images}"
             )
-        logger.info(
+        self.logger.info(
             f"Resetting seen image list and refreshing buckets. State before reset:"
         )
         self.log_state()
@@ -225,9 +226,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
         ]
         if not available_buckets:
-            logger.warning(
-                f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
-            )
             # Raise MultiDatasetExhausted
             self._reset_buckets()
 
@@ -270,7 +268,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.debug_log(
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
         )
-        logger.info(
+        self.logger.info(
             f"{self.rank_info}Multi-aspect sampler statistics:\n"
             f"{self.rank_info}    -> Batch size: {self.batch_size}\n"
             f"{self.rank_info}    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
@@ -384,7 +382,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Check if all buckets are exhausted
             if all_buckets_exhausted:
                 # If all buckets are exhausted, reset the seen images and refresh buckets
-                logger.warning(
+                self.logger.warning(
                     f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
                 # Resetting buckets raises MultiDatasetExhausted
@@ -414,4 +412,4 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return f"{ratio_width}:{ratio_height}"
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info} (id: {self.id}) {msg}", main_process_only=False)
+        self.logger.debug(f"{self.rank_info} {msg}", main_process_only=False)

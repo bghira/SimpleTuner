@@ -437,7 +437,10 @@ def random_dataloader_iterator(dataloaders):
         backend_id = list(data_backends)[chosen_index]
 
         if StateTracker.backend_status(backend_id):
-            logger.info(f"Dataset (name={backend_id}) exhausted. Removing from list.")
+            logger.info(
+                f"Dataset (name={backend_id}) was detected as exhausted from a previous run."
+                " Removing from list, it will not be sampled for the remainder of this epoch."
+            )
             remove_index = iterator_indices.index(chosen_index)
             iterator_indices.pop(remove_index)
             iterators.pop(remove_index)
@@ -448,7 +451,9 @@ def random_dataloader_iterator(dataloaders):
         try:
             yield (step, next(chosen_iter))
         except MultiDatasetExhausted:
-            logger.info(f"Dataset (name={backend_id}) exhausted. Removing from list.")
+            logger.info(
+                f"Dataset (name={backend_id}) is now exhausted. Removing from list."
+            )
             remove_index = iterator_indices.index(chosen_index)
             iterator_indices.pop(remove_index)
             iterators.pop(remove_index)

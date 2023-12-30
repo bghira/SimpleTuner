@@ -143,6 +143,15 @@ class StateTracker:
             json.dump(training_state, f)
 
     @classmethod
+    def get_training_state(cls):
+        return {
+            "global_step": cls.global_step,
+            "epoch_step": cls.epoch_step,
+            "epoch": cls.epoch,
+            "exhausted_backends": cls.exhausted_backends,
+        }
+
+    @classmethod
     def backend_status(cls, data_backend_id: str):
         return data_backend_id in cls.exhausted_backends
 
