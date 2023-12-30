@@ -716,6 +716,7 @@ def main():
         if args.use_ema:
             logger.info("Moving EMA model weights to accelerator...")
             ema_unet.to(accelerator.device, dtype=weight_dtype)
+    idx_count = 0
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     total_num_batches = sum(
@@ -925,8 +926,14 @@ def main():
         else:
             # If it's None, we need to calculate the current epoch step based on the current global step.
             current_epoch_step = global_step % num_update_steps_per_epoch
+        train_backends = {}
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            if StateTracker.backend_status(backend_id):
+                # Exclude exhausted backends.
+                continue
+            train_backends[backend_id] = train_dataloaders[idx_count]
 
-        for step, batch in random_dataloader_iterator(train_dataloaders):
+        for step, batch in random_dataloader_iterator(train_backends):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
 

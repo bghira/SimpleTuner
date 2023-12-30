@@ -399,47 +399,8 @@ def get_dataset(args: dict, accelerator) -> list:
 step = None
 
 
-def remove_exhausted_dataloaders(dataloaders: tuple):
-    """
-    Remove exhausted dataloaders from the list of dataloaders.
-
-    Args:
-        dataloaders (tuple): A tuple of dataloaders.
-    Returns:
-        tuple: A tuple of dataloaders with exhausted dataloaders removed.
-    """
-    return tuple(
-        [
-            dataloader
-            for dataloader in dataloaders
-            if not StateTracker.backend_status(dataloader.sampler.id)
-        ]
-    )
-
-
-def convert_dataloader_tuple_to_databackend_dict(dataloader_tuple: tuple) -> dict:
-    """
-    Convert a dataloader tuple to a data backend dict.
-
-    Args:
-        dataloader_tuple (tuple): A tuple of (step, dataloader).
-    Returns:
-        dict: A dict of the data backend.
-    """
-    backends = {}
-    for dataloader in dataloader_tuple:
-        backends[dataloader.sampler.id] = dataloader
-
-    return backends
-
-
-def random_dataloader_iterator(all_dataloaders: tuple):
+def random_dataloader_iterator(backends: dict):
     global step
-    # Remove any exhausted dataloaders and convert to a dictionary
-    backends = convert_dataloader_tuple_to_databackend_dict(
-        remove_exhausted_dataloaders(all_dataloaders)
-    )
-
     if step is None:
         step = StateTracker.get_epoch_step()
     else:
@@ -480,10 +441,9 @@ def random_dataloader_iterator(all_dataloaders: tuple):
 def select_dataloader_index(step, backends):
     adjusted_probabilities = {}
     for backend_id, dataloader in backends.items():
-        prob = dataloader["config"].get("probability", 1)
-        disable_step = dataloader["config"].get(
-            "disable_after_epoch_step", float("inf")
-        )
+        backend = StateTracker.get_data_backend(backend_id)
+        prob = backend["config"].get("probability", 1)
+        disable_step = backend["config"].get("disable_after_epoch_step", float("inf"))
 
         adjusted_prob = (
             0 if step > disable_step else max(0, prob * (1 - step / disable_step))
