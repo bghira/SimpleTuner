@@ -399,45 +399,46 @@ def get_dataset(args: dict, accelerator) -> list:
 step = None
 
 
+def remove_exhausted_dataloaders(dataloaders: tuple):
+    """
+    Remove exhausted dataloaders from the list of dataloaders.
+
+    Args:
+        dataloaders (tuple): A tuple of dataloaders.
+    Returns:
+        tuple: A tuple of dataloaders with exhausted dataloaders removed.
+    """
+    return tuple(
+        [
+            dataloader
+            for dataloader in dataloaders
+            if not StateTracker.backend_status(dataloader.sampler.id)
+        ]
+    )
+
+
+def convert_dataloader_tuple_to_databackend_dict(dataloader_tuple: tuple) -> dict:
+    """
+    Convert a dataloader tuple to a data backend dict.
+
+    Args:
+        dataloader_tuple (tuple): A tuple of (step, dataloader).
+    Returns:
+        dict: A dict of the data backend.
+    """
+    backends = {}
+    for dataloader in dataloader_tuple:
+        backends[dataloader.sampler.id] = dataloader
+
+    return backends
+
+
 def random_dataloader_iterator(all_dataloaders: tuple):
     global step
-    dataloaders = list(all_dataloaders)
-    logger.debug(f"Received dataloaders for analysis: {dataloaders}")
-    data_backends = StateTracker.get_data_backends()
-    # Remove any 'dataloaders' who have been exhausted.
-    for backend_id in list(data_backends.keys()):
-        if StateTracker.backend_status(backend_id):
-            logger.info(
-                f"Dataset (name={backend_id}) was detected as exhausted from a previous run."
-                " Removing from list, it will not be sampled for the remainder of this epoch."
-            )
-            # Remove corresponding 'dataloaders' entry:
-            for i, dataloader in enumerate(dataloaders):
-                logger.debug(f"Checking dataloader entry {i} from list: {dataloader}.")
-                if dataloader == backend_id:
-                    logger.debug(
-                        f"Removed dataloader entry {i} from list: {dataloader}."
-                    )
-                    dataloaders.pop(i)
-                    break
-            # Remove data_backend entry:
-            del data_backends[backend_id]
-            logger.debug(f"Removed data_backend {backend_id}")
-
-    # List reindexing for "dataloaders"
-    dataloaders = tuple(dataloaders)
-    logger.debug(f"Active dataloaders after analysis: {dataloaders}")
-
-    iterator_indices = list(range(len(dataloaders)))
-    iterators = [iter(dataloader) for dataloader in dataloaders]
-
-    initial_probabilities = [
-        backend["config"].get("probability", 1) for _, backend in data_backends.items()
-    ]
-    disable_steps = [
-        backend["config"].get("disable_after_epoch_step", float("inf"))
-        for _, backend in data_backends.items()
-    ]
+    # Remove any exhausted dataloaders and convert to a dictionary
+    backends = convert_dataloader_tuple_to_databackend_dict(
+        remove_exhausted_dataloaders(all_dataloaders)
+    )
 
     if step is None:
         step = StateTracker.get_epoch_step()
@@ -446,80 +447,58 @@ def random_dataloader_iterator(all_dataloaders: tuple):
 
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
 
-    while iterators:
+    while backends:
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
 
-        chosen_index = select_dataloader_index(
-            step, iterator_indices, initial_probabilities, disable_steps
-        )
+        chosen_backend_id = select_dataloader_index(step, backends)
 
-        if chosen_index is None:
+        if chosen_backend_id is None:
             logger.info("No dataloader iterators were available.")
             break
 
-        chosen_iter = iterators[iterator_indices.index(chosen_index)]
-        backend_id = list(data_backends)[chosen_index]
-
-        if StateTracker.backend_status(backend_id):
-            logger.info(
-                f"Dataset (name={backend_id}) was detected as exhausted from a previous run."
-                " Removing from list, it will not be sampled for the remainder of this epoch."
-            )
-            remove_index = iterator_indices.index(chosen_index)
-            iterator_indices.pop(remove_index)
-            iterators.pop(remove_index)
-            initial_probabilities.pop(remove_index)
-            disable_steps.pop(remove_index)
-            continue
+        chosen_iter = iter(backends[chosen_backend_id])
 
         try:
             yield (step, next(chosen_iter))
         except MultiDatasetExhausted:
             logger.info(
-                f"Dataset (name={backend_id}) is now exhausted. Removing from list."
+                f"Dataset (name={chosen_backend_id}) is now exhausted. Removing from list."
             )
-            remove_index = iterator_indices.index(chosen_index)
-            iterator_indices.pop(remove_index)
-            iterators.pop(remove_index)
-            initial_probabilities.pop(remove_index)
-            disable_steps.pop(remove_index)
-            StateTracker.backend_exhausted(backend_id)
-            if not iterator_indices:
+            del backends[chosen_backend_id]
+            StateTracker.backend_exhausted(chosen_backend_id)
+            if not backends:
                 logger.info(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
-                for backend_id in data_backends:
+                for backend_id in backends:
                     StateTracker.backend_enable(backend_id)
                 return None
 
 
-def select_dataloader_index(
-    step, iterator_indices, initial_probabilities, disable_steps
-):
-    adjusted_probabilities = []
-    logging.debug(f"select_dataloader_index indicies: {iterator_indices}")
-    logging.debug(
-        f"select_dataloader_index initial_probabilities: {initial_probabilities}"
-    )
-    logging.debug(f"select_dataloader_index disable_steps: {disable_steps}")
-    for i in iterator_indices:
-        prob, disable_step = initial_probabilities[i], disable_steps[i]
+def select_dataloader_index(step, backends):
+    adjusted_probabilities = {}
+    for backend_id, dataloader in backends.items():
+        prob = dataloader["config"].get("probability", 1)
+        disable_step = dataloader["config"].get(
+            "disable_after_epoch_step", float("inf")
+        )
+
         adjusted_prob = (
             0 if step > disable_step else max(0, prob * (1 - step / disable_step))
         )
-        adjusted_probabilities.append(adjusted_prob)
+        adjusted_probabilities[backend_id] = adjusted_prob
 
-    total_prob = sum(adjusted_probabilities)
+    total_prob = sum(adjusted_probabilities.values())
     if total_prob == 0:
         return None
 
     rnd = random.uniform(0, total_prob)
     cumulative_prob = 0
-    for i, prob in enumerate(adjusted_probabilities):
+    for backend_id, prob in adjusted_probabilities.items():
         cumulative_prob += prob
         if rnd < cumulative_prob:
-            return iterator_indices[i]
+            return backend_id
 
     return None
