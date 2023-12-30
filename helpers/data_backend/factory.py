@@ -399,13 +399,13 @@ def get_dataset(args: dict, accelerator) -> list:
 step = None
 
 
-def random_dataloader_iterator(active_dataloaders: tuple):
+def random_dataloader_iterator(all_dataloaders: tuple):
     global step
-    dataloaders = list(active_dataloaders)
+    dataloaders = list(all_dataloaders)
+    logger.debug(f"Received dataloaders for analysis: {dataloaders}")
     data_backends = StateTracker.get_data_backends()
-
     # Remove any 'dataloaders' who have been exhausted.
-    for backend_id, backend in data_backends.items():
+    for backend_id in list(data_backends.keys()):
         if StateTracker.backend_status(backend_id):
             logger.info(
                 f"Dataset (name={backend_id}) was detected as exhausted from a previous run."
@@ -413,9 +413,19 @@ def random_dataloader_iterator(active_dataloaders: tuple):
             )
             # Remove corresponding 'dataloaders' entry:
             for i, dataloader in enumerate(dataloaders):
-                if dataloader.dataset.id == backend_id:
+                if dataloader == backend_id:
+                    logger.debug(
+                        f"Removed dataloader entry {i} from list: {dataloader}."
+                    )
                     dataloaders.pop(i)
                     break
+            # Remove data_backend entry:
+            del data_backends[backend_id]
+            logger.debug(f"Removed data_backend {backend_id}")
+
+    # List reindexing for "dataloaders"
+    dataloaders = tuple(dataloaders)
+    logger.debug(f"Active dataloaders after analysis: {dataloaders}")
 
     iterator_indices = list(range(len(dataloaders)))
     iterators = [iter(dataloader) for dataloader in dataloaders]
