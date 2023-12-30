@@ -450,7 +450,11 @@ def select_dataloader_index(step, backends):
         )
         adjusted_probabilities[backend_id] = adjusted_prob
 
-    total_prob = sum(adjusted_probabilities.values())
+    # Shuffle the backends
+    items = list(adjusted_probabilities.items())
+    random.shuffle(items)
+
+    total_prob = sum(prob for _, prob in items)
     if total_prob == 0:
         return None
     for backend_id, prob in adjusted_probabilities.items():
