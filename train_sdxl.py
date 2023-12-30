@@ -705,17 +705,28 @@ def main():
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
         train_dataloaders.append(backend["train_dataloader"])
+        break
+
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
-        results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
+        results = accelerator.prepare(
+            unet, lr_scheduler, optimizer, train_dataloaders[0]
+        )
+        logger.debug(f"Accelerate prepare resules: {results}")
         unet = results[0]
         lr_scheduler = results[1]
         optimizer = results[2]
         # The rest of the entries are dataloaders:
-        train_dataloaders = results[3:]
+        train_dataloaders = [results[3:]]
         if args.use_ema:
             logger.info("Moving EMA model weights to accelerator...")
             ema_unet.to(accelerator.device, dtype=weight_dtype)
+
+    idx_count = 0
+    for _, backend in StateTracker.get_data_backends().items():
+        if idx_count == 0:
+            continue
+        train_dataloaders.append(accelerator.prepare(backend["train_dataloader"]))
     idx_count = 0
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
