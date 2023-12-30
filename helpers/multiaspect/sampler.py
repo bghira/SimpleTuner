@@ -231,11 +231,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Raise MultiDatasetExhausted
             self._reset_buckets()
 
-        self.debug_log(
-            f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}"
-        )
-        self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
-        self.debug_log(f"bucket list: {self.buckets}")
+        if len(self.exhausted_buckets) > 0:
+            self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
 
         # Sequentially get the next bucket
         if hasattr(self, "current_bucket") and self.current_bucket is not None:
@@ -257,9 +254,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
         self._clear_batch_accumulator()
-        self.debug_log(
-            f"Changed bucket to {next_bucket} ({self.buckets[self.current_bucket]})."
-        )
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -350,9 +344,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 to_yield = self._validate_and_yield_images_from_samples(
                     samples, self.buckets[self.current_bucket]
                 )
-                self.debug_log(
-                    f"After validating and yielding, we have {len(to_yield)} images to yield."
-                )
                 if len(self.batch_accumulator) < self.batch_size:
                     remaining_entries_needed = self.batch_size - len(
                         self.batch_accumulator
@@ -361,12 +352,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.batch_accumulator.extend(to_yield[:remaining_entries_needed])
                 # If the batch is full, yield it
                 if len(self.batch_accumulator) >= self.batch_size:
-                    self.debug_log(
-                        f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
-                    )
                     final_yield = self.batch_accumulator[: self.batch_size]
                     self.debug_log(
-                        f"Marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} unseen images before adding."
+                        f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} seen images before adding."
                     )
                     self.bucket_manager.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
@@ -374,9 +362,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.accelerator.wait_for_everyone()
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
-                    self.debug_log(
-                        f"Clearing batch accumulator while changing buckets."
-                    )
                     self.change_bucket()
                     # Break out of the while loop:
                     break
