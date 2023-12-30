@@ -740,30 +740,6 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    # We need to initialize the trackers we use, and also store our configuration.
-    # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
-        # Copy args into public_args:
-        public_args = copy.deepcopy(args)
-        # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
-        public_args_hash = hashlib.md5(
-            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        project_name = args.tracker_project_name or "simpletuner-training"
-        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
-        accelerator.init_trackers(
-            project_name,
-            config=vars(public_args),
-            init_kwargs={
-                "wandb": {
-                    "name": tracker_run_name,
-                    "id": f"{public_args_hash}",
-                    "resume": "allow",
-                    "allow_val_change": True,
-                }
-            },
-        )
-
     if not args.keep_vae_loaded:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
@@ -859,7 +835,29 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
-
+    # We need to initialize the trackers we use, and also store our configuration.
+    # The trackers initializes automatically on the main process.
+    if accelerator.is_main_process:
+        # Copy args into public_args:
+        public_args = copy.deepcopy(args)
+        # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
+        public_args_hash = hashlib.md5(
+            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        project_name = args.tracker_project_name or "simpletuner-training"
+        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
+        accelerator.init_trackers(
+            project_name,
+            config=vars(public_args),
+            init_kwargs={
+                "wandb": {
+                    "name": tracker_run_name,
+                    "id": f"{public_args_hash}",
+                    "resume": "allow",
+                    "allow_val_change": True,
+                }
+            },
+        )
     logger.info("***** Running training *****")
     total_num_batches = sum(
         [
