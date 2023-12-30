@@ -1109,6 +1109,7 @@ def main():
                     "learning_rate": lr,
                     "epoch": epoch,
                 }
+                ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
                     training_logger.debug(f"Stepping EMA unet forward")
                     ema_unet.step(unet.parameters())
