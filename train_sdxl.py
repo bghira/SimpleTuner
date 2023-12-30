@@ -942,7 +942,7 @@ def main():
             if StateTracker.backend_status(backend_id):
                 # Exclude exhausted backends.
                 continue
-            train_backends[backend_id] = train_dataloaders[idx_count]
+            train_backends[backend_id] = backend["train_dataloader"]
 
         for step, batch in random_dataloader_iterator(train_backends):
             if args.lr_scheduler == "cosine_with_restarts":
