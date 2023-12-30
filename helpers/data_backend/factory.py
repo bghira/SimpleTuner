@@ -498,6 +498,11 @@ def select_dataloader_index(
     step, iterator_indices, initial_probabilities, disable_steps
 ):
     adjusted_probabilities = []
+    logging.debug(f"select_dataloader_index indicies: {iterator_indices}")
+    logging.debug(
+        f"select_dataloader_index initial_probabilities: {initial_probabilities}"
+    )
+    logging.debug(f"select_dataloader_index disable_steps: {disable_steps}")
     for i in iterator_indices:
         prob, disable_step = initial_probabilities[i], disable_steps[i]
         adjusted_prob = (
