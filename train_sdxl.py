@@ -878,9 +878,17 @@ def main():
     )
 
     # Only show the progress bar once on each machine.
+    show_progress_bar = True
+    if not accelerator.is_local_main_process:
+        show_progress_bar = False
+    if (
+        training_logger_level == "DEBUG"
+        or os.environ.get("SIMPLETUNER_LOG_LEVEL") == "DEBUG"
+    ):
+        show_progress_bar = False
     progress_bar = tqdm(
         range(0, args.max_train_steps),
-        disable=not accelerator.is_local_main_process,
+        disable=not show_progress_bar,
         initial=global_step,
         desc="Steps",
     )
@@ -1109,6 +1117,9 @@ def main():
                     ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
                     logs["ema_decay_value"] = ema_decay_value
                     training_logger.debug(f"EMA decay value: {ema_decay_value}")
+                logger.debug(
+                    f"Step {global_step} of {args.max_train_steps}: loss {loss.item()}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {train_loss}"
+                )
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
