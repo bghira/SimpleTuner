@@ -407,7 +407,7 @@ def random_dataloader_iterator(backends: dict):
         step = 0
 
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
-
+    logger.debug(f"Backends to select from {backends}")
     while backends:
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
@@ -453,6 +453,8 @@ def select_dataloader_index(step, backends):
     total_prob = sum(adjusted_probabilities.values())
     if total_prob == 0:
         return None
+    for backend_id, prob in adjusted_probabilities.items():
+        logger.debug(f"Backend ID: {backend_id}, Probability: {prob}")
 
     rnd = random.uniform(0, total_prob)
     cumulative_prob = 0
