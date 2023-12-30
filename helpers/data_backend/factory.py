@@ -402,6 +402,20 @@ step = None
 def random_dataloader_iterator(dataloaders):
     global step
     data_backends = StateTracker.get_data_backends()
+
+    # Remove any 'dataloaders' who have been exhausted.
+    for backend_id, backend in data_backends.items():
+        if StateTracker.backend_status(backend_id):
+            logger.info(
+                f"Dataset (name={backend_id}) was detected as exhausted from a previous run."
+                " Removing from list, it will not be sampled for the remainder of this epoch."
+            )
+            # Remove corresponding 'dataloaders' entry:
+            for i, dataloader in enumerate(dataloaders):
+                if dataloader.dataset.id == backend_id:
+                    dataloaders.pop(i)
+                    break
+
     iterator_indices = list(range(len(dataloaders)))
     iterators = [iter(dataloader) for dataloader in dataloaders]
 
@@ -424,11 +438,9 @@ def random_dataloader_iterator(dataloaders):
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
-        current_probabilities = [initial_probabilities[i] for i in iterator_indices]
-        current_disable_steps = [disable_steps[i] for i in iterator_indices]
 
         chosen_index = select_dataloader_index(
-            step, iterator_indices, current_probabilities, current_disable_steps
+            step, iterator_indices, initial_probabilities, disable_steps
         )
 
         if chosen_index is None:
