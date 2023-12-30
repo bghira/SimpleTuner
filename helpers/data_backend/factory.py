@@ -440,6 +440,7 @@ def random_dataloader_iterator(backends: dict):
 
 def select_dataloader_index(step, backends):
     adjusted_probabilities = {}
+    logger.debug(f"Selecting from backends: {backends}")
     for backend_id, dataloader in backends.items():
         backend = StateTracker.get_data_backend(backend_id)
         prob = backend["config"].get("probability", 1)
@@ -453,7 +454,7 @@ def select_dataloader_index(step, backends):
     # Shuffle the backends
     items = list(adjusted_probabilities.items())
     random.shuffle(items)
-
+    logger.debug(f"Adjusted probabilities: {items}")
     total_prob = sum(prob for _, prob in items)
     if total_prob == 0:
         return None
