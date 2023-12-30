@@ -413,6 +413,7 @@ def random_dataloader_iterator(all_dataloaders: tuple):
             )
             # Remove corresponding 'dataloaders' entry:
             for i, dataloader in enumerate(dataloaders):
+                logger.debug(f"Checking dataloader entry {i} from list: {dataloader}.")
                 if dataloader == backend_id:
                     logger.debug(
                         f"Removed dataloader entry {i} from list: {dataloader}."
