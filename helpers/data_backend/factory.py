@@ -462,7 +462,7 @@ def select_dataloader_index(step, backends):
 
     rnd = random.uniform(0, total_prob)
     cumulative_prob = 0
-    for backend_id, prob in adjusted_probabilities.items():
+    for backend_id, prob in items:  # Use shuffled order
         cumulative_prob += prob
         if rnd < cumulative_prob:
             return backend_id
