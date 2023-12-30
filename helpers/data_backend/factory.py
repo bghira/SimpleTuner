@@ -424,9 +424,11 @@ def random_dataloader_iterator(dataloaders):
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
+        current_probabilities = [initial_probabilities[i] for i in iterator_indices]
+        current_disable_steps = [disable_steps[i] for i in iterator_indices]
 
         chosen_index = select_dataloader_index(
-            step, iterator_indices, initial_probabilities, disable_steps
+            step, iterator_indices, current_probabilities, current_disable_steps
         )
 
         if chosen_index is None:
