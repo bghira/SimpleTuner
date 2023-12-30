@@ -399,8 +399,9 @@ def get_dataset(args: dict, accelerator) -> list:
 step = None
 
 
-def random_dataloader_iterator(dataloaders):
+def random_dataloader_iterator(active_dataloaders: tuple):
     global step
+    dataloaders = list(active_dataloaders)
     data_backends = StateTracker.get_data_backends()
 
     # Remove any 'dataloaders' who have been exhausted.
