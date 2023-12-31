@@ -409,6 +409,4 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return f"{ratio_width}:{ratio_height}"
 
     def debug_log(self, msg: str):
-        self.logger.debug(
-            f"{self.rank_info} (id={self.id}) {msg}", main_process_only=False
-        )
+        self.logger.debug(f"{self.rank_info} {msg}", main_process_only=False)

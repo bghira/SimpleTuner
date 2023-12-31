@@ -1051,7 +1051,7 @@ def main():
                     "time_ids": batch["batch_time_ids"].to(accelerator.device),
                 }
                 training_logger.debug("Predicting noise residual.")
-                logger.debug(
+                training_logger.debug(
                     f"\n -> Latents device: {latents.device}"
                     f"\n -> Noise device: {noise.device}"
                     f"\n -> Timesteps device: {timesteps.device}"
