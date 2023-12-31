@@ -972,7 +972,9 @@ def main():
                 training_logger.debug(
                     f"Sending latent batch from pinned memory to device."
                 )
-                latents = batch["latent_batch"].to(dtype=weight_dtype)
+                latents = batch["latent_batch"].to(
+                    accelerator.device, dtype=weight_dtype
+                )
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
@@ -1016,7 +1018,9 @@ def main():
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps).to(
+                    accelerator.device
+                )
 
                 # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
