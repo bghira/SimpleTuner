@@ -414,7 +414,6 @@ def random_dataloader_iterator(backends: dict):
         StateTracker.set_epoch_step(epoch_step)
 
         chosen_backend_id = select_dataloader_index(step, backends)
-        logger.debug(f"Chosen backend: {chosen_backend_id}")
         if chosen_backend_id is None:
             logger.info("No dataloader iterators were available.")
             break
@@ -440,7 +439,7 @@ def random_dataloader_iterator(backends: dict):
 
 def select_dataloader_index(step, backends):
     adjusted_probabilities = {}
-    logger.debug(f"Selecting from backends: {backends}")
+    logger.debug(f"Selecting from backends: {backends.keys()}")
     for backend_id, dataloader in backends.items():
         backend = StateTracker.get_data_backend(backend_id)
         prob = backend["config"].get("probability", 1)
@@ -454,12 +453,9 @@ def select_dataloader_index(step, backends):
     # Shuffle the backends
     items = list(adjusted_probabilities.items())
     random.shuffle(items)
-    logger.debug(f"Adjusted probabilities: {items}")
     total_prob = sum(prob for _, prob in items)
     if total_prob == 0:
         return None
-    for backend_id, prob in adjusted_probabilities.items():
-        logger.debug(f"Backend ID: {backend_id}, Probability: {prob}")
 
     rnd = random.uniform(0, total_prob)
     cumulative_prob = 0
