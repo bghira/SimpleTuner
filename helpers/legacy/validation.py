@@ -92,7 +92,6 @@ def prepare_validation_prompt_list(args, embed_cache):
 
 
 def log_validations(
-    logger,
     accelerator,
     prompt_handler,
     unet,
@@ -102,7 +101,6 @@ def log_validations(
     global_step,
     resume_global_step,
     step,
-    progress_bar,
     text_encoder_1,
     tokenizer,
     vae_path: str,
@@ -121,7 +119,7 @@ def log_validations(
         logger.debug(
             f"Performing validation every {args.validation_steps} steps."
             f" We are on step {global_step} and have {len(validation_prompts)} validation prompts."
-            f" We have {progress_bar.n} steps of progress done and are resuming from {resume_global_step}."
+            f" We have {global_step} steps of progress done and are resuming from {resume_global_step}."
             f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
             f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
         )
