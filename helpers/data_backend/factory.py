@@ -439,8 +439,7 @@ def random_dataloader_iterator(backends: dict):
                 logger.info(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
-                for backend_id in backends:
-                    StateTracker.backend_enable(backend_id)
+                StateTracker.clear_exhausted_buckets()
                 return (step, None)
 
 

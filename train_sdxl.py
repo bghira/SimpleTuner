@@ -1246,7 +1246,6 @@ def main():
             }
             progress_bar.set_postfix(**logs)
             log_validations(
-                logger,
                 accelerator,
                 prompt_handler,
                 unet,
@@ -1256,7 +1255,6 @@ def main():
                 global_step,
                 resume_global_step,
                 step,
-                progress_bar,
                 text_encoder_1,
                 tokenizer=None,
                 vae_path=vae_path,
@@ -1333,7 +1331,6 @@ def main():
             )
 
         log_validations(
-            logger,
             accelerator,
             prompt_handler,
             unet,
@@ -1343,7 +1340,6 @@ def main():
             global_step,
             resume_global_step,
             step,
-            progress_bar,
             text_encoder_1,
             tokenizer=None,
             vae_path=vae_path,
