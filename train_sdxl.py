@@ -49,8 +49,8 @@ if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
     target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
 logger.setLevel(target_level)
 training_logger_level = "WARNING"
-if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
-    training_logger_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
+if os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL"):
+    training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
 training_logger.setLevel(training_logger_level)
 
 # Less important logs.
@@ -91,7 +91,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.25.0.dev0")
+check_min_version("0.25.0")
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
@@ -451,14 +451,14 @@ def main():
         )
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
+    total_num_batches = sum(
+        [
+            len(backend["bucket_manager"])
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
+    )
     num_update_steps_per_epoch = math.ceil(
-        sum(
-            [
-                len(backend["bucket_manager"])
-                for _, backend in StateTracker.get_data_backends().items()
-            ]
-        )
-        / args.gradient_accumulation_steps
+        total_num_batches / args.gradient_accumulation_steps
     )
     if args.max_train_steps is None or args.max_train_steps == 0:
         if args.num_train_epochs is None or args.num_train_epochs == 0:
@@ -705,57 +705,52 @@ def main():
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
         train_dataloaders.append(backend["train_dataloader"])
+        break
+
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
-        results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
+        results = accelerator.prepare(
+            unet, lr_scheduler, optimizer, train_dataloaders[0]
+        )
+        logger.debug(f"Accelerate prepare resules: {results}")
         unet = results[0]
         lr_scheduler = results[1]
         optimizer = results[2]
         # The rest of the entries are dataloaders:
-        train_dataloaders = results[3:]
+        train_dataloaders = [results[3:]]
         if args.use_ema:
             logger.info("Moving EMA model weights to accelerator...")
             ema_unet.to(accelerator.device, dtype=weight_dtype)
 
+    idx_count = 0
+    for _, backend in StateTracker.get_data_backends().items():
+        if idx_count == 0:
+            continue
+        train_dataloaders.append(accelerator.prepare(backend["train_dataloader"]))
+    idx_count = 0
+
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
-    num_update_steps_per_epoch = math.ceil(
-        sum([len(dataloader) for dataloader in train_dataloaders])
-        / args.gradient_accumulation_steps
+    total_num_batches = sum(
+        [
+            len(backend["bucket_manager"])
+            for _, backend in StateTracker.get_data_backends().items()
+        ]
     )
-    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
-        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+    num_update_steps_per_epoch = math.ceil(
+        total_num_batches / args.gradient_accumulation_steps
+    )
     if overrode_max_train_steps:
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+
+    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+
     # Afterwards we recalculate our number of training epochs
     args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
     logger.info(
-        "After all of the heave-ho messing around, we have settled on"
+        "After removing any undesired samples and updating cache entries, we have settled on"
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
-
-    # We need to initialize the trackers we use, and also store our configuration.
-    # The trackers initializes automatically on the main process.
-    if accelerator.is_main_process:
-        # Copy args into public_args:
-        public_args = copy.deepcopy(args)
-        # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
-        public_args_hash = hashlib.md5(
-            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        project_name = args.tracker_project_name or "simpletuner-training"
-        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
-        accelerator.init_trackers(
-            project_name,
-            config=vars(public_args),
-            init_kwargs={
-                "wandb": {
-                    "name": tracker_run_name,
-                    "id": f"{public_args_hash}",
-                    "resume": "allow",
-                    "allow_val_change": True,
-                }
-            },
-        )
 
     if not args.keep_vae_loaded:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
@@ -781,9 +776,16 @@ def main():
     )
 
     lr = 0.0
+    # Global step represents the most recently *completed* optimization step, which means it
+    #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,
+    #  then global_step and step will be the same throughout training. However, if we use
+    #  2 gradient_accumulation_steps, then global_step will be twice as large as step, and so on.
     global_step = 0
-    first_epoch = 0
     resume_global_step = 0
+    StateTracker.set_global_step(global_step)
+    # First_epoch represents the *currently training epoch*, as opposed to global_step, which represents
+    #  the *last completed* optimization step.
+    first_epoch = 1
     scheduler_kwargs = {}
     accelerator.wait_for_everyone()
 
@@ -812,7 +814,10 @@ def main():
                         args.output_dir, path, "training_state.json"
                     ),
                 )
-            resume_global_step = global_step = int(path.split("-")[1])
+            resume_global_step = global_step = StateTracker.get_global_step()
+            logger.debug(
+                f"Training state inside checkpoint: {StateTracker.get_training_state()}"
+            )
 
             # If we use a constant LR, we can update that now.
             if args.lr_scheduler == "constant":
@@ -823,24 +828,17 @@ def main():
                 )
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = resume_global_step
-            logger.info(
-                f"Basically, we have resume_global_step {resume_global_step} after considering"
-                f" {num_update_steps_per_epoch} steps per epoch and"
-                f" {args.gradient_accumulation_steps} gradient_accumulation_steps"
-            )
+            logger.info(f"Resuming from global_step {resume_global_step}.")
+
+    # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
         backend["sampler"].log_state()
+
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
-    first_epoch = max(
-        [
-            backend["sampler"].current_epoch
-            for _, backend in StateTracker.get_data_backends().items()
-        ]
-    )
-    if first_epoch > 1:
-        steps_to_remove = first_epoch * num_update_steps_per_epoch
-        total_steps_remaining_at_start -= steps_to_remove
+    first_epoch = StateTracker.get_epoch()
+    if first_epoch > 1 or resume_global_step > 1:
+        total_steps_remaining_at_start -= resume_global_step
         logger.debug(
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
         )
@@ -849,41 +847,76 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
-
+    # We need to initialize the trackers we use, and also store our configuration.
+    # The trackers initializes automatically on the main process.
+    if accelerator.is_main_process:
+        # Copy args into public_args:
+        public_args = copy.deepcopy(args)
+        # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
+        public_args_hash = hashlib.md5(
+            json.dumps(vars(public_args), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        project_name = args.tracker_project_name or "simpletuner-training"
+        tracker_run_name = args.tracker_run_name or "simpletuner-training-run"
+        accelerator.init_trackers(
+            project_name,
+            config=vars(public_args),
+            init_kwargs={
+                "wandb": {
+                    "name": tracker_run_name,
+                    "id": f"{public_args_hash}",
+                    "resume": "allow",
+                    "allow_val_change": True,
+                }
+            },
+        )
     logger.info("***** Running training *****")
-    total_num_batches = len(
+    total_num_batches = sum(
         [
-            backend["train_dataset"]
+            len(backend["train_dataset"])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
     logger.info(
-        f"  Num batches = {total_num_batches} ({total_num_batches * args.train_batch_size} samples)"
+        f" -> Num batches = {total_num_batches} ({total_num_batches * args.train_batch_size} total samples)"
     )
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Current Epoch = {first_epoch}")
-    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
+    logger.info(f" -> Num Epochs = {args.num_train_epochs}")
+    logger.info(f" -> Current Epoch = {first_epoch}")
+    logger.info(f" -> Instantaneous batch size per device = {args.train_batch_size}")
+    logger.info(f" -> Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+        f"   -> Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
     )
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(f" -> Total optimization steps = {args.max_train_steps}")
+    if global_step > 1:
+        logger.info(f" -> Steps completed: {global_step}")
     logger.info(
-        f"  Total optimization steps remaining = {total_steps_remaining_at_start}"
+        f" -> Total optimization steps remaining = {total_steps_remaining_at_start}"
     )
 
     # Only show the progress bar once on each machine.
+    show_progress_bar = True
+    if not accelerator.is_local_main_process:
+        show_progress_bar = False
+    if (
+        training_logger_level == "DEBUG"
+        or os.environ.get("SIMPLETUNER_LOG_LEVEL") == "DEBUG"
+    ):
+        show_progress_bar = False
     progress_bar = tqdm(
         range(0, args.max_train_steps),
-        disable=not accelerator.is_local_main_process,
+        disable=not show_progress_bar,
         initial=global_step,
         desc="Steps",
     )
     accelerator.wait_for_everyone()
+
+    # Some values that are required to be initialised later.
     timesteps_buffer = []
     train_loss = 0.0
     step = global_step
     training_luminance_values = []
+    current_epoch_step = None
 
     for epoch in range(first_epoch, args.num_train_epochs):
         if current_epoch >= args.num_train_epochs:
@@ -892,15 +925,29 @@ def main():
                 f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs)."
             )
             break
-        logger.debug(
-            f"Starting into epoch {epoch} out of {current_epoch}, final epoch will be {args.num_train_epochs}"
-        )
+        if first_epoch != epoch:
+            logger.debug(
+                f"Just completed epoch {current_epoch}. Beginning epoch {epoch}. Final epoch will be {args.num_train_epochs}"
+            )
         current_epoch = epoch
         unet.train()
-        current_epoch_step = 0
-        for step, batch in random_dataloader_iterator(train_dataloaders):
+        if current_epoch_step is not None:
+            # We are resetting to the next epoch, if it is not none.
+            current_epoch_step = 0
+        else:
+            # If it's None, we need to calculate the current epoch step based on the current global step.
+            current_epoch_step = global_step % num_update_steps_per_epoch
+        train_backends = {}
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            if StateTracker.backend_status(backend_id):
+                # Exclude exhausted backends.
+                continue
+            train_backends[backend_id] = backend["train_dataloader"]
+
+        for step, batch in random_dataloader_iterator(train_backends):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
+
             if accelerator.is_main_process:
                 progress_bar.set_description(
                     f"Epoch {current_epoch}/{args.num_train_epochs}, Steps"
@@ -925,7 +972,9 @@ def main():
                 training_logger.debug(
                     f"Sending latent batch from pinned memory to device."
                 )
-                latents = batch["latent_batch"].to(dtype=weight_dtype)
+                latents = batch["latent_batch"].to(
+                    accelerator.device, dtype=weight_dtype
+                )
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
@@ -965,11 +1014,13 @@ def main():
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
-                    timesteps_buffer.append((global_step, timestep))
+                    timesteps_buffer.append((step, timestep))
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps).to(
+                    accelerator.device
+                )
 
                 # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"]
@@ -996,10 +1047,18 @@ def main():
 
                 # Predict the noise residual and compute loss
                 added_cond_kwargs = {
-                    "text_embeds": add_text_embeds,
-                    "time_ids": batch["batch_time_ids"],
+                    "text_embeds": add_text_embeds.to(accelerator.device),
+                    "time_ids": batch["batch_time_ids"].to(accelerator.device),
                 }
                 training_logger.debug("Predicting noise residual.")
+                training_logger.debug(
+                    f"\n -> Latents device: {latents.device}"
+                    f"\n -> Noise device: {noise.device}"
+                    f"\n -> Timesteps device: {timesteps.device}"
+                    f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
+                    f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
+                    f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
+                )
                 model_pred = unet(
                     noisy_latents,
                     timesteps,
@@ -1087,6 +1146,12 @@ def main():
                     "learning_rate": lr,
                     "epoch": epoch,
                 }
+                progress_bar.update(1)
+                global_step += 1
+                current_epoch_step += 1
+                StateTracker.set_global_step(global_step)
+
+                ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
                     training_logger.debug(f"Stepping EMA unet forward")
                     ema_unet.step(unet.parameters())
@@ -1095,9 +1160,9 @@ def main():
                     ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
                     logs["ema_decay_value"] = ema_decay_value
                     training_logger.debug(f"EMA decay value: {ema_decay_value}")
-                progress_bar.update(1)
-                global_step += 1
-                current_epoch_step += 1
+                logger.debug(
+                    f"Step {global_step} of {args.max_train_steps}: loss {loss.item()}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {train_loss}"
+                )
 
                 # Log scatter plot to wandb
                 if args.report_to == "wandb":

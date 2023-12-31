@@ -50,6 +50,15 @@ def parse_args():
         default=False,
         help="Delete *input* image files after captioning.",
     )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        choices=["bf16", "fp16", "fp4", "fp8"],
+        default="fp4",
+        help=(
+            "When loading CogVLM, you can load it in fp16, bf16, fp8 or fp4 precision to reduce memory. Default: fp4"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -203,6 +212,18 @@ def process_directory(
 
 def main():
     args = parse_args()
+    send_to_cuda = load_in_4bit = load_in_8bit = False
+    torch_dtype = torch.float16
+    if args.precision == "bf16" or args.precision == "fp16":
+        send_to_cuda = True
+        if args.precision == "bf16":
+            torch_dtype = torch.bfloat16
+        else:
+            torch_dtype = torch.float16
+    elif args.precision == "fp4":
+        load_in_4bit = True
+    elif args.precision == "fp8":
+        load_in_8bit = True
     logging.basicConfig(level=logging.INFO)
 
     # Ensure output directory exists
@@ -212,16 +233,18 @@ def main():
     from transformers import AutoModelForCausalLM, LlamaTokenizer
 
     tokenizer = LlamaTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
-    model = (
-        AutoModelForCausalLM.from_pretrained(
-            "THUDM/cogvlm-chat-hf",
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-            trust_remote_code=True,
-        )
-        .to("cuda")
-        .eval()
-    )
+    logger.info(f"Loading CogVLM in {args.precision} precision.")
+    model = AutoModelForCausalLM.from_pretrained(
+        "THUDM/cogvlm-chat-hf",
+        torch_dtype=torch_dtype,
+        low_cpu_mem_usage=True,
+        trust_remote_code=True,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
+    ).eval()
+    if send_to_cuda:
+        logger.info(f"Sending model to CUDA.")
+        model.to("cuda")
     logger.info("Completed loading model.")
     processed_files = set()
     progress_file = os.path.join(args.input_dir, "processed_files.txt")

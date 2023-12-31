@@ -1,0 +1,2 @@
+class MultiDatasetExhausted(Exception):
+    pass

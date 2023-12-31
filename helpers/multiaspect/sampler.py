@@ -7,12 +7,9 @@ from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
+from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
-
-logger = get_logger(
-    "MultiAspectSampler", os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
-)
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -61,6 +58,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             raise ValueError(
                 f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and BucketManager ID ({bucket_manager.id})."
             )
+        # Update the logger name with the id:
+        self.logger = get_logger(
+            f"MultiAspectSampler-{self.id}",
+            os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"),
+        )
         self.rank_info = rank_info()
         self.accelerator = accelerator
         self.bucket_manager = bucket_manager
@@ -70,7 +72,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.seen_images_path = seen_images_path
         self.state_path = state_path
         if debug_aspect_buckets:
-            logger.setLevel(logging.DEBUG)
+            self.logger.setLevel(logging.DEBUG)
         self.delete_unwanted_images = delete_unwanted_images
         self.minimum_image_size = minimum_image_size
         self.resolution = resolution
@@ -154,7 +156,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"\n-> Unseen images: {self._get_unseen_images()}"
                 f"\n-> Seen images: {self.bucket_manager.seen_images}"
             )
-        logger.info(
+        self.logger.info(
             f"Resetting seen image list and refreshing buckets. State before reset:"
         )
         self.log_state()
@@ -164,6 +166,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.buckets = self.load_buckets()
         self.bucket_manager.reset_seen_images()
         self.change_bucket()
+        raise MultiDatasetExhausted()
 
     def _get_unseen_images(self, bucket=None):
         """
@@ -214,31 +217,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         return False
 
-    def _reset_if_not_enough_unseen_images(self):
-        """
-        Reset the seen images if there aren't enough unseen images across all buckets to form a batch.
-        Return True if we reset the seen images, otherwise return False.
-        This is distinctly separate behaviour from change_bucket, which resets based on exhausted buckets.
-        """
-        total_unseen_images = len(self._get_unseen_images())
-        if total_unseen_images < self.batch_size:
-            logger.warning(
-                f"_reset_if_not_enough_unseen_images: total_unseen_images={total_unseen_images}, batch_size={self.batch_size} triggered reset"
-            )
-            self._reset_buckets()
-            return True
-        available_buckets = [
-            bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
-        ]
-        if not available_buckets:
-            logger.warning(
-                f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
-                f" ({len(self.exhausted_buckets)}), resetting"
-            )
-            self._reset_buckets()
-            return True
-        return False
-
     def _get_next_bucket(self):
         """
         Get the next bucket excluding the exhausted ones.
@@ -248,18 +226,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket for bucket in self.buckets if bucket not in self.exhausted_buckets
         ]
         if not available_buckets:
-            logger.warning(
-                f"_get_next_bucket: all {len(self.buckets)} buckets are exhausted"
-                f" ({len(self.exhausted_buckets)}), resetting"
-            )
+            # Raise MultiDatasetExhausted
             self._reset_buckets()
-            available_buckets = self.buckets
 
-        self.debug_log(
-            f"Selecting next bucket from {len(available_buckets)} possible choices (truncated): {available_buckets[:10]}"
-        )
-        self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
-        self.debug_log(f"bucket list: {self.buckets}")
+        if len(self.exhausted_buckets) > 0:
+            self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
 
         # Sequentially get the next bucket
         if hasattr(self, "current_bucket") and self.current_bucket is not None:
@@ -281,9 +252,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         next_bucket = self._get_next_bucket()
         self.current_bucket = self._bucket_name_to_id(next_bucket)
         self._clear_batch_accumulator()
-        self.debug_log(
-            f"Changed bucket to {next_bucket} ({self.buckets[self.current_bucket]})."
-        )
 
     def move_to_exhausted(self):
         bucket = self.buckets[self.current_bucket]
@@ -300,7 +268,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.debug_log(
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
         )
-        logger.info(
+        self.logger.info(
             f"{self.rank_info}Multi-aspect sampler statistics:\n"
             f"{self.rank_info}    -> Batch size: {self.batch_size}\n"
             f"{self.rank_info}    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
@@ -316,17 +284,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         to_yield = []
         for image_path in samples:
-            self.debug_log(
-                f"Begin analysing sample. We have {len(to_yield)} images to yield."
-            )
             image_metadata = self.bucket_manager.get_metadata_by_filepath(image_path)
             if "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
                 )
-            self.debug_log(
-                f"Image {image_path} is considered valid. Adding to yield list."
-            )
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
@@ -340,9 +302,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
 
             to_yield.append(image_metadata)
-            self.debug_log(
-                f"Completed analysing sample. We have {len(to_yield)} images to yield."
-            )
         return to_yield
 
     def _clear_batch_accumulator(self):
@@ -358,40 +317,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             all_buckets_exhausted = True  # Initial assumption
 
             # Loop through all buckets to find one with sufficient images
-            self.debug_log(f"Found {len(self.buckets)} buckets.")
             for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
-                self.debug_log(
-                    f"Fetching available images for bucket {self.current_bucket} ({self.buckets[self.current_bucket]})."
-                )
                 available_images = self._get_unseen_images(
                     self.buckets[self.current_bucket]
                 )
                 self.debug_log(
-                    f"We found {len(available_images)} images in bucket {self.current_bucket} ({self.buckets[self.current_bucket]})."
+                    f"From {len(self.buckets)} buckets, selected {self.buckets[self.current_bucket]} ({self.buckets[self.current_bucket]}) -> {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
-
                 if len(available_images) >= self.batch_size:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     break
                 else:
                     # Current bucket doesn't have enough images, try the next bucket
-                    self.debug_log(
-                        f"Bucket {self.buckets[self.current_bucket]} is empty or doesn't have enough samples for a full batch. Moving to the next bucket."
-                    )
                     self.move_to_exhausted()
                     self.change_bucket()
             while len(available_images) >= self.batch_size:
-                self.debug_log(
-                    f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
-                )
                 all_buckets_exhausted = False  # Found a non-exhausted bucket
                 samples = random.sample(available_images, k=self.batch_size)
                 to_yield = self._validate_and_yield_images_from_samples(
                     samples, self.buckets[self.current_bucket]
-                )
-                self.debug_log(
-                    f"After validating and yielding, we have {len(to_yield)} images to yield."
                 )
                 if len(self.batch_accumulator) < self.batch_size:
                     remaining_entries_needed = self.batch_size - len(
@@ -401,12 +346,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.batch_accumulator.extend(to_yield[:remaining_entries_needed])
                 # If the batch is full, yield it
                 if len(self.batch_accumulator) >= self.batch_size:
-                    self.debug_log(
-                        f"We have a full batch of {len(self.batch_accumulator)} images ready for yielding. Now we yield them!"
-                    )
                     final_yield = self.batch_accumulator[: self.batch_size]
                     self.debug_log(
-                        f"Marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} unseen images before adding."
+                        f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} seen images before adding."
                     )
                     self.bucket_manager.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
@@ -414,9 +356,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.accelerator.wait_for_everyone()
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
-                    self.debug_log(
-                        f"Clearing batch accumulator while changing buckets."
-                    )
                     self.change_bucket()
                     # Break out of the while loop:
                     break
@@ -440,12 +379,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Check if all buckets are exhausted
             if all_buckets_exhausted:
                 # If all buckets are exhausted, reset the seen images and refresh buckets
-                logger.warning(
+                self.logger.warning(
                     f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
+                # Resetting buckets raises MultiDatasetExhausted
                 self._reset_buckets()
-                # Exit with nothing, and the epoch is over. Magic.
-                return
 
     def __len__(self):
         return sum(
@@ -471,4 +409,4 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return f"{ratio_width}:{ratio_height}"
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info} (id: {self.id}) {msg}", main_process_only=False)
+        self.logger.debug(f"{self.rank_info} {msg}", main_process_only=False)

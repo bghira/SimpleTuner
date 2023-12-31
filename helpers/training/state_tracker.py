@@ -9,19 +9,23 @@ logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class StateTracker:
     # Class variables
-    has_training_started = False
-    calculate_luminance = False
+
+    ## Training state
+    global_step = 0
+    epoch_step = 0
+    epoch = 1
+
+    ## Caches
     all_image_files = {}
     all_vae_cache_files = {}
     all_caption_files = None
 
-    # Backend entities for retrieval
-    data_backend = None
-    vaecache = None
+    ## Backend entities for retrieval
     embedcache = None
     accelerator = None
-    bucket_managers = []
     data_backends = {}
+    # A list of backend IDs to exhaust.
+    exhausted_backends = []
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -93,6 +97,75 @@ class StateTracker:
                 "all_image_files_{}".format(data_backend_id)
             )
         return cls.all_image_files[data_backend_id]
+
+    @classmethod
+    def get_global_step(cls):
+        return cls.global_step
+
+    @classmethod
+    def set_global_step(cls, global_step: int):
+        cls.global_step = global_step
+
+    @classmethod
+    def get_epoch(cls):
+        return cls.epoch
+
+    @classmethod
+    def set_epoch(cls, epoch: int):
+        cls.epoch = epoch
+
+    @classmethod
+    def get_epoch_step(cls):
+        return cls.epoch_step
+
+    @classmethod
+    def set_epoch_step(cls, epoch_step: int):
+        cls.epoch_step = epoch_step
+
+    @classmethod
+    def load_training_state(cls, state_path: str):
+        with open(state_path, "r") as f:
+            training_state = json.load(f)
+        cls.set_global_step(training_state["global_step"])
+        cls.set_epoch_step(training_state["epoch_step"])
+        cls.set_epoch(training_state["epoch"])
+        cls.set_exhausted_backends(training_state["exhausted_backends"])
+
+    @classmethod
+    def save_training_state(cls, state_path: str):
+        training_state = {
+            "global_step": cls.global_step,
+            "epoch_step": cls.epoch_step,
+            "epoch": cls.epoch,
+            "exhausted_backends": cls.exhausted_backends,
+        }
+        with open(state_path, "w") as f:
+            json.dump(training_state, f)
+
+    @classmethod
+    def get_training_state(cls):
+        return {
+            "global_step": cls.global_step,
+            "epoch_step": cls.epoch_step,
+            "epoch": cls.epoch,
+            "exhausted_backends": cls.exhausted_backends,
+        }
+
+    @classmethod
+    def backend_status(cls, data_backend_id: str):
+        return data_backend_id in cls.exhausted_backends
+
+    @classmethod
+    def backend_exhausted(cls, data_backend_id: str):
+        cls.exhausted_backends.append(data_backend_id)
+
+    @classmethod
+    def backend_enable(cls, data_backend_id: str):
+        cls.exhausted_backends.remove(data_backend_id)
+
+    @classmethod
+    def set_exhausted_backends(cls, exhausted_backends: list):
+        cls.exhausted_backends = exhausted_backends
 
     @classmethod
     def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
@@ -178,10 +251,6 @@ class StateTracker:
         return cls.vae_dtype
 
     @classmethod
-    def get_bucket_managers(cls):
-        return cls.bucket_managers
-
-    @classmethod
     def set_weight_dtype(cls, weight_dtype):
         cls.weight_dtype = weight_dtype
 
@@ -198,10 +267,6 @@ class StateTracker:
         return cls.args
 
     @classmethod
-    def set_vaecache(cls, vaecache):
-        cls.vaecache = vaecache
-
-    @classmethod
     def get_vaecache(cls, id: str):
         return cls.data_backends[id]["vaecache"]
 
@@ -215,8 +280,8 @@ class StateTracker:
 
     @classmethod
     def get_metadata_by_filepath(cls, filepath):
-        for bucket_manager in cls.get_bucket_managers():
-            metadata = bucket_manager.get_metadata_by_filepath(filepath)
+        for _, data_backend in cls.get_data_backends().items():
+            metadata = data_backend["bucket_manager"].get_metadata_by_filepath(filepath)
             if metadata is not None:
                 return metadata
         return None

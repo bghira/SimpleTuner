@@ -1,6 +1,7 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
 
+from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
@@ -130,12 +131,13 @@ def configure_multi_databackend(args: dict, accelerator):
             ),
             delete_problematic_images=args.delete_problematic_images or False,
         )
-        logger.debug(
-            f"Loaded previous data backend config: {init_backend['bucket_manager'].config}"
-        )
+        prev_config = {}
+        if hasattr(init_backend["bucket_manager"], "config"):
+            prev_config = init_backend["bucket_manager"].config
+        logger.debug(f"Loaded previous data backend config: {prev_config}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
-            config=init_backend["bucket_manager"].config,
+            config=prev_config,
         )
         if init_backend["bucket_manager"].has_single_underfilled_bucket():
             raise Exception(
@@ -153,29 +155,24 @@ def configure_multi_databackend(args: dict, accelerator):
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
-        if init_backend["bucket_manager"].config != {}:
-            logger.debug(
-                f"Found existing config: {init_backend['bucket_manager'].config}"
-            )
+        if prev_config != {}:
+            logger.debug(f"Found existing config: {prev_config}")
             # Check if any values differ between the 'backend' values and the 'config' values:
-            for key, _ in init_backend["bucket_manager"].config.items():
+            for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
-                if (
-                    key in backend
-                    and init_backend["bucket_manager"].config[key] != backend[key]
-                ):
+                if key in backend and prev_config[key] != backend[key]:
                     if not args.override_dataset_config:
                         raise Exception(
                             f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
-                            f"\n-> Expected value {key}={init_backend['bucket_manager'].config[key]} differs from current value={backend[key]}."
+                            f"\n-> Expected value {key}={prev_config[key]} differs from current value={backend[key]}."
                             f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
-                            f"\n{init_backend['bucket_manager'].config}"
+                            f"\n{prev_config}"
                         )
                     else:
                         logger.warning(
-                            f"Overriding config value {key}={init_backend['bucket_manager'].config[key]} with {backend[key]}"
+                            f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
                         )
-                        init_backend["bucket_manager"].config[key] = backend[key]
+                        prev_config[key] = backend[key]
 
         print_bucket_info(init_backend["bucket_manager"])
         if len(init_backend["bucket_manager"]) == 0:
@@ -399,27 +396,76 @@ def get_dataset(args: dict, accelerator) -> list:
         ]
 
 
-def random_dataloader_iterator(dataloaders):
-    """
-    Create an iterator that yields batches from multiple dataloaders randomly.
+step = None
 
-    Args:
-        dataloaders (list): A list of DataLoader objects.
 
-    Yields:
-        A batch from one of the dataloaders chosen randomly.
-    """
-    # Create iterators for each dataloader
-    iterators = [iter(dataloader) for dataloader in dataloaders]
-    step = 0
-    while iterators:
-        # Randomly select a dataloader iterator
+def random_dataloader_iterator(backends: dict):
+    global step
+    if step is None:
+        step = StateTracker.get_epoch_step()
+    else:
+        step = 0
+
+    gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
+    logger.debug(f"Backends to select from {backends}")
+    while backends:
         step += 1
-        chosen_iter = random.choice(iterators)
+        epoch_step = int(step / gradient_accumulation_steps)
+        StateTracker.set_epoch_step(epoch_step)
+
+        chosen_backend_id = select_dataloader_index(step, backends)
+        logger.debug(f"Chosen backend: {chosen_backend_id}")
+        if chosen_backend_id is None:
+            logger.info("No dataloader iterators were available.")
+            break
+
+        chosen_iter = iter(backends[chosen_backend_id])
 
         try:
-            # Yield a batch from the chosen dataloader
             yield (step, next(chosen_iter))
-        except StopIteration:
-            # If the chosen iterator is exhausted, remove it from the list
-            iterators.remove(chosen_iter)
+        except MultiDatasetExhausted:
+            logger.info(
+                f"Dataset (name={chosen_backend_id}) is now exhausted. Removing from list."
+            )
+            del backends[chosen_backend_id]
+            StateTracker.backend_exhausted(chosen_backend_id)
+            if not backends:
+                logger.info(
+                    "All dataloaders exhausted. Moving to next epoch in main training loop."
+                )
+                for backend_id in backends:
+                    StateTracker.backend_enable(backend_id)
+                return None
+
+
+def select_dataloader_index(step, backends):
+    adjusted_probabilities = {}
+    logger.debug(f"Selecting from backends: {backends}")
+    for backend_id, dataloader in backends.items():
+        backend = StateTracker.get_data_backend(backend_id)
+        prob = backend["config"].get("probability", 1)
+        disable_step = backend["config"].get("disable_after_epoch_step", float("inf"))
+
+        adjusted_prob = (
+            0 if step > disable_step else max(0, prob * (1 - step / disable_step))
+        )
+        adjusted_probabilities[backend_id] = adjusted_prob
+
+    # Shuffle the backends
+    items = list(adjusted_probabilities.items())
+    random.shuffle(items)
+    logger.debug(f"Adjusted probabilities: {items}")
+    total_prob = sum(prob for _, prob in items)
+    if total_prob == 0:
+        return None
+    for backend_id, prob in adjusted_probabilities.items():
+        logger.debug(f"Backend ID: {backend_id}, Probability: {prob}")
+
+    rnd = random.uniform(0, total_prob)
+    cumulative_prob = 0
+    for backend_id, prob in items:  # Use shuffled order
+        cumulative_prob += prob
+        if rnd < cumulative_prob:
+            return backend_id
+
+    return None

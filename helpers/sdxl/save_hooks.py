@@ -1,6 +1,7 @@
 from diffusers.training_utils import EMAModel
 from diffusers import UNet2DConditionModel
-import os, logging, shutil
+from helpers.training.state_tracker import StateTracker
+import os, logging, shutil, json
 
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -33,6 +34,11 @@ class SDXLSaveHook:
             else:
                 shutil.copy2(s, d)
 
+        # Write "training_state.json" to the output directory containing the training state
+        StateTracker.save_training_state(
+            os.path.join(output_dir, "training_state.json")
+        )
+
         # Remove the temporary directory
         shutil.rmtree(temporary_dir)
 
@@ -57,3 +63,12 @@ class SDXLSaveHook:
 
             model.load_state_dict(load_model.state_dict())
             del load_model
+
+        # Check the checkpoint dir for a "training_state.json" file to load
+        training_state_path = os.path.join(input_dir, "training_state.json")
+        if os.path.exists(training_state_path):
+            StateTracker.load_training_state(training_state_path)
+        else:
+            logger.warning(
+                f"Could not find training_state.json in checkpoint dir {input_dir}"
+            )
