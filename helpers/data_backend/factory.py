@@ -436,7 +436,7 @@ def random_dataloader_iterator(backends: dict):
                 )
                 for backend_id in backends:
                     StateTracker.backend_enable(backend_id)
-                return None
+                return (step, None)
 
 
 def select_dataloader_index(step, backends):

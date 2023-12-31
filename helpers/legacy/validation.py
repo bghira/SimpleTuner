@@ -17,6 +17,10 @@ if is_wandb_available():
 from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 
 
+logger = logging.getLogger("validation")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+
+
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
