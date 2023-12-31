@@ -19,6 +19,8 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
+    if "probability" in backend:
+        output["config"]["probability"] = backend["probability"]
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
     else:
@@ -442,7 +444,7 @@ def select_dataloader_index(step, backends):
     logger.debug(f"Selecting from backends: {backends.keys()}")
     for backend_id, dataloader in backends.items():
         backend = StateTracker.get_data_backend(backend_id)
-        prob = backend["config"].get("probability", 1)
+        prob = backend["config"].get("  `", 1)
         disable_step = backend["config"].get("disable_after_epoch_step", float("inf"))
 
         adjusted_prob = (
