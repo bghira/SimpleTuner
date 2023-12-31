@@ -1043,8 +1043,8 @@ def main():
 
                 # Predict the noise residual and compute loss
                 added_cond_kwargs = {
-                    "text_embeds": add_text_embeds,
-                    "time_ids": batch["batch_time_ids"],
+                    "text_embeds": add_text_embeds.to(accelerator.device),
+                    "time_ids": batch["batch_time_ids"].to(accelerator.device),
                 }
                 training_logger.debug("Predicting noise residual.")
                 model_pred = unet(
