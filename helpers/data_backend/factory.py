@@ -157,12 +157,17 @@ def configure_multi_databackend(args: dict, accelerator):
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
+        excluded_keys = ["probability"]
         if prev_config != {}:
             logger.debug(f"Found existing config: {prev_config}")
             # Check if any values differ between the 'backend' values and the 'config' values:
             for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
-                if key in backend and prev_config[key] != backend[key]:
+                if (
+                    key in backend
+                    and prev_config[key] != backend[key]
+                    and key not in excluded_keys
+                ):
                     if not args.override_dataset_config:
                         raise Exception(
                             f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
