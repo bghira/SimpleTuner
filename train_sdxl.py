@@ -1047,6 +1047,14 @@ def main():
                     "time_ids": batch["batch_time_ids"].to(accelerator.device),
                 }
                 training_logger.debug("Predicting noise residual.")
+                logger.debug(
+                    f"\n -> Latents device: {latents.device}"
+                    f"\n -> Noise device: {noise.device}"
+                    f"\n -> Timesteps device: {timesteps.device}"
+                    f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
+                    f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
+                    f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
+                )
                 model_pred = unet(
                     noisy_latents,
                     timesteps,
