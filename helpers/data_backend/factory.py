@@ -90,6 +90,11 @@ def configure_multi_databackend(args: dict, accelerator):
             )
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
+        StateTracker.set_data_backend_config(
+            data_backend_id=init_backend["id"],
+            config=init_backend,
+        )
+
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"]
