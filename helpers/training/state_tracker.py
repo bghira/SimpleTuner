@@ -168,6 +168,10 @@ class StateTracker:
         cls.exhausted_backends = exhausted_backends
 
     @classmethod
+    def clear_exhausted_buckets(cls):
+        cls.exhausted_backends = []
+
+    @classmethod
     def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
         if cls.all_vae_cache_files[data_backend_id] is not None:
             cls.all_vae_cache_files[data_backend_id].clear()

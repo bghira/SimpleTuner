@@ -17,6 +17,10 @@ if is_wandb_available():
 from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 
 
+logger = logging.getLogger("validation")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+
+
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
@@ -88,7 +92,6 @@ def prepare_validation_prompt_list(args, embed_cache):
 
 
 def log_validations(
-    logger,
     accelerator,
     prompt_handler,
     unet,
@@ -98,7 +101,6 @@ def log_validations(
     global_step,
     resume_global_step,
     step,
-    progress_bar,
     text_encoder_1,
     tokenizer,
     vae_path: str,
@@ -114,18 +116,18 @@ def log_validations(
     validation_type: str = "training",
 ):
     if accelerator.is_main_process:
-        # logger.debug(
-        #     f"Performing validation every {args.validation_steps} steps."
-        #     f" We are on step {global_step} and have {len(validation_prompts)} validation prompts."
-        #     f" We have {progress_bar.n} steps of progress done and are resuming from {resume_global_step}."
-        #     f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
-        #     f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
-        # )
+        logger.debug(
+            f"Performing validation every {args.validation_steps} steps."
+            f" We are on step {global_step} and have {len(validation_prompts)} validation prompts."
+            f" We have {global_step} steps of progress done and are resuming from {resume_global_step}."
+            f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
+            f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
+        )
         if validation_type == "finish" or (
             validation_prompts
             and global_step % args.validation_steps == 0
             and step % args.gradient_accumulation_steps == 0
-            and progress_bar.n > resume_global_step
+            and StateTracker.get_global_step() > resume_global_step
         ):
             logger.debug(
                 f"We might want to process validations, because we have {len(validation_prompts)} validation prompts,"

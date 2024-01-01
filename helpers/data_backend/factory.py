@@ -19,6 +19,8 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
+    if "probability" in backend:
+        output["config"]["probability"] = backend["probability"]
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
     else:
@@ -155,12 +157,17 @@ def configure_multi_databackend(args: dict, accelerator):
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
+        excluded_keys = ["probability"]
         if prev_config != {}:
             logger.debug(f"Found existing config: {prev_config}")
             # Check if any values differ between the 'backend' values and the 'config' values:
             for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
-                if key in backend and prev_config[key] != backend[key]:
+                if (
+                    key in backend
+                    and prev_config[key] != backend[key]
+                    and key not in excluded_keys
+                ):
                     if not args.override_dataset_config:
                         raise Exception(
                             f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
@@ -414,7 +421,6 @@ def random_dataloader_iterator(backends: dict):
         StateTracker.set_epoch_step(epoch_step)
 
         chosen_backend_id = select_dataloader_index(step, backends)
-        logger.debug(f"Chosen backend: {chosen_backend_id}")
         if chosen_backend_id is None:
             logger.info("No dataloader iterators were available.")
             break
@@ -433,17 +439,16 @@ def random_dataloader_iterator(backends: dict):
                 logger.info(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
-                for backend_id in backends:
-                    StateTracker.backend_enable(backend_id)
-                return None
+                StateTracker.clear_exhausted_buckets()
+                return (step, None)
 
 
 def select_dataloader_index(step, backends):
     adjusted_probabilities = {}
-    logger.debug(f"Selecting from backends: {backends}")
+    logger.debug(f"Selecting from backends: {backends.keys()}")
     for backend_id, dataloader in backends.items():
         backend = StateTracker.get_data_backend(backend_id)
-        prob = backend["config"].get("probability", 1)
+        prob = backend["config"].get("  `", 1)
         disable_step = backend["config"].get("disable_after_epoch_step", float("inf"))
 
         adjusted_prob = (
@@ -454,12 +459,9 @@ def select_dataloader_index(step, backends):
     # Shuffle the backends
     items = list(adjusted_probabilities.items())
     random.shuffle(items)
-    logger.debug(f"Adjusted probabilities: {items}")
     total_prob = sum(prob for _, prob in items)
     if total_prob == 0:
         return None
-    for backend_id, prob in adjusted_probabilities.items():
-        logger.debug(f"Backend ID: {backend_id}, Probability: {prob}")
 
     rnd = random.uniform(0, total_prob)
     cumulative_prob = 0
