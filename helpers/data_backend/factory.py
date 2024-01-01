@@ -92,7 +92,7 @@ def configure_multi_databackend(args: dict, accelerator):
         init_backend = init_backend_config(backend, args, accelerator)
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
-            config=init_backend,
+            config=init_backend["config"],
         )
 
         if backend["type"] == "local":
