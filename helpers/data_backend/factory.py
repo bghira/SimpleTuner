@@ -133,14 +133,7 @@ def configure_multi_databackend(args: dict, accelerator):
             ),
             delete_problematic_images=args.delete_problematic_images or False,
         )
-        prev_config = {}
-        if hasattr(init_backend["bucket_manager"], "config"):
-            prev_config = init_backend["bucket_manager"].config
-        logger.debug(f"Loaded previous data backend config: {prev_config}")
-        StateTracker.set_data_backend_config(
-            data_backend_id=init_backend["id"],
-            config=prev_config,
-        )
+
         if init_backend["bucket_manager"].has_single_underfilled_bucket():
             raise Exception(
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
@@ -158,7 +151,8 @@ def configure_multi_databackend(args: dict, accelerator):
 
         # Check if there is an existing 'config' in the bucket_manager.config
         excluded_keys = ["probability"]
-        if prev_config != {}:
+        if init_backend["bucket_manager"].config != {}:
+            prev_config = init_backend["bucket_manager"].config
             logger.debug(f"Found existing config: {prev_config}")
             # Check if any values differ between the 'backend' values and the 'config' values:
             for key, _ in prev_config.items():
