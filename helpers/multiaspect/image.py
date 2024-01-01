@@ -145,6 +145,7 @@ class MultiaspectImage:
         )
 
         if crop:
+            logger.debug(f"We are cropping the image. Data backend: {id}")
             crop_width, crop_height = (
                 (resolution, resolution)
                 if crop_aspect == "square"
