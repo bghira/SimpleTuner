@@ -135,8 +135,12 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
         crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop", StateTracker.get_args().crop
+            "crop", None
         )
+        logger.debug(f"Crop is {crop}")
+        if crop is None:
+            crop = StateTracker.get_args().crop
+            logger.debug(f"Crop is now the global value, {crop}")
         crop_style = StateTracker.get_data_backend_config(data_backend_id=id).get(
             "crop_style", StateTracker.get_args().crop_style
         )
@@ -145,6 +149,7 @@ class MultiaspectImage:
         )
 
         if crop:
+            logger.debug(f"We are cropping the image. Data backend: {id}")
             crop_width, crop_height = (
                 (resolution, resolution)
                 if crop_aspect == "square"

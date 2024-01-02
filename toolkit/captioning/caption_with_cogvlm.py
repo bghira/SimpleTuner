@@ -59,6 +59,18 @@ def parse_args():
             "When loading CogVLM, you can load it in fp16, bf16, fp8 or fp4 precision to reduce memory. Default: fp4"
         ),
     )
+    parser.add_argument(
+        "--disable_filename_cleaning",
+        action="store_true",
+        default=False,
+        help="Disable filename cleaning. This may result in filenames that are too long for some operating systems, but better captions.",
+    )
+    parser.add_argument(
+        "--query_str",
+        type=str,
+        default="Caption this image accurately, with as few words as possible.",
+        help="The query string to use for captioning. This instructs the model how to behave.",
+    )
     return parser.parse_args()
 
 
@@ -73,7 +85,8 @@ def eval_image(
     image: Image,
     model,
     tokenizer,
-    query: str = "Describe the image accurately and concisely, with few fill words.",
+    torch_dtype,
+    query: str,
 ):
     inputs = model.build_conversation_input_ids(
         tokenizer, query=query, history=[], images=[image]
@@ -82,7 +95,7 @@ def eval_image(
         "input_ids": inputs["input_ids"].unsqueeze(0).to("cuda"),
         "token_type_ids": inputs["token_type_ids"].unsqueeze(0).to("cuda"),
         "attention_mask": inputs["attention_mask"].unsqueeze(0).to("cuda"),
-        "images": [[inputs["images"][0].to("cuda").to(torch.bfloat16)]],
+        "images": [[inputs["images"][0].to("cuda").to(torch_dtype)]],
     }
     gen_kwargs = {"max_new_tokens": 77, "do_sample": False}
 
@@ -92,16 +105,19 @@ def eval_image(
         return tokenizer.decode(outputs[0])
 
 
-def content_to_filename(content, filter_terms):
+def content_to_filename(content, filter_terms, disable_filename_cleaning: bool = False):
     """
     Function to convert content to filename by stripping specified terms,
     replacing non-alphanumeric characters and spaces, converting to lowercase,
     removing leading/trailing underscores, and limiting filename length to 230.
     """
+    cleaned_content = content.replace("</s>", "")
+    if disable_filename_cleaning:
+        return f"{cleaned_content}.png"
     for term in filter_terms:
-        content = content.replace(term, "")
+        cleaned_content = cleaned_content.replace(term, "")
     # Split on '--' and take the first part
-    content = content.split("--")[0]
+    cleaned_content = cleaned_content.split("--")[0]
 
     # Remove URLs
     cleaned_content = re.sub(r"https*://\S*", "", content)
@@ -111,7 +127,6 @@ def content_to_filename(content, filter_terms):
     cleaned_content = cleaned_content.replace(" its ", " ")
 
     # Remove </s>
-    cleaned_content = cleaned_content.replace("</s>", "")
 
     # Replace non-alphanumeric characters and spaces, convert to lowercase, remove leading/trailing underscores
     cleaned_content = re.sub(r"[^a-zA-Z0-9 ]", "", cleaned_content)
@@ -140,6 +155,8 @@ def process_directory(
     save_interval,
     progress_file,
     filter_terms,
+    torch_dtype,
+    query_str: str,
 ):
     processed_file_counter = 0
 
@@ -155,6 +172,7 @@ def process_directory(
             continue
 
         full_filepath = os.path.join(image_dir, filename)
+        logger.info(f"Full filepath: {full_filepath}")
         if os.path.isdir(full_filepath):
             process_directory(
                 args,
@@ -164,15 +182,24 @@ def process_directory(
                 tokenizer,
                 processed_files,
                 caption_strategy,
+                save_interval,
+                progress_file,
+                filter_terms,
+                torch_dtype,
+                query_str,
             )
         elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
             try:
                 with Image.open(full_filepath) as image:
-                    best_match = eval_image(image, model, tokenizer)
+                    best_match = eval_image(
+                        image, model, tokenizer, torch_dtype, query_str
+                    )
                     logging.info(f"Best match for {filename}: {best_match}")
                     # Save based on caption strategy
                     new_filename = (
-                        content_to_filename(best_match, filter_terms)
+                        content_to_filename(
+                            best_match, filter_terms, args.disable_filename_cleaning
+                        )
                         if caption_strategy == "filename"
                         else filename
                     )
@@ -213,7 +240,7 @@ def process_directory(
 def main():
     args = parse_args()
     send_to_cuda = load_in_4bit = load_in_8bit = False
-    torch_dtype = torch.float16
+    torch_dtype = torch.bfloat16
     if args.precision == "bf16" or args.precision == "fp16":
         send_to_cuda = True
         if args.precision == "bf16":
@@ -275,6 +302,8 @@ def main():
         args.save_interval,
         progress_file,
         filter_terms,
+        torch_dtype,
+        args.query_str,
     )
 
     # Save progress

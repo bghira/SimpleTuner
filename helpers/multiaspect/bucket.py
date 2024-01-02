@@ -124,7 +124,13 @@ class BucketManager:
                 "aspect_ratio_bucket_indices", {}
             )
             self.config = cache_data.get("config", {})
-            logger.debug(f"Setting config to {self.config}")
+            if self.config != {}:
+                logger.debug(f"Setting config to {self.config}")
+                logger.debug(f"Loaded previous data backend config: {self.config}")
+                StateTracker.set_data_backend_config(
+                    data_backend_id=self.id,
+                    config=self.config,
+                )
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
 
     def save_cache(self, enforce_constraints: bool = False):
