@@ -1,158 +1,178 @@
 import os, logging, re, random, argparse, json, torch
 from PIL import Image
 from tqdm import tqdm
-import requests
+import requests, io
+from transformers import BitsAndBytesConfig
 
-from llava.constants import (
-    IMAGE_TOKEN_INDEX,
-    DEFAULT_IMAGE_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IM_END_TOKEN,
-    IMAGE_PLACEHOLDER,
-)
-from llava.mm_utils import (
-    process_images,
-    tokenizer_image_token,
-    get_model_name_from_path,
-    KeywordsStoppingCriteria,
-)
-from llava.conversation import conv_templates, SeparatorStyle
-from llava.model.builder import load_pretrained_model
+from transformers import AutoProcessor, LlavaForConditionalGeneration
 
 logger = logging.getLogger("Captioner")
 
-# Directory where the images are located
-input_directory_path = "/notebooks/datasets/Hands"
-output_dir = "/notebooks/datasets/caption_output"
-caption_strategy = "filename"
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Process images and generate captions."
+    )
+    parser.add_argument(
+        "--input_dir", type=str, required=True, help="Directory containing the images."
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Directory to save processed images.",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=16, help="Batch size for processing."
+    )
+    parser.add_argument(
+        "--caption_strategy",
+        type=str,
+        default="filename",
+        choices=["filename", "text"],
+        help="Strategy for saving captions.",
+    )
+    parser.add_argument(
+        "--filter_list",
+        type=str,
+        default=None,
+        help=(
+            "Path to a txt file containing terms or sentence fragments to filter out."
+            " These will be removed from the final caption."
+        ),
+    )
+    parser.add_argument(
+        "--save_interval",
+        type=int,
+        default=100,
+        help="Interval to save progress (number of files processed).",
+    )
+    parser.add_argument(
+        "--delete_after_caption",
+        action="store_true",
+        default=False,
+        help="Delete *input* image files after captioning.",
+    )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        choices=["bf16", "fp16", "fp4", "fp8"],
+        default="fp4",
+        help=(
+            "When loading CogVLM, you can load it in fp16, bf16, fp8 or fp4 precision to reduce memory. Default: fp4"
+        ),
+    )
+    parser.add_argument(
+        "--disable_filename_cleaning",
+        action="store_true",
+        default=False,
+        help="Disable filename cleaning. This may result in filenames that are too long for some operating systems, but better captions.",
+    )
+    parser.add_argument(
+        "--query_str",
+        type=str,
+        default="Caption this image accurately, with as few words as possible.",
+        help="The query string to use for captioning. This instructs the model how to behave.",
+    )
+    parser.add_argument(
+        "--model_path", type=str, default="llava-hf/llava-1.5-7b-hf", help="Model path"
+    )
+    parser.add_argument(
+        "--progress_file",
+        type=str,
+        default="progress.json",
+        help="File to save progress",
+    )
+    parser.add_argument(
+        "--max_new_tokens",
+        type=int,
+        default=90,
+        help=(
+            "The maximum number of tokens a stable diffusion model can reasonably use is 77."
+            " This allows returning longer than 77 token long captions, though their utility may be reduced."
+        ),
+    )
+    args = parser.parse_args()
+
+    return parser.parse_args()
 
 
 # Function to load LLaVA model
-def load_llava_model(model_path: str = "liuhaotian/llava-v1.5-7b"):
-    tokenizer, model, image_processor, context_len = load_pretrained_model(
-        model_path=model_path,
-        model_base=None,
-        model_name=get_model_name_from_path(model_path),
+def load_llava_model(model_path: str = "llava-hf/llava-1.5-7b-hf"):
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
     )
-    return tokenizer, model, image_processor, context_len
+    model = LlavaForConditionalGeneration.from_pretrained(
+        model_path, quantization_config=bnb_config, device_map="auto"
+    )
+    processor = AutoProcessor.from_pretrained(model_path)
+
+    return model, processor
 
 
 # Function to evaluate the model
-def eval_model(args, tokenizer, model, image_processor, context_len):
-    qs = args.query
-    image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
-    if IMAGE_PLACEHOLDER in qs:
-        if model.config.mm_use_im_start_end:
-            qs = re.sub(IMAGE_PLACEHOLDER, image_token_se, qs)
-        else:
-            qs = re.sub(IMAGE_PLACEHOLDER, DEFAULT_IMAGE_TOKEN, qs)
-    else:
-        if model.config.mm_use_im_start_end:
-            qs = image_token_se + "\n" + qs
-        else:
-            qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
-
-    conv_mode = "llava_v1"
-    if args.conv_mode is not None and conv_mode != args.conv_mode:
-        print(
-            "[WARNING] the auto inferred conversation mode is {}, while `--conv-mode` is {}, using {}".format(
-                conv_mode, args.conv_mode, args.conv_mode
-            )
-        )
-    else:
-        args.conv_mode = conv_mode
-
-    conv = conv_templates[args.conv_mode].copy()
-    conv.append_message(conv.roles[0], qs)
-    conv.append_message(conv.roles[1], None)
-    prompt = conv.get_prompt()
-    images = [args.image_file]
-    images_tensor = process_images(images, image_processor, model.config).to(
-        model.device, dtype=torch.float16
-    )
-
-    input_ids = (
-        tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt")
-        .unsqueeze(0)
-        .cuda()
-    )
-
-    stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-    keywords = [stop_str]
-    stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
-
+def eval_model(args, image_file, model, processor):
+    images = [image_file]
+    prompt = f"<image>\nUSER: {args.query_str}\nASSISTANT:"
+    inputs = processor(text=prompt, images=images, return_tensors="pt").to("cuda")
     with torch.inference_mode():
-        output_ids = model.generate(
-            input_ids,
-            images=images_tensor,
-            do_sample=True if args.temperature > 0 else False,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            num_beams=args.num_beams,
-            max_new_tokens=args.max_new_tokens,
-            use_cache=True,
-            stopping_criteria=[stopping_criteria],
+        generate_ids = model.generate(
+            **inputs,
+            max_length=args.max_new_tokens,
         )
 
-    input_token_len = input_ids.shape[1]
-    n_diff_input_output = (input_ids != output_ids[:, :input_token_len]).sum().item()
-    if n_diff_input_output > 0:
-        print(
-            f"[Warning] {n_diff_input_output} output_ids are not the same as the input_ids"
-        )
-    outputs = tokenizer.batch_decode(
-        output_ids[:, input_token_len:], skip_special_tokens=True
+    outputs = processor.batch_decode(
+        generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )[0]
-    outputs = outputs.strip()
-    if outputs.endswith(stop_str):
-        outputs = outputs[: -len(stop_str)]
-    outputs = outputs.strip()
+    # Pull everything after "ASSISTANT":
+    outputs = outputs.split("ASSISTANT:")[1].strip()
     return outputs
 
 
-def process_and_evaluate_image(
-    image_path: str,
-    tokenizer,
-    model,
-    image_processor,
-    context_len: int,
-    model_path: str = "liuhaotian/llava-v1.5-7b",
-    prompt: str = "Describe what the hand is doing.",
-):
+def process_and_evaluate_image(args, image_path: str, model, processor):
     if image_path.startswith("http://") or image_path.startswith("https://"):
         response = requests.get(image_path)
         image = Image.open(io.BytesIO(response.content))
     else:
         image = Image.open(image_path)
 
-    llava_args = type(
-        "Args",
-        (),
-        {
-            "model_path": model_path,
-            "model_base": None,
-            "model_name": get_model_name_from_path(model_path),
-            "query": prompt,
-            "conv_mode": None,
-            "image_file": image,
-            "sep": ",",
-            "temperature": 0.2,
-            "top_p": 0.1,
-            "num_beams": 1,
-            "max_new_tokens": context_len,
-        },
-    )()
+    def resize_for_condition_image(input_image: Image, resolution: int):
+        if resolution == 0:
+            return input_image
+        input_image = input_image.convert("RGB")
+        W, H = input_image.size
+        aspect_ratio = round(W / H, 2)
+        msg = f"Inspecting image of aspect {aspect_ratio} and size {W}x{H} to "
+        if W < H:
+            W = resolution
+            H = int(resolution / aspect_ratio)  # Calculate the new height
+        elif H < W:
+            H = resolution
+            W = int(resolution * aspect_ratio)  # Calculate the new width
+        if W == H:
+            W = resolution
+            H = resolution
+        msg = f"{msg} {W}x{H}."
+        logger.debug(msg)
+        img = input_image.resize((W, H), resample=Image.LANCZOS)
+        return img
 
-    return eval_model(llava_args, tokenizer, model, image_processor, context_len)
+    return eval_model(args, resize_for_condition_image(image, 384), model, processor)
 
 
 # Function to convert content to filename
-def content_to_filename(content):
+def content_to_filename(args, content):
     """
     Function to convert content to filename by stripping everything after '--',
     replacing non-alphanumeric characters and spaces, converting to lowercase,
     removing leading/trailing underscores, and limiting filename length to 128.
     """
+    # If --disable_filename_cleaning is provided, we just append ".png":
+    if args.disable_filename_cleaning:
+        return f"{content}.png"
     # Split on '--' and take the first part
     content = content.split("--")[0]
 
@@ -160,8 +180,8 @@ def content_to_filename(content):
     cleaned_content = re.sub(r"https*://\S*", "", content)
 
     # Replace non-alphanumeric characters and spaces, convert to lowercase, remove leading/trailing underscores
-    cleaned_content = re.sub(r"[^a-zA-Z0-9 ]", "", cleaned_content)
-    cleaned_content = cleaned_content.replace(" ", "_").lower().strip("_")
+    # cleaned_content = re.sub(r"[^a-zA-Z0-9 ]", "", cleaned_content)
+    # cleaned_content = cleaned_content.replace(" ", "_").lower().strip("_")
 
     # If cleaned_content is empty after removing URLs, generate a random filename
     if cleaned_content == "":
@@ -176,9 +196,7 @@ def content_to_filename(content):
 
 
 # Main processing function with progress saving
-def process_directory(
-    image_dir, output_dir, progress_file, model, tokenizer, image_processor, context_len
-):
+def process_directory(args, image_dir, output_dir, progress_file, model, processor):
     # Load progress if exists
     if os.path.exists(progress_file):
         with open(progress_file, "r") as file:
@@ -188,24 +206,28 @@ def process_directory(
 
     for filename in tqdm(os.listdir(image_dir), desc="Processing Images"):
         full_filepath = os.path.join(image_dir, filename)
-        if filename in processed_files:
+        if filename in processed_files[image_dir]:
+            logging.info(f"File has already been processed: {filename}")
             continue
 
         if os.path.isdir(full_filepath):
+            logging.info(f"Found directory to traverse: {full_filepath}")
             process_directory(
-                full_filepath, model, context_len
+                args, full_filepath, output_dir, progress_file, model, processor
             )  # Recursive call for directories
         elif filename.lower().endswith((".jpg", ".png")):
             try:
+                logging.info(f"Attempting to load image: {filename}")
                 with Image.open(full_filepath) as image:
+                    logging.info(f"Processing image: {filename}")
                     best_match = process_and_evaluate_image(
-                        full_filepath, tokenizer, model, image_processor, context_len
+                        args, full_filepath, model, processor
                     )
                     logging.info(f"Best match for {filename}: {best_match}")
                     # Save based on caption strategy
                     new_filename = (
-                        content_to_filename(best_match)
-                        if caption_strategy == "filename"
+                        content_to_filename(args, best_match)
+                        if args.caption_strategy == "filename"
                         else filename
                     )
                     new_filepath = os.path.join(output_dir, new_filename)
@@ -221,12 +243,14 @@ def process_directory(
 
                     image.save(new_filepath)
 
-                if caption_strategy == "text":
+                if args.caption_strategy == "text":
                     with open(new_filepath + ".txt", "w") as f:
                         f.write(best_match)
 
                 # Update progress
-                processed_files[filename] = best_match
+                if image_dir not in processed_files:
+                    processed_files[image_dir] = {}
+                processed_files[image_dir][filename] = best_match
                 with open(progress_file, "w") as file:
                     json.dump(processed_files, file)
 
@@ -235,23 +259,7 @@ def process_directory(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Image Captioning with LLaVA model")
-    parser.add_argument(
-        "--input_dir", type=str, required=True, help="Input directory path"
-    )
-    parser.add_argument(
-        "--output_dir", type=str, required=True, help="Output directory path"
-    )
-    parser.add_argument(
-        "--model_path", type=str, default="liuhaotian/llava-v1.5-7b", help="Model path"
-    )
-    parser.add_argument(
-        "--progress_file",
-        type=str,
-        default="progress.json",
-        help="File to save progress",
-    )
-    args = parser.parse_args()
+    args = parse_args()
 
     logging.basicConfig(level=logging.INFO)
 
@@ -260,17 +268,16 @@ def main():
         os.makedirs(args.output_dir)
 
     # Load model
-    tokenizer, model, image_processor, context_len = load_llava_model(args.model_path)
+    model, processor = load_llava_model(args.model_path)
 
     # Process directory
     process_directory(
+        args,
         args.input_dir,
         args.output_dir,
         args.progress_file,
         model,
-        tokenizer,
-        image_processor,
-        context_len,
+        processor,
     )
 
 
