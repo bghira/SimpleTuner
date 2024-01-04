@@ -259,6 +259,11 @@ class VAECache:
             for i, filename in enumerate(full_filenames)
             if not self.data_backend.exists(filename)
         ]
+        uncached_image_paths = [
+            filepaths[i]
+            for i, filename in enumerate(full_filenames)
+            if i in uncached_image_indices
+        ]
         # if len(uncached_image_indices) > 0:
         #     logger.debug(
         #         f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
@@ -271,7 +276,7 @@ class VAECache:
         if len(uncached_image_indices) > 0 and load_from_cache:
             # We wanted only uncached images. Something went wrong.
             raise Exception(
-                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_images}"
+                f"Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_image_paths}"
             )
 
         if load_from_cache:
