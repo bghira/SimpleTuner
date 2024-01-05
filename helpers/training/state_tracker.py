@@ -112,6 +112,7 @@ class StateTracker:
 
     @classmethod
     def set_epoch(cls, epoch: int):
+        logger.debug(f"Current training state: {cls.get_training_state()}")
         cls.epoch = epoch
 
     @classmethod
