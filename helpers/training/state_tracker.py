@@ -130,6 +130,7 @@ class StateTracker:
         cls.set_epoch_step(training_state["epoch_step"])
         cls.set_epoch(training_state["epoch"])
         cls.set_exhausted_backends(training_state["exhausted_backends"])
+        logging.debug(f"Training state loaded: {cls.get_training_state()}")
 
     @classmethod
     def save_training_state(cls, state_path: str):
@@ -139,6 +140,7 @@ class StateTracker:
             "epoch": cls.epoch,
             "exhausted_backends": cls.exhausted_backends,
         }
+        logger.debug(f"Saving training state: {training_state}")
         with open(state_path, "w") as f:
             json.dump(training_state, f)
 
