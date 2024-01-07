@@ -10,6 +10,7 @@ The features implemented will eventually be shared between SD 2.1 and SDXL as mu
 * Aspect bucketing is a "just works" thing; fill a folder of images and let it rip
 * SDXL trainer caches the VAE latents and text embeddings to save on VRAM during training
 * Full featured fine-tuning support for SDXL and SD 2.x
+* LoRA training support for SDXL
 
 ## Table of Contents
 
@@ -40,7 +41,8 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 
 - Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during the forward pass.
 - Precomputed captions are run through the text encoder(s) and saved to storage to save on VRAM.
-- Trainable on a 40G GPU at lower base resolutions.
+- Trainable on a 24G GPU, or even down to 16G at lower base resolutions.
+- LoRA training for SDXL that uses less than 16G VRAM.
 - DeepSpeed integration allowing for [training SDXL on 12G of VRAM](/documentation/DEEPSPEED.md) - although, incidentally, DeepSpeed stage 1 is required for SimpleTuner to work on **24G of VRAM** as well.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
 - Support for a variety of image sizes, not limited to 768x768 squares, for improved generalization across aspect ratios.

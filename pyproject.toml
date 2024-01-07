@@ -38,6 +38,7 @@ torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
 colorama = "^0.4.6"
 numpy = "1.26"
+peft = "^0.7.1"
 
 
 [build-system]

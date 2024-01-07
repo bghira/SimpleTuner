@@ -8,6 +8,11 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ## 🌟 Core Model Configuration
 
+### `--model_type`
+
+- **What**: Choices: lora, full. Default: full
+- **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
@@ -163,8 +168,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 This is a basic overview meant to help you get started. For a complete list of options and more detailed explanations, please refer to the full specification:
 
 ```
-usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA]
-                     --pretrained_model_name_or_path
+usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
+                     [--rank RANK] --pretrained_model_name_or_path
                      PRETRAINED_MODEL_NAME_OR_PATH
                      [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                      [--prediction_type {epsilon,v_prediction,sample}]
@@ -272,6 +277,11 @@ options:
                         SNR weighting gamma to be used if rebalancing the
                         loss. Recommended value is 5.0. More details here:
                         https://arxiv.org/abs/2303.09556.
+  --model_type {full,lora}
+                        The training type to use. 'full' will train the full
+                        model, while 'lora' will train the LoRA model. LoRA is
+                        a smaller model that can be used for faster training.
+  --rank RANK           The dimension of the LoRA update matrices.
   --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
                         huggingface.co/models.
