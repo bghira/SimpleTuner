@@ -78,7 +78,9 @@ def configure_multi_databackend(args: dict, accelerator):
         )
     all_captions = []
     for backend in data_backend_config:
-        if "disabled" in backend and backend["disabled"]:
+        if ("disabled" in backend and backend["disabled"]) or (
+            "disable" in backend and backend["disable"]
+        ):
             logger.info(
                 f"Skipping disabled data backend {backend['id']} in config file."
             )

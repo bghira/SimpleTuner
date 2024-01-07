@@ -43,27 +43,6 @@ class SDXLSaveHook:
         shutil.rmtree(temporary_dir)
 
     def load_model_hook(self, models, input_dir):
-        if self.args.use_ema:
-            load_model = EMAModel.from_pretrained(
-                os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
-            )
-            self.ema_unet.load_state_dict(load_model.state_dict())
-            self.ema_unet.to(self.accelerator.device)
-            del load_model
-
-        for i in range(len(models)):
-            # pop models so that they are not loaded again
-            model = models.pop()
-
-            # load diffusers style into model
-            load_model = UNet2DConditionModel.from_pretrained(
-                input_dir, subfolder="unet"
-            )
-            model.register_to_config(**load_model.config)
-
-            model.load_state_dict(load_model.state_dict())
-            del load_model
-
         # Check the checkpoint dir for a "training_state.json" file to load
         training_state_path = os.path.join(input_dir, "training_state.json")
         if os.path.exists(training_state_path):
@@ -72,3 +51,31 @@ class SDXLSaveHook:
             logger.warning(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
+
+        if self.args.use_ema:
+            load_model = EMAModel.from_pretrained(
+                os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
+            )
+            self.ema_unet.load_state_dict(load_model.state_dict())
+            self.ema_unet.to(self.accelerator.device)
+            del load_model
+
+        return_exception = False
+        for i in range(len(models)):
+            try:
+                # pop models so that they are not loaded again
+                model = models.pop()
+
+                # load diffusers style into model
+                load_model = UNet2DConditionModel.from_pretrained(
+                    input_dir, subfolder="unet"
+                )
+                model.register_to_config(**load_model.config)
+
+                model.load_state_dict(load_model.state_dict())
+                del load_model
+            except Exception as e:
+                return_exception = e
+
+        if return_exception:
+            raise Exception("Could not load model: {}".format(return_exception))
