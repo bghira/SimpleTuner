@@ -712,7 +712,6 @@ def main():
         results = accelerator.prepare(
             unet, lr_scheduler, optimizer, train_dataloaders[0]
         )
-        logger.debug(f"Accelerate prepare resules: {results}")
         unet = results[0]
         lr_scheduler = results[1]
         optimizer = results[2]
@@ -843,6 +842,8 @@ def main():
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
         )
     current_epoch = first_epoch
+    StateTracker.set_epoch(current_epoch)
+
     if current_epoch >= args.num_train_epochs:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
@@ -930,6 +931,7 @@ def main():
                 f"Just completed epoch {current_epoch}. Beginning epoch {epoch}. Final epoch will be {args.num_train_epochs}"
             )
         current_epoch = epoch
+        StateTracker.set_epoch(epoch)
         unet.train()
         if current_epoch_step is not None:
             # We are resetting to the next epoch, if it is not none.
@@ -1059,12 +1061,16 @@ def main():
                     f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
                     f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
                 )
-                model_pred = unet(
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states,
-                    added_cond_kwargs=added_cond_kwargs,
-                ).sample
+                if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
+                    model_pred = unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states,
+                        added_cond_kwargs=added_cond_kwargs,
+                    ).sample
+                else:
+                    # Dummy model prediction for debugging.
+                    model_pred = torch.randn_like(noisy_latents)
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if noise_scheduler.config.prediction_type == "sample":
@@ -1123,14 +1129,17 @@ def main():
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 # Backpropagate
-                training_logger.debug(f"Backwards pass.")
-                accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
-                training_logger.debug(f"Stepping components forward.")
-                optimizer.step()
-                lr_scheduler.step(**scheduler_kwargs)
-                optimizer.zero_grad(set_to_none=args.set_grads_to_none)
+                if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
+                    training_logger.debug(f"Backwards pass.")
+                    accelerator.backward(loss)
+                    if accelerator.sync_gradients:
+                        accelerator.clip_grad_norm_(
+                            unet.parameters(), args.max_grad_norm
+                        )
+                    training_logger.debug(f"Stepping components forward.")
+                    optimizer.step()
+                    lr_scheduler.step(**scheduler_kwargs)
+                    optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
