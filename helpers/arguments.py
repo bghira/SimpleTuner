@@ -19,6 +19,22 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--model_type",
+        type=str,
+        choices=["full", "lora"],
+        default="full",
+        help=(
+            "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
+            " LoRA is a smaller model that can be used for faster training."
+        ),
+    )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=4,
+        help=("The dimension of the LoRA update matrices."),
+    )
+    parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,

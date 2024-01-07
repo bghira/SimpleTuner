@@ -76,6 +76,9 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, DDIMScheduler
+from diffusers.loaders import LoraLoaderMixin
+from peft import LoraConfig
+from peft.utils import get_peft_model_state_dict
 from diffusers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
@@ -86,7 +89,12 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
     StableDiffusionXLPipeline,
 )
 from diffusers.training_utils import EMAModel
-from diffusers.utils import check_min_version, deprecate, is_wandb_available
+from diffusers.utils import (
+    check_min_version,
+    deprecate,
+    convert_state_dict_to_diffusers,
+    is_wandb_available,
+)
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
@@ -330,6 +338,50 @@ def main():
     vae.requires_grad_(False)
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
+    unet = UNet2DConditionModel.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+    )
+    unet.to(accelerator.device, dtype=weight_dtype)
+    if args.enable_xformers_memory_efficient_attention:
+        logger.info("Enabling xformers memory-efficient attention.")
+        if is_xformers_available():
+            import xformers
+
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.20"):
+                logger.warn(
+                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
+                )
+            unet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
+
+    if args.model_type == "lora":
+        logger.info("Using LoRA training mode.")
+        # now we will add new LoRA weights to the attention layers
+        # Set correct lora layers
+        unet.requires_grad_(False)
+        unet_lora_config = LoraConfig(
+            r=args.rank,
+            lora_alpha=args.rank,
+            init_lora_weights="gaussian",
+            target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+        )
+
+        unet.add_adapter(unet_lora_config)
+
+    if args.mixed_precision == "bf16":
+        models = [unet]
+        if args.train_text_encoder:
+            models.extend([text_encoder_1, text_encoder_2])
+        for model in models:
+            for param in model.parameters():
+                # only upcast trainable parameters (LoRA) into fp32
+                if param.requires_grad:
+                    param.data = param.to(torch.float32)
+
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
     vae_dtype = torch.float32
@@ -431,7 +483,7 @@ def main():
         text_encoder_2 = None
         gc.collect()
         torch.cuda.empty_cache()
-    else:
+    elif not args.train_text_encoder:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         text_encoder_1.to("cpu")
         text_encoder_2.to("cpu")
@@ -474,24 +526,6 @@ def main():
     logger.info(
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
-    if args.enable_xformers_memory_efficient_attention:
-        logger.info("Enabling xformers memory-efficient attention.")
-        if is_xformers_available():
-            import xformers
-
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.20"):
-                logger.warn(
-                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
-                )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError(
-                "xformers is not available. Make sure it is installed correctly"
-            )
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
@@ -612,14 +646,30 @@ def main():
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
+
+    if args.model_type == "full":
+        params_to_optimize = unet.parameters()
+        if args.train_text_encoder:
+            raise ValueError(
+                "Full model tuning does not currently support text encoder training."
+            )
+    elif args.model_type == "lora":
+        params_to_optimize = list(filter(lambda p: p.requires_grad, unet.parameters()))
+        if args.train_text_encoder:
+            params_to_optimize = (
+                params_to_optimize
+                + list(filter(lambda p: p.requires_grad, text_encoder_1.parameters()))
+                + list(filter(lambda p: p.requires_grad, text_encoder_2.parameters()))
+            )
+
     if use_deepspeed_optimizer:
-        optimizer = optimizer_class(unet.parameters())
+        optimizer = optimizer_class(params_to_optimize)
     else:
         logger.info(
             f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
         )
         optimizer = optimizer_class(
-            unet.parameters(),
+            params_to_optimize,
             **extra_optimizer_args,
         )
 
@@ -694,8 +744,11 @@ def main():
 
     model_hooks = SDXLSaveHook(
         args=args,
+        unet=unet,
         ema_unet=ema_unet,
         accelerator=accelerator,
+        text_encoder_1=text_encoder_1,
+        text_encoder_2=text_encoder_2,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
@@ -727,6 +780,12 @@ def main():
             continue
         train_dataloaders.append(accelerator.prepare(backend["train_dataloader"]))
     idx_count = 0
+
+    if args.model_type == "lora" and args.train_text_encoder:
+        logger.info("Preparing text encoders for training.")
+        text_encoder_1, text_encoder_2 = accelerator.prepare(
+            text_encoder_1, text_encoder_2
+        )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     total_num_batches = sum(
@@ -933,6 +992,10 @@ def main():
         current_epoch = epoch
         StateTracker.set_epoch(epoch)
         unet.train()
+        if args.model_type == "lora" and args.train_text_encoder:
+            text_encoder_1.train()
+            text_encoder_2.train()
+
         if current_epoch_step is not None:
             # We are resetting to the next epoch, if it is not none.
             current_epoch_step = 0
@@ -1060,6 +1123,12 @@ def main():
                     f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
                     f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
                     f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
+                    f"\n -> Latents dtype: {latents.dtype}"
+                    f"\n -> Noise dtype: {noise.dtype}"
+                    f"\n -> Timesteps dtype: {timesteps.dtype}"
+                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
+                    f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
+                    f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
                 )
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     model_pred = unet(
@@ -1133,9 +1202,14 @@ def main():
                     training_logger.debug(f"Backwards pass.")
                     accelerator.backward(loss)
                     if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(
-                            unet.parameters(), args.max_grad_norm
-                        )
+                        if args.model_type == "lora":
+                            accelerator.clip_grad_norm_(
+                                params_to_optimize, args.max_grad_norm
+                            )
+                        elif args.model_type == "full":
+                            accelerator.clip_grad_norm_(
+                                params_to_optimize, args.max_grad_norm
+                            )
                     training_logger.debug(f"Stepping components forward.")
                     optimizer.step()
                     lr_scheduler.step(**scheduler_kwargs)
@@ -1293,8 +1367,37 @@ def main():
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unet = accelerator.unwrap_model(unet)
-        if args.use_ema:
+        if args.model_type == "lora":
+            unet_lora_layers = convert_state_dict_to_diffusers(
+                get_peft_model_state_dict(unet)
+            )
+            if args.train_text_encoder:
+                text_encoder_1 = accelerator.unwrap_model(text_encoder_1)
+                text_encoder_lora_layers = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(text_encoder_1)
+                )
+                text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
+                text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(text_encoder_2)
+                )
+            else:
+                text_encoder_lora_layers = None
+                text_encoder_2_lora_layers = None
+
+            StableDiffusionXLPipeline.save_lora_weights(
+                save_directory=args.output_dir,
+                unet_lora_layers=unet_lora_layers,
+                text_encoder_lora_layers=text_encoder_lora_layers,
+                text_encoder_2_lora_layers=text_encoder_2_lora_layers,
+            )
+
+            del unet
+            del text_encoder_lora_layers
+            del text_encoder_2_lora_layers
+            torch.cuda.empty_cache()
+        elif args.use_ema:
             ema_unet.copy_to(unet.parameters())
+
         if StateTracker.get_vae() is None:
             StateTracker.set_vae(
                 AutoencoderKL.from_pretrained(
@@ -1327,14 +1430,20 @@ def main():
             timestep_spacing=args.training_scheduler_timestep_spacing,
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         )
-        pipeline.save_pretrained(
-            os.path.join(args.output_dir, "pipeline"), safe_serialization=True
-        )
+        if args.model_type == "full":
+            pipeline.save_pretrained(
+                os.path.join(args.output_dir, "pipeline"), safe_serialization=True
+            )
+        elif args.model_type == "lora":
+            # load attention processors
+            pipeline.load_lora_weights(args.output_dir)
 
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
-                folder_path=os.path.join(args.output_dir, "pipeline"),
+                folder_path=os.path.join(args.output_dir, "pipeline")
+                if args.model_type == "full"
+                else args.output_dir,
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
