@@ -30,8 +30,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         data_backend: BaseDataBackend,
         accelerator,
         batch_size: int,
-        seen_images_path: str,
-        state_path: str,
         debug_aspect_buckets: bool = False,
         delete_unwanted_images: bool = False,
         minimum_image_size: int = None,
@@ -47,7 +45,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - id: An identifier to link this with its VAECache and DataBackend objects.
         - bucket_manager: An initialised instance of BucketManager.
         - batch_size: Number of samples to draw per batch.
-        - seen_images_path: Path to store the seen images.
         - state_path: Path to store the current state of the sampler.
         - debug_aspect_buckets: Flag to log state for debugging purposes.
         - delete_unwanted_images: Flag to decide whether to delete unwanted (small) images or just remove from the bucket.
@@ -69,8 +66,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.data_backend = data_backend
         self.current_bucket = None
         self.batch_size = batch_size
-        self.seen_images_path = seen_images_path
-        self.state_path = state_path
         if debug_aspect_buckets:
             self.logger.setLevel(logging.DEBUG)
         self.delete_unwanted_images = delete_unwanted_images
@@ -80,12 +75,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.use_captions = use_captions
         self.caption_strategy = caption_strategy
         self.prepend_instance_prompt = prepend_instance_prompt
-        self.load_states(
-            state_path=state_path,
-        )
-        self.change_bucket()
+        self.buckets = []
+        self.exhausted_buckets = []
 
-    def save_state(self, state_path: str = None):
+    def save_state(self, state_path: str):
         """
         This method should be called when the accelerator save hook is called,
          so that the state is correctly restored with a given checkpoint.
@@ -103,21 +96,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def load_states(self, state_path: str):
         try:
-            self.state_manager = BucketStateManager(
-                self.id, state_path, self.seen_images_path
-            )
+            self.state_manager = BucketStateManager(self.id)
             self.buckets = self.load_buckets()
-            previous_state = self.state_manager.load_state()
+            previous_state = self.state_manager.load_state(state_path)
         except Exception as e:
             raise e
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
+            self.logger.info(
+                f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets."
+            )
             self.exhausted_buckets = previous_state["exhausted_buckets"]
         self.current_epoch = 1
         if "current_epoch" in previous_state:
+            self.logger.info(
+                f"Previous checkpoint was on epoch {previous_state['current_epoch']}."
+            )
             self.current_epoch = previous_state["current_epoch"]
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
+            self.logger.info(
+                f"Previous checkpoint had {len(previous_state['seen_images'])} seen images."
+            )
             self.bucket_manager.seen_images.update(previous_state["seen_images"])
 
     def load_buckets(self):
@@ -312,7 +312,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Iterate over the sampler to yield image paths in batches.
         """
         self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
-
+        self.change_bucket()
         while True:
             all_buckets_exhausted = True  # Initial assumption
 

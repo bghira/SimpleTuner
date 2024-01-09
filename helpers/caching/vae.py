@@ -87,9 +87,7 @@ class VAECache:
         elif str(self.instance_data_root) not in test_filepath_png:
             test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
 
-        test_filepath_jpg = (
-            f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[0])[0]}.jpg"
-        )
+        test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
 
         return test_filepath_png, test_filepath_jpg
 
@@ -200,14 +198,14 @@ class VAECache:
         relevant_files = []
         for f in aspect_bucket_cache[bucket]:
             if os.path.splitext(f)[0] in processed_images:
-                # self.debug_log(
-                #     f"Skipping {f} because it is already in the processed images list"
-                # )
+                self.debug_log(
+                    f"Skipping {f} because it is already in the processed images list"
+                )
                 continue
             if f not in self.local_unprocessed_files:
-                # self.debug_log(
-                #     f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                # )
+                self.debug_log(
+                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                )
                 continue
             relevant_files.append(f)
         if do_shuffle:
@@ -220,22 +218,22 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        # self.debug_log(
-        #     f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
-        # )
+        self.debug_log(
+            f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
+        )
         # Use the accelerator to split the data
 
         with self.accelerator.split_between_processes(
             all_unprocessed_files
         ) as split_files:
             self.local_unprocessed_files = split_files
-        # self.debug_log(
-        #     f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
-        # )
+        self.debug_log(
+            f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
+        )
         # # Print the first 5 as a debug log:
-        # self.debug_log(
-        #     f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
-        # )
+        self.debug_log(
+            f"Local unprocessed files: {self.local_unprocessed_files[:5]} (truncated)"
+        )
 
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
@@ -516,7 +514,9 @@ class VAECache:
                         and test_filepath_jpg not in self.local_unprocessed_files
                     ):
                         self.debug_log(
-                            f"Skipping {raw_filepath} because it is not in local unprocessed files"
+                            f"Skipping {raw_filepath} because it is not in local unprocessed files:"
+                            f"\n -> {test_filepath_jpg}"
+                            f"\n -> {test_filepath_png}"
                         )
                         continue
                     try:

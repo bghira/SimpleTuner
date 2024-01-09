@@ -198,26 +198,12 @@ def configure_multi_databackend(args: dict, accelerator):
             datasets=[init_backend["bucket_manager"]],
         )
 
-        # full filename path:
-        seen_state_path = args.seen_state_path
-        # split the filename by extension, append init_backend["id"] to the end of the filename, reassemble with extension:
-        seen_state_path = ".".join(
-            seen_state_path.split(".")[:-1]
-            + [init_backend["id"], seen_state_path.split(".")[-1]]
-        )
-        state_path = args.state_path
-        state_path = ".".join(
-            state_path.split(".")[:-1] + [init_backend["id"], state_path.split(".")[-1]]
-        )
-
         init_backend["sampler"] = MultiAspectSampler(
             id=init_backend["id"],
             bucket_manager=init_backend["bucket_manager"],
             data_backend=init_backend["data_backend"],
             accelerator=accelerator,
             batch_size=args.train_batch_size,
-            seen_images_path=backend.get("seen_state_path", seen_state_path),
-            state_path=backend.get("state_path", state_path),
             debug_aspect_buckets=args.debug_aspect_buckets,
             delete_unwanted_images=backend.get(
                 "delete_unwanted_images", args.delete_unwanted_images
@@ -372,36 +358,6 @@ def get_aws_backend(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
     )
-
-
-def get_dataset(args: dict, accelerator) -> list:
-    """Retrieve a dataset based on the provided commandline args.
-
-    Args:
-        args (dict): A dictionary from parseargs.
-        accelerator (Accelerator): A Huggingface Accelerate object.
-    Returns:
-        list: A list of DataBackend objects.
-    """
-    if args.data_backend == "multi":
-        return configure_multi_databackend(args)
-    elif args.data_backend == "local":
-        if not os.path.exists(args.instance_data_dir):
-            raise FileNotFoundError(
-                f"Instance {args.instance_data_root} images root doesn't exist. Cannot continue."
-            )
-        return [get_local_backend(args, accelerator)]
-    elif args.data_backend == "aws":
-        return [
-            get_aws_backend(
-                aws_bucket_name=args.aws_bucket_name,
-                aws_region_name=args.aws_region_name,
-                aws_endpoint_url=args.aws_endpoint_url,
-                aws_access_key_id=args.aws_access_key_id,
-                aws_secret_access_key=args.aws_secret_access_key,
-                accelerator=accelerator,
-            )
-        ]
 
 
 step = None

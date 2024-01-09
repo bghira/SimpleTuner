@@ -6,11 +6,8 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class BucketStateManager:
-    def __init__(self, id: str, state_path, seen_images_path):
+    def __init__(self, id: str):
         self.id = id
-        self.state_path = self.mangle_state_path(state_path)
-        # seen_images_path is pre-mangled by the dataset factory
-        self.seen_images_path = seen_images_path
 
     def mangle_state_path(self, state_path):
         # When saving the state, it goes into the checkpoint dir.
@@ -21,15 +18,15 @@ class BucketStateManager:
         filename, ext = os.path.splitext(state_path)
         return f"{filename}-{self.id}{ext}"
 
-    def load_seen_images(self):
-        if os.path.exists(self.seen_images_path):
-            with open(self.seen_images_path, "r") as f:
+    def load_seen_images(self, state_path: str):
+        if os.path.exists(state_path):
+            with open(state_path, "r") as f:
                 return json.load(f)
         else:
             return {}
 
-    def save_seen_images(self, seen_images):
-        with open(self.seen_images_path, "w") as f:
+    def save_seen_images(self, seen_images, state_path: str):
+        with open(state_path, "w") as f:
             json.dump(seen_images, f)
 
     def deep_convert_dict(self, d):
@@ -42,22 +39,22 @@ class BucketStateManager:
         else:
             return d
 
-    def save_state(self, state: dict, state_path: str = None):
-        final_state = state
+    def save_state(self, state: dict, state_path: str):
         if state_path is None:
-            state_path = self.state_path
-        else:
-            state_path = self.mangle_state_path(state_path)
-        logger.debug(f"Type of state: {type(state)}")
-        final_state = self.deep_convert_dict(state)
+            raise ValueError("state_path must be specified")
+        state_path = self.mangle_state_path(state_path)
         logger.info(f"Saving trainer state to {state_path}")
+        final_state = self.deep_convert_dict(state)
         with open(state_path, "w") as f:
             json.dump(final_state, f)
 
-    def load_state(self):
-        if os.path.exists(self.state_path):
-            with open(self.state_path, "r") as f:
+    def load_state(self, state_path: str):
+        if state_path is None:
+            raise ValueError("state_path must be specified")
+        state_path = self.mangle_state_path(state_path)
+        if os.path.exists(state_path):
+            with open(state_path, "r") as f:
                 return json.load(f)
         else:
-            logger.debug(f"load_state found no file: {self.state_path}")
+            logger.debug(f"load_state found no file: {state_path}")
             return {}
