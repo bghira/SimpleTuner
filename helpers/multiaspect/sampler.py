@@ -75,8 +75,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.use_captions = use_captions
         self.caption_strategy = caption_strategy
         self.prepend_instance_prompt = prepend_instance_prompt
-        self.buckets = []
         self.exhausted_buckets = []
+        self.buckets = self.load_buckets()
 
     def save_state(self, state_path: str):
         """
