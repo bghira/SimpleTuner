@@ -30,11 +30,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ## 📂 Data Storage and Management
 
-### `--instance_data_dir`
-
-- **What**: Folder containing the training data.
-- **Why**: Designates where your training images and other data are stored.
-
 ### `--data_backend_config`
 
 - **What**: Path to your SimpleTuner dataset configuration.
@@ -45,7 +40,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: When provided, will allow SimpleTuner to ignore differences between the cached config inside the dataset and the current values.
 - **Why**: When SimplerTuner is run for the first time on a dataset, it will create a cache document containing information about everything in that dataset. This includes the dataset config, including its "crop" and "resolution" related configuration values. Changing these arbitrarily or by accident could result in your training jobs crashing randomly, so it's highly recommended to not use this parameter, and instead resolve the differences you'd like to apply in your dataset some other way.
-
 
 ### `--vae_cache_behaviour`
 
@@ -186,16 +180,13 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--vae_cache_behaviour {recreate,sync}]
                      [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
-                     [--revision REVISION] --instance_data_dir
-                     INSTANCE_DATA_DIR [--preserve_data_backend_cache]
+                     [--revision REVISION] [--preserve_data_backend_cache]
                      [--override_dataset_config]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
                      [--cache_dir CACHE_DIR]
                      [--cache_clear_validation_prompts]
-                     [--seen_state_path SEEN_STATE_PATH]
-                     [--state_path STATE_PATH]
                      [--caption_strategy {filename,textfile,instance_prompt}]
                      [--instance_prompt INSTANCE_PROMPT]
                      [--output_dir OUTPUT_DIR] [--seed SEED]
@@ -380,17 +371,6 @@ options:
   --revision REVISION   Revision of pretrained model identifier from
                         huggingface.co/models. Trainable model components
                         should be float32 precision.
-  --instance_data_dir INSTANCE_DATA_DIR
-                        A folder containing the training data. Folder contents
-                        must either follow the structure described in the
-                        SimpleTuner documentation
-                        (https://github.com/bghira/SimpleTuner), or the
-                        structure described in https://huggingface.co/docs/dat
-                        asets/image_dataset#imagefolder. For 🤗 Datasets in
-                        particular, a `metadata.jsonl` file must exist to
-                        provide the captions for the images. For SimpleTuner
-                        layout, the images can be in subfolders. No particular
-                        config is required.
   --preserve_data_backend_cache
                         For very large cloud storage buckets that will never
                         change, enabling this option will prevent the trainer
@@ -440,13 +420,6 @@ options:
                         text embed cache will be recreated. This is useful if
                         you've modified any of the existing prompts, or,
                         disabled/enabled Compel, via `--disable_compel`
-  --seen_state_path SEEN_STATE_PATH
-                        Where the JSON document containing the state of the
-                        seen images is stored. This helps ensure we do not
-                        repeat images too many times.
-  --state_path STATE_PATH
-                        A JSON document containing the current state of
-                        training, will be placed here.
   --caption_strategy {filename,textfile,instance_prompt}
                         The default captioning strategy, 'filename', will use
                         the filename as the caption, after stripping some
