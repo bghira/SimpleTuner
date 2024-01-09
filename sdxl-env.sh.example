@@ -28,10 +28,9 @@ export MAX_NUM_STEPS=30000
 # Will likely overtrain, but that's fine.
 export NUM_EPOCHS=25
 
-# Location of training data.
+# A convenient prefix for all of your training paths.
 export BASE_DIR="/notebooks/datasets"
-export DATALOADER_CONFIG="multidatabackend.json"
-export INSTANCE_DIR="${BASE_DIR}/training_data"
+export DATALOADER_CONFIG="${BASE_DIR}/multidatabackend.json"
 export OUTPUT_DIR="${BASE_DIR}/models"
 # By default, images will be resized so their SMALLER EDGE is 1024 pixels, maintaining aspect ratio.
 # Setting this value to 768px might result in more reasonable training data sizes for SDXL.
@@ -65,11 +64,6 @@ export TRAIN_BATCH_SIZE=10
 # Accumulate your update gradient over many steps, to save VRAM while still having higher effective batch size:
 # effective batch size = ($TRAIN_BATCH_SIZE * $GRADIENT_ACCUMULATION_STEPS).
 export GRADIENT_ACCUMULATION_STEPS=4
-
-# Some data that we generate will be cached here. Training state is baked into the checkpoints themselves.
-export STATE_PATH="${BASE_DIR}/training_state.json"
-# Store whether we've seen an image or not, to prevent repeats.
-export SEEN_STATE_PATH="${BASE_DIR}/training_images_seen.json"
 
 # Use any standard scheduler type. constant, polynomial, constant_with_warmup
 export LR_SCHEDULE="constant"

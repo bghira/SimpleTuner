@@ -32,8 +32,6 @@ class TestMultiAspectSampler(unittest.TestCase):
             data_backend=self.data_backend,
             accelerator=self.accelerator,
             batch_size=self.batch_size,
-            seen_images_path=self.seen_images_path,
-            state_path=self.state_path,
             minimum_image_size=0,
         )
 
@@ -45,7 +43,7 @@ class TestMultiAspectSampler(unittest.TestCase):
 
     def test_save_state(self):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
-            self.sampler.save_state()
+            self.sampler.save_state(self.state_path)
         mock_save_state.assert_called_once()
 
     def test_load_buckets(self):
@@ -61,6 +59,7 @@ class TestMultiAspectSampler(unittest.TestCase):
     def test_move_to_exhausted(self):
         self.sampler.current_bucket = 0  # Pointing to '1.0'
         self.sampler.buckets = ["1.0"]
+        self.sampler.change_bucket()
         self.sampler.move_to_exhausted()
         self.assertEqual(self.sampler.exhausted_buckets, ["1.0"])
         self.assertEqual(self.sampler.buckets, [])

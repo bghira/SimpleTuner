@@ -204,19 +204,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--instance_data_dir",
-        type=str,
-        default=None,
-        required=True,
-        help=(
-            "A folder containing the training data. Folder contents must either follow the structure described in"
-            " the SimpleTuner documentation (https://github.com/bghira/SimpleTuner), or the structure described in"
-            " https://huggingface.co/docs/datasets/image_dataset#imagefolder. For 🤗 Datasets in particular,"
-            " a `metadata.jsonl` file must exist to provide the captions for the images. For SimpleTuner layout,"
-            " the images can be in subfolders. No particular config is required."
-        ),
-    )
-    parser.add_argument(
         "--preserve_data_backend_cache",
         action="store_true",
         default=False,
@@ -291,18 +278,6 @@ def parse_args(input_args=None):
             " This is useful if you've modified any of the existing prompts, or, disabled/enabled Compel,"
             " via `--disable_compel`"
         ),
-    )
-    parser.add_argument(
-        "--seen_state_path",
-        type=str,
-        default="seen_images.json",
-        help="Where the JSON document containing the state of the seen images is stored. This helps ensure we do not repeat images too many times.",
-    )
-    parser.add_argument(
-        "--state_path",
-        type=str,
-        default="training_state.json",
-        help="A JSON document containing the current state of training, will be placed here.",
     )
     parser.add_argument(
         "--caption_strategy",
@@ -967,9 +942,6 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    if args.instance_data_dir is None:
-        raise ValueError("Need either a dataset name or a training folder.")
-
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
@@ -1006,14 +978,6 @@ def parse_args(input_args=None):
         raise ValueError(
             "It seems that the value for --validation_resolution is less than 128 pixels, which is invalid."
             f" You might have accidentally set it in megapixels: {args.validation_resolution}"
-        )
-    if args.seen_state_path is None:
-        raise ValueError(
-            'Please specify a path to a "seen" state dict via the --seen_state_path parameter.'
-        )
-    if args.state_path is None:
-        raise ValueError(
-            "Please specify a location of your training state status file via the --state_path parameter."
         )
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
