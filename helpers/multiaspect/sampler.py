@@ -77,6 +77,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.prepend_instance_prompt = prepend_instance_prompt
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
+        self.state_manager = BucketStateManager(self.id)
 
     def save_state(self, state_path: str):
         """
@@ -96,7 +97,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def load_states(self, state_path: str):
         try:
-            self.state_manager = BucketStateManager(self.id)
             self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state(state_path)
         except Exception as e:

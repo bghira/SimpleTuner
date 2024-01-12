@@ -19,6 +19,10 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
+    if "vae_cache_clear_each_epoch" in backend:
+        output["config"]["vae_cache_clear_each_epoch"] = backend[
+            "vae_cache_clear_each_epoch"
+        ]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
     if "crop" in backend:

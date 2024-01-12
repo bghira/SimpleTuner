@@ -41,6 +41,7 @@ class VAECache:
         vae_batch_size: int = 4,
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
+        max_workers: int = 32,
     ):
         self.id = id
         if data_backend.id != id:
@@ -64,6 +65,7 @@ class VAECache:
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.bucket_manager = bucket_manager
+        self.max_workers = max_workers
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -92,8 +94,9 @@ class VAECache:
         return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
-        if self.data_backend.exists(self.generate_vae_cache_filename(filepath)[0]):
-            self.debug_log(f"Skipping {filepath} because it is already in the cache")
+        test_path = self.generate_vae_cache_filename(filepath)[0]
+        if self.data_backend.exists(test_path):
+            self.debug_log(f"Skipping {test_path} because it is already in the cache")
             return True
         return False
 
@@ -140,6 +143,75 @@ class VAECache:
             f"VAECache discover_all_files found {len(all_image_files)} images"
         )
         return all_image_files
+
+    def init_vae(self):
+        from diffusers import AutoencoderKL
+
+        args = StateTracker.get_args()
+        vae_path = (
+            args.pretrained_model_name_or_path
+            if args.pretrained_vae_model_name_or_path is None
+            else args.pretrained_vae_model_name_or_path
+        )
+        precached_vae = StateTracker.get_vae()
+        logger.debug(f"Was the VAE loaded? {precached_vae}")
+        self.vae = precached_vae or AutoencoderKL.from_pretrained(
+            vae_path,
+            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+            revision=args.revision,
+            force_upcast=False,
+        ).to(self.accelerator.device)
+        StateTracker.set_vae(self.vae)
+
+    def rebuild_cache(self):
+        """
+        First, we'll clear the cache before rebuilding it.
+        """
+        self.clear_cache()
+        self.split_cache_between_processes()
+        self.init_vae()
+        self.process_buckets()
+        if self.accelerator.is_local_main_process:
+            StateTracker.set_vae_cache_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.cache_dir,
+                    str_pattern="*.pt",
+                ),
+                data_backend_id=self.id,
+            )
+        self.accelerator.wait_for_everyone()
+
+    def clear_cache(self):
+        """
+        Clear all .pt files in our data backend's cache prefix, as obtained from self.discover_all_files().
+
+        We can't simply clear the directory, because it might be mixed with the image samples (in the case of S3)
+
+        We want to thread this, using the data_backend.delete function as the worker function.
+        """
+        futures = []
+        all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            for filename in all_cache_files:
+                full_path = os.path.join(self.cache_dir, filename)
+                logger.debug(f"Would delete: {full_path}")
+                futures.append(executor.submit(self.data_backend.delete, full_path))
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"Deleting files for backend {self.id}",
+                position=get_rank(),
+                ncols=100,
+                leave=False,
+            ):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Error deleting file {filename}: {e}")
+                    logger.debug(f"Error traceback: {traceback.format_exc()}")
+                    raise e
+        # Clear the StateTracker list of VAE objects:
+        StateTracker.set_vae_cache_files([], data_backend_id=self.id)
 
     def _list_cached_images(self):
         """
