@@ -57,7 +57,7 @@ def register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls)
                         shutil.rmtree(removing_checkpoint)
             sub_dir = (
                 "unet"
-                if isinstance(model, type(unwrap_model(unet)))
+                if isinstance(model, type(unwrap_model(accelerator, unet)))
                 else "text_encoder"
             )
             model.save_pretrained(os.path.join(output_dir, sub_dir))

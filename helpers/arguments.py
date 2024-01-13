@@ -594,10 +594,10 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--validation_torch_compile_mode",
         type=str,
-        default="reduce-overhead",
-        choices=["reduce-overhead", "default"],
+        default="max-autotune",
+        choices=["max-autotune", "reduce-overhead", "default"],
         help=(
-            "PyTorch provides different modes for the Torch Inductor when compiling graphs. reduce-overhead,"
+            "PyTorch provides different modes for the Torch Inductor when compiling graphs. max-autotune,"
             " the default mode, provides the most benefit."
         ),
     )
