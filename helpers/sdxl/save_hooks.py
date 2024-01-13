@@ -1,12 +1,16 @@
-from diffusers.training_utils import EMAModel
+from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
+from helpers.training.wrappers import unwrap_model
 from diffusers.loaders import LoraLoaderMixin
-from diffusers.utils import convert_state_dict_to_diffusers
-from peft import LoraConfig
+from diffusers.utils import (
+    convert_state_dict_to_diffusers,
+    convert_unet_state_dict_to_peft,
+)
+from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 
 from diffusers import UNet2DConditionModel, StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
-import os, logging, shutil, json
+import os, logging, shutil, torch
 
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -14,7 +18,13 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 class SDXLSaveHook:
     def __init__(
-        self, args, unet, ema_unet, text_encoder_1, text_encoder_2, accelerator
+        self,
+        args,
+        unet,
+        ema_unet,
+        text_encoder_1,
+        text_encoder_2,
+        accelerator,
     ):
         self.args = args
         self.unet = unet
@@ -36,7 +46,7 @@ class SDXLSaveHook:
             text_encoder_2_lora_layers_to_save = None
 
             for model in models:
-                if isinstance(model, type(self.accelerator.unwrap_model(self.unet))):
+                if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
                     unet_lora_layers_to_save = convert_state_dict_to_diffusers(
                         get_peft_model_state_dict(model)
                     )
@@ -79,7 +89,8 @@ class SDXLSaveHook:
 
         for model in models:
             model.save_pretrained(os.path.join(temporary_dir, "unet"))
-            weights.pop()  # Pop the last weight
+            if weights:
+                weights.pop()  # Pop the last weight
 
         # Copy contents of temporary directory to output directory
         for item in os.listdir(temporary_dir):
@@ -106,47 +117,71 @@ class SDXLSaveHook:
         if self.args.model_type == "lora":
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
             unet_ = None
-            text_encoder_1_ = None
-            text_encoder_2_ = None
+            text_encoder_one_ = None
+            text_encoder_two_ = None
 
             while len(models) > 0:
                 model = models.pop()
 
-                if isinstance(model, type(self.accelerator.unwrap_model(self.unet))):
+                if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
                     unet_ = model
                 elif isinstance(
-                    model, type(self.accelerator.unwrap_model(self.text_encoder_1))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_one))
                 ):
-                    text_encoder_1_ = model
+                    text_encoder_one_ = model
                 elif isinstance(
-                    model, type(self.accelerator.unwrap_model(self.text_encoder_2))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_two))
                 ):
-                    text_encoder_2_ = model
+                    text_encoder_two_ = model
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
             lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
-            LoraLoaderMixin.load_lora_into_unet(
-                lora_state_dict, network_alphas=network_alphas, unet=unet_
-            )
 
-            text_encoder_state_dict = {
-                k: v for k, v in lora_state_dict.items() if "text_encoder." in k
+            unet_state_dict = {
+                f'{k.replace("unet.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
             }
-            LoraLoaderMixin.load_lora_into_text_encoder(
-                text_encoder_state_dict,
-                network_alphas=network_alphas,
-                text_encoder=text_encoder_1_,
+            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
+            incompatible_keys = set_peft_model_state_dict(
+                unet_, unet_state_dict, adapter_name="default"
             )
+            if incompatible_keys is not None:
+                # check only for unexpected keys
+                unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+                if unexpected_keys:
+                    logger.warning(
+                        f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+                        f" {unexpected_keys}. "
+                    )
 
-            text_encoder_2_state_dict = {
-                k: v for k, v in lora_state_dict.items() if "text_encoder_2." in k
-            }
-            LoraLoaderMixin.load_lora_into_text_encoder(
-                text_encoder_2_state_dict,
-                network_alphas=network_alphas,
-                text_encoder=text_encoder_2_,
-            )
+            if self.args.train_text_encoder:
+                # Do we need to call `scale_lora_layers()` here?
+                _set_state_dict_into_text_encoder(
+                    lora_state_dict,
+                    prefix="text_encoder.",
+                    text_encoder=text_encoder_one_,
+                )
+
+                _set_state_dict_into_text_encoder(
+                    lora_state_dict,
+                    prefix="text_encoder_2.",
+                    text_encoder=text_encoder_one_,
+                )
+
+            # Make sure the trainable params are in float32. This is again needed since the base models
+            # are in `weight_dtype`. More details:
+            # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
+            if self.args.mixed_precision == "fp16":
+                models = [unet_]
+                if self.args.train_text_encoder:
+                    models.extend([text_encoder_one_, text_encoder_two_])
+                for model in models:
+                    for param in model.parameters():
+                        # only upcast trainable parameters (LoRA) into fp32
+                        if param.requires_grad:
+                            param.data = param.to(torch.float32)
             logger.info("Completed loading LoRA weights.")
 
         if self.args.use_ema:

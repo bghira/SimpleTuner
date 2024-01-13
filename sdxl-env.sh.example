@@ -156,4 +156,4 @@ export ACCELERATE_EXTRA_ARGS=""                          # --multi_gpu or other 
 
 # With Pytorch 2.1, you might have pretty good luck here.
 # If you're using aspect bucketing however, each resolution change will recompile. Seriously, just don't do it.
-export TRAINING_DYNAMO_BACKEND='no'          # or 'inductor' if you want to brave PyTorch 2 compile issues
+export TRAINING_DYNAMO_BACKEND='inductor'                # or 'no' if you want to disable torch compile in case of performance issues or lack of support (eg. AMD)

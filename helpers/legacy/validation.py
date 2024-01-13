@@ -1,8 +1,10 @@
 import logging, os, torch, numpy as np
 from tqdm import tqdm
 from diffusers.utils import is_wandb_available
+from diffusers.utils.torch_utils import is_compiled_module
 from helpers.image_manipulation.brightness import calculate_luminance
 from helpers.training.state_tracker import StateTracker
+from helpers.training.wrappers import unwrap_model
 from helpers.prompts import PromptHandler
 from diffusers import (
     AutoencoderKL,
@@ -167,7 +169,7 @@ def log_validations(
             # The models need unwrapping because for compatibility in distributed training mode.
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
-                unet=accelerator.unwrap_model(unet),
+                unet=unwrap_model(accelerator, unet),
                 text_encoder=text_encoder_1,
                 text_encoder_2=text_encoder_2,
                 tokenizer=None,
@@ -186,9 +188,11 @@ def log_validations(
                 timestep_spacing=args.inference_scheduler_timestep_spacing,
                 rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             )
-            if args.validation_torch_compile:
+            if args.validation_torch_compile and not is_compiled_module(pipeline.unet):
                 pipeline.unet = torch.compile(
-                    unet, mode=args.validation_torch_compile_mode, fullgraph=False
+                    pipeline.unet,
+                    mode=args.validation_torch_compile_mode,
+                    fullgraph=False,
                 )
             pipeline = pipeline.to(accelerator.device)
             pipeline.set_progress_bar_config(disable=True)

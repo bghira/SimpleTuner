@@ -4,14 +4,19 @@
         "type": "local",
         "instance_data_dir": "/path/to/data/tree",
         "crop": false,
+        "crop_style": "random|center|corner",
+        "crop_aspect": "square|preserve",
         "resolution": 1.0,
-        "resolution_type": "area",
+        "resolution_type": "area|pixel",
         "minimum_image_size": 1.0,
         "prepend_instance_prompt": false,
         "instance_prompt": "cat girls",
         "only_instance_prompt": false,
         "caption_strategy": "filename",
-        "cache_dir_vae": "cache_prefix"
+        "cache_dir_vae": "/path/to/vaecache",
+        "vae_cache_clear_each_epoch": true,
+        "probability": 1.0,
+        "repeats": 5
     },
     {
         "id": "another-special-name-for-another-backend",
@@ -22,6 +27,8 @@
         "aws_access_key_id": "wpz-764e9734523434",
         "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
         "aws_data_prefix": "",
-        "cache_dir_vae": "/path/to/cache/dir"
+        "cache_dir_vae": "/path/to/cache/dir",
+        "vae_cache_clear_each_epoch": true,
+        "repeats": 2
     }
 ]

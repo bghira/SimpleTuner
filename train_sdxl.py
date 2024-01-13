@@ -25,6 +25,7 @@ from helpers.arguments import parse_args
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
 from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
+from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
@@ -258,14 +259,16 @@ def main():
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-        logger.warning(
-            f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
-        )
+        if args.pretrained_vae_model_name_or_path is None:
+            logger.warning(
+                f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
+            )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        logger.warning(
-            f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
-        )
+        if args.pretrained_vae_model_name_or_path is None:
+            logger.warning(
+                f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
+            )
     StateTracker.set_weight_dtype(weight_dtype)
     # Load scheduler, tokenizer and models.
     tokenizer_1 = AutoTokenizer.from_pretrained(
@@ -1320,6 +1323,7 @@ def main():
                                     )
                                     shutil.rmtree(removing_checkpoint)
 
+                    if accelerator.is_main_process or use_deepspeed_optimizer:
                         save_path = os.path.join(
                             args.output_dir, f"checkpoint-{global_step}"
                         )
@@ -1376,7 +1380,7 @@ def main():
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        unet = accelerator.unwrap_model(unet)
+        unet = unwrap_model(accelerator, unet)
         if args.model_type == "lora":
             unet_lora_layers = convert_state_dict_to_diffusers(
                 get_peft_model_state_dict(unet)
