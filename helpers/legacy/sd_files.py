@@ -1,5 +1,6 @@
 from transformers import PretrainedConfig
 from diffusers import UNet2DConditionModel
+from helpers.training.wrappers import unwrap_model
 import os, logging, shutil
 
 
@@ -56,7 +57,7 @@ def register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls)
                         shutil.rmtree(removing_checkpoint)
             sub_dir = (
                 "unet"
-                if isinstance(model, type(accelerator.unwrap_model(unet)))
+                if isinstance(model, type(unwrap_model(unet)))
                 else "text_encoder"
             )
             model.save_pretrained(os.path.join(output_dir, sub_dir))
