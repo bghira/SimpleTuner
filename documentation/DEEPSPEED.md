@@ -34,6 +34,24 @@ ZeRO stands for **Zero Redundancy Optimizer**. This technique reduces the memory
 
 ZeRO is being implemented as incremental stages of optimizations, where optimizations in earlier stages are available in the later stages. To deep dive into ZeRO, please see the original [paper](https://arxiv.org/abs/1910.02054v3) (1910.02054v3).
 
+## Known issues
+
+### LoRA support
+
+Due to how DeepSpeed changes the model saving routines, it's not currently supported to train LoRA with DeepSpeed.
+
+This may change in a future release.
+
+### Enabling / disabling DeepSpeed on existing checkpoints
+
+Currently in SimpleTuner, DeepSpeed cannot be **enabled** when resuming from a checkpoint that did **not** previously use DeepSpeed.
+
+Conversely, DeepSpeed cannot be **disabled** when attempting to resume training from a checkpoint that was trained using DeepSpeed.
+
+To workaround this issue, export the training pipeline to a complete set of model weights before attempting to enable/disable DeepSpeed on an in-progress training session.
+
+It's unlikely this support will ever come to fruition, as DeepSpeed's optimiser is very different from any of the usual choices.
+
 ## DeepSpeed Stages
 
 DeepSpeed offers three levels of optimisation for training a model, with each increase having more and more overhead.

@@ -587,8 +587,11 @@ def process_and_upload(image_path_args):
     # Resize image for condition if required
     image = resize_for_condition_image(image, args.condition_image_size)
     temp_path = os.path.join(args.temporary_folder, os.path.basename(image_path))
-    image.save(temp_path, format="PNG")
-    image.close()
+    try:
+        image.save(temp_path, format="PNG")
+        image.close()
+    except:
+        logger.error(f"Error saving image")
     # Upload to S3
     upload_local_image_to_s3(temp_path, args, s3_client)
 

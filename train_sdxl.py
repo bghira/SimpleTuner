@@ -15,7 +15,7 @@
 # limitations under the License.
 from helpers import log_format
 
-import shutil, hashlib, json, copy, random, logging, math, os
+import shutil, hashlib, json, copy, random, logging, math, os, sys
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
@@ -197,6 +197,11 @@ def main():
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):
+        if args.model_type == "lora":
+            logger.error(
+                "LoRA can not be trained with DeepSpeed. Please disable DeepSpeed via 'accelerate config' before reattempting."
+            )
+            sys.exit(1)
         if (
             "gradient_accumulation_steps"
             in accelerator.state.deepspeed_plugin.deepspeed_config
@@ -416,7 +421,6 @@ def main():
         configure_multi_databackend(args, accelerator)
     except Exception as e:
         logging.error(f"{e}")
-        import sys
 
         sys.exit(0)
 
@@ -752,6 +756,7 @@ def main():
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
+        use_deepspeed_optimizer=use_deepspeed_optimizer,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)

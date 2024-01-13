@@ -25,6 +25,7 @@ class SDXLSaveHook:
         text_encoder_1,
         text_encoder_2,
         accelerator,
+        use_deepspeed_optimizer,
     ):
         self.args = args
         self.unet = unet
@@ -32,6 +33,7 @@ class SDXLSaveHook:
         self.text_encoder_2 = text_encoder_2
         self.ema_unet = ema_unet
         self.accelerator = accelerator
+        self.use_deepspeed_optimizer = use_deepspeed_optimizer
 
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
@@ -66,11 +68,12 @@ class SDXLSaveHook:
                             get_peft_model_state_dict(model)
                         )
                     )
-                else:
+                elif not self.use_deepspeed_optimizer:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
                 # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
+                if weights:
+                    weights.pop()
 
             StableDiffusionXLPipeline.save_lora_weights(
                 output_dir,

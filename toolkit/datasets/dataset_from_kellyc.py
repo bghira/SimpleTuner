@@ -21,27 +21,50 @@ def get_photo_id(url):
     return match.group(1) if match else None
 
 
-def download_smallest_image(urls, output_path, minimum_image_size: int):
-    """Download the smallest image based on width."""
-    smallest_url = min(urls, key=get_image_width)
-    response = requests.get(smallest_url, stream=True)
+conn_timeout = 6
+read_timeout = 60
+timeouts = (conn_timeout, read_timeout)
+
+
+def download_image(url, output_path, minimum_image_size: int, minimum_pixel_area: int):
+    """Download an image."""
+    response = requests.get(url, timeout=timeouts, stream=True)
 
     if response.status_code == 200:
-        filename = os.path.basename(smallest_url.split("?")[0])
+        filename = os.path.basename(url.split("?")[0])
         file_path = os.path.join(output_path, filename)
+        # Convert path to PNG:
+        file_path = file_path.replace(".jpg", ".png")
 
         with open(file_path, "wb") as f:
             for chunk in response.iter_content(1024):
                 f.write(chunk)
-        # Is the file >= 1024px on both sides?
+        # Check if the file meets the minimum size requirements
         image = Image.open(file_path)
         width, height = image.size
-        if width < minimum_image_size or height < minimum_image_size:
+        if minimum_image_size > 0 and (
+            width < minimum_image_size or height < minimum_image_size
+        ):
             os.remove(file_path)
-            return f"Nuked tiny image: {smallest_url}"
+            return f"Nuked tiny image: {url}"
+        if minimum_pixel_area > 0 and (width * height < minimum_pixel_area):
+            os.remove(file_path)
+            return f"Nuked tiny image: {url}"
 
-        return f"Downloaded: {smallest_url}"
-    return f"Failed to download: {smallest_url}"
+        return f"Downloaded: {url}"
+    return f"Failed to download: {url}"
+
+
+def process_urls(urls, output_path, minimum_image_size: int, minimum_pixel_area: int):
+    """Process a list of URLs."""
+    # Simple URL list
+    results = []
+    for url in urls:
+        result = download_image(
+            url, output_path, minimum_image_size, minimum_pixel_area
+        )
+        results.append(result)
+    return "\n".join(results)
 
 
 def main(args):
@@ -52,18 +75,17 @@ def main(args):
     with open(args.file_path, "r") as file:
         for line in file:
             urls = line.strip().split()
-            for url in urls:
-                photo_id = get_photo_id(url)
-                if photo_id:
-                    if photo_id not in url_groups:
-                        url_groups[photo_id] = []
-                    url_groups[photo_id].append(url)
+            # Treat as a simple URL list
+            url_groups[line] = urls
 
-    # Using ThreadPoolExecutor to parallelize downloads
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = [
             executor.submit(
-                download_smallest_image, urls, args.output_path, args.minimum_image_size
+                process_urls,
+                urls,
+                args.output_path,
+                args.minimum_image_size,
+                args.minimum_pixel_area,
             )
             for urls in url_groups.values()
         ]
@@ -89,7 +111,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--minimum_image_size",
         type=int,
-        help="Both sides of the image must be larger than this.",
+        default=0,
+        help="Both sides of the image must be larger than this. ZERO disables this.",
+    )
+    parser.add_argument(
+        "--minimum_pixel_area",
+        type=int,
+        default=0,
+        help="The total number of pixels in the image must be larger than this. ZERO disables this. Recommended value: 1024*1024",
     )
     parser.add_argument(
         "--workers",

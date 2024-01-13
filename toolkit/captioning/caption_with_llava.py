@@ -98,13 +98,21 @@ def parse_args():
 
 
 # Function to load LLaVA model
-def load_llava_model(model_path: str = "llava-hf/llava-1.5-7b-hf"):
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-    )
+def load_llava_model(
+    model_path: str = "llava-hf/llava-1.5-7b-hf", precision: str = "fp4"
+):
+    bnb_config = BitsAndBytesConfig()
+    if precision == "fp4":
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+    elif precision == "fp8":
+        bnb_config = BitsAndBytesConfig(
+            load_in_8bit=True,
+        )
     model = LlavaForConditionalGeneration.from_pretrained(
         model_path, quantization_config=bnb_config, device_map="auto"
     )
@@ -160,7 +168,7 @@ def process_and_evaluate_image(args, image_path: str, model, processor):
         img = input_image.resize((W, H), resample=Image.LANCZOS)
         return img
 
-    return eval_model(args, resize_for_condition_image(image, 384), model, processor)
+    return eval_model(args, resize_for_condition_image(image, 256), model, processor)
 
 
 # Function to convert content to filename
@@ -206,7 +214,7 @@ def process_directory(args, image_dir, output_dir, progress_file, model, process
 
     for filename in tqdm(os.listdir(image_dir), desc="Processing Images"):
         full_filepath = os.path.join(image_dir, filename)
-        if filename in processed_files[image_dir]:
+        if image_dir in processed_files and filename in processed_files[image_dir]:
             logging.info(f"File has already been processed: {filename}")
             continue
 
@@ -219,7 +227,7 @@ def process_directory(args, image_dir, output_dir, progress_file, model, process
             try:
                 logging.info(f"Attempting to load image: {filename}")
                 with Image.open(full_filepath) as image:
-                    logging.info(f"Processing image: {filename}")
+                    logging.info(f"Processing image: {filename}, data: {image}")
                     best_match = process_and_evaluate_image(
                         args, full_filepath, model, processor
                     )
@@ -256,6 +264,23 @@ def process_directory(args, image_dir, output_dir, progress_file, model, process
 
             except Exception as e:
                 logging.error(f"Error processing {filename}: {str(e)}")
+                if "CUDA error" in str(e):
+                    import sys
+
+                    sys.exit(1)
+                if "name too long" in str(e):
+                    # Loop and try to reduce the filename length until it works:
+                    exception_error = str(e)
+                    while "name too long" in exception_error:
+                        # Cut the word down by one character:
+                        new_filename = new_filename[:-1]
+                        try:
+                            new_filepath = os.path.join(output_dir, new_filename)
+                            # Try to save again
+                            image.save(new_filepath)
+                            exception_error = ""
+                        except Exception as e:
+                            exception_error = str(e)
 
 
 def main():
@@ -268,7 +293,7 @@ def main():
         os.makedirs(args.output_dir)
 
     # Load model
-    model, processor = load_llava_model(args.model_path)
+    model, processor = load_llava_model(args.model_path, args.precision)
 
     # Process directory
     process_directory(

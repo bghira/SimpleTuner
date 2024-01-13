@@ -979,7 +979,7 @@ def parse_args(input_args=None):
         Path(args.cache_dir_text),
     ]:
         os.makedirs(target_dir, exist_ok=True)
-    logger.info(f"VAE Cache location: {args.cache_dir_vae}")
+    logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
 
     if args.validation_resolution < 128:
