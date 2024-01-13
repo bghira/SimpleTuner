@@ -26,13 +26,13 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
 
 ## Hardware Requirements
 
-Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended.
+Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRA.
 
-Although SimpleTuner has an option to `--fully_unload_text_encoder` and by default will unload the VAE during training, the base SDXL u-net consumes 12.5GB at idle. When the first forward pass runs, a 24G GPU will hit an Out of Memory condition, *even* with 128x128 training data.
+**For full u-net tuning:** Although SimpleTuner has an option to `--fully_unload_text_encoder` and by default will unload the VAE during training, the base SDXL u-net consumes 12.5GB at idle. When the first forward pass runs, a 24G GPU will hit an Out of Memory condition, *even* with 128x128 training data.
 
-This occurs with Adafactor, AdamW8Bit, Prodigy, and D-adaptation.
+This occurs with Adafactor, AdamW8Bit, Prodigy, and D-adaptation due to a bug in PyTorch. Ensure you are using the **latest** 2.1.x release of PyTorch, which allows **full u-net tuning in ~22G of VRAM without DeepSpeed**.
 
-40G GPUs can meaningfully train SDXL.
+24G GPUs can meaningfully train SDXL, though 40G is the sweet spot for full fine-tune - an 80G GPU is pure heaven.
 
 ## Dependencies
 
@@ -40,9 +40,9 @@ Install SimpleTuner as detailed in [INSTALL.md](/INSTALL.md)
 
 ## Training data
 
-A publicly-available dataset is available [on huggingface hub](https://huggingface.co/datasets/ptx0/mj51-data).
+A publicly-available dataset is available [on huggingface hub](https://huggingface.co/datasets/ptx0/pseudo-camera-10k).
 
-Approximately 162GB of images are available in the `split_train` directory, although this format is not required by SimpleTuner.
+Approximately 10k images are available in this repository with their caption as their filename, ready to be imported for use in SimpleTuner.
 
 You can simply create a single folder full of jumbled-up images, or they can be neatly organised into subdirectories.
 
@@ -62,7 +62,7 @@ To summarise:
 
 - You want as high of a batch size as you can tolerate.
 - The larger you set `RESOLUTION`, the more VRAM is used, and the lower your batch size can be.
-- A larger batch size requires more training data in each bucket, since each one **must** contain a minimum of that many images.
+- A larger batch size requires more training data in each bucket, since each one **must** contain a minimum of that many images - a batch size of 8 means each bucket must have at least 8 images.
 - If you can't get a single iteration done with batch size of 1 and resolution of 128x128 on Adafactor or AdamW8Bit, your hardware just won't work.
 
 Which brings up the next point: **you should use as much high quality training data as you can acquire.**
@@ -70,23 +70,34 @@ Which brings up the next point: **you should use as much high quality training d
 ### Selecting images
 
 - JPEG artifacts and blurry images are a no-go. The model **will** pick these up.
+- High-res images introduce their own problems - they must be downsampled to fit their aspect bucket, and this inherently damages their quality.
+- For high quality photographs, some grainy CMOS sensors in the camera itself end up producing a lot of noise. Too much of this will result in nearly every image your model produces, containing the same sensor noise.
 - Same goes for watermarks and "badges", artist signatures. That will all be picked up effortlessly.
 - If you're trying to extract frames from a movie to train from, you're going to have a bad time. Compression ruins most films - only the large 40+ GB releases are really going to be useful for improving image clarity.
+  - Using 1080p Bluray extractions really helps - 4k isn't absolutely required, but you're going to need to reduce expectations as to what kind of content will actually WORK.
+  - Anime content will generally work very well if it's minimally compressed, but live action stuff tends to look blurry.
 - Image resolutions optimally should be divisible by 64.
   - This isn't **required**, but is beneficial to follow.
 - Square images are not required, though they will work.
-  - The model might fail to generalise across aspect ratios if they are not seen during training. This means if you train on only square images, you might not get a very good widescreen effect when you are done.
-- The trainer will resize images so that the smaller side is equal to the value of `RESOLUTION`, while maintaining the aspect ratio.
-  - If your images all hover around a certain resolution, eg. `512x768`, `1280x720` and `640x480`, you might then set `RESOLUTION=640`, which would result in upscaling a minimal number of images during training time.
-  - If your images are all above a given base resolution, the trainer will downsample them to your base `RESOLUTION`
-- Your dataset should be **as varied as possible** to get the highest quality.
+  - If you train on ONLY square images or ONLY non-square images, you might not get a very good balance of capabilities in the resulting model.
 - Synthetic data works great. This means AI-generated images, from either GAN upscaling or a different model entirely. Using outputs from a different model is called **transfer learning** and can be highly effective.
+  - Using ONLY synthetic data can harm the model's ability to generate more realistic details. A decent balance of regularisation images (eg. concepts that aren't your target) will help to maintain broad capabilities.
+- Your dataset should be **as varied as possible** to get the highest quality. It should be balanced across different concepts, unless heavily biasing the model is desired.
 
 ### Captioning
 
-SimpleTuner provides a [captioning](/toolkit/captioning/README.md) script that can be used to mass-rename files in a format that is acceptable to SimpleTuner.
+SimpleTuner provides multiple [captioning](/toolkit/captioning/README.md) scripts that can be used to mass-rename files in a format that is acceptable to SimpleTuner.
 
-Currently, it uses T5 Flan and BLIP2 to produce high quality captions, though it can be very slow and resource hungry.
+Options:
+
+- T5 Flan and BLIP2 produce mediocre captions; it can be very slow and resource hungry.
+- LLaVA produces acceptable captions but misses subtle details.
+  - It is better than BLIP, can sometimes read text but invents details and speculates.
+  - Follows instruction templates better than CogVLM and BLIP.
+- CogVLM produces the best captions and requires the most time/resources.
+  - It still speculates, especially when given long instruct queries.
+  - It does not follow instruct queries very well.
+
 
 Other tools are available from third-party sources, such as Captionr.
 
@@ -101,7 +112,9 @@ Longer captions aren't necessarily better for training. Simpler, concise caption
 
 Foundational models like Stable Diffusion are built using 10% caption drop-out, meaning the model is shown an "empty" caption instead of the real one, about 10% of the time. This ends up substantially improving the quality of generations, especially for prompts that involve subject matter that do not exist in your training data.
 
-In other words, caption drop-out will allow you to introduce a style or concept more broadly across the model. You might not want to use this at all if you really want to restrict your changes to just the captions you show the model during training.
+Disabling caption dropout can damage the model's ability to generalise to unseen prompts. Conversely, using too much caption dropout will damage the model's ability to adhere to prompts.
+
+A value of 25% seems to provide some additional benefits such as reducing the number of required steps during inference on v-prediction models.
 
 ### Advanced Configuration
 
@@ -113,9 +126,17 @@ If `--report_to=wandb` is passed to the trainer (the default), it will ask on st
 
 ### Post-Training Steps
 
-You might not want to train all the way to the end once you realise your progress has been "good enough". At this point, it would be best to reduce `NUM_EPOCHS` to `1` and start another training run. This will in fact, not do any more training, but will simply export the model into the pipeline directory - assuming a single epoch has been hit yet. **This may not be the case for very large datasets**. You can switch to a small folder of files to force it to export.
+#### How do I end training early?
 
-Once the training is complete, you can evaluate the model using [the provided evaluation script](/inference.py) or [other options in the inference toolkit](/toolkit/inference/inference_ddpm.py).
+You might not want to train all the way to the end.
+
+At this point, reduce `--max_train_steps` value to one smaller than your current training step to force a pipeline export into your `output_dir`.
+
+#### How do I test the model without wandb (Weights & Biases)?
+
+You can evaluate the model using [the provided evaluation script](/inference.py) or [other options in the inference toolkit](/toolkit/inference/inference_ddpm.py).
+
+If you used `--push_to_hub`, the Huggingface Diffusers SDXL example scripts will be useable with the same model name.
 
 If you require a single 13GiB safetensors file for eg. AUTOMATIC1111's Stable Diffusion WebUI or for uploading to CivitAI, you should make use of the [SDXL checkpoint conversion script](/convert_sdxl_checkpoint.py):
 
@@ -151,6 +172,8 @@ This command will capture the output of your training run into `train.log`, loca
 
 In each model checkpoint directory is a `tracker_state.json` file which contains the current epoch that training was on or the images it has seen so far.
 
+Each dataset will have its own tracking state documents in this directory as well.
+
 
 ### Example Environment File Explained
 
@@ -185,8 +208,10 @@ Here's a breakdown of what each environment variable does:
 - `TRACKER_PROJECT_NAME` and `TRACKER_RUN_NAME`: Names for the tracking project on Weights and Biases. Currently, run names are non-functional.
 - `INSTANCE_PROMPT`: Optional prompt to append to each caption. This can be useful if you want to add a **trigger keyword** for your model's style to associate with.
   - Make sure the instance prompt you use is similar to your data, or you could actually end up doing harm to the model.
+  - Each dataset entry in `multidatabackend.json` can have its own `instance_prompt` set in lieu of using this main variable.
 - `VALIDATION_PROMPT`: The prompt used for validation.
   - Optionally, a user prompt library or the built-in prompt library may be used to generate more than 84 images on each checkpoint across a large number of concepts.
+  - See `--user_prompt_library` for more information.
 
 #### Data Locations
 
@@ -194,8 +219,6 @@ Here's a breakdown of what each environment variable does:
   - `BASE_DIR` - Used for populating other variables, mostly.
   - `INSTANCE_DIR` - Where your actual training data is. This can be anywhere, it does not need to be underneath `BASE_DIR`.
   - `OUTPUT_DIR` - Where the model pipeline results are stored during training, and after it completes.
-- `STATE_PATH`, `SEEN_STATE_PATH`: Paths for the training state and seen images.
-  - These can effectively be ignored, unless you want to make use of this data for integrations in eg. a Discord bot and need it placed in a particular location.
 
 #### Training Parameters
 
@@ -210,4 +233,4 @@ Here's a breakdown of what each environment variable does:
 
 ## Additional Notes
 
-For more details, consult the [INSTALL](/INSTALL.md) and [OPTIONS](/OPTIONS.md) documents.
+For more details, consult the [INSTALL](/INSTALL.md) and [OPTIONS](/OPTIONS.md) documents or the [DATALOADER](/documentation/DATALOADER.md) information page for specific details on the dataset config file.
