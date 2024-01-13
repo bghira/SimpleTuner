@@ -89,7 +89,8 @@ class SDXLSaveHook:
 
         for model in models:
             model.save_pretrained(os.path.join(temporary_dir, "unet"))
-            weights.pop()  # Pop the last weight
+            if weights:
+                weights.pop()  # Pop the last weight
 
         # Copy contents of temporary directory to output directory
         for item in os.listdir(temporary_dir):
