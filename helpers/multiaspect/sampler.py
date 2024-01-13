@@ -156,10 +156,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"\n-> Unseen images: {self._get_unseen_images()}"
                 f"\n-> Seen images: {self.bucket_manager.seen_images}"
             )
-        self.logger.info(
-            f"Resetting seen image list and refreshing buckets. State before reset:"
-        )
-        self.log_state()
+        if StateTracker.get_args().print_sampler_statistics:
+            self.logger.info(
+                f"Resetting seen image list and refreshing buckets. State before reset:"
+            )
+            self.log_state()
         # All buckets are exhausted, so we will move onto the next epoch.
         self.current_epoch += 1
         self.exhausted_buckets = []
@@ -386,9 +387,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self._reset_buckets()
 
     def __len__(self):
-        return sum(
-            len(indices)
-            for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
+        backend_config = StateTracker.get_data_backend_config(self.id)
+        repeats = backend_config.get("repeats", 0)
+        # We need at least a multiplier of 1. Repeats is the number of extra sample steps.
+        multiplier = 1
+        if repeats > 0:
+            multiplier = repeats + 1
+        return (
+            sum(
+                len(indices)
+                for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
+            )
+            * multiplier
         )
 
     @staticmethod

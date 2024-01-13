@@ -217,7 +217,7 @@ def log_validations(
                     for validation_prompt in tqdm(
                         validation_prompts,
                         leave=False,
-                        ncols=100,
+                        ncols=125,
                         desc="Generating validation images",
                     ):
                         # Each validation prompt needs its own embed.

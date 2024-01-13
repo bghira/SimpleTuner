@@ -25,6 +25,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         ]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
+    if "repeats" in backend:
+        output["config"]["repeats"] = backend["repeats"]
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
     else:
@@ -391,13 +393,30 @@ def random_dataloader_iterator(backends: dict):
         try:
             yield (step, next(chosen_iter))
         except MultiDatasetExhausted:
-            logger.info(
-                f"Dataset (name={chosen_backend_id}) is now exhausted. Removing from list."
+            # We may want to repeat the same dataset multiple times in a single epoch.
+            # If so, we can just reset the iterator and keep going.
+            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get(
+                "repeats", False
+            )
+            if (
+                repeats
+                and repeats > 0
+                and StateTracker.get_repeats(chosen_backend_id) < repeats
+            ):
+                StateTracker.increment_repeats(chosen_backend_id)
+                logger.debug(
+                    f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
+                )
+                continue
+            logger.debug(
+                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
             )
             del backends[chosen_backend_id]
             StateTracker.backend_exhausted(chosen_backend_id)
+            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
+        finally:
             if not backends:
-                logger.info(
+                logger.debug(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()

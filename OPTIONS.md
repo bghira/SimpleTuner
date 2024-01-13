@@ -34,7 +34,7 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: Path to your SimpleTuner dataset configuration.
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
-- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration.
+- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
 
 ### `--override_dataset_config`
 
@@ -248,7 +248,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                      [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                      [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
-                     [--print_filenames]
+                     [--print_filenames] [--print_sampler_statistics]
                      [--metadata_update_interval METADATA_UPDATE_INTERVAL]
                      [--debug_aspect_buckets] [--debug_dataset_loader]
                      [--freeze_encoder]
@@ -702,6 +702,10 @@ options:
   --print_filenames     If any image files are stopping the process eg. due to
                         corruption or truncation, this will help identify
                         which is at fault.
+  --print_sampler_statistics
+                        If provided, will print statistics about the dataset
+                        sampler. This is useful for debugging. The default
+                        behaviour is to not print sampler statistics.
   --metadata_update_interval METADATA_UPDATE_INTERVAL
                         When generating the aspect bucket indicies, we want to
                         save it every X seconds. The default is to save it

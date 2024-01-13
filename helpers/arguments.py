@@ -833,6 +833,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--print_sampler_statistics",
+        action="store_true",
+        help=(
+            "If provided, will print statistics about the dataset sampler. This is useful for debugging."
+            " The default behaviour is to not print sampler statistics."
+        ),
+    )
+    parser.add_argument(
         "--metadata_update_interval",
         type=int,
         default=3600,
