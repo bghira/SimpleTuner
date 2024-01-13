@@ -159,6 +159,7 @@ Here's a breakdown of what each environment variable does:
 #### General Settings
 
 - `DATALOADER_CONFIG`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
+  - See [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
   - One or more datasets can be configured, but it's not necessary to use multiple.
   - Some config options that have an equivalent commandline option name can be omitted, in favour of the global option
   - Some config options are mandatory, but errors will emit for those on startup. Feel free to experiment.

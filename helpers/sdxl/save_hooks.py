@@ -29,7 +29,6 @@ class SDXLSaveHook:
             os.path.join(output_dir, "training_state.json")
         )
         if self.args.model_type == "lora":
-            logging.info("Saving LoRA weights")
             # there are only two options here. Either are just the unet attn processor layers
             # or there are the unet and text encoder atten layers
             unet_lora_layers_to_save = None

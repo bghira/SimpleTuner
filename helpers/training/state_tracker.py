@@ -26,6 +26,8 @@ class StateTracker:
     data_backends = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
+    # A dict of backend IDs to the number of times they have been repeated.
+    repeats = {}
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -124,13 +126,25 @@ class StateTracker:
         cls.epoch_step = epoch_step
 
     @classmethod
+    def set_repeats(cls, repeats: dict):
+        cls.repeats = repeats
+
+    @classmethod
     def load_training_state(cls, state_path: str):
-        with open(state_path, "r") as f:
-            training_state = json.load(f)
-        cls.set_global_step(training_state["global_step"])
-        cls.set_epoch_step(training_state["epoch_step"])
-        cls.set_epoch(training_state["epoch"])
-        cls.set_exhausted_backends(training_state["exhausted_backends"])
+        try:
+            with open(state_path, "r") as f:
+                training_state = json.load(f)
+        except OSError as e:
+            logger.error(f"Error loading training state: {e}")
+            training_state = {}
+        except Exception as e:
+            logger.error(f"Error loading training state: {e}")
+            training_state = {}
+        cls.set_global_step(training_state.get("global_step", 0))
+        cls.set_epoch_step(training_state.get("epoch_step", 0))
+        cls.set_epoch(training_state.get("epoch", 1))
+        cls.set_exhausted_backends(training_state.get("exhausted_backends", []))
+        cls.init_repeats(training_state.get("repeats", {}))
         logging.debug(f"Training state loaded: {cls.get_training_state()}")
 
     @classmethod
@@ -140,6 +154,7 @@ class StateTracker:
             "epoch_step": cls.epoch_step,
             "epoch": cls.epoch,
             "exhausted_backends": cls.exhausted_backends,
+            "repeats": cls.repeats,
         }
         logger.debug(f"Saving training state: {training_state}")
         with open(state_path, "w") as f:
@@ -152,7 +167,29 @@ class StateTracker:
             "epoch_step": cls.epoch_step,
             "epoch": cls.epoch,
             "exhausted_backends": cls.exhausted_backends,
+            "repeats": cls.repeats,
         }
+
+    @classmethod
+    def set_repeats(cls, repeats: int, data_backend_id: str):
+        cls.repeats[data_backend_id] = repeats
+
+    @classmethod
+    def init_repeats(cls, repeats: int):
+        cls.repeats = repeats
+
+    @classmethod
+    def get_repeats(cls, data_backend_id: str):
+        if data_backend_id not in cls.repeats:
+            return 0
+        return cls.repeats[data_backend_id]
+
+    @classmethod
+    def increment_repeats(cls, data_backend_id: str):
+        cls.set_repeats(
+            data_backend_id=data_backend_id,
+            repeats=cls.get_repeats(data_backend_id) + 1,
+        )
 
     @classmethod
     def backend_status(cls, data_backend_id: str):

@@ -967,7 +967,8 @@ def main():
         range(0, args.max_train_steps),
         disable=not show_progress_bar,
         initial=global_step,
-        desc="Steps",
+        desc=f"Epoch {first_epoch}/{args.num_train_epochs} Steps",
+        ncols=125,
     )
     accelerator.wait_for_everyone()
 
@@ -989,6 +990,16 @@ def main():
             logger.debug(
                 f"Just completed epoch {current_epoch}. Beginning epoch {epoch}. Final epoch will be {args.num_train_epochs}"
             )
+            for backend_id, backend in StateTracker.get_data_backends().items():
+                backend_config = StateTracker.get_data_backend_config(backend_id)
+                logger.debug(f"Backend config: {backend_config}")
+                if (
+                    "vae_cache_clear_each_epoch" in backend_config
+                    and backend_config["vae_cache_clear_each_epoch"]
+                ):
+                    # We will clear the cache and then rebuild it. This is useful for random crops.
+                    logger.debug(f"VAE Cache rebuild is enabled. Rebuilding.")
+                    backend["vaecache"].rebuild_cache()
         current_epoch = epoch
         StateTracker.set_epoch(epoch)
         unet.train()
@@ -1296,11 +1307,10 @@ def main():
                                     len(checkpoints) - args.checkpoints_total_limit + 1
                                 )
                                 removing_checkpoints = checkpoints[0:num_to_remove]
-
-                                logger.info(
+                                logger.debug(
                                     f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
                                 )
-                                logger.info(
+                                logger.debug(
                                     f"removing checkpoints: {', '.join(removing_checkpoints)}"
                                 )
 
@@ -1313,6 +1323,7 @@ def main():
                         save_path = os.path.join(
                             args.output_dir, f"checkpoint-{global_step}"
                         )
+                        print("\n")
                         accelerator.save_state(save_path)
                         for _, backend in StateTracker.get_data_backends().items():
                             logger.debug(f"Backend: {backend}")
@@ -1321,7 +1332,6 @@ def main():
                                     save_path, "training_state.json"
                                 ),
                             )
-                        logger.info(f"Saved state to {save_path}")
 
             logs = {
                 "step_loss": loss.detach().item(),

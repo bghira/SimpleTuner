@@ -43,7 +43,7 @@ class BucketStateManager:
         if state_path is None:
             raise ValueError("state_path must be specified")
         state_path = self.mangle_state_path(state_path)
-        logger.info(f"Saving trainer state to {state_path}")
+        logger.debug(f"Saving trainer state to {state_path}")
         final_state = self.deep_convert_dict(state)
         with open(state_path, "w") as f:
             json.dump(final_state, f)

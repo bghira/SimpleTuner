@@ -41,6 +41,7 @@ class VAECache:
         vae_batch_size: int = 4,
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
+        max_workers: int = 32,
     ):
         self.id = id
         if data_backend.id != id:
@@ -64,6 +65,7 @@ class VAECache:
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.bucket_manager = bucket_manager
+        self.max_workers = max_workers
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -92,8 +94,9 @@ class VAECache:
         return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
-        if self.data_backend.exists(self.generate_vae_cache_filename(filepath)[0]):
-            self.debug_log(f"Skipping {filepath} because it is already in the cache")
+        test_path = self.generate_vae_cache_filename(filepath)[0]
+        if self.data_backend.exists(test_path):
+            self.debug_log(f"Skipping {test_path} because it is already in the cache")
             return True
         return False
 
@@ -141,6 +144,82 @@ class VAECache:
         )
         return all_image_files
 
+    def init_vae(self):
+        from diffusers import AutoencoderKL
+
+        args = StateTracker.get_args()
+        vae_path = (
+            args.pretrained_model_name_or_path
+            if args.pretrained_vae_model_name_or_path is None
+            else args.pretrained_vae_model_name_or_path
+        )
+        precached_vae = StateTracker.get_vae()
+        self.debug_log(f"Was the VAE loaded? {precached_vae}")
+        self.vae = precached_vae or AutoencoderKL.from_pretrained(
+            vae_path,
+            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+            revision=args.revision,
+            force_upcast=False,
+        ).to(self.accelerator.device)
+        StateTracker.set_vae(self.vae)
+
+    def rebuild_cache(self):
+        """
+        First, we'll clear the cache before rebuilding it.
+        """
+        self.debug_log("Rebuilding cache.")
+        self.debug_log("-> Clearing cache objects")
+        self.clear_cache()
+        self.debug_log("-> Split tasks between GPU(s)")
+        self.split_cache_between_processes()
+        self.debug_log("-> Load VAE")
+        self.init_vae()
+        self.debug_log("-> Process VAE cache")
+        self.process_buckets()
+        self.debug_log("-> Completed cache rebuild")
+        if self.accelerator.is_local_main_process:
+            self.debug_log("Updating StateTracker with new VAE cache entry list.")
+            StateTracker.set_vae_cache_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.cache_dir,
+                    str_pattern="*.pt",
+                ),
+                data_backend_id=self.id,
+            )
+        self.accelerator.wait_for_everyone()
+
+    def clear_cache(self):
+        """
+        Clear all .pt files in our data backend's cache prefix, as obtained from self.discover_all_files().
+
+        We can't simply clear the directory, because it might be mixed with the image samples (in the case of S3)
+
+        We want to thread this, using the data_backend.delete function as the worker function.
+        """
+        futures = []
+        all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            for filename in all_cache_files:
+                full_path = os.path.join(self.cache_dir, filename)
+                self.debug_log(f"Would delete: {full_path}")
+                futures.append(executor.submit(self.data_backend.delete, full_path))
+            for future in tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc=f"Deleting files for backend {self.id}",
+                position=get_rank(),
+                ncols=125,
+                leave=False,
+            ):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Error deleting file {filename}: {e}")
+                    self.debug_log(f"Error traceback: {traceback.format_exc()}")
+                    raise e
+        # Clear the StateTracker list of VAE objects:
+        StateTracker.set_vae_cache_files([], data_backend_id=self.id)
+
     def _list_cached_images(self):
         """
         Return a set of filenames (without the .pt extension) that have been processed.
@@ -149,7 +228,7 @@ class VAECache:
         pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
-        # logger.debug(
+        # self.debug_log(
         #     f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
         # )
         return results
@@ -263,10 +342,10 @@ class VAECache:
             if i in uncached_image_indices
         ]
         # if len(uncached_image_indices) > 0:
-        #     logger.debug(
+        #     self.debug_log(
         #         f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
         #     )
-        #     logger.debug(
+        #     self.debug_log(
         #         f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
         #     )
         uncached_images = [images[i] for i in uncached_image_indices]
@@ -312,7 +391,7 @@ class VAECache:
         # Pull the 'filepaths' and 'latents' from self.write_queue
         filepaths, latents = [], []
         qlen = self.write_queue.qsize()
-        logger.debug(f"We have {qlen} latents to write to disk.")
+        self.debug_log(f"We have {qlen} latents to write to disk.")
         for idx in range(0, qlen):
             output_file, filepath, latent_vector = self.write_queue.get()
             file_extension = os.path.splitext(output_file)[1]
@@ -369,7 +448,7 @@ class VAECache:
                 self.debug_log(f"Completed processing {filepath}")
         except Exception as e:
             logger.error(f"Error processing images {filepaths}: {e}")
-            logger.debug(f"Error traceback: {traceback.format_exc()}")
+            self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise e
 
     def _encode_images_in_batch(self) -> None:
@@ -407,7 +486,7 @@ class VAECache:
                 qlen = self.vae_input_queue.qsize()
         except Exception as e:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
-            logger.debug(f"Error traceback: {traceback.format_exc()}")
+            self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise e
 
     def read_images_in_batch(self) -> None:
@@ -425,9 +504,9 @@ class VAECache:
         qlen = self.read_queue.qsize()
         for idx in range(0, qlen):
             path = self.read_queue.get()
-            logger.debug(f"Read path '{path}' from read_queue.")
+            self.debug_log(f"Read path '{path}' from read_queue.")
             filepaths.append(path)
-        logger.debug(f"Beginning to read images in batch: {filepaths}")
+        self.debug_log(f"Beginning to read images in batch: {filepaths}")
         available_filepaths, batch_output = self.data_backend.read_image_batch(
             filepaths, delete_problematic_images=self.delete_problematic_images
         )
@@ -501,7 +580,7 @@ class VAECache:
                     relevant_files,
                     desc=f"Processing bucket {bucket}",
                     position=get_rank(),
-                    ncols=100,
+                    ncols=125,
                     leave=False,
                 ):
                     filepath = self._process_raw_filepath(raw_filepath)
@@ -526,7 +605,7 @@ class VAECache:
                         if self.already_cached(filepath):
                             continue
                         # It does not exist. We can add it to the read queue.
-                        logger.debug(f"Adding {filepath} to the read queue.")
+                        self.debug_log(f"Adding {filepath} to the read queue.")
                         self._accumulate_read_queue(filepath)
                         # We will check to see whether the queue is ready.
                         if self.read_queue.qsize() >= self.read_batch_size:
@@ -559,7 +638,7 @@ class VAECache:
                         raise e
                     except Exception as e:
                         logger.error(f"Error processing image {filepath}: {e}")
-                        logger.debug(f"Error traceback: {traceback.format_exc()}")
+                        self.debug_log(f"Error traceback: {traceback.format_exc()}")
                         raise e
 
                     # Now, see if we have any futures to complete, and execute them.
@@ -599,7 +678,7 @@ class VAECache:
                         futures.append(future_to_write)
 
                     futures = self._process_futures(futures, executor)
-                    logger.debug(
+                    self.debug_log(
                         "Completed process_buckets, all futures have been returned."
                     )
                 except Exception as e:
@@ -625,4 +704,4 @@ class VAECache:
                 yield (full_path, cache_content)
         except Exception as e:
             logger.error(f"Error in scan_cache_contents: {e}")
-            logger.debug(f"Error traceback: {traceback.format_exc()}")
+            self.debug_log(f"Error traceback: {traceback.format_exc()}")

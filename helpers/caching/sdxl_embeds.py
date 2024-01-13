@@ -179,7 +179,7 @@ class TextEmbeddingCache:
                 desc="Processing prompts",
                 disable=return_concat,
                 leave=False,
-                ncols=100,
+                ncols=125,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -230,7 +230,7 @@ class TextEmbeddingCache:
                 prompts or self.prompts,
                 desc="Processing prompts",
                 leave=False,
-                ncols=100,
+                ncols=125,
                 disable=return_concat,
             ):
                 filename = os.path.join(
