@@ -523,18 +523,16 @@ triton = ["triton (>=2.1.0)"]
 
 [[package]]
 name = "diffusers"
-version = "0.25.0"
+version = "0.26.0.dev0"
 description = "State-of-the-art diffusion in PyTorch and JAX."
 optional = false
 python-versions = ">=3.8.0"
-files = [
-    {file = "diffusers-0.25.0-py3-none-any.whl", hash = "sha256:5eebec0c4d4f12de205e6e97d34c3617598be9a1f853cc5f40becc94a1abaa7c"},
-    {file = "diffusers-0.25.0.tar.gz", hash = "sha256:67102c6490f869aea943f90cd7a115251c8989c1ab3e9b07eaad4e5a4c593f59"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 filelock = "*"
-huggingface-hub = ">=0.19.4"
+huggingface-hub = ">=0.20.2"
 importlib-metadata = "*"
 numpy = "*"
 Pillow = "*"
@@ -550,6 +548,12 @@ quality = ["hf-doc-builder (>=0.3.0)", "isort (>=5.5.4)", "ruff (==0.1.5)", "url
 test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "omegaconf", "parameterized", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "torchvision", "transformers (>=4.25.1)"]
 torch = ["accelerate (>=0.11.0)", "torch (>=1.4)"]
 training = ["Jinja2", "accelerate (>=0.11.0)", "datasets", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "tensorboard"]
+
+[package.source]
+type = "git"
+url = "https://github.com/huggingface/diffusers"
+reference = "HEAD"
+resolved_reference = "79df50388df09d9615e3c067695a453bb0a694c0"
 
 [[package]]
 name = "dill"
@@ -885,13 +889,13 @@ files = [
 
 [[package]]
 name = "huggingface-hub"
-version = "0.20.1"
+version = "0.20.2"
 description = "Client library to download and publish models, datasets and other repos on the huggingface.co hub"
 optional = false
 python-versions = ">=3.8.0"
 files = [
-    {file = "huggingface_hub-0.20.1-py3-none-any.whl", hash = "sha256:ecfdea395a8bc68cd160106c5bd857f7e010768d95f9e1862a779010cc304831"},
-    {file = "huggingface_hub-0.20.1.tar.gz", hash = "sha256:8c88c4c3c8853e22f2dfb4d84c3d493f4e1af52fb3856a90e1eeddcf191ddbb1"},
+    {file = "huggingface_hub-0.20.2-py3-none-any.whl", hash = "sha256:53752eda2239d30a470c307a61cf9adcf136bc77b0a734338c7d04941af560d8"},
+    {file = "huggingface_hub-0.20.2.tar.gz", hash = "sha256:215c5fceff631030c7a3d19ba7b588921c908b3f21eef31d160ebc245b200ff6"},
 ]
 
 [package.dependencies]
@@ -3209,4 +3213,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "bebf55a1d1d06335658b688def8b140763af7c2eacf06c6179f87336defca67a"
+content-hash = "d0a0345d03cc475c3ad00214554524e36dc00cb09aed95a2a2dafc8dfb963ea7"
