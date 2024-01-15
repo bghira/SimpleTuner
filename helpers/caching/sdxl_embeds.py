@@ -1,9 +1,12 @@
-import os, torch, hashlib, logging
+import os, torch, hashlib, logging, time
 from tqdm import tqdm
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
+from queue import Queue
+from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -12,6 +15,7 @@ logger.setLevel("DEBUG")
 
 class TextEmbeddingCache:
     prompts = {}
+    write_queue = Queue()
 
     def __init__(
         self,
@@ -49,6 +53,8 @@ class TextEmbeddingCache:
         self.rank_info = rank_info()
         self.debug_log("Creating cache directory if it doesn't exist.")
         self.data_backend.create_directory(self.cache_dir)
+        self.batch_write_thread = Thread(target=self.batch_write_embeddings)
+        self.batch_write_thread.start()
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -57,7 +63,46 @@ class TextEmbeddingCache:
         return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
 
     def save_to_cache(self, filename, embeddings):
-        self.data_backend.torch_save(embeddings, filename)
+        """Add write requests to the queue instead of writing directly."""
+        self.write_queue.put((embeddings, filename))
+        self.debug_log(
+            f"Pushing cache object into write queue. We have {self.write_queue.qsize()} items in the queue."
+        )
+
+    def batch_write_embeddings(self):
+        """Process write requests in batches."""
+        while True:
+            batch = []
+            while not self.write_queue.empty() and len(batch) < self.write_batch_size:
+                self.debug_log(
+                    f"Adding to batch, currently at {len(batch)} embeds. Waiting for {self.write_batch_size} embeds before we process"
+                )
+                batch.append(self.write_queue.get())
+
+            if len(batch) >= self.write_batch_size:
+                self.debug_log(
+                    f"Processing batch of {len(batch)} embeds, as we reached our threshold of {self.write_batch_size}"
+                )
+                self.process_write_batch(batch)
+            elif self.write_queue.empty() and len(batch) > 0:
+                self.debug_log(
+                    f"Processing batch of {len(batch)} embeds, as the queue is empty."
+                )
+                self.process_write_batch(batch)
+
+            time.sleep(1)  # Prevents the thread from being too busy-waiting
+
+    def process_write_batch(self, batch):
+        """Write a batch of embeddings to the cache."""
+        self.debug_log(
+            f"Processing write batch of {len(batch)} embeds via process_write_batch"
+        )
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = [
+                executor.submit(self.data_backend.torch_save, *args) for args in batch
+            ]
+            for future in futures:
+                future.result()  # Wait for all writes to complete
 
     def load_from_cache(self, filename):
         logger.debug("Begin load from cache.")
