@@ -56,12 +56,33 @@ class TextEmbeddingCache:
         self.data_backend.create_directory(self.cache_dir)
         self.batch_write_thread = Thread(target=self.batch_write_embeddings)
         self.batch_write_thread.start()
+        # Ensure the cache has the currently-existing file list.
+        self.discover_all_files()
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
 
     def create_hash(self, caption):
         return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
+
+    def discover_all_files(self, directory: str = None):
+        """Identify all files in a directory."""
+        logger.info(f"(id={self.id}) Listing all text embed cache entries")
+        # This isn't returned, because we merely check if it's stored, or, store it.
+        (
+            StateTracker.get_text_cache_files(data_backend_id=self.id)
+            or StateTracker.set_text_cache_files(
+                self.data_backend.list_files(
+                    instance_data_root=self.cache_dir,
+                    str_pattern="*.pt",
+                ),
+                data_backend_id=self.id,
+            )
+        )
+        self.debug_log(" -> done listing all text embed cache entries")
+        self.debug_log(
+            f" -> {StateTracker.get_text_cache_files(data_backend_id=self.id)}"
+        )
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
@@ -221,10 +242,39 @@ class TextEmbeddingCache:
 
     def compute_embeddings_for_prompts(
         self,
-        prompts,
+        all_prompts,
         return_concat: bool = True,
         is_validation: bool = False,
     ):
+        existing_cache_filenames = list(
+            StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
+        )
+        all_cache_filenames = [f"{self.create_hash(p)}.pt" for p in all_prompts]
+        self.debug_log(f"Existing cache filenames: {existing_cache_filenames}")
+        self.debug_log(f"All cache filenames: {all_cache_filenames}")
+        # Check if we have all the files in the cache
+        if (
+            not is_validation
+            and not return_concat
+            and all([f in existing_cache_filenames for f in all_cache_filenames])
+        ):
+            logger.debug(f"(id={self.id}) All prompts are cached, ignoring.")
+            return None
+        # Reduce prompts down to the list of unncached prompts.
+        if not return_concat and not is_validation:
+            prompts = [
+                p
+                for p in all_prompts
+                if f"{self.create_hash(p)}.pt" not in existing_cache_filenames
+            ]
+            self.debug_log(
+                f"Reduced count of prompts for processing from {len(all_prompts)} to {len(prompts)}"
+            )
+        else:
+            prompts = all_prompts
+        logger.info(
+            f"Beginning caching of text embeds, we have {len(prompts)} prompts to process."
+        )
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
                 prompts,
