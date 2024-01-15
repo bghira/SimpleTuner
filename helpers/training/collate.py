@@ -4,6 +4,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.brightness import calculate_batch_luminance
 from accelerate.logging import get_logger
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO"))
@@ -61,19 +62,6 @@ def compute_time_ids(
     return add_time_ids
 
 
-def extract_pixel_values(examples):
-    pixel_values = []
-    for example in examples:
-        image_data = example["image_data"]
-        pixel_values.append(
-            to_tensor(image_data).to(
-                memory_format=torch.contiguous_format,
-                dtype=StateTracker.get_vae_dtype(),
-            )
-        )
-    return pixel_values
-
-
 def extract_filepaths(examples):
     filepaths = []
     for example in examples:
@@ -113,24 +101,47 @@ def compute_latents(filepaths, data_backend_id: str):
     return torch.stack(latents)
 
 
-def compute_prompt_embeddings(captions, text_embed_cache):
-    debug_log(" -> get embed from cache")
-    if text_embed_cache.model_type == "sdxl":
-        (
-            prompt_embeds_all,
-            add_text_embeds_all,
-        ) = text_embed_cache.compute_embeddings_for_sdxl_prompts(captions)
-        debug_log(" -> concat embeds")
+def compute_single_embedding(caption, text_embed_cache, is_sdxl):
+    """Worker function to compute embedding for a single caption."""
+    if is_sdxl:
+        return text_embed_cache.compute_embeddings_for_sdxl_prompts([caption])[0]
     else:
-        debug_log(" -> concat embeds")
-        prompt_embeds_all = text_embed_cache.compute_embeddings_for_legacy_prompts(
-            captions
-        )[0]
-        prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
+        return text_embed_cache.compute_embeddings_for_legacy_prompts([caption])[0]
+
+
+def compute_prompt_embeddings(captions, text_embed_cache):
+    """
+    Retrieve / compute text embeds in parallel.
+    Args:
+        captions: List of strings
+        text_embed_cache: TextEmbedCache instance
+
+    Returns:
+        prompt_embeds_all: Tensor of shape (batch_size, 512)
+        add_text_embeds_all: Tensor of shape (batch_size, 512)
+    """
+    debug_log(" -> get embed from cache")
+    is_sdxl = text_embed_cache.model_type == "sdxl"
+
+    # Use a thread pool to compute embeddings concurrently
+    with ThreadPoolExecutor() as executor:
+        embeddings = list(
+            executor.map(
+                compute_single_embedding,
+                captions,
+                [text_embed_cache] * len(captions),
+                [is_sdxl] * len(captions),
+            )
+        )
+
+    if is_sdxl:
+        prompt_embeds_all, add_text_embeds_all = zip(*embeddings)
+        prompt_embeds_all = torch.concat(list(prompt_embeds_all), dim=0)
+        add_text_embeds_all = torch.concat(list(add_text_embeds_all), dim=0)
+        return prompt_embeds_all, add_text_embeds_all
+    else:
+        prompt_embeds_all = torch.concat(embeddings, dim=0)
         return prompt_embeds_all, None
-    prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
-    add_text_embeds_all = torch.concat([add_text_embeds_all for _ in range(1)], dim=0)
-    return prompt_embeds_all, add_text_embeds_all
 
 
 def gather_conditional_size_features(examples, latents, weight_dtype):
