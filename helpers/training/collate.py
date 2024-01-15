@@ -146,10 +146,10 @@ def compute_prompt_embeddings(captions, text_embed_cache):
 
     logger.debug(f"Got embeddings: {embeddings}")
     if is_sdxl:
-        prompt_embeds_all, add_text_embeds_all = zip(*embeddings)
-        prompt_embeds_all = torch.concat(list(prompt_embeds_all), dim=0)
-        add_text_embeds_all = torch.concat(list(add_text_embeds_all), dim=0)
-        return prompt_embeds_all, add_text_embeds_all
+        # Separate the tuples
+        prompt_embeds = [t[0] for t in embeddings]
+        add_text_embeds = [t[1] for t in embeddings]
+        return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
     else:
         prompt_embeds_all = torch.concat(embeddings, dim=0)
         return prompt_embeds_all, None
