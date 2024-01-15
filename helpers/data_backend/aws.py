@@ -82,6 +82,7 @@ class S3DataBackend(BaseDataBackend):
     def exists(self, s3_key) -> bool:
         """Determine whether a file exists in S3."""
         try:
+            logger.debug("Checking if file exists: {s3_key}")
             self.client.head_object(
                 Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
             )
