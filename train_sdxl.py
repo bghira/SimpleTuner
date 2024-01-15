@@ -154,6 +154,7 @@ def compute_null_conditioning(
 
 def main():
     args = parse_args()
+    StateTracker.set_model_type("sdxl")
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
         StateTracker.delete_cache_files()
@@ -276,6 +277,7 @@ def main():
             )
     StateTracker.set_weight_dtype(weight_dtype)
     # Load scheduler, tokenizer and models.
+    logger.info("Load tokenizers")
     tokenizer_1 = AutoTokenizer.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="tokenizer",
@@ -320,16 +322,19 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        logger.info("Load text encoder 1..")
         text_encoder_1 = text_encoder_cls_1.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="text_encoder",
             revision=args.revision,
         )
+        logger.info("Load text encoder 2..")
         text_encoder_2 = text_encoder_cls_2.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="text_encoder_2",
             revision=args.revision,
         )
+        logger.info("Load VAE..")
         vae = AutoencoderKL.from_pretrained(
             vae_path,
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
@@ -337,6 +342,7 @@ def main():
             force_upcast=False,
         )
 
+    logger.info("Moving models to GPU. Almost there.")
     text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     text_encoder_2.to(accelerator.device, dtype=weight_dtype)
     tokenizers = [tokenizer_1, tokenizer_2]
@@ -346,9 +352,11 @@ def main():
     vae.requires_grad_(False)
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
+    logger.info("Creating the U-net..")
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
+    logger.info("Moving the U-net to GPU.")
     unet.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention:
         logger.info("Enabling xformers memory-efficient attention.")
@@ -378,6 +386,7 @@ def main():
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
         )
 
+        logger.info("Adding LoRA adapter to the unet model..")
         unet.add_adapter(unet_lora_config)
 
     if args.mixed_precision == "bf16":
@@ -417,13 +426,6 @@ def main():
     logger.info(f"Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
-    try:
-        configure_multi_databackend(args, accelerator)
-    except Exception as e:
-        logging.error(f"{e}")
-
-        sys.exit(0)
-
     prompt_handler = None
     if not args.disable_compel:
         prompt_handler = PromptHandler(
@@ -433,38 +435,19 @@ def main():
             accelerator=accelerator,
             model_type="sdxl",
         )
-    logger.info("Initialise text embedding cache")
-    embed_cache = TextEmbeddingCache(
-        text_encoders=text_encoders,
-        tokenizers=tokenizers,
-        accelerator=accelerator,
-        prompt_handler=prompt_handler,
-        model_type="sdxl",
-    )
-    StateTracker.set_embedcache(embed_cache)
-    if (
-        args.caption_dropout_probability is not None
-        and args.caption_dropout_probability > 0
-    ):
-        logger.info("Pre-computing null embedding for caption dropout")
-        with accelerator.main_process_first():
-            embed_cache.compute_embeddings_for_sdxl_prompts([""], return_concat=False)
-        accelerator.wait_for_everyone()
-    else:
-        logger.warning(
-            f"Not using caption dropout will potentially lead to overfitting on captions."
-        )
 
-    if "text" not in args.skip_file_discovery:
-        logger.info(f"Pre-computing text embeds / updating cache.")
-        # Captions are extracted from datasets during `configure_multi_databackend(...)`
-        all_captions = StateTracker.get_caption_files()
-        if accelerator.is_main_process:
-            embed_cache.compute_embeddings_for_sdxl_prompts(
-                all_captions, return_concat=False
-            )
-        accelerator.wait_for_everyone()
-        logger.info(f"Discovered {len(all_captions)} captions.")
+    try:
+        configure_multi_databackend(
+            args,
+            accelerator=accelerator,
+            text_encoders=text_encoders,
+            tokenizers=tokenizers,
+            prompt_handler=prompt_handler,
+        )
+    except Exception as e:
+        logging.error(f"{e}")
+
+        sys.exit(0)
 
     with accelerator.main_process_first():
         (
@@ -472,7 +455,9 @@ def main():
             validation_shortnames,
             validation_negative_prompt_embeds,
             validation_negative_pooled_embeds,
-        ) = prepare_validation_prompt_list(args=args, embed_cache=embed_cache)
+        ) = prepare_validation_prompt_list(
+            args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+        )
     accelerator.wait_for_everyone()
     # Grab GPU memory used:
     if accelerator.is_main_process:
@@ -510,6 +495,9 @@ def main():
         )
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
+    logger.info(
+        f"Collected the following data backends: {StateTracker.get_data_backends()}"
+    )
     total_num_batches = sum(
         [
             len(backend["bucket_manager"])
@@ -1361,7 +1349,7 @@ def main():
                 tokenizer=None,
                 vae_path=vae_path,
                 weight_dtype=weight_dtype,
-                embed_cache=embed_cache,
+                embed_cache=StateTracker.get_default_text_embed_cache(),
                 validation_negative_pooled_embeds=validation_negative_pooled_embeds,
                 validation_negative_prompt_embeds=validation_negative_prompt_embeds,
                 text_encoder_2=text_encoder_2,

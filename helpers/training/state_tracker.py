@@ -9,6 +9,7 @@ logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class StateTracker:
     # Class variables
+    model_type = ""
 
     ## Training state
     global_step = 0
@@ -21,7 +22,7 @@ class StateTracker:
     all_caption_files = None
 
     ## Backend entities for retrieval
-    embedcache = None
+    default_text_embed_cache = None
     accelerator = None
     data_backends = {}
     # A list of backend IDs to exhaust.
@@ -72,6 +73,16 @@ class StateTracker:
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         with cache_path.open("w") as f:
             json.dump(data, f)
+
+    @classmethod
+    def set_model_type(cls, model_type: str):
+        if model_type not in ["legacy", "sdxl"]:
+            raise ValueError(f"Unknown model type: {model_type}")
+        cls.model_type = model_type
+
+    @classmethod
+    def get_model_type(cls):
+        return cls.model_type
 
     @classmethod
     def set_image_files(cls, raw_file_list: list, data_backend_id: str):
@@ -268,7 +279,11 @@ class StateTracker:
 
     @classmethod
     def get_data_backends(cls):
-        return cls.data_backends
+        output = {}
+        for backend_id, backend in dict(cls.data_backends).items():
+            if backend.get("dataset_type", "image") == "image":
+                output[backend_id] = backend
+        return output
 
     @classmethod
     def set_accelerator(cls, accelerator):
@@ -315,12 +330,16 @@ class StateTracker:
         return cls.data_backends[id]["vaecache"]
 
     @classmethod
-    def set_embedcache(cls, embedcache):
-        cls.embedcache = embedcache
+    def set_default_text_embed_cache(cls, default_text_embed_cache):
+        cls.default_text_embed_cache = default_text_embed_cache
 
     @classmethod
-    def get_embedcache(cls):
-        return cls.embedcache
+    def get_default_text_embed_cache(cls):
+        return cls.default_text_embed_cache
+
+    @classmethod
+    def get_embedcache(cls, data_backend_id: str):
+        return cls.data_backends[data_backend_id]["text_embed_cache"]
 
     @classmethod
     def get_metadata_by_filepath(cls, filepath):

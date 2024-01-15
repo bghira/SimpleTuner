@@ -222,18 +222,10 @@ class PromptHandler:
     def prepare_instance_prompt(
         image_path: str,
         use_captions: bool,
-        data_backend: BaseDataBackend,
         prepend_instance_prompt: bool,
         instance_prompt: str = None,
     ) -> str:
         instance_prompt = Path(image_path).stem
-        if not instance_prompt and prepend_instance_prompt:
-            # If we did not get a specific instance prompt, use the folder name.
-            logger.debug(f"Prepending instance prompt: {instance_prompt}")
-            if type(data_backend) == S3DataBackend:
-                raise ValueError(
-                    "S3 data backend is not yet compatible with --prepend_instance_prompt"
-                )
         if use_captions:
             # Underscores to spaces.
             instance_prompt = instance_prompt.replace("_", " ")
@@ -245,13 +237,15 @@ class PromptHandler:
         return instance_prompt
 
     @staticmethod
-    def prepare_instance_prompt_from_textfile(image_path) -> str:
-        caption_file = Path(image_path).with_suffix(".txt")
-        if not caption_file.exists():
+    def prepare_instance_prompt_from_textfile(
+        image_path: str, data_backend: BaseDataBackend
+    ) -> str:
+        caption_file = os.path.splitext(image_path)[0] + ".txt"
+        if not data_backend.exists(caption_file):
             raise FileNotFoundError(f"Caption file {caption_file} not found.")
         try:
-            with caption_file.open("r") as f:
-                instance_prompt = f.read()
+            instance_prompt = data_backend.read(caption_file)
+
             return instance_prompt
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")
@@ -283,11 +277,10 @@ class PromptHandler:
                 image_path=image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
-                data_backend=data_backend,
             )
         elif caption_strategy == "textfile":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
-                image_path
+                image_path, data_backend=data_backend
             )
         else:
             raise ValueError(f"Unsupported caption strategy: {caption_strategy}")
@@ -313,7 +306,6 @@ class PromptHandler:
                 image_path=str(image_path),
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
-                data_backend=data_backend,
             )
             captions.append(caption)
 

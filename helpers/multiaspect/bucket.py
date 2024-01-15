@@ -113,8 +113,10 @@ class BucketManager:
         if self.data_backend.exists(self.cache_file):
             try:
                 # Use our DataBackend to actually read the cache file.
+                logger.debug("Pulling cache file from storage.")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
+                logger.debug("Completed loading cache data.")
             except Exception as e:
                 logger.warning(
                     f"Error loading aspect bucket cache, creating new one: {e}"

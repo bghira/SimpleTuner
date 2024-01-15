@@ -113,20 +113,19 @@ def compute_latents(filepaths, data_backend_id: str):
     return torch.stack(latents)
 
 
-def compute_prompt_embeddings(captions):
+def compute_prompt_embeddings(captions, text_embed_cache):
     debug_log(" -> get embed from cache")
-    embedcache = StateTracker.get_embedcache()
-    if embedcache.model_type == "sdxl":
+    if text_embed_cache.model_type == "sdxl":
         (
             prompt_embeds_all,
             add_text_embeds_all,
-        ) = embedcache.compute_embeddings_for_sdxl_prompts(captions)
+        ) = text_embed_cache.compute_embeddings_for_sdxl_prompts(captions)
         debug_log(" -> concat embeds")
     else:
         debug_log(" -> concat embeds")
-        prompt_embeds_all = embedcache.compute_embeddings_for_legacy_prompts(captions)[
-            0
-        ]
+        prompt_embeds_all = text_embed_cache.compute_embeddings_for_legacy_prompts(
+            captions
+        )[0]
         prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
         return prompt_embeds_all, None
     prompt_embeds_all = torch.concat([prompt_embeds_all for _ in range(1)], dim=0)
@@ -201,7 +200,12 @@ def collate_fn(batch):
     debug_log("Extract captions")
     captions = [example["instance_prompt_text"] for example in examples]
     debug_log("Pull cached text embeds")
-    prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(captions)
+    text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
+        "text_embed_cache"
+    ]
+    prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
+        captions, text_embed_cache
+    )
     batch_time_ids = None
     if add_text_embeds_all is not None:
         debug_log("Compute and stack SDXL time ids")

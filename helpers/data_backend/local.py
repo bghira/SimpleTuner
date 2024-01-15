@@ -151,7 +151,9 @@ class LocalDataBackend(BaseDataBackend):
         return (available_keys, output_images)
 
     def create_directory(self, directory_path):
+        logger.debug(f"Creating directory: {directory_path}")
         os.makedirs(directory_path, exist_ok=True)
+        logger.debug(f"Created directory.")
 
     def torch_load(self, filename):
         # Check if file exists:

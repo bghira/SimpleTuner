@@ -1,10 +1,13 @@
 import os, torch, hashlib, logging
 from tqdm import tqdm
+from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.prompts import PromptHandler
+from helpers.training.multi_process import rank_info
 
 logger = logging.getLogger("TextEmbeddingCache")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger.setLevel("DEBUG")
 
 
 class TextEmbeddingCache:
@@ -12,29 +15,52 @@ class TextEmbeddingCache:
 
     def __init__(
         self,
+        id: str,
+        data_backend: BaseDataBackend,
         text_encoders,
         tokenizers,
         accelerator,
         cache_dir: str = "cache",
         model_type: str = "sdxl",
         prompt_handler: PromptHandler = None,
+        write_batch_size: int = 25,
+        read_batch_size: int = 25,
+        process_queue_size: int = 16,
+        text_encoder_batch_size: int = 4,
+        max_workers: int = 32,
     ):
+        self.id = id
+        if data_backend.id != id:
+            raise ValueError(
+                f"TextEmbeddingCache received incorrect data_backend: {data_backend}"
+            )
+        self.data_backend = data_backend
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         self.model_type = model_type
         self.prompt_handler = prompt_handler
-        os.makedirs(self.cache_dir, exist_ok=True)
+        self.write_batch_size = write_batch_size
+        self.read_batch_size = read_batch_size
+        self.process_queue_size = process_queue_size
+        self.text_encoder_batch_size = text_encoder_batch_size
+        self.max_workers = max_workers
+        self.rank_info = rank_info()
+        self.debug_log("Creating cache directory if it doesn't exist.")
+        self.data_backend.create_directory(self.cache_dir)
+
+    def debug_log(self, msg: str):
+        logger.debug(f"{self.rank_info}{msg}")
 
     def create_hash(self, caption):
         return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
 
     def save_to_cache(self, filename, embeddings):
-        torch.save(embeddings, filename)
+        self.data_backend.torch_save(embeddings, filename)
 
     def load_from_cache(self, filename):
-        return torch.load(filename, map_location=self.accelerator.device)
+        return self.data_backend.torch_load(filename)
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
         input_tokens = tokenizer(
@@ -45,8 +71,8 @@ class TextEmbeddingCache:
             return_tensors="pt",
         ).input_ids.to(text_encoder.device)
         output = text_encoder(input_tokens)[0]
-        logger.debug(f"Legacy prompt shape: {output.shape}")
-        logger.debug(f"Legacy prompt encoded: {output}")
+        self.debug_log(f"Legacy prompt shape: {output.shape}")
+        self.debug_log(f"Legacy prompt encoded: {output}")
         return output
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
@@ -120,6 +146,7 @@ class TextEmbeddingCache:
         pooled_prompt_embeds_all = []
 
         for prompt in prompts:
+            self.debug_log(f"Encoding prompt: {prompt}")
             prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompt(
                 text_encoders, tokenizers, prompt, is_validation
             )
@@ -163,6 +190,9 @@ class TextEmbeddingCache:
         return_concat: bool = True,
         is_validation: bool = False,
     ):
+        logger.debug(
+            f"(id={self.id}) Running compute_embeddings_for_sdxl_prompts on {len(prompts or self.prompts)} prompts.."
+        )
         prompt_embeds_all = []
         add_text_embeds_all = []
         load_from_cache = True
@@ -184,12 +214,17 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                if os.path.exists(filename) and load_from_cache and not return_concat:
+                self.debug_log(f"Checking for cache file: {filename}")
+                if (
+                    self.data_backend.exists(filename)
+                    and load_from_cache
+                    and not return_concat
+                ):
                     continue
-                if os.path.exists(filename) and load_from_cache:
+                if self.data_backend.exists(filename) and load_from_cache:
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
-                    logger.debug(f"Encoding prompt: {prompt}")
+                    self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
                         self.text_encoders,
                         self.tokenizers,
@@ -239,10 +274,10 @@ class TextEmbeddingCache:
                 if os.path.exists(filename) and not return_concat:
                     continue
                 if os.path.exists(filename):
-                    logger.debug(f"Loading from cache: {filename}")
+                    self.debug_log(f"Loading from cache: {filename}")
                     prompt_embeds = self.load_from_cache(filename)
                 else:
-                    logger.debug(f"Encoding prompt: {prompt}")
+                    self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds = self.encode_legacy_prompt(
                         self.text_encoders[0], self.tokenizers[0], [prompt]
                     )
