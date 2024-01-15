@@ -28,7 +28,7 @@ class TextEmbeddingCache:
         cache_dir: str = "cache",
         model_type: str = "sdxl",
         prompt_handler: PromptHandler = None,
-        write_batch_size: int = 25,
+        write_batch_size: int = 128,
         read_batch_size: int = 25,
         process_queue_size: int = 16,
         text_encoder_batch_size: int = 4,
