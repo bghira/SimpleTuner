@@ -19,6 +19,7 @@ class StateTracker:
     ## Caches
     all_image_files = {}
     all_vae_cache_files = {}
+    all_text_cache_files = {}
     all_caption_files = None
 
     ## Backend entities for retrieval
@@ -36,7 +37,11 @@ class StateTracker:
 
     @classmethod
     def delete_cache_files(cls):
-        for cache_name in ["all_image_files", "all_vae_cache_files"]:
+        for cache_name in [
+            "all_image_files",
+            "all_vae_cache_files",
+            "all_text_cache_files",
+        ]:
             cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
             if cache_path.exists():
                 try:
@@ -54,6 +59,13 @@ class StateTracker:
                 pass
 
         filelist = Path(cls.args.output_dir).glob("all_vae_cache_files_*.json")
+        for file in filelist:
+            try:
+                file.unlink()
+            except:
+                pass
+
+        filelist = Path(cls.args.output_dir).glob("all_text_cache_files_*.json")
         for file in filelist:
             try:
                 file.unlink()
@@ -247,6 +259,32 @@ class StateTracker:
                 "all_vae_cache_files_{}".format(data_backend_id)
             )
         return cls.all_vae_cache_files[data_backend_id]
+
+    @classmethod
+    def set_text_cache_files(cls, raw_file_list: list, data_backend_id: str):
+        if cls.all_text_cache_files[data_backend_id] is not None:
+            cls.all_text_cache_files[data_backend_id].clear()
+        else:
+            cls.all_text_cache_files[data_backend_id] = {}
+        for subdirectory_list in raw_file_list:
+            _, _, files = subdirectory_list
+            for image in files:
+                cls.all_text_cache_files[data_backend_id][path.basename(image)] = False
+        cls._save_to_disk(
+            "all_text_cache_files_{}".format(data_backend_id),
+            cls.all_text_cache_files[data_backend_id],
+        )
+        logger.debug(
+            f"set_text_cache_files found {len(cls.all_text_cache_files[data_backend_id])} images."
+        )
+
+    @classmethod
+    def get_text_cache_files(cls: list, data_backend_id: str):
+        if data_backend_id not in cls.all_text_cache_files:
+            cls.all_text_cache_files[data_backend_id] = cls._load_from_disk(
+                "all_text_cache_files_{}".format(data_backend_id)
+            )
+        return cls.all_text_cache_files[data_backend_id]
 
     @classmethod
     def set_caption_files(cls, caption_files):

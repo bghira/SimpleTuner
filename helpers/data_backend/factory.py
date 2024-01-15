@@ -367,10 +367,11 @@ def configure_multi_databackend(
                 use_captions=use_captions,
             )
             if "text" not in args.skip_file_discovery:
-                logger.info(
-                    f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process."
+                logger.debug(
+                    f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
                 )
-                init_backend["text_embed_cache"].compute_embeddings_for_sdxl_prompts(
+                logger.info("Initialise text embed pre-computation.")
+                init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     captions, return_concat=False
                 )
         accelerator.wait_for_everyone()
