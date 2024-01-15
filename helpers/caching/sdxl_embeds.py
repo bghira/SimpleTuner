@@ -112,7 +112,7 @@ class TextEmbeddingCache:
                 )
                 self.process_write_batch(batch)
 
-            if not self.process_write_batches:
+            if not self.process_write_batches and self.write_queue.empty():
                 # End the loop if we are done.
                 break
             time.sleep(1)  # Prevents the thread from being too busy-waiting
