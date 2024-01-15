@@ -159,9 +159,9 @@ def configure_multi_databackend(
             ):
                 logger.info("Pre-computing null embedding for caption dropout")
                 with accelerator.main_process_first():
-                    init_backend[
-                        "text_embed_cache"
-                    ].compute_embeddings_for_sdxl_prompts([""], return_concat=False)
+                    init_backend["text_embed_cache"].compute_embeddings_for_prompts(
+                        [""], return_concat=False
+                    )
                 accelerator.wait_for_everyone()
             else:
                 logger.warning(
