@@ -246,6 +246,11 @@ class TextEmbeddingCache:
         return_concat: bool = True,
         is_validation: bool = False,
     ):
+        if not self.batch_write_thread.is_alive():
+            # Start the thread again.
+            self.process_write_batches = True
+            self.batch_write_thread = Thread(target=self.batch_write_embeddings)
+            self.batch_write_thread.start()
         existing_cache_filenames = list(
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
@@ -318,12 +323,10 @@ class TextEmbeddingCache:
                 )
                 self.debug_log(f"Checking for cache file: {filename}")
                 if (
-                    self.data_backend.exists(filename)
+                    return_concat
+                    and self.data_backend.exists(filename)
                     and load_from_cache
-                    and not return_concat
                 ):
-                    continue
-                if self.data_backend.exists(filename) and load_from_cache:
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
                     self.debug_log(f"Encoding prompt: {prompt}")
