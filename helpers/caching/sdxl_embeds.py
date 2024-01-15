@@ -84,29 +84,17 @@ class TextEmbeddingCache:
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
         self.write_queue.put((embeddings, filename))
-        self.debug_log(
-            f"Pushing cache object into write queue. We have {self.write_queue.qsize()} items in the queue."
-        )
 
     def batch_write_embeddings(self):
         """Process write requests in batches."""
         while True:
             batch = []
             while not self.write_queue.empty() and len(batch) < self.write_batch_size:
-                self.debug_log(
-                    f"Adding to batch, currently at {len(batch)} embeds. Waiting for {self.write_batch_size} embeds before we process"
-                )
                 batch.append(self.write_queue.get())
 
             if len(batch) >= self.write_batch_size:
-                self.debug_log(
-                    f"Processing batch of {len(batch)} embeds, as we reached our threshold of {self.write_batch_size}"
-                )
                 self.process_write_batch(batch)
             elif self.write_queue.empty() and len(batch) > 0:
-                self.debug_log(
-                    f"Processing batch of {len(batch)} embeds, as the queue is empty."
-                )
                 self.process_write_batch(batch)
 
             if not self.process_write_batches and self.write_queue.empty():
@@ -116,9 +104,6 @@ class TextEmbeddingCache:
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
-        self.debug_log(
-            f"Processing write batch of {len(batch)} embeds via process_write_batch"
-        )
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
                 executor.submit(self.data_backend.torch_save, *args) for args in batch
@@ -127,9 +112,7 @@ class TextEmbeddingCache:
                 future.result()  # Wait for all writes to complete
 
     def load_from_cache(self, filename):
-        logger.debug("Begin load from cache.")
         result = self.data_backend.torch_load(filename)
-        logger.debug("Completed load from cache.")
         return result
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
@@ -216,7 +199,6 @@ class TextEmbeddingCache:
         pooled_prompt_embeds_all = []
 
         for prompt in prompts:
-            self.debug_log(f"Encoding prompt: {prompt}")
             prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompt(
                 text_encoders, tokenizers, prompt, is_validation
             )
