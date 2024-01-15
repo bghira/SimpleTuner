@@ -95,12 +95,19 @@ def configure_multi_databackend(
 
     text_embed_backends = {}
     default_text_embed_backend_id = None
-    logger.info("Initialise text embedding cache")
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is None or dataset_type != "text_embeds":
             # Skip configuration of image data backends. It is done earlier.
             continue
+        if ("disabled" in backend and backend["disabled"]) or (
+            "disable" in backend and backend["disable"]
+        ):
+            logger.info(
+                f"Skipping disabled data backend {backend['id']} in config file."
+            )
+            continue
+
         logger.info(f'Configuring text embed backend: {backend["id"]}')
         if backend.get("default", None):
             if default_text_embed_backend_id is not None:
@@ -133,7 +140,6 @@ def configure_multi_databackend(
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
         # Generate a TextEmbeddingCache object
-        logger.info("Loading the text embed management object")
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
             data_backend=init_backend["data_backend"],

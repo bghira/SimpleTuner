@@ -60,7 +60,10 @@ class TextEmbeddingCache:
         self.data_backend.torch_save(embeddings, filename)
 
     def load_from_cache(self, filename):
-        return self.data_backend.torch_load(filename)
+        logger.debug("Begin load from cache.")
+        result = self.data_backend.torch_load(filename)
+        logger.debug("Completed load from cache.")
+        return result
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
         input_tokens = tokenizer(

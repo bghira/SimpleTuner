@@ -260,6 +260,7 @@ def log_validations(
                                 **extra_validation_kwargs,
                             ).images
                         )
+                        logger.debug(f"Completed generating image: {validation_prompt}")
 
                 for tracker in accelerator.trackers:
                     if tracker.name == "wandb":
