@@ -21,7 +21,8 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "cache_dir_vae": "/path/to/vaecache",
         "vae_cache_clear_each_epoch": true,
         "probability": 1.0,
-        "repeats": 5
+        "repeats": 5,
+        "text_embeds": "alt-embed-cache"
     },
     {
         "id": "another-special-name-for-another-backend",
@@ -32,17 +33,48 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "aws_access_key_id": "wpz-764e9734523434",
         "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
         "aws_data_prefix": "",
-        "cache_dir_vae": "/path/to/cache/dir",
+        "cache_dir_vae": "s3prefix/for/vaecache",
         "vae_cache_clear_each_epoch": true,
         "repeats": 2
+    },
+    {
+        "id": "an example backend for text embeds.",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "type": "aws",
+        "aws_bucket_name": "textembeds-something-yummy",
+        "aws_region_name": null,
+        "aws_endpoint_url": "https://foo.bar/",
+        "aws_access_key_id": "wpz-764e9734523434",
+        "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+        "aws_data_prefix": "",
+        "cache_dir": ""
+    },
+    {
+        "id": "alt-embed-cache",
+        "dataset_type": "text_embeds",
+        "default": false,
+        "type": "local",
+        "cache_dir": "/path/to/textembed_cache"
     }
-]
-```
+]```
 
 ## Configuration Options
 
 ### `id`
 - **Description:** Unique identifier for the dataset. It should remain constant once set, as it links the dataset to its state tracking entries.
+
+### `dataset_type`
+- **Values:** `image` | `text_embeds`
+- **Description:** Text embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
+
+### `default`
+- **Only applies to `dataset_type=text_embeds`**
+- If set `true`, this text embed dataset will be where SimpleTuner stores the text embed cache for eg. validation prompt embeds. As they do not pair to image data, there needs to be a specific location for them to end up.
+
+### `text_embeds`
+- **Only applies to `dataset_type=image`**
+- If unset, the `default` text_embeds dataset will be used. If set to an existing `id` of a `text_embeds` dataset, it will use that instead. Allows specific text embed datasets to be associated with a given image dataset.
 
 ### `type`
 - **Values:** `aws` | `local`

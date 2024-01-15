@@ -1,5 +1,6 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
+from helpers.caching.sdxl_embeds import TextEmbeddingCache
 
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.bucket import BucketManager
@@ -19,6 +20,13 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
+    if backend.get("dataset_type", None) == "text":
+        output["dataset_type"] = "text"
+
+        return output
+
+    # Image backend config
+    output["dataset_type"] = "image"
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend[
             "vae_cache_clear_each_epoch"
@@ -64,7 +72,9 @@ def print_bucket_info(bucket_manager):
         print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
-def configure_multi_databackend(args: dict, accelerator):
+def configure_multi_databackend(
+    args: dict, accelerator, text_encoders, tokenizers, prompt_handler
+):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -82,8 +92,106 @@ def configure_multi_databackend(args: dict, accelerator):
         raise ValueError(
             "Must provide at least one data backend in the data backend config file."
         )
+
+    text_embed_backends = {}
+    default_text_embed_backend_id = None
+    for backend in data_backend_config:
+        dataset_type = backend.get("dataset_type", None)
+        if dataset_type is None or dataset_type != "text_embeds":
+            # Skip configuration of image data backends. It is done earlier.
+            continue
+        if ("disabled" in backend and backend["disabled"]) or (
+            "disable" in backend and backend["disable"]
+        ):
+            logger.info(
+                f"Skipping disabled data backend {backend['id']} in config file."
+            )
+            continue
+
+        logger.info(f'Configuring text embed backend: {backend["id"]}')
+        if backend.get("default", None):
+            if default_text_embed_backend_id is not None:
+                raise ValueError(
+                    "Only one text embed backend can be marked as default."
+                )
+            default_text_embed_backend_id = backend["id"]
+        # Retrieve some config file overrides for commandline arguments,
+        #  there currently isn't much for text embeds.
+        init_backend = init_backend_config(backend, args, accelerator)
+        if backend["type"] == "local":
+            init_backend["data_backend"] = get_local_backend(
+                accelerator, init_backend["id"]
+            )
+            init_backend["cache_dir"] = backend["cache_dir"]
+        elif backend["type"] == "aws":
+            check_aws_config(backend)
+            init_backend["data_backend"] = get_aws_backend(
+                identifier=init_backend["id"],
+                aws_bucket_name=backend["aws_bucket_name"],
+                aws_region_name=backend["aws_region_name"],
+                aws_endpoint_url=backend["aws_endpoint_url"],
+                aws_access_key_id=backend["aws_access_key_id"],
+                aws_secret_access_key=backend["aws_secret_access_key"],
+                accelerator=accelerator,
+            )
+            # S3 buckets use the aws_data_prefix as their prefix/ for all data.
+            init_backend["cache_dir"] = backend["aws_data_prefix"]
+        else:
+            raise ValueError(f"Unknown data backend type: {backend['type']}")
+
+        # Generate a TextEmbeddingCache object
+        init_backend["text_embed_cache"] = TextEmbeddingCache(
+            id=init_backend["id"],
+            data_backend=init_backend["data_backend"],
+            text_encoders=text_encoders,
+            tokenizers=tokenizers,
+            accelerator=accelerator,
+            cache_dir=backend.get("cache_dir", args.cache_dir_text),
+            model_type=StateTracker.get_model_type(),
+        )
+        if backend.get("default", False):
+            # The default embed cache will be used for eg. validation prompts.
+            StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
+            # We will compute the null embedding for caption dropout here.
+            if (
+                args.caption_dropout_probability is not None
+                and args.caption_dropout_probability > 0
+            ):
+                logger.info("Pre-computing null embedding for caption dropout")
+                with accelerator.main_process_first():
+                    init_backend[
+                        "text_embed_cache"
+                    ].compute_embeddings_for_sdxl_prompts([""], return_concat=False)
+                accelerator.wait_for_everyone()
+            else:
+                logger.warning(
+                    f"Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+                )
+
+        # We don't compute the text embeds at this time, because we do not really have any captions available yet.
+        text_embed_backends[init_backend["id"]] = init_backend
+
+    if not text_embed_backends:
+        raise ValueError(
+            "Must provide at least one text embed backend in the data backend config file."
+        )
+    if not default_text_embed_backend_id and len(text_embed_backends) > 1:
+        raise ValueError(
+            "Must provide a default text embed backend in the data backend config file. It requires 'default':true."
+        )
+    elif not default_text_embed_backend_id:
+        logger.warning(
+            f"No default text embed was defined, using {list(text_embed_backends.keys())[0]} as the default."
+        )
+        default_text_embed_backend_id = list(text_embed_backends.keys())[0]
+    logger.info("Completed loading text embed services.")
+
     all_captions = []
     for backend in data_backend_config:
+        dataset_type = backend.get("dataset_type", None)
+        if dataset_type is not None:
+            # Skip configuration of text embed backends. It is done earlier.
+            continue
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
         ):
@@ -92,10 +200,12 @@ def configure_multi_databackend(args: dict, accelerator):
             )
             continue
         # For each backend, we will create a dict to store all of its components in.
-        if "id" not in backend:
-            raise ValueError(
-                "No identifier was given for one more of your data backends. Add a unique 'id' field to each one."
-            )
+        if (
+            "id" not in backend
+            or backend["id"] == ""
+            or backend["id"] in StateTracker.get_data_backends()
+        ):
+            raise ValueError("Each dataset needs a unique 'id' field.")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
         StateTracker.set_data_backend_config(
@@ -124,6 +234,13 @@ def configure_multi_databackend(args: dict, accelerator):
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
+        # Assign a TextEmbeddingCache to this dataset. it might be undefined.
+        text_embed_id = backend.get("text_embeds", default_text_embed_backend_id)
+        if text_embed_id not in text_embed_backends:
+            raise ValueError(
+                f"Text embed backend {text_embed_id} not found in data backend config file."
+            )
+        logger.info("Loading bucket manager.")
         init_backend["bucket_manager"] = BucketManager(
             id=init_backend["id"],
             instance_data_root=init_backend["instance_data_root"],
@@ -154,8 +271,10 @@ def configure_multi_databackend(args: dict, accelerator):
             )
         if "aspect" not in args.skip_file_discovery:
             if accelerator.is_local_main_process:
+                logger.info("Refreshing aspect buckets.")
                 init_backend["bucket_manager"].refresh_buckets(rank_info())
         accelerator.wait_for_everyone()
+        logger.info("Reloading bucket manager cache.")
         init_backend["bucket_manager"].reload_cache()
         # Now split the contents of these buckets between all processes
         init_backend["bucket_manager"].split_buckets_between_processes(
@@ -233,17 +352,30 @@ def configure_multi_databackend(args: dict, accelerator):
             persistent_workers=False,
         )
 
+        init_backend["text_embed_cache"] = text_embed_backends[text_embed_id][
+            "text_embed_cache"
+        ]
+
         with accelerator.main_process_first():
-            all_captions.extend(
-                PromptHandler.get_all_captions(
-                    data_backend=init_backend["data_backend"],
-                    instance_data_root=init_backend["instance_data_root"],
-                    prepend_instance_prompt=backend.get(
-                        "prepend_instance_prompt", args.prepend_instance_prompt
-                    ),
-                    use_captions=use_captions,
-                )
+            # We get captions from the IMAGE dataset. Not the text embeds dataset.
+            captions = PromptHandler.get_all_captions(
+                data_backend=init_backend["data_backend"],
+                instance_data_root=init_backend["instance_data_root"],
+                prepend_instance_prompt=backend.get(
+                    "prepend_instance_prompt", args.prepend_instance_prompt
+                ),
+                use_captions=use_captions,
             )
+            if "text" not in args.skip_file_discovery:
+                logger.debug(
+                    f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
+                )
+                logger.info("Initialise text embed pre-computation.")
+                init_backend["text_embed_cache"].compute_embeddings_for_prompts(
+                    captions, return_concat=False
+                )
+        accelerator.wait_for_everyone()
+        logger.info(f"Completed processing {len(captions)} captions.")
 
         logger.info(f"Pre-computing VAE latent space.")
         init_backend["vaecache"] = VAECache(

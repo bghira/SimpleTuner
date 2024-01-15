@@ -16,7 +16,8 @@
         "cache_dir_vae": "/path/to/vaecache",
         "vae_cache_clear_each_epoch": true,
         "probability": 1.0,
-        "repeats": 5
+        "repeats": 5,
+        "text_embeds": "alt-embed-cache"
     },
     {
         "id": "another-special-name-for-another-backend",
@@ -27,8 +28,28 @@
         "aws_access_key_id": "wpz-764e9734523434",
         "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
         "aws_data_prefix": "",
-        "cache_dir_vae": "/path/to/cache/dir",
+        "cache_dir_vae": "s3prefix/for/vaecache",
         "vae_cache_clear_each_epoch": true,
         "repeats": 2
+    },
+    {
+        "id": "an example backend for text embeds.",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "type": "aws",
+        "aws_bucket_name": "textembeds-something-yummy",
+        "aws_region_name": null,
+        "aws_endpoint_url": "https://foo.bar/",
+        "aws_access_key_id": "wpz-764e9734523434",
+        "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+        "aws_data_prefix": "",
+        "cache_dir": ""
+    },
+    {
+        "id": "alt-embed-cache",
+        "dataset_type": "text_embeds",
+        "default": false,
+        "type": "local",
+        "cache_dir": "/path/to/textembed_cache"
     }
 ]

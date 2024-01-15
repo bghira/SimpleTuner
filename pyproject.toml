@@ -10,7 +10,7 @@ readme = "README.md"
 python = ">=3.9,<3.13"
 torch = "^2.1.0+cu118"
 torchvision = "^0.16.0+cu118"
-diffusers = "^0.25.0"
+diffusers = {git = "https://github.com/huggingface/diffusers"}
 transformers = "^4.36.2"
 datasets = "^2.14.3"
 xformers = "^0.0.23.post1+cu118"

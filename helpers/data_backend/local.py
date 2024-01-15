@@ -151,7 +151,9 @@ class LocalDataBackend(BaseDataBackend):
         return (available_keys, output_images)
 
     def create_directory(self, directory_path):
+        logger.debug(f"Creating directory: {directory_path}")
         os.makedirs(directory_path, exist_ok=True)
+        logger.debug(f"Created directory.")
 
     def torch_load(self, filename):
         # Check if file exists:
@@ -162,6 +164,7 @@ class LocalDataBackend(BaseDataBackend):
         )
 
     def torch_save(self, data, original_location):
+        logger.debug("Calling torch_save on Local backend.")
         if type(original_location) == str:
             # A file path was given. Open it.
             logger.debug(f"Using file path: {original_location}")
@@ -170,7 +173,7 @@ class LocalDataBackend(BaseDataBackend):
             # A file object was given. Use it.
             logger.debug(f"Using file object: {original_location}")
             location = original_location
-        logger.debug(f"Torch save was given data: {data}")
+        logger.debug(f"Torch location {original_location} save was given data: {data}")
         torch.save(data, location)
         # Check whether the file created:
         if type(original_location) == str:

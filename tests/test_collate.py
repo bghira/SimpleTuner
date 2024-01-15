@@ -44,7 +44,12 @@ class TestCollateFn(unittest.TestCase):
         )
 
         # Call collate_fn with a mock batch
-        result = collate_fn([self.mock_batch])
+        with patch("helpers.training.state_tracker.StateTracker.get_data_backend"):
+            # Mock get_data_backend() to return a mock object with required attributes
+            StateTracker.get_data_backend.return_value = MagicMock(
+                compute_embeddings_for_legacy_prompts=MagicMock()
+            )
+            result = collate_fn([self.mock_batch])
 
         # Assert that the results are as expected
         self.assertIn("latent_batch", result)
