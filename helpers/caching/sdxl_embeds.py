@@ -80,9 +80,6 @@ class TextEmbeddingCache:
             )
         )
         self.debug_log(" -> done listing all text embed cache entries")
-        self.debug_log(
-            f" -> {StateTracker.get_text_cache_files(data_backend_id=self.id)}"
-        )
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
