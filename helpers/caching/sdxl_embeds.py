@@ -16,6 +16,7 @@ logger.setLevel("DEBUG")
 class TextEmbeddingCache:
     prompts = {}
     write_queue = Queue()
+    process_write_batches = True
 
     def __init__(
         self,
@@ -90,6 +91,9 @@ class TextEmbeddingCache:
                 )
                 self.process_write_batch(batch)
 
+            if not self.process_write_batches:
+                # End the loop if we are done.
+                break
             time.sleep(1)  # Prevents the thread from being too busy-waiting
 
     def process_write_batch(self, batch):
@@ -292,7 +296,7 @@ class TextEmbeddingCache:
 
                 prompt_embeds_all.append(prompt_embeds)
                 add_text_embeds_all.append(add_text_embeds)
-
+            self.process_write_batches = False
             if not return_concat:
                 del prompt_embeds_all
                 del add_text_embeds_all
@@ -301,6 +305,7 @@ class TextEmbeddingCache:
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
+        self.process_write_batches = False
         return prompt_embeds_all, add_text_embeds_all
 
     def compute_embeddings_for_legacy_prompts(
@@ -347,3 +352,8 @@ class TextEmbeddingCache:
         # Use the accelerator to split the data
         with self.accelerator.split_between_processes(prompts) as split_files:
             self.prompts = split_files
+
+    def __del__(self):
+        """Ensure that the batch write thread is properly closed."""
+        if self.batch_write_thread.is_alive():
+            self.batch_write_thread.join()
