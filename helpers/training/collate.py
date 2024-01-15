@@ -104,9 +104,19 @@ def compute_latents(filepaths, data_backend_id: str):
 def compute_single_embedding(caption, text_embed_cache, is_sdxl):
     """Worker function to compute embedding for a single caption."""
     if is_sdxl:
-        return text_embed_cache.compute_embeddings_for_sdxl_prompts([caption])[0]
+        (
+            prompt_embeds,
+            add_text_embeds,
+        ) = text_embed_cache.compute_embeddings_for_sdxl_prompts([caption])
+        return (
+            prompt_embeds[0],
+            add_text_embeds[0],
+        )  # Unpack the first (and only) element
     else:
-        return text_embed_cache.compute_embeddings_for_legacy_prompts([caption])[0]
+        prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
+            [caption]
+        )
+        return prompt_embeds[0], None  # Unpack and return None for the second element
 
 
 def compute_prompt_embeddings(captions, text_embed_cache):
@@ -134,6 +144,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             )
         )
 
+    logger.debug(f"Got embeddings: {embeddings}")
     if is_sdxl:
         prompt_embeds_all, add_text_embeds_all = zip(*embeddings)
         prompt_embeds_all = torch.concat(list(prompt_embeds_all), dim=0)
