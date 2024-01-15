@@ -255,8 +255,6 @@ class TextEmbeddingCache:
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
         all_cache_filenames = [f"{self.create_hash(p)}.pt" for p in all_prompts]
-        self.debug_log(f"Existing cache filenames: {existing_cache_filenames}")
-        self.debug_log(f"All cache filenames: {all_cache_filenames}")
         # Check if we have all the files in the cache
         if (
             not is_validation
