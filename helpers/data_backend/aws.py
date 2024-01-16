@@ -103,7 +103,7 @@ class S3DataBackend(BaseDataBackend):
                 return None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
-            except Exception as e:
+            except (BotoCoreError, Exception) as e:
                 logger.error(f'Error reading S3 bucket key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
                     # We have reached our maximum retry count.
@@ -306,14 +306,9 @@ class S3DataBackend(BaseDataBackend):
     def read_batch(self, s3_keys):
         """Read a batch of files from the specified S3 keys concurrently."""
 
-        def read_from_s3(s3_key):
-            """Helper function to read data from S3."""
-            response = self.client.get_object(Bucket=self.bucket_name, Key=s3_key)
-            return response["Body"].read()
-
         # Use ThreadPoolExecutor for concurrent reads
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            return list(executor.map(read_from_s3, s3_keys))
+            return list(executor.map(self.read, s3_keys))
 
     def bulk_exists(self, s3_keys, prefix=""):
         """Check the existence of a list of S3 keys in bulk."""
