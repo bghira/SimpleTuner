@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-logger.setLevel("DEBUG")
 
 
 class TextEmbeddingCache:
@@ -28,7 +27,7 @@ class TextEmbeddingCache:
         cache_dir: str = "cache",
         model_type: str = "sdxl",
         prompt_handler: PromptHandler = None,
-        write_batch_size: int = 25,
+        write_batch_size: int = 128,
         read_batch_size: int = 25,
         process_queue_size: int = 16,
         text_encoder_batch_size: int = 4,
@@ -80,48 +79,30 @@ class TextEmbeddingCache:
             )
         )
         self.debug_log(" -> done listing all text embed cache entries")
-        self.debug_log(
-            f" -> {StateTracker.get_text_cache_files(data_backend_id=self.id)}"
-        )
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
         self.write_queue.put((embeddings, filename))
-        self.debug_log(
-            f"Pushing cache object into write queue. We have {self.write_queue.qsize()} items in the queue."
-        )
 
     def batch_write_embeddings(self):
         """Process write requests in batches."""
         while True:
             batch = []
             while not self.write_queue.empty() and len(batch) < self.write_batch_size:
-                self.debug_log(
-                    f"Adding to batch, currently at {len(batch)} embeds. Waiting for {self.write_batch_size} embeds before we process"
-                )
                 batch.append(self.write_queue.get())
 
             if len(batch) >= self.write_batch_size:
-                self.debug_log(
-                    f"Processing batch of {len(batch)} embeds, as we reached our threshold of {self.write_batch_size}"
-                )
                 self.process_write_batch(batch)
             elif self.write_queue.empty() and len(batch) > 0:
-                self.debug_log(
-                    f"Processing batch of {len(batch)} embeds, as the queue is empty."
-                )
                 self.process_write_batch(batch)
 
-            if not self.process_write_batches:
+            if not self.process_write_batches and self.write_queue.empty():
                 # End the loop if we are done.
                 break
-            time.sleep(1)  # Prevents the thread from being too busy-waiting
+            time.sleep(0.01)  # Prevents the thread from being too busy-waiting
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
-        self.debug_log(
-            f"Processing write batch of {len(batch)} embeds via process_write_batch"
-        )
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
                 executor.submit(self.data_backend.torch_save, *args) for args in batch
@@ -130,9 +111,7 @@ class TextEmbeddingCache:
                 future.result()  # Wait for all writes to complete
 
     def load_from_cache(self, filename):
-        logger.debug("Begin load from cache.")
         result = self.data_backend.torch_load(filename)
-        logger.debug("Completed load from cache.")
         return result
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
@@ -219,7 +198,6 @@ class TextEmbeddingCache:
         pooled_prompt_embeds_all = []
 
         for prompt in prompts:
-            self.debug_log(f"Encoding prompt: {prompt}")
             prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompt(
                 text_encoders, tokenizers, prompt, is_validation
             )
@@ -246,12 +224,15 @@ class TextEmbeddingCache:
         return_concat: bool = True,
         is_validation: bool = False,
     ):
+        if not self.batch_write_thread.is_alive():
+            # Start the thread again.
+            self.process_write_batches = True
+            self.batch_write_thread = Thread(target=self.batch_write_embeddings)
+            self.batch_write_thread.start()
         existing_cache_filenames = list(
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
         all_cache_filenames = [f"{self.create_hash(p)}.pt" for p in all_prompts]
-        self.debug_log(f"Existing cache filenames: {existing_cache_filenames}")
-        self.debug_log(f"All cache filenames: {all_cache_filenames}")
         # Check if we have all the files in the cache
         if (
             not is_validation
@@ -316,14 +297,7 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                self.debug_log(f"Checking for cache file: {filename}")
-                if (
-                    self.data_backend.exists(filename)
-                    and load_from_cache
-                    and not return_concat
-                ):
-                    continue
-                if self.data_backend.exists(filename) and load_from_cache:
+                if return_concat and load_from_cache:
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
                     self.debug_log(f"Encoding prompt: {prompt}")

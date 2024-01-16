@@ -39,10 +39,6 @@ class LocalDataBackend(BaseDataBackend):
                     f"Received an unknown data type to write to disk. Doing our best: {type(data)}"
                 )
             file.write(data)
-        # Check if file exists:
-        if not self.exists(filepath):
-            raise Exception(f"Failed to write to {filepath}")
-        logger.debug(f"Completed write()")
 
     def delete(self, filepath):
         """Delete the specified file."""
@@ -58,7 +54,7 @@ class LocalDataBackend(BaseDataBackend):
     def exists(self, filepath):
         """Check if the file exists."""
         result = os.path.exists(filepath)
-        # logger.debug(f"Checking if {filepath} exists = {result}")
+        logger.debug(f"Checking if {filepath} exists = {result}")
         return result
 
     def open_file(self, filepath, mode):
@@ -153,7 +149,6 @@ class LocalDataBackend(BaseDataBackend):
     def create_directory(self, directory_path):
         logger.debug(f"Creating directory: {directory_path}")
         os.makedirs(directory_path, exist_ok=True)
-        logger.debug(f"Created directory.")
 
     def torch_load(self, filename):
         # Check if file exists:
@@ -164,39 +159,15 @@ class LocalDataBackend(BaseDataBackend):
         )
 
     def torch_save(self, data, original_location):
-        logger.debug("Calling torch_save on Local backend.")
         if type(original_location) == str:
             # A file path was given. Open it.
-            logger.debug(f"Using file path: {original_location}")
             location = self.open_file(original_location, "wb")
         else:
             # A file object was given. Use it.
-            logger.debug(f"Using file object: {original_location}")
             location = original_location
-        logger.debug(f"Torch location {original_location} save was given data: {data}")
         torch.save(data, location)
-        # Check whether the file created:
-        if type(original_location) == str:
-            # A file path was given. Check it.
-            if not self.exists(original_location):
-                raise Exception(f"Failed to write to {original_location}")
-        elif hasattr(original_location, "name"):
-            # A file object was given. Check it.
-            if not self.exists(original_location.name):
-                raise Exception(f"Failed to write to {original_location.name}")
-        else:
-            import traceback
-
-            raise Exception(
-                f"Unknown error writing to {original_location}, traceback: {traceback.format_exc()}"
-            )
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
         """Write a batch of data to the specified filepaths."""
-        logger.debug(f"Reached write_batch in LocalDataBackend.")
         for filepath, data in zip(filepaths, data_list):
             self.write(filepath, data)
-            # Check if file was written:
-            if not self.exists(filepath):
-                raise Exception(f"Failed to write to {filepath}")
-            logger.debug(f"Succesfully validated file creation: {filepath}")
