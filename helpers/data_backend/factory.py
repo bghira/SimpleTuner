@@ -501,6 +501,39 @@ def get_aws_backend(
 step = None
 
 
+def select_dataloader_index(step, backends):
+    # Generate weights for each backend based on some criteria
+    weights = []
+    backend_ids = []
+    for backend_id, backend in backends.items():
+        weight = get_backend_weight(backend_id, backend, step)
+        weights.append(weight)
+        backend_ids.append(backend_id)
+
+    # Convert to a torch tensor for easy sampling
+    weights = torch.tensor(weights)
+    weights /= weights.sum()  # Normalize the weights
+
+    if weights.sum() == 0:
+        return None
+
+    # Sample a backend index based on the weights
+    chosen_index = torch.multinomial(weights, 1).item()
+    return backend_ids[chosen_index]
+
+
+def get_backend_weight(backend_id, backend, step):
+    # Implement your logic to determine the weight for each backend
+    # For example, a simple linear decay based on the step count
+    backend_config = StateTracker.get_data_backend_config(backend_id)
+    prob = backend_config.get("probability", 1)
+    disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
+    adjusted_prob = (
+        0 if step > disable_step else max(0, prob * (1 - step / disable_step))
+    )
+    return adjusted_prob
+
+
 def random_dataloader_iterator(backends: dict):
     global step
     if step is None:
@@ -547,39 +580,16 @@ def random_dataloader_iterator(backends: dict):
             StateTracker.backend_exhausted(chosen_backend_id)
             StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
         finally:
-            if not backends:
+            if not backends or all(
+                [
+                    StateTracker.get_data_backend_config(backend_id).get(
+                        "ignore_epochs", False
+                    )
+                    for backend_id in backends
+                ]
+            ):
                 logger.debug(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()
                 return (step, None)
-
-
-def select_dataloader_index(step, backends):
-    adjusted_probabilities = {}
-    logger.debug(f"Selecting from backends: {backends.keys()}")
-    for backend_id, dataloader in backends.items():
-        backend = StateTracker.get_data_backend(backend_id)
-        prob = backend["config"].get("  `", 1)
-        disable_step = backend["config"].get("disable_after_epoch_step", float("inf"))
-
-        adjusted_prob = (
-            0 if step > disable_step else max(0, prob * (1 - step / disable_step))
-        )
-        adjusted_probabilities[backend_id] = adjusted_prob
-
-    # Shuffle the backends
-    items = list(adjusted_probabilities.items())
-    random.shuffle(items)
-    total_prob = sum(prob for _, prob in items)
-    if total_prob == 0:
-        return None
-
-    rnd = random.uniform(0, total_prob)
-    cumulative_prob = 0
-    for backend_id, prob in items:  # Use shuffled order
-        cumulative_prob += prob
-        if rnd < cumulative_prob:
-            return backend_id
-
-    return None

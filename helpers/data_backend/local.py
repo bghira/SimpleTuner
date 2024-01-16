@@ -39,10 +39,6 @@ class LocalDataBackend(BaseDataBackend):
                     f"Received an unknown data type to write to disk. Doing our best: {type(data)}"
                 )
             file.write(data)
-        # Check if file exists:
-        if not self.exists(filepath):
-            raise Exception(f"Failed to write to {filepath}")
-        logger.debug(f"Completed write()")
 
     def delete(self, filepath):
         """Delete the specified file."""
@@ -170,28 +166,8 @@ class LocalDataBackend(BaseDataBackend):
             # A file object was given. Use it.
             location = original_location
         torch.save(data, location)
-        # Check whether the file created:
-        if type(original_location) == str:
-            # A file path was given. Check it.
-            if not self.exists(original_location):
-                raise Exception(f"Failed to write to {original_location}")
-        elif hasattr(original_location, "name"):
-            # A file object was given. Check it.
-            if not self.exists(original_location.name):
-                raise Exception(f"Failed to write to {original_location.name}")
-        else:
-            import traceback
-
-            raise Exception(
-                f"Unknown error writing to {original_location}, traceback: {traceback.format_exc()}"
-            )
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
         """Write a batch of data to the specified filepaths."""
-        logger.debug(f"Reached write_batch in LocalDataBackend.")
         for filepath, data in zip(filepaths, data_list):
             self.write(filepath, data)
-            # Check if file was written:
-            if not self.exists(filepath):
-                raise Exception(f"Failed to write to {filepath}")
-            logger.debug(f"Succesfully validated file creation: {filepath}")

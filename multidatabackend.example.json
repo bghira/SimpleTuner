@@ -30,7 +30,8 @@
         "aws_data_prefix": "",
         "cache_dir_vae": "s3prefix/for/vaecache",
         "vae_cache_clear_each_epoch": true,
-        "repeats": 2
+        "repeats": 2,
+        "ignore_epochs": false
     },
     {
         "id": "an example backend for text embeds.",

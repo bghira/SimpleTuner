@@ -297,11 +297,7 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                if (
-                    return_concat
-                    and self.data_backend.exists(filename)
-                    and load_from_cache
-                ):
+                if return_concat and load_from_cache:
                     prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                 else:
                     self.debug_log(f"Encoding prompt: {prompt}")
