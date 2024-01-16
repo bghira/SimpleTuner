@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-logger.setLevel("DEBUG")
 
 
 class TextEmbeddingCache:
@@ -298,7 +297,6 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                self.debug_log(f"Checking for cache file: {filename}")
                 if (
                     return_concat
                     and self.data_backend.exists(filename)
