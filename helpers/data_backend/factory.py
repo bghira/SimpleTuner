@@ -33,6 +33,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         ]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
+    if "ignore_epochs" in backend:
+        output["config"]["ignore_epochs"] = backend["ignore_epochs"]
     if "repeats" in backend:
         output["config"]["repeats"] = backend["repeats"]
     if "crop" in backend:
