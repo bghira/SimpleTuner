@@ -23,7 +23,7 @@ train_sd21.py \
 --learning_rate="${LEARNING_RATE}" \
 --lr_end="${LEARNING_RATE_END}" \
 --lr_scheduler="${LR_SCHEDULE}" \
---num_train_epochs="${NUM_EPOCHS}" \
+--num_train_epochs="${NUM_EPOCHS}" --override_dataset_config \
 --mixed_precision="${MIXED_PRECISION}" \
 --checkpointing_steps="${CHECKPOINTING_STEPS}" \
 --checkpoints_total_limit=10 \

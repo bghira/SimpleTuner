@@ -1056,14 +1056,10 @@ def main():
                     f"\n -> Noise device: {noise.device}"
                     f"\n -> Timesteps device: {timesteps.device}"
                     f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
-                    f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
-                    f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
                     f"\n -> Latents dtype: {latents.dtype}"
                     f"\n -> Noise dtype: {noise.dtype}"
                     f"\n -> Timesteps dtype: {timesteps.dtype}"
                     f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
-                    f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
-                    f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
                 )
 
                 model_pred = unet(
