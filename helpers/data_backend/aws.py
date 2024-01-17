@@ -1,5 +1,9 @@
 import boto3, os, time
-from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+from botocore.exceptions import (
+    NoCredentialsError,
+    PartialCredentialsError,
+    BotoCoreError,
+)
 import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
@@ -282,9 +286,20 @@ class S3DataBackend(BaseDataBackend):
         import torch
         from io import BytesIO
 
-        return torch.load(
-            BytesIO(self.read(s3_key)), map_location=self.accelerator.device
-        )
+        # Retry the torch load within the retry limit
+        for i in range(self.read_retry_limit):
+            try:
+                return torch.load(
+                    BytesIO(self.read(s3_key)), map_location=self.accelerator.device
+                )
+            except Exception as e:
+                logger.error(f"Error loading torch file: {e}")
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
 
     def torch_save(self, data, s3_key):
         import torch
