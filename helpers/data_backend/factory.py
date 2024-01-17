@@ -215,6 +215,9 @@ def configure_multi_databackend(
             config=init_backend["config"],
         )
 
+        if not backend.get("preserve_data_backend_cache", False):
+            StateTracker.delete_cache_files(data_backend_id=init_backend["id"])
+
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"]
