@@ -110,11 +110,18 @@ class S3DataBackend(BaseDataBackend):
                 return None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
-            except (BotoCoreError, Exception) as e:
+            except Exception as e:
                 logger.error(f'Error reading S3 bucket key "{s3_key}": {e}')
                 if i == self.read_retry_limit - 1:
                     # We have reached our maximum retry count.
                     raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
+            except:
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise
                 else:
                     # Sleep for a bit before retrying.
                     time.sleep(self.read_retry_interval)
