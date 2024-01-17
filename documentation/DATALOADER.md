@@ -111,3 +111,9 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 ### `ignore_epochs`
 - When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets *without* this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
+
+### `skip_file_discovery`
+- This allows specifying the commandline option `--skip_file_discovery` just for a particular dataset at a time. This is helpful if you have datasets you don't need the trainer to scan on every startup, eg. their latents/embeds are already cached fully. This allows quicker startup and resumption of training. This parameter accepts a comma or space separated list of values, eg. `vae metadata aspect text` to skip file discovery for one or more stages of the loader configuration.
+
+### `preserve_data_cache_backend`
+- Like `skip_file_discovery`, this option can be set to prevent repeated lookups of file lists during startup. It takes a boolean value, and if set to be `true`, the generated cache file will not be removed at launch. This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times. Additionally, on S3, backend listing can add up in cost and should be avoided. **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
