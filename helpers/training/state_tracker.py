@@ -36,41 +36,23 @@ class StateTracker:
     args = None
 
     @classmethod
-    def delete_cache_files(cls):
+    def delete_cache_files(cls, data_backend_id: str = None):
         for cache_name in [
             "all_image_files",
             "all_vae_cache_files",
             "all_text_cache_files",
         ]:
-            cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
+            data_backend_id_suffix = ""
+            if data_backend_id:
+                data_backend_id_suffix = f"_{data_backend_id}"
+            cache_path = (
+                Path(cls.args.output_dir) / f"{cache_name}{data_backend_id_suffix}.json"
+            )
             if cache_path.exists():
                 try:
                     cache_path.unlink()
                 except:
                     pass
-
-        # Glob the directory for "all_image_files.*.json" and "all_vae_cache_files.*.json", and delete those too
-        # This is a workaround for the fact that the cache files are named with the data_backend_id
-        filelist = Path(cls.args.output_dir).glob("all_image_files_*.json")
-        for file in filelist:
-            try:
-                file.unlink()
-            except:
-                pass
-
-        filelist = Path(cls.args.output_dir).glob("all_vae_cache_files_*.json")
-        for file in filelist:
-            try:
-                file.unlink()
-            except:
-                pass
-
-        filelist = Path(cls.args.output_dir).glob("all_text_cache_files_*.json")
-        for file in filelist:
-            try:
-                file.unlink()
-            except:
-                pass
 
     @classmethod
     def _load_from_disk(cls, cache_name):

@@ -116,7 +116,9 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl):
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
         )
-        return prompt_embeds[0], None  # Unpack and return None for the second element
+        result = torch.squeeze(prompt_embeds[0])
+        debug_log(f"Torch shape: {result.shape}")
+        return result, None  # Unpack and return None for the second element
 
 
 def compute_prompt_embeddings(captions, text_embed_cache):
@@ -151,8 +153,9 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         add_text_embeds = [t[1] for t in embeddings]
         return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
     else:
-        prompt_embeds_all = torch.concat(embeddings, dim=0)
-        return prompt_embeds_all, None
+        # Separate the tuples
+        prompt_embeds = [t[0] for t in embeddings]
+        return (torch.stack(prompt_embeds).squeeze(dim=0), None)
 
 
 def gather_conditional_size_features(examples, latents, weight_dtype):

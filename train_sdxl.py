@@ -28,7 +28,6 @@ from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_mana
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
-from helpers.caching.sdxl_embeds import TextEmbeddingCache
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
@@ -37,7 +36,7 @@ from helpers.training.min_snr_gamma import compute_snr
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
-logger = get_logger("SimpleTuner")
+logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 filelock_logger = get_logger("filelock")
 connection_logger = get_logger("urllib3.connectionpool")
@@ -57,58 +56,45 @@ training_logger.setLevel(training_logger_level)
 # Less important logs.
 filelock_logger.setLevel("WARNING")
 connection_logger.setLevel("WARNING")
-import accelerate
-import datasets
 import numpy as np
-import PIL
-import torch
+import torch, diffusers, accelerate, transformers
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
-import transformers
 from accelerate import Accelerator
-from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
-from PIL import Image
-from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
-import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel, DDIMScheduler
-from diffusers.loaders import LoraLoaderMixin
-from peft import LoraConfig
-from peft.utils import get_peft_model_state_dict
 from diffusers import (
+    AutoencoderKL,
+    DDIMScheduler,
+    DDPMScheduler,
+    StableDiffusionXLPipeline,
+    DPMSolverMultistepScheduler,
+    UNet2DConditionModel,
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
     UniPCMultistepScheduler,
 )
+
+from peft import LoraConfig
+from peft.utils import get_peft_model_state_dict
 from diffusers.optimization import get_scheduler
-from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
-    StableDiffusionXLPipeline,
-)
 from diffusers.training_utils import EMAModel
 from diffusers.utils import (
     check_min_version,
-    deprecate,
     convert_state_dict_to_diffusers,
     is_wandb_available,
 )
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
+torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.26.0.dev0")
 
-logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-
-VAE_SCALING_FACTOR = 8
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-}
-WANDB_TABLE_COL_NAMES = ["step", "image", "text"]
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
@@ -169,16 +155,14 @@ def main():
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
-
     StateTracker.set_accelerator(accelerator)
+
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=True)
     if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
     else:
-        datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
     logging.basicConfig(
@@ -276,6 +260,7 @@ def main():
                 f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
             )
     StateTracker.set_weight_dtype(weight_dtype)
+
     # Load scheduler, tokenizer and models.
     logger.info("Load tokenizers")
     tokenizer_1 = AutoTokenizer.from_pretrained(
@@ -290,6 +275,9 @@ def main():
         revision=args.revision,
         use_fast=False,
     )
+    if not tokenizer_1 or not tokenizer_2:
+        raise Exception("Failed to load tokenizer")
+
     text_encoder_cls_1 = import_model_class_from_model_name_or_path(
         args.pretrained_model_name_or_path, args.revision
     )
@@ -933,9 +921,7 @@ def main():
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    logger.info(
-        f" -> Num batches = {total_num_batches} ({total_num_batches * args.train_batch_size} total samples)"
-    )
+    logger.info(f" -> Num batches = {total_num_batches}")
     logger.info(f" -> Num Epochs = {args.num_train_epochs}")
     logger.info(f" -> Current Epoch = {first_epoch}")
     logger.info(f" -> Instantaneous batch size per device = {args.train_batch_size}")
@@ -998,10 +984,16 @@ def main():
                     backend["vaecache"].rebuild_cache()
         current_epoch = epoch
         StateTracker.set_epoch(epoch)
+        if args.lr_scheduler == "cosine_with_restarts":
+            scheduler_kwargs["epoch"] = epoch
+
         unet.train()
+        training_models = [unet]
         if args.model_type == "lora" and args.train_text_encoder:
             text_encoder_1.train()
             text_encoder_2.train()
+            training_models.append(text_encoder_1)
+            training_models.append(text_encoder_2)
 
         if current_epoch_step is not None:
             # We are resetting to the next epoch, if it is not none.
@@ -1040,7 +1032,8 @@ def main():
             # Add the current batch of training data's avg luminance to a list.
             if "batch_luminance" in batch:
                 training_luminance_values.append(batch["batch_luminance"])
-            with accelerator.accumulate(unet):
+
+            with accelerator.accumulate(training_models):
                 training_logger.debug(
                     f"Sending latent batch from pinned memory to device."
                 )
@@ -1178,11 +1171,6 @@ def main():
                         / snr_divisor
                     )
 
-                    # For zero-terminal SNR, we have to handle the case where a sigma of Zero results in a Inf value.
-                    # When we run this, the MSE loss weights for this timestep is set unconditionally to 1.
-                    # If we do not run this, the loss value will go to NaN almost immediately, usually within one step.
-                    mse_loss_weights[snr == 0] = 1.0
-
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
@@ -1209,14 +1197,9 @@ def main():
                     training_logger.debug(f"Backwards pass.")
                     accelerator.backward(loss)
                     if accelerator.sync_gradients:
-                        if args.model_type == "lora":
-                            accelerator.clip_grad_norm_(
-                                params_to_optimize, args.max_grad_norm
-                            )
-                        elif args.model_type == "full":
-                            accelerator.clip_grad_norm_(
-                                params_to_optimize, args.max_grad_norm
-                            )
+                        accelerator.clip_grad_norm_(
+                            params_to_optimize, args.max_grad_norm
+                        )
                     training_logger.debug(f"Stepping components forward.")
                     optimizer.step()
                     lr_scheduler.step(**scheduler_kwargs)
@@ -1249,10 +1232,6 @@ def main():
                     ema_unet.optimization_step = global_step
                     ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
                     logs["ema_decay_value"] = ema_decay_value
-                    training_logger.debug(f"EMA decay value: {ema_decay_value}")
-                logger.debug(
-                    f"Step {global_step} of {args.max_train_steps}: loss {loss.item()}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {train_loss}"
-                )
 
                 # Log scatter plot to wandb
                 if args.report_to == "wandb":
@@ -1277,6 +1256,10 @@ def main():
                     training_luminance_values
                 )
                 logs["train_luminance"] = avg_training_data_luminance
+
+                logger.debug(
+                    f"Step {global_step} of {args.max_train_steps}: loss {loss.item()}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {train_loss}"
+                )
                 accelerator.log(
                     logs,
                     step=global_step,
@@ -1443,7 +1426,7 @@ def main():
             )
         elif args.model_type == "lora":
             # load attention processors
-            pipeline.load_lora_weights(args.output_dir)
+            pipeline.save_lora_weights(args.output_dir)
 
         if args.push_to_hub:
             upload_folder(
@@ -1469,7 +1452,7 @@ def main():
             tokenizer=None,
             vae_path=vae_path,
             weight_dtype=weight_dtype,
-            embed_cache=embed_cache,
+            embed_cache=StateTracker.get_default_text_embed_cache(),
             validation_negative_pooled_embeds=validation_negative_pooled_embeds,
             validation_negative_prompt_embeds=validation_negative_prompt_embeds,
             text_encoder_2=text_encoder_2,

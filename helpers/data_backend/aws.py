@@ -1,5 +1,9 @@
 import boto3, os, time
-from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+from botocore.exceptions import (
+    NoCredentialsError,
+    PartialCredentialsError,
+    BotoCoreError,
+)
 import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
@@ -87,8 +91,13 @@ class S3DataBackend(BaseDataBackend):
                 Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
             )
             return True
-        except:
+        # Catch the error when the file does not exist
+        except (Exception, self.client.exceptions.NoSuchKey) as e:
+            if "Not Found" not in str(e):
+                raise
             return False
+        except:
+            raise
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
@@ -108,6 +117,13 @@ class S3DataBackend(BaseDataBackend):
                 if i == self.read_retry_limit - 1:
                     # We have reached our maximum retry count.
                     raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
+            except:
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise
                 else:
                     # Sleep for a bit before retrying.
                     time.sleep(self.read_retry_interval)
@@ -282,20 +298,39 @@ class S3DataBackend(BaseDataBackend):
         import torch
         from io import BytesIO
 
-        return torch.load(
-            BytesIO(self.read(s3_key)), map_location=self.accelerator.device
-        )
+        # Retry the torch load within the retry limit
+        for i in range(self.read_retry_limit):
+            try:
+                return torch.load(
+                    BytesIO(self.read(s3_key)), map_location=self.accelerator.device
+                )
+            except Exception as e:
+                logger.error(f"Error loading torch file: {e}")
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
 
     def torch_save(self, data, s3_key):
         import torch
         from io import BytesIO
 
-        try:
-            buffer = BytesIO()
-            torch.save(data, buffer)
-            return self.write(s3_key, buffer.getvalue())
-        except Exception as e:
-            logger.error(f"Could not torch save to backend: {e}")
+        # Retry the torch save within the retry limit
+        for i in range(self.write_retry_limit):
+            try:
+                buffer = BytesIO()
+                torch.save(data, buffer)
+                return self.write(s3_key, buffer.getvalue())
+            except Exception as e:
+                logger.error(f"Could not torch save to backend: {e}")
+                if i == self.write_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.write_retry_interval)
 
     def write_batch(self, s3_keys, data_list):
         """Write a batch of files to the specified S3 keys concurrently."""
@@ -306,14 +341,9 @@ class S3DataBackend(BaseDataBackend):
     def read_batch(self, s3_keys):
         """Read a batch of files from the specified S3 keys concurrently."""
 
-        def read_from_s3(s3_key):
-            """Helper function to read data from S3."""
-            response = self.client.get_object(Bucket=self.bucket_name, Key=s3_key)
-            return response["Body"].read()
-
         # Use ThreadPoolExecutor for concurrent reads
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            return list(executor.map(read_from_s3, s3_keys))
+            return list(executor.map(self.read, s3_keys))
 
     def bulk_exists(self, s3_keys, prefix=""):
         """Check the existence of a list of S3 keys in bulk."""

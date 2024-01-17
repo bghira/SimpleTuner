@@ -17,7 +17,9 @@
         "vae_cache_clear_each_epoch": true,
         "probability": 1.0,
         "repeats": 5,
-        "text_embeds": "alt-embed-cache"
+        "text_embeds": "alt-embed-cache",
+        "skip_file_discovery": "vae,aspect,text,metadata",
+        "preserve_data_backend_cache": true
     },
     {
         "id": "another-special-name-for-another-backend",
