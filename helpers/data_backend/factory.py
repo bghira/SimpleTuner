@@ -271,7 +271,9 @@ def configure_multi_databackend(
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
                 f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
             )
-        if "aspect" not in args.skip_file_discovery:
+        if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
+            "skip_file_discovery", ""
+        ):
             if accelerator.is_local_main_process:
                 logger.info("Refreshing aspect buckets.")
                 init_backend["bucket_manager"].refresh_buckets(rank_info())
@@ -368,7 +370,9 @@ def configure_multi_databackend(
                 ),
                 use_captions=use_captions,
             )
-            if "text" not in args.skip_file_discovery:
+            if "text" not in args.skip_file_discovery or "text" not in backend.get(
+                "skip_file_discovery", ""
+            ):
                 logger.debug(
                     f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
                 )
@@ -405,7 +409,10 @@ def configure_multi_databackend(
         accelerator.wait_for_everyone()
 
         if (
-            "metadata" not in args.skip_file_discovery
+            (
+                "metadata" not in args.skip_file_discovery
+                or "metadata" not in backend.get("skip_file_discovery", "")
+            )
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
         ):
@@ -428,7 +435,9 @@ def configure_multi_databackend(
             init_backend["bucket_manager"].load_image_metadata()
         accelerator.wait_for_everyone()
 
-        if "vae" not in args.skip_file_discovery:
+        if "vae" not in args.skip_file_discovery or "vae" not in backend.get(
+            "skip_file_discovery", ""
+        ):
             init_backend["vaecache"].split_cache_between_processes()
             init_backend["vaecache"].process_buckets()
             accelerator.wait_for_everyone()
