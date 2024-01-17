@@ -92,7 +92,9 @@ class S3DataBackend(BaseDataBackend):
             )
             return True
         # Catch the error when the file does not exist
-        except self.client.exceptions.NoSuchKey:
+        except (Exception, self.client.exceptions.NoSuchKey) as e:
+            if "Not Found" in str(e):
+                raise
             return False
         except:
             raise
