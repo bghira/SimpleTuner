@@ -91,8 +91,11 @@ class S3DataBackend(BaseDataBackend):
                 Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
             )
             return True
-        except:
+        # Catch the error when the file does not exist
+        except self.client.exceptions.NoSuchKey:
             return False
+        except:
+            raise
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
