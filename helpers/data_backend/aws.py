@@ -305,12 +305,20 @@ class S3DataBackend(BaseDataBackend):
         import torch
         from io import BytesIO
 
-        try:
-            buffer = BytesIO()
-            torch.save(data, buffer)
-            return self.write(s3_key, buffer.getvalue())
-        except Exception as e:
-            logger.error(f"Could not torch save to backend: {e}")
+        # Retry the torch save within the retry limit
+        for i in range(self.write_retry_limit):
+            try:
+                buffer = BytesIO()
+                torch.save(data, buffer)
+                return self.write(s3_key, buffer.getvalue())
+            except Exception as e:
+                logger.error(f"Could not torch save to backend: {e}")
+                if i == self.write_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.write_retry_interval)
 
     def write_batch(self, s3_keys, data_list):
         """Write a batch of files to the specified S3 keys concurrently."""
