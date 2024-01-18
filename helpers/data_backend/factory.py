@@ -289,7 +289,7 @@ def configure_multi_databackend(
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
-        excluded_keys = ["probability"]
+        excluded_keys = ["probability", "repeats", "ignore_epochs"]
         if init_backend["bucket_manager"].config != {}:
             prev_config = init_backend["bucket_manager"].config
             logger.debug(f"Found existing config: {prev_config}")
