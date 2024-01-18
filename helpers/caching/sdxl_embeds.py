@@ -272,20 +272,24 @@ class TextEmbeddingCache:
         prompts: list = None,
         return_concat: bool = True,
         is_validation: bool = False,
+        load_from_cache: bool = True,
     ):
         logger.debug(
             f"(id={self.id}) Running compute_embeddings_for_sdxl_prompts on {len(prompts or self.prompts)} prompts.."
         )
         prompt_embeds_all = []
         add_text_embeds_all = []
-        load_from_cache = True
+        should_encode = not load_from_cache
+
         args = StateTracker.get_args()
         if (
             hasattr(args, "cache_clear_validation_prompts")
             and args.cache_clear_validation_prompts
             and is_validation
         ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
+            should_encode = True
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -298,8 +302,20 @@ class TextEmbeddingCache:
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
                 if return_concat and load_from_cache:
-                    prompt_embeds, add_text_embeds = self.load_from_cache(filename)
-                else:
+                    try:
+                        # We attempt to load.
+                        prompt_embeds, add_text_embeds = self.load_from_cache(filename)
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.warning(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                        )
+                        should_encode = True
+                if should_encode:
+                    # If load_from_cache is True, should_encode would be False unless we failed to load.
                     self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
                         self.text_encoders,
