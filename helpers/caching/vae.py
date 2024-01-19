@@ -117,8 +117,8 @@ class VAECache:
         """
         return self.encode_images([None], [filepath])[0]
 
-    def discover_all_files(self, directory: str = None):
-        """Identify all files in a directory."""
+    def discover_all_files(self):
+        """Identify all files in the data backend."""
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.id
         ) or StateTracker.set_image_files(
