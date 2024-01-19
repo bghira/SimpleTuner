@@ -291,7 +291,6 @@ class S3DataBackend(BaseDataBackend):
 
     def create_directory(self, directory_path):
         # Since S3 doesn't have a traditional directory structure, this is just a pass-through
-        logger.debug(f"Not creating directory {directory_path} on S3 backend.")
         pass
 
     def torch_load(self, s3_key):
@@ -305,7 +304,14 @@ class S3DataBackend(BaseDataBackend):
                     BytesIO(self.read(s3_key)), map_location=self.accelerator.device
                 )
             except Exception as e:
-                logger.error(f"Error loading torch file: {e}")
+                if not self.exists(s3_key):
+                    logger.debug(f"File {s3_key} does not exist in S3 bucket.")
+                    raise FileNotFoundError(f"{s3_key} not found.")
+                logger.error(f"Error loading torch file (path: {s3_key}): {e}")
+                if str(e) == "Ran out of input":
+                    logger.error(f"File {s3_key} is empty. Deleting it from S3.")
+                    self.delete(s3_key)
+                    raise FileNotFoundError(f"{s3_key} not found.")
                 if i == self.read_retry_limit - 1:
                     # We have reached our maximum retry count.
                     raise e

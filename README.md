@@ -4,13 +4,12 @@
 
 **SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions to its improvement are welcome.
 
-The features implemented will eventually be shared between SD 2.1 and SDXL as much as possible.
-
-* Multi-GPU training is supported, and encouraged
-* Aspect bucketing is a "just works" thing; fill a folder of images and let it rip
-* SDXL trainer caches the VAE latents and text embeddings to save on VRAM during training
+* Multi-GPU training is supported and encouraged
+* Aspect bucketing "just works"; fill a folder of images and let it rip
+* Multiple datasets can be used in a single training session, each with a different base resolution.
+* VRAM-saving techniques, such as pre-computing VAE and text encoder outputs
 * Full featured fine-tuning support for SDXL and SD 2.x
-* LoRA training support for SDXL
+* LoRA training support for SDXL and SD 2.x
 
 ## Table of Contents
 
@@ -27,7 +26,7 @@ The features implemented will eventually be shared between SD 2.1 and SDXL as mu
 
 ## Design Philosophy
 
-- **Simplicity**: Just add captioned images to a directory, and the script handles the rest.
+- **Simplicity**: Aiming to have good default settings for most use cases, so less tinkering is required.
 - **Versatility**: Designed to handle a wide range of image quantities - from small datasets to extensive collections.
 - **Cutting-Edge Features**: Only incorporates features that have proven efficacy, avoiding the addition of untested options.
 
@@ -39,44 +38,45 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 
 ## Features
 
-- Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during the forward pass.
+- Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during training.
 - Precomputed captions are run through the text encoder(s) and saved to storage to save on VRAM.
 - Trainable on a 24G GPU, or even down to 16G at lower base resolutions.
-- LoRA training for SDXL that uses less than 16G VRAM.
-- DeepSpeed integration allowing for [training SDXL on 12G of VRAM](/documentation/DEEPSPEED.md) - although, incidentally, DeepSpeed stage 1 is required for SimpleTuner to work on **24G of VRAM** as well.
-- Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
-- Support for a variety of image sizes, not limited to 768x768 squares, for improved generalization across aspect ratios.
+  - LoRA training for SDXL and SD 2.x that uses less than 16G VRAM.
+- DeepSpeed integration allowing for [training SDXL's full u-net on 12G of VRAM](/documentation/DEEPSPEED.md), albeit very slowly.
+- Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
+- Support for a variety of image sizes and aspect ratios, enabling widescreen and portrait training on SDXL and SD 2.x.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
 
 ### Stable Diffusion 2.0/2.1
 
-Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn't have to be the case. Related features in StableTuner include:
+Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn't have to be the case. Related features in SimpleTuner include:
 
 - Training only the text encoder's later layers
 - Enforced zero SNR on the terminal timestep instead of offset noise for clearer images.
 - The use of EMA (exponential moving average) during training to ensure we do not "fry" the model.
+- The ability to train on multiple datasets with different base resolutions in each, eg. 512px and 768px images simultaneously
 
-Some of these features exist in other trainers, but EMA seems to be unique here.
 ## Hardware Requirements
 
 EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Without it, training can still be done, but more care must be taken not to drastically change the model leading to "catastrophic forgetting".
 
-### SDXL
+### SDXL, 1024px
 
-* A100-80G (EMA, large batches)
-* A6000-48G (EMA@768px, no EMA@1024px)
-* A100-40G (no EMA@1024px, no EMA@768px, EMA@512px)
+* A100-80G (EMA, large batches, LoRA @ insane batch sizes)
+* A6000-48G (EMA@768px, no EMA@1024px, LoRA @ high batch sizes)
+* A100-40G (no EMA@1024px, no EMA@768px, EMA@512px, LoRA @ high batch sizes)
+* 4090-24G (no EMA@1024px, batch size 1-4, LoRA @ medium-high batch sizes)
+* 4080-12G (LoRA @ low-medium batch sizes)
 
-### Stable Diffusion 2.x
+### Stable Diffusion 2.x, 768px
 
-* NVIDIA RTX 3090 or better (24G, no EMA)
-* A100-40, A40, or A6000 (EMA)
-
-More optimisation work can be done to bring the memory requirements of SD 2.1 down to about 16G.
+* A100-40, A40, A6000 or better (EMA, 1024px training)
+* NVIDIA RTX 4090 or better (24G, no EMA)
+* NVIDIA RTX 4080 or better (LoRA only)
 
 ## Scripts
 
-* `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance.
+* `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance. It might not work for every single container image.
 * `train_sdxl.sh` - The main training script for SDXL.
 * `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
 * `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`

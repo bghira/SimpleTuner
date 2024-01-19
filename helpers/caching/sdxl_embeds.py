@@ -51,7 +51,6 @@ class TextEmbeddingCache:
         self.text_encoder_batch_size = text_encoder_batch_size
         self.max_workers = max_workers
         self.rank_info = rank_info()
-        self.debug_log("Creating cache directory if it doesn't exist.")
         self.data_backend.create_directory(self.cache_dir)
         self.batch_write_thread = Thread(target=self.batch_write_embeddings)
         self.batch_write_thread.start()
@@ -62,10 +61,19 @@ class TextEmbeddingCache:
         logger.debug(f"{self.rank_info}{msg}")
 
     def create_hash(self, caption):
-        return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
+        # Precomputed part of the format string
+        hash_format = f"-{self.model_type}"
 
-    def discover_all_files(self, directory: str = None):
-        """Identify all files in a directory."""
+        # Reuse the hash object
+        md5_hash = hashlib.md5()
+        md5_hash.update(caption.encode())
+        return md5_hash.hexdigest() + hash_format
+
+    def hash_prompt(self, caption):
+        return self.create_hash(caption) + ".pt"
+
+    def discover_all_files(self):
+        """Identify all files in the data backend."""
         logger.info(f"(id={self.id}) Listing all text embed cache entries")
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
@@ -95,6 +103,9 @@ class TextEmbeddingCache:
                 self.process_write_batch(batch)
             elif self.write_queue.empty() and len(batch) > 0:
                 self.process_write_batch(batch)
+            elif self.write_queue.empty() and len(batch) == 0:
+                # End the loop if we are done.
+                break
 
             if not self.process_write_batches and self.write_queue.empty():
                 # End the loop if we are done.
@@ -223,6 +234,7 @@ class TextEmbeddingCache:
         all_prompts,
         return_concat: bool = True,
         is_validation: bool = False,
+        load_from_cache: bool = True,
     ):
         if not self.batch_write_thread.is_alive():
             # Start the thread again.
@@ -232,7 +244,9 @@ class TextEmbeddingCache:
         existing_cache_filenames = list(
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
-        all_cache_filenames = [f"{self.create_hash(p)}.pt" for p in all_prompts]
+        # Parallel processing for hashing
+        with ThreadPoolExecutor() as executor:
+            all_cache_filenames = list(executor.map(self.hash_prompt, all_prompts))
         # Check if we have all the files in the cache
         if (
             not is_validation
@@ -244,27 +258,26 @@ class TextEmbeddingCache:
         # Reduce prompts down to the list of unncached prompts.
         if not return_concat and not is_validation:
             prompts = [
-                p
-                for p in all_prompts
-                if f"{self.create_hash(p)}.pt" not in existing_cache_filenames
+                p for p in all_cache_filenames if p not in existing_cache_filenames
             ]
             self.debug_log(
                 f"Reduced count of prompts for processing from {len(all_prompts)} to {len(prompts)}"
             )
         else:
             prompts = all_prompts
-        logger.info(
-            f"Beginning caching of text embeds, we have {len(prompts)} prompts to process."
-        )
+
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
                 prompts,
                 return_concat=return_concat,
                 is_validation=is_validation,
+                load_from_cache=load_from_cache,
             )
         elif self.model_type == "legacy":
             return self.compute_embeddings_for_legacy_prompts(
-                prompts, return_concat=return_concat
+                prompts,
+                return_concat=return_concat,
+                load_from_cache=load_from_cache,
             )
 
     def compute_embeddings_for_sdxl_prompts(
@@ -272,20 +285,21 @@ class TextEmbeddingCache:
         prompts: list = None,
         return_concat: bool = True,
         is_validation: bool = False,
+        load_from_cache: bool = True,
     ):
-        logger.debug(
-            f"(id={self.id}) Running compute_embeddings_for_sdxl_prompts on {len(prompts or self.prompts)} prompts.."
-        )
         prompt_embeds_all = []
         add_text_embeds_all = []
-        load_from_cache = True
+        should_encode = not load_from_cache
+
         args = StateTracker.get_args()
         if (
             hasattr(args, "cache_clear_validation_prompts")
             and args.cache_clear_validation_prompts
             and is_validation
         ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
+            should_encode = True
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -298,8 +312,20 @@ class TextEmbeddingCache:
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
                 if return_concat and load_from_cache:
-                    prompt_embeds, add_text_embeds = self.load_from_cache(filename)
-                else:
+                    try:
+                        # We attempt to load.
+                        prompt_embeds, add_text_embeds = self.load_from_cache(filename)
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.warning(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                        )
+                        should_encode = True
+                if should_encode:
+                    # If load_from_cache is True, should_encode would be False unless we failed to load.
                     self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
                         self.text_encoders,

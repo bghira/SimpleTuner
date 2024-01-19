@@ -562,38 +562,6 @@ def main():
         logging.error(f"{e}")
         sys.exit(0)
 
-    from helpers.training.collate import (
-        extract_filepaths,
-        compute_latents,
-        check_latent_shapes,
-    )
-
-    def collate_fn(batch):
-        if len(batch) != 1:
-            raise ValueError(
-                "This trainer is not designed to handle multiple batches in a single collate."
-            )
-        examples = batch[0]
-        batch_luminance = [example["luminance"] for example in examples]
-        # average it
-        batch_luminance = sum(batch_luminance) / len(batch_luminance)
-        filepaths = extract_filepaths(examples)
-        latent_batch = compute_latents(filepaths)
-        check_latent_shapes(latent_batch, filepaths)
-
-        # Extract the captions from the examples.
-        captions = [example["instance_prompt_text"] for example in examples]
-        # Compute the embeddings using the captions.
-        prompt_embeds_all = embed_cache.compute_embeddings_for_legacy_prompts(captions)
-        logger.debug(f"{len(prompt_embeds_all)} prompt_embeds_all: {prompt_embeds_all}")
-        prompt_embeds_all = torch.concat(prompt_embeds_all, dim=0)
-
-        return {
-            "latent_batch": latent_batch,
-            "prompt_embeds": prompt_embeds_all,
-            "batch_luminance": batch_luminance,
-        }
-
     with accelerator.main_process_first():
         (
             validation_prompts,

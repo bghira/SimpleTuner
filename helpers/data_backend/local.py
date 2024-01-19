@@ -147,6 +147,8 @@ class LocalDataBackend(BaseDataBackend):
         return (available_keys, output_images)
 
     def create_directory(self, directory_path):
+        if os.path.exists(directory_path):
+            return
         logger.debug(f"Creating directory: {directory_path}")
         os.makedirs(directory_path, exist_ok=True)
 

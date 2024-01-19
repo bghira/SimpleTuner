@@ -208,6 +208,7 @@ def configure_multi_databackend(
             or backend["id"] in StateTracker.get_data_backends()
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
+        logger.info(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
         StateTracker.set_data_backend_config(
@@ -245,7 +246,7 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
             )
-        logger.info("Loading bucket manager.")
+        logger.info(f"(id={init_backend['id']}) Loading bucket manager.")
         init_backend["bucket_manager"] = BucketManager(
             id=init_backend["id"],
             instance_data_root=init_backend["instance_data_root"],
@@ -278,10 +279,10 @@ def configure_multi_databackend(
             "skip_file_discovery", ""
         ):
             if accelerator.is_local_main_process:
-                logger.info("Refreshing aspect buckets.")
+                logger.info(f"(id={init_backend['id']}) Refreshing aspect buckets.")
                 init_backend["bucket_manager"].refresh_buckets(rank_info())
         accelerator.wait_for_everyone()
-        logger.info("Reloading bucket manager cache.")
+        logger.info(f"(id={init_backend['id']}) Reloading bucket manager cache.")
         init_backend["bucket_manager"].reload_cache()
         # Now split the contents of these buckets between all processes
         init_backend["bucket_manager"].split_buckets_between_processes(
@@ -289,7 +290,7 @@ def configure_multi_databackend(
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
-        excluded_keys = ["probability"]
+        excluded_keys = ["probability", "repeats", "ignore_epochs"]
         if init_backend["bucket_manager"].config != {}:
             prev_config = init_backend["bucket_manager"].config
             logger.debug(f"Found existing config: {prev_config}")
@@ -317,7 +318,7 @@ def configure_multi_databackend(
         print_bucket_info(init_backend["bucket_manager"])
         if len(init_backend["bucket_manager"]) == 0:
             raise Exception(
-                "No images were discovered by the bucket manager in the dataset."
+                f"No images were discovered by the bucket manager in the dataset: {init_backend['id']}."
             )
 
         use_captions = True
@@ -373,20 +374,25 @@ def configure_multi_databackend(
                 ),
                 use_captions=use_captions,
             )
-            if "text" not in args.skip_file_discovery or "text" not in backend.get(
+            if "text" not in args.skip_file_discovery and "text" not in backend.get(
                 "skip_file_discovery", ""
             ):
                 logger.debug(
                     f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
                 )
-                logger.info("Initialise text embed pre-computation.")
+                logger.info(
+                    f"(id={init_backend['id']}) Initialise text embed pre-computation. We have {len(captions)} captions to process."
+                )
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     captions, return_concat=False
                 )
-        accelerator.wait_for_everyone()
-        logger.info(f"Completed processing {len(captions)} captions.")
 
-        logger.info(f"Pre-computing VAE latent space.")
+        accelerator.wait_for_everyone()
+        logger.info(
+            f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
+        )
+
+        logger.info(f"(id={init_backend['id']}) Pre-computing VAE latent space.")
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             vae=StateTracker.get_vae(),
