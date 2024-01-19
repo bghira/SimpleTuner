@@ -305,7 +305,7 @@ class S3DataBackend(BaseDataBackend):
                     BytesIO(self.read(s3_key)), map_location=self.accelerator.device
                 )
             except Exception as e:
-                logger.error(f"Error loading torch file: {e}")
+                logger.error(f"Error loading torch file (path: {s3_key}): {e}")
                 if i == self.read_retry_limit - 1:
                     # We have reached our maximum retry count.
                     raise e
