@@ -11,6 +11,8 @@ poetry install --no-root
 
 You will need to install some Linux-specific dependencies (Ubuntu is used here):
 
+> ⚠️ This command can break certain container deployments. If it does, you'll have to redeploy the container.
+
 ```bash
 apt -y install nvidia-cuda-dev nvidia-cuda-toolkit
 ```
@@ -21,7 +23,7 @@ If you get an error about missing cudNN library, you will want to install torch 
 pip3 install xformers torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118 --force
 ```
 
-Alternatively, Pytorch Nightly may be used (Torch 2.1) with Xformers 0.0.21dev (note that this includes torchtriton now):
+Alternatively, Pytorch Nightly may be used (currently Torch 2.3) with Xformers 0.0.21dev (note that this includes torchtriton now):
 
 ```bash
 pip3 install --pre torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
@@ -61,3 +63,5 @@ For SDXL, run the `train_sdxl.sh` script, redirecting outputs to the log file:
 ```bash
 bash train_sdxl.sh > /path/to/training-$(date +%s).log 2>&1
 ```
+
+> ⚠️ At this point, the commands will work, but further configuration is required. See [the tutorial](/TUTORIAL.md) for more information.
