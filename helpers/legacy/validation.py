@@ -264,6 +264,8 @@ def log_validations(
                                     validation_negative_prompt_embeds,
                                 ]
                             )
+                            for text_encoder in prompt_handler.text_encoders:
+                                text_encoder.to("cpu")
 
                         logger.debug(
                             f"Generating validation image: {validation_prompt}"
