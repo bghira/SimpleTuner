@@ -62,7 +62,16 @@ class TextEmbeddingCache:
         logger.debug(f"{self.rank_info}{msg}")
 
     def create_hash(self, caption):
-        return f"{hashlib.md5(caption.encode()).hexdigest()}-{self.model_type}"
+        # Precomputed part of the format string
+        hash_format = f"-{self.model_type}"
+
+        # Reuse the hash object
+        md5_hash = hashlib.md5()
+        md5_hash.update(caption.encode())
+        return md5_hash.hexdigest() + hash_format
+
+    def hash_prompt(self, caption):
+        return self.create_hash(caption) + ".pt"
 
     def discover_all_files(self, directory: str = None):
         """Identify all files in a directory."""
@@ -232,7 +241,9 @@ class TextEmbeddingCache:
         existing_cache_filenames = list(
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
-        all_cache_filenames = [f"{self.create_hash(p)}.pt" for p in all_prompts]
+        # Parallel processing for hashing
+        with ThreadPoolExecutor() as executor:
+            all_cache_filenames = list(executor.map(self.hash_prompt, all_prompts))
         # Check if we have all the files in the cache
         if (
             not is_validation
