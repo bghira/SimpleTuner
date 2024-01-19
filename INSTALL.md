@@ -23,7 +23,7 @@ If you get an error about missing cudNN library, you will want to install torch 
 pip3 install xformers torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118 --force
 ```
 
-Alternatively, Pytorch Nightly may be used (currently Torch 2.3) with Xformers 0.0.21dev (note that this includes torchtriton now):
+Alternatively, Pytorch Nightly may be used (currently Torch 2.3) with Xformers 0.0.23.post1+cu118 (note that this includes torchtriton now):
 
 ```bash
 pip3 install --pre torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
