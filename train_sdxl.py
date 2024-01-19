@@ -1399,17 +1399,25 @@ def main():
                     force_upcast=False,
                 )
             )
-        pipeline = StableDiffusionXLPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            text_encoder=text_encoder_1,
-            text_encoder_2=text_encoder_2,
-            tokenizer=tokenizer_1,
-            tokenizer_2=tokenizer_2,
-            vae=StateTracker.get_vae(),
-            unet=unet,
-            revision=args.revision,
-            add_watermarker=args.enable_watermark,
-        )
+        if args.model_type == "full":
+            pipeline = StableDiffusionXLPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                text_encoder=text_encoder_1,
+                text_encoder_2=text_encoder_2,
+                tokenizer=tokenizer_1,
+                tokenizer_2=tokenizer_2,
+                vae=StateTracker.get_vae(),
+                unet=unet,
+                revision=args.revision,
+                add_watermarker=args.enable_watermark,
+            )
+        else:
+            pipeline = StableDiffusionXLPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                vae=StateTracker.get_vae(),
+                revision=args.revision,
+                add_watermarker=args.enable_watermark,
+            )
         pipeline.set_progress_bar_config(disable=True)
         pipeline.scheduler = SCHEDULER_NAME_MAP[
             args.validation_noise_scheduler
@@ -1424,10 +1432,57 @@ def main():
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
+            log_validations(
+                accelerator,
+                prompt_handler,
+                unet,
+                args,
+                validation_prompts,
+                validation_shortnames,
+                global_step,
+                resume_global_step,
+                step,
+                text_encoder_1,
+                tokenizer=None,
+                vae_path=vae_path,
+                weight_dtype=weight_dtype,
+                embed_cache=StateTracker.get_default_text_embed_cache(),
+                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+                text_encoder_2=text_encoder_2,
+                tokenizer_2=None,
+                vae=vae,
+                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
+                validation_type="finish",
+                pipeline=pipeline,
+            )
         elif args.model_type == "lora":
-            # load attention processors
-            pipeline.save_lora_weights(args.output_dir)
-
+            # load attention processors. They were saved earlier.
+            pipeline.load_lora_weights(args.output_dir)
+            log_validations(
+                accelerator,
+                prompt_handler,
+                None,
+                args,
+                validation_prompts,
+                validation_shortnames,
+                global_step,
+                resume_global_step,
+                step,
+                text_encoder_1,
+                tokenizer=None,
+                vae_path=vae_path,
+                weight_dtype=weight_dtype,
+                embed_cache=StateTracker.get_default_text_embed_cache(),
+                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+                text_encoder_2=text_encoder_2,
+                tokenizer_2=None,
+                vae=vae,
+                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
+                validation_type="finish",
+                pipeline=pipeline,
+            )
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
@@ -1437,31 +1492,6 @@ def main():
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
-
-        log_validations(
-            accelerator,
-            prompt_handler,
-            unet,
-            args,
-            validation_prompts,
-            validation_shortnames,
-            global_step,
-            resume_global_step,
-            step,
-            text_encoder_1,
-            tokenizer=None,
-            vae_path=vae_path,
-            weight_dtype=weight_dtype,
-            embed_cache=StateTracker.get_default_text_embed_cache(),
-            validation_negative_pooled_embeds=validation_negative_pooled_embeds,
-            validation_negative_prompt_embeds=validation_negative_prompt_embeds,
-            text_encoder_2=text_encoder_2,
-            tokenizer_2=None,
-            vae=vae,
-            SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-            validation_type="finish",
-        )
-
     accelerator.end_training()
 
 

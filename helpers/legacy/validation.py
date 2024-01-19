@@ -55,7 +55,9 @@ def prepare_validation_prompt_list(args, embed_cache):
             ncols=100,
             desc="Precomputing user prompt library embeddings",
         ):
-            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
+            embed_cache.compute_embeddings_for_prompts(
+                [prompt], is_validation=True, load_from_cache=False
+            )
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.validation_prompt is not None:
@@ -66,12 +68,15 @@ def prepare_validation_prompt_list(args, embed_cache):
 
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
+        logger.info("Precomputing the negative prompt embed for validations.")
         if model_type == "sdxl":
             (
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
             ) = embed_cache.compute_embeddings_for_prompts(
-                [StateTracker.get_args().validation_negative_prompt], is_validation=True
+                [StateTracker.get_args().validation_negative_prompt],
+                is_validation=True,
+                load_from_cache=False,
             )
             return (
                 validation_prompts,
@@ -82,7 +87,8 @@ def prepare_validation_prompt_list(args, embed_cache):
         elif model_type == "legacy":
             validation_negative_prompt_embeds = (
                 embed_cache.compute_embeddings_for_prompts(
-                    [StateTracker.get_args().validation_negative_prompt]
+                    [StateTracker.get_args().validation_negative_prompt],
+                    load_from_cache=False,
                 )
             )
 
@@ -116,6 +122,7 @@ def log_validations(
     vae=None,
     SCHEDULER_NAME_MAP: dict = {},
     validation_type: str = "training",
+    pipeline: DiffusionPipeline = None,
 ):
     if accelerator.is_main_process:
         logger.debug(
@@ -167,27 +174,41 @@ def log_validations(
                     force_upcast=False,
                 )
             # The models need unwrapping because for compatibility in distributed training mode.
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                unet=unwrap_model(accelerator, unet),
-                text_encoder=text_encoder_1,
-                text_encoder_2=text_encoder_2,
-                tokenizer=None,
-                tokenizer_2=None,
-                vae=vae,
-                revision=args.revision,
-                torch_dtype=weight_dtype,
-                add_watermarker=args.enable_watermark,
-            )
-            pipeline.scheduler = SCHEDULER_NAME_MAP[
-                args.validation_noise_scheduler
-            ].from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="scheduler",
-                prediction_type=args.prediction_type,
-                timestep_spacing=args.inference_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-            )
+            if not pipeline:
+                if StateTracker.get_model_type() == "sdxl":
+                    pipeline_cls = StableDiffusionXLPipeline
+                    pipeline = pipeline_cls.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        unet=unwrap_model(accelerator, unet),
+                        text_encoder=text_encoder_1,
+                        text_encoder_2=text_encoder_2,
+                        tokenizer=None,
+                        tokenizer_2=None,
+                        vae=vae,
+                        revision=args.revision,
+                        torch_dtype=weight_dtype,
+                        add_watermarker=args.enable_watermark,
+                    )
+                elif StateTracker.get_model_type() == "legacy":
+                    pipeline_cls = DiffusionPipeline
+                    pipeline = pipeline_cls.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        unet=unwrap_model(accelerator, unet),
+                        text_encoder=text_encoder_1,
+                        tokenizer=None,
+                        vae=vae,
+                        revision=args.revision,
+                        torch_dtype=weight_dtype,
+                    )
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.inference_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             if args.validation_torch_compile and not is_compiled_module(pipeline.unet):
                 pipeline.unet = torch.compile(
                     pipeline.unet,
@@ -232,6 +253,8 @@ def log_validations(
                             [validation_prompt]
                         )
                         if prompt_handler is not None:
+                            for text_encoder in prompt_handler.text_encoders:
+                                text_encoder.to(accelerator.device)
                             [
                                 current_validation_prompt_embeds,
                                 validation_negative_prompt_embeds,
@@ -241,6 +264,8 @@ def log_validations(
                                     validation_negative_prompt_embeds,
                                 ]
                             )
+                            for text_encoder in prompt_handler.text_encoders:
+                                text_encoder.to("cpu")
 
                         logger.debug(
                             f"Generating validation image: {validation_prompt}"
