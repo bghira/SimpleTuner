@@ -484,7 +484,7 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     logger.info(
-        f"Collected the following data backends: {StateTracker.get_data_backends()}"
+        f"Collected the following data backends: {list(StateTracker.get_data_backends().keys())}"
     )
     total_num_batches = sum(
         [
