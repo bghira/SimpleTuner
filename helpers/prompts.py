@@ -217,6 +217,8 @@ class PromptHandler:
                 device=accelerator.device,
             )
             self.encoder_style = "legacy"
+        self.text_encoders = text_encoders
+        self.tokenizers = tokenizers
 
     @staticmethod
     def prepare_instance_prompt(

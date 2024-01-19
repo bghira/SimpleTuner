@@ -253,6 +253,8 @@ def log_validations(
                             [validation_prompt]
                         )
                         if prompt_handler is not None:
+                            for text_encoder in prompt_handler.text_encoders:
+                                text_encoder.to(accelerator.device)
                             [
                                 current_validation_prompt_embeds,
                                 validation_negative_prompt_embeds,

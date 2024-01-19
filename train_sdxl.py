@@ -1459,7 +1459,30 @@ def main():
         elif args.model_type == "lora":
             # load attention processors. They were saved earlier.
             pipeline.load_lora_weights(args.output_dir)
-
+            log_validations(
+                accelerator,
+                prompt_handler,
+                None,
+                args,
+                validation_prompts,
+                validation_shortnames,
+                global_step,
+                resume_global_step,
+                step,
+                text_encoder_1,
+                tokenizer=None,
+                vae_path=vae_path,
+                weight_dtype=weight_dtype,
+                embed_cache=StateTracker.get_default_text_embed_cache(),
+                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+                text_encoder_2=text_encoder_2,
+                tokenizer_2=None,
+                vae=vae,
+                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
+                validation_type="finish",
+                pipeline=pipeline,
+            )
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
