@@ -1410,6 +1410,7 @@ def main():
                 unet=unet,
                 revision=args.revision,
                 add_watermarker=args.enable_watermark,
+                torch_dtype=weight_dtype,
             )
         else:
             pipeline = StableDiffusionXLPipeline.from_pretrained(
@@ -1417,6 +1418,7 @@ def main():
                 vae=StateTracker.get_vae(),
                 revision=args.revision,
                 add_watermarker=args.enable_watermark,
+                torch_dtype=weight_dtype,
             )
         pipeline.set_progress_bar_config(disable=True)
         pipeline.scheduler = SCHEDULER_NAME_MAP[
