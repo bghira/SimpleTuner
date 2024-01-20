@@ -46,6 +46,7 @@ files.tbz
 */config/auth.json
 work
 multidatabackend.json
+multidatabackend_sd2x.json
 
 sd21-env.sh
 sdxl-env.sh
