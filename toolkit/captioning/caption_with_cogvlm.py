@@ -11,7 +11,7 @@ def upload_to_s3(s3_client, bucket_name, image_data, object_name):
     try:
         in_memory_file = io.BytesIO()
         # Save PIL image to the bytes buffer
-        image_data.save(in_memory_file, format=image_data.format)
+        image_data.save(in_memory_file, format="PNG")
         in_memory_file.seek(0)  # Move to the beginning of the buffer
 
         s3_client.upload_fileobj(
