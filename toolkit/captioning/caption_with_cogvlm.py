@@ -234,12 +234,6 @@ def process_directory(
         position=0,
         mininterval=0.5,
     ):
-        if filename in processed_files:
-            # Remove the original file if args.delete_after_caption
-            if args.delete_after_caption:
-                os.remove(full_filepath)
-            continue
-
         full_filepath = os.path.join(image_dir, filename)
         if os.path.isdir(full_filepath):
             process_directory(
@@ -257,6 +251,12 @@ def process_directory(
                 query_str,
             )
         elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
+            if filename in processed_files:
+                # Remove the original file if args.delete_after_caption
+                if args.delete_after_caption:
+                    os.remove(full_filepath)
+                continue
+
             try:
                 with Image.open(full_filepath) as image:
                     # Convert to RGB
