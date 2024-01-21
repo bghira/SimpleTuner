@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        required=True,
+        required=False,
         help="Directory to save processed images.",
     )
     parser.add_argument(
