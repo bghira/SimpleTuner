@@ -257,6 +257,8 @@ def process_directory(
         elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
             try:
                 with Image.open(full_filepath) as image:
+                    # Convert to RGB
+                    image = image.convert("RGB")
                     best_match = eval_image(
                         image, model, tokenizer, torch_dtype, query_str
                     )
