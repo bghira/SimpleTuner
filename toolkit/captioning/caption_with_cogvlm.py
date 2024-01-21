@@ -21,6 +21,7 @@ def upload_to_s3(s3_client, bucket_name, image_data, object_name):
         )
     except Exception as e:
         logger.error(f"Error uploading {object_name} to bucket {bucket_name}: {e}")
+        raise
 
 
 def parse_args():
