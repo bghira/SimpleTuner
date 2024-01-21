@@ -228,9 +228,9 @@ def process_directory(
 
     for filename in tqdm(
         os.listdir(image_dir),
-        desc="Processing Images",
+        desc=f"Processing directory {image_dir}",
         unit="images",
-        leave=False,
+        leave=True,
         position=0,
         mininterval=0.5,
     ):
@@ -238,7 +238,6 @@ def process_directory(
             continue
 
         full_filepath = os.path.join(image_dir, filename)
-        logger.info(f"Full filepath: {full_filepath}")
         if os.path.isdir(full_filepath):
             process_directory(
                 args,
@@ -262,7 +261,7 @@ def process_directory(
                     best_match = eval_image(
                         image, model, tokenizer, torch_dtype, query_str
                     )
-                    logging.info(f"Best match for {filename}: {best_match}")
+                    logging.debug(f"Best match for {filename}: {best_match}")
                     # Save based on caption strategy
                     new_filename = (
                         content_to_filename(
