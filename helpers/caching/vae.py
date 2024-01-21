@@ -34,6 +34,8 @@ class VAECache:
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
         resolution: float = 1024,
+        maximum_image_size: float = None,
+        target_downsample_size: float = None,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         read_batch_size: int = 25,
@@ -66,6 +68,15 @@ class VAECache:
         self.rank_info = rank_info()
         self.bucket_manager = bucket_manager
         self.max_workers = max_workers
+        if (maximum_image_size and not target_downsample_size) or (
+            target_downsample_size and not maximum_image_size
+        ):
+            raise ValueError(
+                "Both maximum_image_size and target_downsample_size must be specified."
+                f"Only {'maximum_image_size' if maximum_image_size else 'target_downsample_size'} was specified."
+            )
+        self.maximum_image_size = maximum_image_size
+        self.target_downsample_size = target_downsample_size
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -432,7 +443,12 @@ class VAECache:
                         )
                         continue
                 image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image, self.resolution, self.resolution_type, self.id
+                    image,
+                    self.resolution,
+                    self.resolution_type,
+                    self.maximum_image_size,
+                    self.target_downsample_size,
+                    self.id,
                 )
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype

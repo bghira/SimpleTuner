@@ -269,6 +269,16 @@ def log_validations(
 
                         logger.debug(
                             f"Generating validation image: {validation_prompt}"
+                            "\n Device allocations:"
+                            f"\n -> unet on {pipeline.unet.device}"
+                            f"\n -> text_encoder on {pipeline.text_encoder.device}"
+                            f"\n -> vae on {pipeline.vae.device}"
+                            f"\n -> scheduler on {pipeline.scheduler.device}"
+                            f"\n -> generator on {pipeline.generator.device}"
+                            f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
+                            f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
+                            f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
+                            f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
                         )
                         validation_images.extend(
                             pipeline(

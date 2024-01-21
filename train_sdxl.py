@@ -433,7 +433,9 @@ def main():
             prompt_handler=prompt_handler,
         )
     except Exception as e:
-        logging.error(f"{e}")
+        import traceback
+
+        logger.error(f"{e}, traceback: {traceback.format_exc()}")
 
         sys.exit(0)
 

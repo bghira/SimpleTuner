@@ -58,6 +58,49 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     else:
         output["config"]["resolution_type"] = args.resolution_type
 
+    maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
+    target_downsample_size = backend.get(
+        "target_downsample_size", args.target_downsample_size
+    )
+    if maximum_image_size and not target_downsample_size:
+        raise ValueError(
+            "When a data backend is configured to use `maximum_image_size`, you must also provide a value for `target_downsample_size`."
+        )
+    if (
+        maximum_image_size
+        and output["config"]["resolution_type"] == "area"
+        and maximum_image_size > 10
+        and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
+    ):
+        raise ValueError(
+            f"When a data backend is configured to use `'resolution_type':area`, `maximum_image_size` must be less than 10 megapixels. You may have accidentally entered {maximum_image_size} pixels, instead of megapixels."
+        )
+    elif (
+        maximum_image_size
+        and output["config"]["resolution_type"] == "pixel"
+        and maximum_image_size < 512
+    ):
+        raise ValueError(
+            f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
+        )
+    if (
+        target_downsample_size
+        and output["config"]["resolution_type"] == "area"
+        and target_downsample_size > 10
+        and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
+    ):
+        raise ValueError(
+            f"When a data backend is configured to use `'resolution_type':area`, `target_downsample_size` must be less than 10 megapixels. You may have accidentally entered {target_downsample_size} pixels, instead of megapixels."
+        )
+    elif (
+        target_downsample_size
+        and output["config"]["resolution_type"] == "pixel"
+        and target_downsample_size < 512
+    ):
+        raise ValueError(
+            f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
+        )
+
     return output
 
 
@@ -224,6 +267,11 @@ def configure_multi_databackend(
                 accelerator, init_backend["id"]
             )
             init_backend["instance_data_root"] = backend["instance_data_dir"]
+            # Remove trailing slash
+            if init_backend["instance_data_root"][-1] == "/":
+                init_backend["instance_data_root"] = init_backend["instance_data_root"][
+                    :-1
+                ]
         elif backend["type"] == "aws":
             check_aws_config(backend)
             init_backend["data_backend"] = get_aws_backend(
@@ -405,6 +453,12 @@ def configure_multi_databackend(
             ),
             resolution=backend.get("resolution", args.resolution),
             resolution_type=backend.get("resolution_type", args.resolution_type),
+            maximum_image_size=backend.get(
+                "maximum_image_size", args.maximum_image_size
+            ),
+            target_downsample_size=backend.get(
+                "target_downsample_size", args.target_downsample_size
+            ),
             minimum_image_size=backend.get(
                 "minimum_image_size", args.minimum_image_size
             ),

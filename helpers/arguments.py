@@ -348,6 +348,27 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--maximum_image_size",
+        type=float,
+        default=None,
+        help=(
+            "When cropping images that are excessively large, the entire scene context may be lost, eg. the crop might just"
+            " end up being a portion of the background. To avoid this, a maximum image size may be provided, which will"
+            " result in very-large images being downsampled before cropping them. This value uses --resolution_type to determine"
+            " whether it is a pixel edge or megapixel value."
+        ),
+    )
+    parser.add_argument(
+        "--target_downsample_size",
+        type=float,
+        default=None,
+        help=(
+            "When using --maximum_image_size, very-large images exceeding that value will be downsampled to this target"
+            " size before cropping. If --resolution_type=area and --maximum_image_size=4.0, --target_downsample_size=2.0"
+            " would result in a 4 megapixel image being resized to 2 megapixel before cropping to 1 megapixel."
+        ),
+    )
+    parser.add_argument(
         "--crop",
         default=False,
         type=bool,
@@ -968,6 +989,45 @@ def parse_args(input_args=None):
 
     if args.cache_dir is None or args.cache_dir == "":
         args.cache_dir = os.path.join(args.output_dir, "cache")
+
+    if args.maximum_image_size is not None and not args.target_downsample_size:
+        raise ValueError(
+            "When providing --maximum_image_size, you must also provide a value for --target_downsample_size."
+        )
+    if (
+        args.maximum_image_size is not None
+        and args.resolution_type == "area"
+        and args.maximum_image_size > 5
+        and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
+    ):
+        raise ValueError(
+            f"When using --resolution_type=area, --maximum_image_size must be less than 5 megapixels. You may have accidentally entered {args.maximum_image_size} pixels, instead of megapixels."
+        )
+    elif (
+        args.maximum_image_size is not None
+        and args.resolution_type == "pixel"
+        and args.maximum_image_size < 512
+    ):
+        raise ValueError(
+            f"When using --resolution_type=pixel, --maximum_image_size must be at least 512 pixels. You may have accidentally entered {args.maximum_image_size} megapixels, instead of pixels."
+        )
+    if (
+        args.target_downsample_size is not None
+        and args.resolution_type == "area"
+        and args.target_downsample_size > 5
+        and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
+    ):
+        raise ValueError(
+            f"When using --resolution_type=area, --target_downsample_size must be less than 5 megapixels. You may have accidentally entered {args.target_downsample_size} pixels, instead of megapixels."
+        )
+    elif (
+        args.target_downsample_size is not None
+        and args.resolution_type == "pixel"
+        and args.target_downsample_size < 512
+    ):
+        raise ValueError(
+            f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
+        )
 
     if args.cache_dir_vae is None or args.cache_dir_vae == "":
         args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")

@@ -344,8 +344,9 @@ class TextEmbeddingCache:
                         del pooled_prompt_embeds
                         continue
 
-                prompt_embeds_all.append(prompt_embeds)
-                add_text_embeds_all.append(add_text_embeds)
+                if return_concat:
+                    prompt_embeds_all.append(prompt_embeds)
+                    add_text_embeds_all.append(add_text_embeds)
             self.process_write_batches = False
             if not return_concat:
                 del prompt_embeds_all
