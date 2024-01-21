@@ -298,7 +298,11 @@ def process_directory(
                         f.write(best_match)
 
             except Exception as e:
-                logging.error(f"Error processing {filename}: {str(e)}")
+                import traceback
+
+                logging.error(
+                    f"Error processing {filename}: {str(e)}, traceback: {traceback.format_exc()}"
+                )
         processed_files.add(filename)
         processed_file_counter += 1
         # Save progress at specified intervals
