@@ -235,6 +235,9 @@ def process_directory(
         mininterval=0.5,
     ):
         if filename in processed_files:
+            # Remove the original file if args.delete_after_caption
+            if args.delete_after_caption:
+                os.remove(full_filepath)
             continue
 
         full_filepath = os.path.join(image_dir, filename)
