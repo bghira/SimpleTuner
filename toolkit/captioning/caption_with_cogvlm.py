@@ -312,7 +312,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # Ensure output directory exists
-    if not os.path.exists(args.output_dir):
+    if args.output_dir and not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     logger.info("Loading CogVLM model. This should only occur once.")
     from transformers import AutoModelForCausalLM, LlamaTokenizer
