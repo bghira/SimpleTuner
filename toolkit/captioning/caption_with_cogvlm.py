@@ -1,4 +1,4 @@
-import os, torch, logging, xformers, accelerate, re, random, argparse
+import os, torch, logging, xformers, accelerate, re, random, argparse, io
 from tqdm.auto import tqdm
 from PIL import Image
 import requests, boto3
@@ -7,8 +7,20 @@ from botocore.config import Config
 logger = logging.getLogger("Captioner")
 
 
-def upload_to_s3(s3_client, bucket_name, file_path, object_name):
-    s3_client.upload_file(file_path, bucket_name, object_name)
+def upload_to_s3(s3_client, bucket_name, image_data, object_name):
+    try:
+        in_memory_file = io.BytesIO()
+        # Save PIL image to the bytes buffer
+        image_data.save(in_memory_file, format=image_data.format)
+        in_memory_file.seek(0)  # Move to the beginning of the buffer
+
+        s3_client.upload_fileobj(
+            in_memory_file,
+            bucket_name,
+            object_name,
+        )
+    except Exception as e:
+        logger.error(f"Error uploading {object_name} to bucket {bucket_name}: {e}")
 
 
 def parse_args():
@@ -271,7 +283,7 @@ def process_directory(
 
                         image.save(new_filepath)
                     if args.target_backend_id:
-                        upload_to_s3(s3_client, bucket_name, new_filepath, new_filename)
+                        upload_to_s3(s3_client, bucket_name, image, new_filename)
 
                     # Remove the original file if args.delete_after_caption
                     if args.delete_after_caption:
