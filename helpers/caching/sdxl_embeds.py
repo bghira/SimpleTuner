@@ -319,7 +319,7 @@ class TextEmbeddingCache:
             load_from_cache = False
             should_encode = True
         logger.debug(
-            f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts.items())[:5]}"
+            f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
         )
         with torch.no_grad():
             for prompt in tqdm(
