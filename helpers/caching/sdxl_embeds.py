@@ -105,12 +105,12 @@ class TextEmbeddingCache:
                 self.process_write_batch(batch)
             elif self.write_queue.empty() and len(batch) > 0:
                 self.process_write_batch(batch)
-            elif self.write_queue.empty() and len(batch) == 0:
-                # End the loop if we are done.
-                logger.debug("Ending the batch write thread loop, the queue is empty.")
-                break
 
-            if not self.process_write_batches and self.write_queue.empty():
+            if (
+                not self.process_write_batches
+                and self.write_queue.empty()
+                and len(batch) == 0
+            ):
                 # End the loop if we are done.
                 logger.debug(
                     "Ending the batch write thread loop, the queue is empty and the process_write_batches flag is disabled."
