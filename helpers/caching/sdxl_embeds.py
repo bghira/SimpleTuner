@@ -97,20 +97,28 @@ class TextEmbeddingCache:
         while True:
             batch = []
             while not self.write_queue.empty() and len(batch) < self.write_batch_size:
-                batch.append(self.write_queue.get())
+                items = self.write_queue.get()
+                logger.debug(f"Adding item to batch: {items}")
+                batch.append(items)
 
             if len(batch) >= self.write_batch_size:
                 self.process_write_batch(batch)
             elif self.write_queue.empty() and len(batch) > 0:
                 self.process_write_batch(batch)
-            elif self.write_queue.empty() and len(batch) == 0:
-                # End the loop if we are done.
-                break
 
-            if not self.process_write_batches and self.write_queue.empty():
+            if (
+                not self.process_write_batches
+                and self.write_queue.empty()
+                and len(batch) == 0
+            ):
                 # End the loop if we are done.
+                logger.debug(
+                    "Ending the batch write thread loop, the queue is empty and the process_write_batches flag is disabled."
+                )
                 break
-            time.sleep(0.01)  # Prevents the thread from being too busy-waiting
+            time.sleep(
+                float(os.environ.get("SIMPLETUNER_BATCH_WRITE_SLEEP_INTERVAL", 0.01))
+            )  # Prevents the thread from being too busy-waiting
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
@@ -153,46 +161,54 @@ class TextEmbeddingCache:
         if self.prompt_handler and is_validation:
             positive_prompt = self.prompt_handler.process_long_prompt(prompt)
             return positive_prompt
-        for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-            text_inputs = tokenizer(
-                prompt, padding="max_length", truncation=True, return_tensors="pt"
-            )
-            text_input_ids = text_inputs.input_ids
-
-            untruncated_ids = tokenizer(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
-
-            if untruncated_ids.shape[
-                -1
-            ] > tokenizer.model_max_length and not torch.equal(
-                text_input_ids, untruncated_ids
-            ):
-                removed_text = tokenizer.batch_decode(
-                    untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
+        try:
+            for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+                text_inputs = tokenizer(
+                    prompt, padding="max_length", truncation=True, return_tensors="pt"
                 )
-                if not emitted_warning:
-                    # Only print this once. It's a bit spammy otherwise.
-                    emitted_warning = True
-                    logger.warning(
-                        f"The following part of your input was truncated because CLIP can only handle sequences up to {tokenizer.model_max_length} tokens: {removed_text}"
+                text_input_ids = text_inputs.input_ids
+
+                untruncated_ids = tokenizer(
+                    prompt, padding="longest", return_tensors="pt"
+                ).input_ids
+
+                if untruncated_ids.shape[
+                    -1
+                ] > tokenizer.model_max_length and not torch.equal(
+                    text_input_ids, untruncated_ids
+                ):
+                    removed_text = tokenizer.batch_decode(
+                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
                     )
+                    if not emitted_warning:
+                        # Only print this once. It's a bit spammy otherwise.
+                        emitted_warning = True
+                        logger.warning(
+                            f"The following part of your input was truncated because CLIP can only handle sequences up to {tokenizer.model_max_length} tokens: {removed_text}"
+                        )
 
-            prompt_embeds_output = text_encoder(
-                text_input_ids.to(text_encoder.device), output_hidden_states=True
+                prompt_embeds_output = text_encoder(
+                    text_input_ids.to(text_encoder.device), output_hidden_states=True
+                )
+                # We are always interested in the pooled output of the final text encoder
+                pooled_prompt_embeds = prompt_embeds_output[0]
+                prompt_embeds = prompt_embeds_output.hidden_states[-2]
+                del prompt_embeds_output
+                bs_embed, seq_len, _ = prompt_embeds.shape
+                prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
+
+                # Clear out anything we moved to the text encoder device
+                text_input_ids.to("cpu")
+                del text_input_ids
+
+                prompt_embeds_list.append(prompt_embeds)
+        except Exception as e:
+            import traceback
+
+            logger.error(
+                f"Failed to encode prompt: {prompt}\n-> error: {e}\n-> traceback: {traceback.format_exc()}"
             )
-            # We are always interested in the pooled output of the final text encoder
-            pooled_prompt_embeds = prompt_embeds_output[0]
-            prompt_embeds = prompt_embeds_output.hidden_states[-2]
-            del prompt_embeds_output
-            bs_embed, seq_len, _ = prompt_embeds.shape
-            prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
-
-            # Clear out anything we moved to the text encoder device
-            text_input_ids.to("cpu")
-            del text_input_ids
-
-            prompt_embeds_list.append(prompt_embeds)
+            raise e
 
         prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
         return prompt_embeds, pooled_prompt_embeds
@@ -241,41 +257,43 @@ class TextEmbeddingCache:
             self.process_write_batches = True
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)
             self.batch_write_thread.start()
+
         existing_cache_filenames = list(
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
+
         # Parallel processing for hashing
         with ThreadPoolExecutor() as executor:
             all_cache_filenames = list(executor.map(self.hash_prompt, all_prompts))
-        # Check if we have all the files in the cache
-        if (
-            not is_validation
-            and not return_concat
-            and all([f in existing_cache_filenames for f in all_cache_filenames])
-        ):
+
+        # Create a set for faster lookups
+        existing_cache_filenames_set = set(existing_cache_filenames)
+
+        # Determine which prompts are not cached
+        uncached_prompts = [
+            prompt
+            for prompt, filename in zip(all_prompts, all_cache_filenames)
+            if filename not in existing_cache_filenames_set
+        ]
+
+        # If all prompts are cached and certain conditions are met, return None
+        if not uncached_prompts and not is_validation and not return_concat:
             logger.debug(f"(id={self.id}) All prompts are cached, ignoring.")
             return None
-        # Reduce prompts down to the list of unncached prompts.
-        if not return_concat and not is_validation:
-            prompts = [
-                p for p in all_cache_filenames if p not in existing_cache_filenames
-            ]
-            self.debug_log(
-                f"Reduced count of prompts for processing from {len(all_prompts)} to {len(prompts)}"
-            )
-        else:
-            prompts = all_prompts
+
+        # Proceed with uncached prompts
+        prompts_to_process = uncached_prompts if uncached_prompts else all_prompts
 
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
-                prompts,
+                prompts_to_process,
                 return_concat=return_concat,
                 is_validation=is_validation,
                 load_from_cache=load_from_cache,
             )
         elif self.model_type == "legacy":
             return self.compute_embeddings_for_legacy_prompts(
-                prompts,
+                prompts_to_process,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
             )
@@ -300,6 +318,9 @@ class TextEmbeddingCache:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
+        logger.debug(
+            f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
+        )
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -334,6 +355,7 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
+                    self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
@@ -347,7 +369,16 @@ class TextEmbeddingCache:
                 if return_concat:
                     prompt_embeds_all.append(prompt_embeds)
                     add_text_embeds_all.append(add_text_embeds)
+
+            # Wait for the batch write thread to finish, showing a spinner
+            while self.write_queue.qsize() > 0:
+                # Loading spinner
+                time.sleep(0.1)
+                tqdm.write(
+                    f"Waiting for batch write thread to finish, {self.write_queue.qsize()} items left in queue."
+                )
             self.process_write_batches = False
+
             if not return_concat:
                 del prompt_embeds_all
                 del add_text_embeds_all
@@ -356,7 +387,6 @@ class TextEmbeddingCache:
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
-        self.process_write_batches = False
         return prompt_embeds_all, add_text_embeds_all
 
     def compute_embeddings_for_legacy_prompts(
