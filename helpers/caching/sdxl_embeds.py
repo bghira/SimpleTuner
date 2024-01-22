@@ -257,41 +257,43 @@ class TextEmbeddingCache:
             self.process_write_batches = True
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)
             self.batch_write_thread.start()
+
         existing_cache_filenames = list(
             StateTracker.get_text_cache_files(data_backend_id=self.id).keys()
         )
+
         # Parallel processing for hashing
         with ThreadPoolExecutor() as executor:
             all_cache_filenames = list(executor.map(self.hash_prompt, all_prompts))
-        # Check if we have all the files in the cache
-        if (
-            not is_validation
-            and not return_concat
-            and all([f in existing_cache_filenames for f in all_cache_filenames])
-        ):
+
+        # Create a set for faster lookups
+        existing_cache_filenames_set = set(existing_cache_filenames)
+
+        # Determine which prompts are not cached
+        uncached_prompts = [
+            prompt
+            for prompt, filename in zip(all_prompts, all_cache_filenames)
+            if filename not in existing_cache_filenames_set
+        ]
+
+        # If all prompts are cached and certain conditions are met, return None
+        if not uncached_prompts and not is_validation and not return_concat:
             logger.debug(f"(id={self.id}) All prompts are cached, ignoring.")
             return None
-        # Reduce prompts down to the list of unncached prompts.
-        if not return_concat and not is_validation:
-            prompts = [
-                p for p in all_cache_filenames if p not in existing_cache_filenames
-            ]
-            self.debug_log(
-                f"Reduced count of prompts for processing from {len(all_prompts)} to {len(prompts)}"
-            )
-        else:
-            prompts = all_prompts
+
+        # Proceed with uncached prompts
+        prompts_to_process = uncached_prompts if uncached_prompts else all_prompts
 
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
-                prompts,
+                prompts_to_process,
                 return_concat=return_concat,
                 is_validation=is_validation,
                 load_from_cache=load_from_cache,
             )
         elif self.model_type == "legacy":
             return self.compute_embeddings_for_legacy_prompts(
-                prompts,
+                prompts_to_process,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
             )
