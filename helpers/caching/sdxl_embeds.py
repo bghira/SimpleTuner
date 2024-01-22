@@ -316,6 +316,9 @@ class TextEmbeddingCache:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
+        logger.debug(
+            f"compute_embeddings_for_sdxl_prompts received list of prompts: {prompts}"
+        )
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -350,6 +353,7 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
+                    self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
