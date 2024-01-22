@@ -347,7 +347,6 @@ class TextEmbeddingCache:
                 if return_concat:
                     prompt_embeds_all.append(prompt_embeds)
                     add_text_embeds_all.append(add_text_embeds)
-            self.process_write_batches = False
             if not return_concat:
                 del prompt_embeds_all
                 del add_text_embeds_all
@@ -356,7 +355,6 @@ class TextEmbeddingCache:
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
-        self.process_write_batches = False
         return prompt_embeds_all, add_text_embeds_all
 
     def compute_embeddings_for_legacy_prompts(
