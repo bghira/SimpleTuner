@@ -161,46 +161,54 @@ class TextEmbeddingCache:
         if self.prompt_handler and is_validation:
             positive_prompt = self.prompt_handler.process_long_prompt(prompt)
             return positive_prompt
-        for tokenizer, text_encoder in zip(tokenizers, text_encoders):
-            text_inputs = tokenizer(
-                prompt, padding="max_length", truncation=True, return_tensors="pt"
-            )
-            text_input_ids = text_inputs.input_ids
-
-            untruncated_ids = tokenizer(
-                prompt, padding="longest", return_tensors="pt"
-            ).input_ids
-
-            if untruncated_ids.shape[
-                -1
-            ] > tokenizer.model_max_length and not torch.equal(
-                text_input_ids, untruncated_ids
-            ):
-                removed_text = tokenizer.batch_decode(
-                    untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
+        try:
+            for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+                text_inputs = tokenizer(
+                    prompt, padding="max_length", truncation=True, return_tensors="pt"
                 )
-                if not emitted_warning:
-                    # Only print this once. It's a bit spammy otherwise.
-                    emitted_warning = True
-                    logger.warning(
-                        f"The following part of your input was truncated because CLIP can only handle sequences up to {tokenizer.model_max_length} tokens: {removed_text}"
+                text_input_ids = text_inputs.input_ids
+
+                untruncated_ids = tokenizer(
+                    prompt, padding="longest", return_tensors="pt"
+                ).input_ids
+
+                if untruncated_ids.shape[
+                    -1
+                ] > tokenizer.model_max_length and not torch.equal(
+                    text_input_ids, untruncated_ids
+                ):
+                    removed_text = tokenizer.batch_decode(
+                        untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
                     )
+                    if not emitted_warning:
+                        # Only print this once. It's a bit spammy otherwise.
+                        emitted_warning = True
+                        logger.warning(
+                            f"The following part of your input was truncated because CLIP can only handle sequences up to {tokenizer.model_max_length} tokens: {removed_text}"
+                        )
 
-            prompt_embeds_output = text_encoder(
-                text_input_ids.to(text_encoder.device), output_hidden_states=True
+                prompt_embeds_output = text_encoder(
+                    text_input_ids.to(text_encoder.device), output_hidden_states=True
+                )
+                # We are always interested in the pooled output of the final text encoder
+                pooled_prompt_embeds = prompt_embeds_output[0]
+                prompt_embeds = prompt_embeds_output.hidden_states[-2]
+                del prompt_embeds_output
+                bs_embed, seq_len, _ = prompt_embeds.shape
+                prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
+
+                # Clear out anything we moved to the text encoder device
+                text_input_ids.to("cpu")
+                del text_input_ids
+
+                prompt_embeds_list.append(prompt_embeds)
+        except Exception as e:
+            import traceback
+
+            logger.error(
+                f"Failed to encode prompt: {prompt}\n-> error: {e}\n-> traceback: {traceback.format_exc()}"
             )
-            # We are always interested in the pooled output of the final text encoder
-            pooled_prompt_embeds = prompt_embeds_output[0]
-            prompt_embeds = prompt_embeds_output.hidden_states[-2]
-            del prompt_embeds_output
-            bs_embed, seq_len, _ = prompt_embeds.shape
-            prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
-
-            # Clear out anything we moved to the text encoder device
-            text_input_ids.to("cpu")
-            del text_input_ids
-
-            prompt_embeds_list.append(prompt_embeds)
+            raise e
 
         prompt_embeds = torch.cat(prompt_embeds_list, dim=-1)
         return prompt_embeds, pooled_prompt_embeds
