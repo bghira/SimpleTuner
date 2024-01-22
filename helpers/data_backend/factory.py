@@ -432,7 +432,7 @@ def configure_multi_databackend(
                     f"(id={init_backend['id']}) Initialise text embed pre-computation. We have {len(captions)} captions to process."
                 )
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                    captions, return_concat=False
+                    captions, return_concat=False, load_from_cache=False
                 )
 
         accelerator.wait_for_everyone()
