@@ -355,6 +355,16 @@ class TextEmbeddingCache:
                 if return_concat:
                     prompt_embeds_all.append(prompt_embeds)
                     add_text_embeds_all.append(add_text_embeds)
+
+            # Wait for the batch write thread to finish, showing a spinner
+            while self.write_queue.qsize() > 0:
+                # Loading spinner
+                time.sleep(0.1)
+                tqdm.write(
+                    f"Waiting for batch write thread to finish, {self.write_queue.qsize()} items left in queue."
+                )
+            self.process_write_batches = False
+
             if not return_concat:
                 del prompt_embeds_all
                 del add_text_embeds_all
