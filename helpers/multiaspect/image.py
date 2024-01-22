@@ -91,13 +91,24 @@ class MultiaspectImage:
 
     @staticmethod
     def prepare_image(
-        image: Image, resolution: float, resolution_type: str = "pixel", id: str = "foo"
+        image: Image,
+        resolution: float,
+        resolution_type: str = "pixel",
+        maximum_image_size: float = None,
+        target_downsample_size: float = None,
+        id: str = "foo",
     ):
         if not hasattr(image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(image)}"
             )
-
+        original_resolution = resolution
+        # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
+        original_resolution = original_resolution * 1e3
+        # Make resolution a multiple of 64
+        original_resolution = MultiaspectImage._round_to_nearest_multiple(
+            original_resolution, 64
+        )
         # Strip transparency
         image = image.convert("RGB")
 
@@ -106,6 +117,22 @@ class MultiaspectImage:
         logger.debug(f"Image size before EXIF transform: {image.size}")
         image = exif_transpose(image)
         logger.debug(f"Image size after EXIF transform: {image.size}")
+
+        # Downsample before we handle, if necessary.
+        downsample_before_crop = False
+        crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
+            "crop", StateTracker.get_args().crop
+        )
+        if crop and maximum_image_size and target_downsample_size:
+            if MultiaspectImage.is_image_too_large(
+                image, maximum_image_size, resolution_type=resolution_type
+            ):
+                # Override the target resolution with the target downsample size
+                logger.debug(
+                    f"Overriding resolution {resolution} with target downsample size: {target_downsample_size}"
+                )
+                resolution = target_downsample_size
+                downsample_before_crop = True
 
         original_width, original_height = image.size
 
@@ -134,13 +161,6 @@ class MultiaspectImage:
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
-        crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop", None
-        )
-        logger.debug(f"Crop is {crop}")
-        if crop is None:
-            crop = StateTracker.get_args().crop
-            logger.debug(f"Crop is now the global value, {crop}")
         crop_style = StateTracker.get_data_backend_config(data_backend_id=id).get(
             "crop_style", StateTracker.get_args().crop_style
         )
@@ -149,9 +169,17 @@ class MultiaspectImage:
         )
 
         if crop:
+            if downsample_before_crop:
+                logger.debug(
+                    f"Resizing image before crop, as its size is too large. Data backend: {id}, image size: {image.size}, target size: {target_width}x{target_height}"
+                )
+                image = MultiaspectImage._resize_image(
+                    image, target_width, target_height
+                )
+
             logger.debug(f"We are cropping the image. Data backend: {id}")
             crop_width, crop_height = (
-                (resolution, resolution)
+                (original_resolution, original_resolution)
                 if crop_aspect == "square"
                 else (target_width, target_height)
             )
@@ -170,6 +198,7 @@ class MultiaspectImage:
                 )
             else:
                 raise ValueError(f"Unknown crop style: {crop_style}")
+            logger.debug(f"After cropping, our image size: {image.size}")
         else:
             # Resize unconditionally if cropping is not enabled
             image = MultiaspectImage._resize_image(image, target_width, target_height)
@@ -230,6 +259,31 @@ class MultiaspectImage:
         msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
         logger.debug(msg)
         return input_image.resize((target_width, target_height), resample=Image.LANCZOS)
+
+    @staticmethod
+    def is_image_too_large(image, resolution: float, resolution_type: str):
+        """
+        Determine if an image is too large to be processed.
+
+        Args:
+            image (PIL.Image): The image to check.
+            resolution (float): The maximum resolution to allow.
+            resolution_type (str): What form of resolution to check, choices: "pixel", "area".
+
+        Returns:
+            bool: True if the image is too large, False otherwise.
+        """
+        if resolution_type == "pixel":
+            return image.width > resolution or image.height > resolution
+        elif resolution_type == "area":
+            image_area = image.width * image.height
+            target_area = resolution * 1e6  # Convert megapixels to pixels
+            logger.debug(
+                f"Image is too large? {image_area > target_area} (image area: {image_area}, target area: {target_area})"
+            )
+            return image_area > target_area
+        else:
+            raise ValueError(f"Unknown resolution type: {resolution_type}")
 
     @staticmethod
     def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: float):

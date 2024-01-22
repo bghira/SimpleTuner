@@ -1,9 +1,27 @@
-import os, torch, logging, xformers, accelerate, re, random, argparse
+import os, torch, logging, xformers, accelerate, re, random, argparse, io
 from tqdm.auto import tqdm
 from PIL import Image
-import requests
+import requests, boto3
+from botocore.config import Config
 
 logger = logging.getLogger("Captioner")
+
+
+def upload_to_s3(s3_client, bucket_name, image_data, object_name):
+    try:
+        in_memory_file = io.BytesIO()
+        # Save PIL image to the bytes buffer
+        image_data.save(in_memory_file, format="PNG")
+        in_memory_file.seek(0)  # Move to the beginning of the buffer
+
+        s3_client.upload_fileobj(
+            in_memory_file,
+            bucket_name,
+            object_name,
+        )
+    except Exception as e:
+        logger.error(f"Error uploading {object_name} to bucket {bucket_name}: {e}")
+        raise
 
 
 def parse_args():
@@ -11,13 +29,27 @@ def parse_args():
         description="Process images and generate captions."
     )
     parser.add_argument(
+        "--multidatabackend_config",
+        type=str,
+        required=True,
+        help="Path to the multidatabackend config JSON file.",
+    )
+    parser.add_argument(
         "--input_dir", type=str, required=True, help="Directory containing the images."
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        required=True,
+        required=False,
         help="Directory to save processed images.",
+    )
+    parser.add_argument(
+        "--target_backend_id",
+        type=str,
+        default=None,
+        help=(
+            "When this is provided, the script will upload the captioned file directly to an S3 backend in your multidatabackend.json file."
+        ),
     )
     parser.add_argument(
         "--batch_size", type=int, default=16, help="Batch size for processing."
@@ -159,20 +191,51 @@ def process_directory(
     query_str: str,
 ):
     processed_file_counter = 0
+    bucket_name = None
+    if args.target_backend_id:
+        if not args.multidatabackend_config:
+            raise ValueError(
+                "A --multidatabackend_config must be provided when --target_backend_id is provided."
+            )
+        # Load the config
+        import json
+
+        with open(args.multidatabackend_config) as file:
+            multidatabackend_config = json.load(file)
+        for backend in multidatabackend_config:
+            if backend["id"] == args.target_backend_id and backend["type"] != "aws":
+                raise ValueError(
+                    "Only S3 backends are supported for --target_backend_id."
+                )
+            elif backend["id"] == args.target_backend_id:
+                config = backend
+                bucket_name = config["aws_bucket_name"]
+                break
+        if not bucket_name:
+            raise ValueError(
+                f"The backend id '{args.target_backend_id}' was not found in the multidatabackend config."
+            )
+
+        s3_config = Config(max_pool_connections=100)
+
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=backend["aws_endpoint_url"],
+            region_name=backend.get("aws_region_name", None),
+            aws_access_key_id=backend["aws_access_key_id"],
+            aws_secret_access_key=backend["aws_secret_access_key"],
+            config=s3_config,
+        )
 
     for filename in tqdm(
         os.listdir(image_dir),
-        desc="Processing Images",
+        desc=f"Processing directory {image_dir}",
         unit="images",
-        leave=False,
+        leave=True,
         position=0,
         mininterval=0.5,
     ):
-        if filename in processed_files:
-            continue
-
         full_filepath = os.path.join(image_dir, filename)
-        logger.info(f"Full filepath: {full_filepath}")
         if os.path.isdir(full_filepath):
             process_directory(
                 args,
@@ -189,12 +252,20 @@ def process_directory(
                 query_str,
             )
         elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
+            if filename in processed_files:
+                # Remove the original file if args.delete_after_caption
+                if args.delete_after_caption:
+                    os.remove(full_filepath)
+                continue
+
             try:
                 with Image.open(full_filepath) as image:
+                    # Convert to RGB
+                    image = image.convert("RGB")
                     best_match = eval_image(
                         image, model, tokenizer, torch_dtype, query_str
                     )
-                    logging.info(f"Best match for {filename}: {best_match}")
+                    logging.debug(f"Best match for {filename}: {best_match}")
                     # Save based on caption strategy
                     new_filename = (
                         content_to_filename(
@@ -203,18 +274,22 @@ def process_directory(
                         if caption_strategy == "filename"
                         else filename
                     )
-                    new_filepath = os.path.join(output_dir, new_filename)
+                    if args.output_dir:
+                        new_filepath = os.path.join(output_dir, new_filename)
 
-                    # Ensure no overwriting
-                    counter = 1
-                    while os.path.exists(new_filepath):
-                        new_filepath = os.path.join(
-                            output_dir,
-                            f"{new_filename.rsplit('.', 1)[0]}_{counter}.{new_filename.rsplit('.', 1)[1]}",
-                        )
-                        counter += 1
+                        # Ensure no overwriting
+                        counter = 1
+                        while os.path.exists(new_filepath):
+                            new_filepath = os.path.join(
+                                output_dir,
+                                f"{new_filename.rsplit('.', 1)[0]}_{counter}.{new_filename.rsplit('.', 1)[1]}",
+                            )
+                            counter += 1
 
-                    image.save(new_filepath)
+                        image.save(new_filepath)
+                    if args.target_backend_id:
+                        upload_to_s3(s3_client, bucket_name, image, new_filename)
+
                     # Remove the original file if args.delete_after_caption
                     if args.delete_after_caption:
                         os.remove(full_filepath)
@@ -224,7 +299,11 @@ def process_directory(
                         f.write(best_match)
 
             except Exception as e:
-                logging.error(f"Error processing {filename}: {str(e)}")
+                import traceback
+
+                logging.error(
+                    f"Error processing {filename}: {str(e)}, traceback: {traceback.format_exc()}"
+                )
         processed_files.add(filename)
         processed_file_counter += 1
         # Save progress at specified intervals
@@ -254,7 +333,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # Ensure output directory exists
-    if not os.path.exists(args.output_dir):
+    if args.output_dir and not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     logger.info("Loading CogVLM model. This should only occur once.")
     from transformers import AutoModelForCausalLM, LlamaTokenizer

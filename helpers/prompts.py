@@ -325,6 +325,7 @@ class PromptHandler:
         try:
             with user_prompt_path.open("r") as f:
                 user_prompts = json.load(f)
+                logger.debug(f"Loaded user prompts: {user_prompts}")
             return user_prompts
         except Exception as e:
             logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")
