@@ -97,7 +97,9 @@ class TextEmbeddingCache:
         while True:
             batch = []
             while not self.write_queue.empty() and len(batch) < self.write_batch_size:
-                batch.append(self.write_queue.get())
+                items = self.write_queue.get()
+                logger.debug(f"Adding item to batch: {items}")
+                batch.append(items)
 
             if len(batch) >= self.write_batch_size:
                 self.process_write_batch(batch)
@@ -105,12 +107,18 @@ class TextEmbeddingCache:
                 self.process_write_batch(batch)
             elif self.write_queue.empty() and len(batch) == 0:
                 # End the loop if we are done.
+                logger.debug("Ending the batch write thread loop, the queue is empty.")
                 break
 
             if not self.process_write_batches and self.write_queue.empty():
                 # End the loop if we are done.
+                logger.debug(
+                    "Ending the batch write thread loop, the queue is empty and the process_write_batches flag is disabled."
+                )
                 break
-            time.sleep(0.01)  # Prevents the thread from being too busy-waiting
+            time.sleep(
+                float(os.environ.get("SIMPLETUNER_BATCH_WRITE_SLEEP_INTERVAL", 0.01))
+            )  # Prevents the thread from being too busy-waiting
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
