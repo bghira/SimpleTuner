@@ -248,7 +248,13 @@ class PromptHandler:
         try:
             instance_prompt = data_backend.read(caption_file)
 
-            return str(instance_prompt)
+            # Convert from bytes to str:
+            if type(instance_prompt) == bytes:
+                result = instance_prompt.decode("utf-8")
+            else:
+                result = instance_prompt
+            logger.debug(f"Textfile caption: {result}")
+            return result
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")
 
@@ -294,6 +300,7 @@ class PromptHandler:
         use_captions: bool,
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
+        caption_strategy: str,
     ) -> list:
         captions = []
         all_image_files = StateTracker.get_image_files(
@@ -304,13 +311,16 @@ class PromptHandler:
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id
         )
-        # Caption strategy can be "filename" or "textfile" or "instanceprompt"
-        caption_strategy = backend_config.get(
-            "caption_strategy", StateTracker.get_args().caption_strategy
-        )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
             all_image_files = all_image_files[0][2]
-        for image_path in all_image_files:
+        from tqdm import tqdm
+
+        for image_path in tqdm(
+            all_image_files,
+            desc="Loading captions",
+            total=len(all_image_files),
+            ncols=125,
+        ):
             if caption_strategy == "filename":
                 caption = PromptHandler.prepare_instance_prompt(
                     image_path=str(image_path),

@@ -57,6 +57,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution_type"] = backend["resolution_type"]
     else:
         output["config"]["resolution_type"] = args.resolution_type
+    if "caption_strategy" in backend:
+        output["config"]["caption_strategy"] = backend["caption_strategy"]
+    else:
+        output["config"]["caption_strategy"] = args.caption_strategy
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
@@ -425,6 +429,7 @@ def configure_multi_databackend(
                     "prepend_instance_prompt", args.prepend_instance_prompt
                 ),
                 use_captions=use_captions,
+                caption_strategy=backend.get("caption_strategy", args.caption_strategy),
             )
             if "text" not in args.skip_file_discovery and "text" not in backend.get(
                 "skip_file_discovery", ""
@@ -432,8 +437,11 @@ def configure_multi_databackend(
                 logger.debug(
                     f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
                 )
+                caption_strategy = backend.get(
+                    "caption_strategy", args.caption_strategy
+                )
                 logger.info(
-                    f"(id={init_backend['id']}) Initialise text embed pre-computation. We have {len(captions)} captions to process."
+                    f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
                 )
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     captions, return_concat=False, load_from_cache=False
