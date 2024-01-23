@@ -446,8 +446,6 @@ class VAECache:
                     image,
                     self.resolution,
                     self.resolution_type,
-                    self.maximum_image_size,
-                    self.target_downsample_size,
                     self.id,
                 )
                 pixel_values = self.transform(image).to(
