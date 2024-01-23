@@ -301,14 +301,30 @@ class PromptHandler:
         ) or data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
+        backend_config = StateTracker.get_data_backend_config(
+            data_backend_id=data_backend.id
+        )
+        # Caption strategy can be "filename" or "textfile" or "instanceprompt"
+        caption_strategy = backend_config.get(
+            "caption_strategy", StateTracker.get_args().caption_strategy
+        )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
             all_image_files = all_image_files[0][2]
         for image_path in all_image_files:
-            caption = PromptHandler.prepare_instance_prompt(
-                image_path=str(image_path),
-                use_captions=use_captions,
-                prepend_instance_prompt=prepend_instance_prompt,
-            )
+            if caption_strategy == "filename":
+                caption = PromptHandler.prepare_instance_prompt(
+                    image_path=str(image_path),
+                    use_captions=use_captions,
+                    prepend_instance_prompt=prepend_instance_prompt,
+                )
+            elif caption_strategy == "textfile":
+                caption = PromptHandler.prepare_instance_prompt_from_textfile(
+                    image_path, data_backend=data_backend
+                )
+            elif caption_strategy == "instanceprompt":
+                return backend_config.get(
+                    "instance_prompt", StateTracker.get_args().instance_prompt
+                )
             captions.append(caption)
 
         return captions
