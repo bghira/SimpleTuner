@@ -184,6 +184,9 @@ def configure_multi_databackend(
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
+        if not backend.get("preserve_data_backend_cache", False):
+            StateTracker.delete_cache_files(data_backend_id=init_backend["id"])
+
         # Generate a TextEmbeddingCache object
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
@@ -194,6 +197,7 @@ def configure_multi_databackend(
             cache_dir=backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_type(),
         )
+
         if backend.get("default", False):
             # The default embed cache will be used for eg. validation prompts.
             StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
