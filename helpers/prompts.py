@@ -248,7 +248,7 @@ class PromptHandler:
         try:
             instance_prompt = data_backend.read(caption_file)
 
-            return instance_prompt
+            return str(instance_prompt)
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")
 
