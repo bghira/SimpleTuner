@@ -44,7 +44,9 @@ def prepare_validation_prompt_list(args, embed_cache):
             ncols=100,
             desc="Precomputing validation prompt embeddings",
         ):
-            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True)
+            embed_cache.compute_embeddings_for_prompts(
+                [prompt], is_validation=True, load_from_cache=False
+            )
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
     if args.user_prompt_library is not None:
