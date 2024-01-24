@@ -253,7 +253,6 @@ class PromptHandler:
                 result = instance_prompt.decode("utf-8")
             else:
                 result = instance_prompt
-            logger.debug(f"Textfile caption: {result}")
             return result
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")

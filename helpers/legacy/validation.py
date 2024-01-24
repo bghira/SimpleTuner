@@ -67,6 +67,9 @@ def prepare_validation_prompt_list(args, embed_cache):
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
         validation_shortnames = validation_shortnames + ["validation"]
+        embed_cache.compute_embeddings_for_prompts(
+            [args.validation_prompt], is_validation=True, load_from_cache=False
+        )
 
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
@@ -182,8 +185,8 @@ def log_validations(
                     pipeline = pipeline_cls.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=unwrap_model(accelerator, unet),
-                        text_encoder=text_encoder_1,
-                        text_encoder_2=text_encoder_2,
+                        text_encoder=None,
+                        text_encoder_2=None,
                         tokenizer=None,
                         tokenizer_2=None,
                         vae=vae,
@@ -212,6 +215,9 @@ def log_validations(
                     rescale_betas_zero_snr=args.rescale_betas_zero_snr,
                 )
             if args.validation_torch_compile and not is_compiled_module(pipeline.unet):
+                logger.warning(
+                    f"Compiling the UNet for validation ({args.validation_torch_compile})"
+                )
                 pipeline.unet = torch.compile(
                     pipeline.unet,
                     mode=args.validation_torch_compile_mode,
@@ -269,17 +275,17 @@ def log_validations(
                             for text_encoder in prompt_handler.text_encoders:
                                 text_encoder.to("cpu")
 
-                        logger.debug(
-                            f"Generating validation image: {validation_prompt}"
-                            "\n Device allocations:"
-                            f"\n -> unet on {pipeline.unet.device}"
-                            f"\n -> text_encoder on {pipeline.text_encoder.device}"
-                            f"\n -> vae on {pipeline.vae.device}"
-                            f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
-                            f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
-                            f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
-                            f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
-                        )
+                        # logger.debug(
+                        #     f"Generating validation image: {validation_prompt}"
+                        #     "\n Device allocations:"
+                        #     f"\n -> unet on {pipeline.unet.device}"
+                        #     f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
+                        #     f"\n -> vae on {pipeline.vae.device}"
+                        #     f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
+                        #     f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
+                        #     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
+                        #     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
+                        # )
                         validation_images.extend(
                             pipeline(
                                 prompt_embeds=current_validation_prompt_embeds,

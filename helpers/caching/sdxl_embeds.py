@@ -14,8 +14,6 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class TextEmbeddingCache:
     prompts = {}
-    write_queue = Queue()
-    process_write_batches = True
 
     def __init__(
         self,
@@ -52,13 +50,19 @@ class TextEmbeddingCache:
         self.max_workers = max_workers
         self.rank_info = rank_info()
         self.data_backend.create_directory(self.cache_dir)
-        self.batch_write_thread = Thread(target=self.batch_write_embeddings)
+        self.write_queue = Queue()
+        self.process_write_batches = True
+        self.batch_write_thread = Thread(
+            target=self.batch_write_embeddings,
+            name=f"batch_write_thread_{self.id}",
+            daemon=True,
+        )
         self.batch_write_thread.start()
         # Ensure the cache has the currently-existing file list.
         self.discover_all_files()
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info}{msg}")
+        logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
 
     def create_hash(self, caption):
         # Precomputed part of the format string
@@ -98,7 +102,9 @@ class TextEmbeddingCache:
             batch = []
             while not self.write_queue.empty() and len(batch) < self.write_batch_size:
                 items = self.write_queue.get()
-                logger.debug(f"Adding item to batch: {items}")
+                logger.debug(
+                    f"Data backend: {self.data_backend.id}, Adding item to batch: {items[1]}"
+                )
                 batch.append(items)
 
             if len(batch) >= self.write_batch_size:
@@ -106,18 +112,16 @@ class TextEmbeddingCache:
             elif self.write_queue.empty() and len(batch) > 0:
                 self.process_write_batch(batch)
 
-            if (
-                not self.process_write_batches
-                and self.write_queue.empty()
-                and len(batch) == 0
-            ):
-                # End the loop if we are done.
-                logger.debug(
-                    "Ending the batch write thread loop, the queue is empty and the process_write_batches flag is disabled."
-                )
-                break
+            check_interval = 5
+            # How many items exist in the queue should influence the interval. If the queue is empty, we can wait longer.
+            if self.write_queue.qsize() > 0:
+                check_interval = 0.001
             time.sleep(
-                float(os.environ.get("SIMPLETUNER_BATCH_WRITE_SLEEP_INTERVAL", 0.01))
+                float(
+                    os.environ.get(
+                        "SIMPLETUNER_BATCH_WRITE_SLEEP_INTERVAL", check_interval
+                    )
+                )
             )  # Prevents the thread from being too busy-waiting
 
     def process_write_batch(self, batch):
@@ -345,6 +349,7 @@ class TextEmbeddingCache:
                             f"\n-> error: {e}"
                         )
                         should_encode = True
+                        raise Exception("This won't work. We cannot continue.")
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
                     self.debug_log(f"Encoding prompt: {prompt}")
@@ -374,9 +379,6 @@ class TextEmbeddingCache:
             while self.write_queue.qsize() > 0:
                 # Loading spinner
                 time.sleep(0.1)
-                tqdm.write(
-                    f"Waiting for batch write thread to finish, {self.write_queue.qsize()} items left in queue."
-                )
             self.process_write_batches = False
 
             if not return_concat:
