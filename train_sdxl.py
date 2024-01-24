@@ -450,25 +450,31 @@ def main():
         )
     accelerator.wait_for_everyone()
     # Grab GPU memory used:
-    if accelerator.is_main_process:
-        logger.info(
-            f"Moving text encoders back to CPU, to save VRAM. Currently, we cannot completely unload the text encoder."
-        )
-    if args.fully_unload_text_encoder:
-        logger.warning(
-            "Fully unloading the text encoder means we do not have functioning validations later (yet)."
-        )
-        import gc
+    import gc
 
+    if args.model_type == "full":
+        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        if accelerator.is_main_process:
+            logger.info(f"Unloading text encoders, as they are not being trained.")
         del text_encoder_1, text_encoder_2
         text_encoder_1 = None
         text_encoder_2 = None
         gc.collect()
         torch.cuda.empty_cache()
+        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        memory_saved = memory_after_unload - memory_before_unload
+        logger.info(
+            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+            " The real memories were the friends we trained a model on along the way."
+        )
     elif not args.train_text_encoder:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        if accelerator.is_main_process:
+            logger.info(f"Moving text encoders back to CPU, to save VRAM.")
         text_encoder_1.to("cpu")
         text_encoder_2.to("cpu")
+        gc.collect()
+        torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -889,7 +895,7 @@ def main():
     current_epoch = first_epoch
     StateTracker.set_epoch(current_epoch)
 
-    if current_epoch >= args.num_train_epochs:
+    if current_epoch > args.num_train_epochs:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
@@ -963,8 +969,8 @@ def main():
     training_luminance_values = []
     current_epoch_step = None
 
-    for epoch in range(first_epoch, args.num_train_epochs):
-        if current_epoch >= args.num_train_epochs:
+    for epoch in range(first_epoch, args.num_train_epochs + 1):
+        if current_epoch > args.num_train_epochs:
             # This might immediately end training, but that's useful for simply exporting the model.
             logger.info(
                 f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs)."
@@ -1404,8 +1410,8 @@ def main():
         if args.model_type == "full":
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
-                text_encoder=text_encoder_1,
-                text_encoder_2=text_encoder_2,
+                text_encoder=None,
+                text_encoder_2=None,
                 tokenizer=tokenizer_1,
                 tokenizer_2=tokenizer_2,
                 vae=StateTracker.get_vae(),
@@ -1497,6 +1503,10 @@ def main():
                 ignore_patterns=["step_*", "epoch_*"],
             )
     accelerator.end_training()
+    # List any running child threads remaining:
+    import threading
+
+    logger.debug(f"Remaining threads: {threading.enumerate()}")
 
 
 if __name__ == "__main__":

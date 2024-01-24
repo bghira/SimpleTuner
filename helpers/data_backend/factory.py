@@ -57,11 +57,18 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution_type"] = backend["resolution_type"]
     else:
         output["config"]["resolution_type"] = args.resolution_type
+    if "caption_strategy" in backend:
+        output["config"]["caption_strategy"] = backend["caption_strategy"]
+    else:
+        output["config"]["caption_strategy"] = args.caption_strategy
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
         "target_downsample_size", args.target_downsample_size
     )
+    output["config"]["maximum_image_size"] = maximum_image_size
+    output["config"]["target_downsample_size"] = target_downsample_size
+
     if maximum_image_size and not target_downsample_size:
         raise ValueError(
             "When a data backend is configured to use `maximum_image_size`, you must also provide a value for `target_downsample_size`."
@@ -184,6 +191,9 @@ def configure_multi_databackend(
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
+        if not backend.get("preserve_data_backend_cache", False):
+            StateTracker.delete_cache_files(data_backend_id=init_backend["id"])
+
         # Generate a TextEmbeddingCache object
         init_backend["text_embed_cache"] = TextEmbeddingCache(
             id=init_backend["id"],
@@ -194,6 +204,7 @@ def configure_multi_databackend(
             cache_dir=backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_type(),
         )
+
         if backend.get("default", False):
             # The default embed cache will be used for eg. validation prompts.
             StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
@@ -205,7 +216,7 @@ def configure_multi_databackend(
                 logger.info("Pre-computing null embedding for caption dropout")
                 with accelerator.main_process_first():
                     init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [""], return_concat=False
+                        [""], return_concat=False, load_from_cache=False
                     )
                 accelerator.wait_for_everyone()
             else:
@@ -421,6 +432,7 @@ def configure_multi_databackend(
                     "prepend_instance_prompt", args.prepend_instance_prompt
                 ),
                 use_captions=use_captions,
+                caption_strategy=backend.get("caption_strategy", args.caption_strategy),
             )
             if "text" not in args.skip_file_discovery and "text" not in backend.get(
                 "skip_file_discovery", ""
@@ -428,8 +440,11 @@ def configure_multi_databackend(
                 logger.debug(
                     f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
                 )
+                caption_strategy = backend.get(
+                    "caption_strategy", args.caption_strategy
+                )
                 logger.info(
-                    f"(id={init_backend['id']}) Initialise text embed pre-computation. We have {len(captions)} captions to process."
+                    f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
                 )
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     captions, return_concat=False, load_from_cache=False

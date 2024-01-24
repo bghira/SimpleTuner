@@ -145,7 +145,7 @@ class S3DataBackend(BaseDataBackend):
                     Bucket=self.bucket_name,
                     Key=real_key,
                 )
-                logger.debug(f"S3-Key {s3_key} Response: {response}")
+                logger.debug(f"(id={self.id}) S3-Key {s3_key} Response: {response}")
                 return response
             except Exception as e:
                 logger.error(f'Error writing S3 bucket key "{real_key}": {e}')

@@ -97,6 +97,11 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 - **Area Comparison:** Specified in megapixels. Considers the entire pixel area.
 - **Pixel Comparison:** Both image edges must exceed this value, specified in pixels.
 
+### `maximum_image_size` and `target_downsample_size`
+- `maximum_image_size` specifies the maximum image size that will be considered croppable. It will downsample images before cropping if they are larger than this.
+- `target_downsample_size` specifies how large the image will be after resample and before it is cropped.
+- **Example**: A 20 megapixel image is too large to crop to 1 megapixel without losing context. Set `maximum_size_image=5.0` and `target_downsample_size=2.0` to resize any images larger than 5 megapixels down to 2 megapixels before cropping to 1 megapixel.
+
 ### `prepend_instance_prompt`
 - When enabled, all captions will include the `instance_prompt` value at the beginning.
 

@@ -288,14 +288,14 @@ class VAECache:
         relevant_files = []
         for f in aspect_bucket_cache[bucket]:
             if os.path.splitext(f)[0] in processed_images:
-                self.debug_log(
-                    f"Skipping {f} because it is already in the processed images list"
-                )
+                # self.debug_log(
+                #     f"Skipping {f} because it is already in the processed images list"
+                # )
                 continue
             if f not in self.local_unprocessed_files:
-                self.debug_log(
-                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                )
+                # self.debug_log(
+                #     f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                # )
                 continue
             relevant_files.append(f)
         if do_shuffle:
@@ -446,8 +446,6 @@ class VAECache:
                     image,
                     self.resolution,
                     self.resolution_type,
-                    self.maximum_image_size,
-                    self.target_downsample_size,
                     self.id,
                 )
                 pixel_values = self.transform(image).to(
@@ -608,11 +606,11 @@ class VAECache:
                         test_filepath_png not in self.local_unprocessed_files
                         and test_filepath_jpg not in self.local_unprocessed_files
                     ):
-                        self.debug_log(
-                            f"Skipping {raw_filepath} because it is not in local unprocessed files:"
-                            f"\n -> {test_filepath_jpg}"
-                            f"\n -> {test_filepath_png}"
-                        )
+                        # self.debug_log(
+                        #     f"Skipping {raw_filepath} because it is not in local unprocessed files:"
+                        #     f"\n -> {test_filepath_jpg}"
+                        #     f"\n -> {test_filepath_png}"
+                        # )
                         continue
                     try:
                         # Convert whatever we have, into the VAE cache basename.

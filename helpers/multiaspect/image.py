@@ -94,8 +94,6 @@ class MultiaspectImage:
         image: Image,
         resolution: float,
         resolution_type: str = "pixel",
-        maximum_image_size: float = None,
-        target_downsample_size: float = None,
         id: str = "foo",
     ):
         if not hasattr(image, "convert"):
@@ -122,6 +120,15 @@ class MultiaspectImage:
         downsample_before_crop = False
         crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
             "crop", StateTracker.get_args().crop
+        )
+        maximum_image_size = StateTracker.get_data_backend_config(
+            data_backend_id=id
+        ).get("maximum_image_size", None)
+        target_downsample_size = StateTracker.get_data_backend_config(
+            data_backend_id=id
+        ).get("target_downsample_size", None)
+        logger.debug(
+            f"Dataset: {id}, maximum_image_size: {maximum_image_size}, target_downsample_size: {target_downsample_size}"
         )
         if crop and maximum_image_size and target_downsample_size:
             if MultiaspectImage.is_image_too_large(
