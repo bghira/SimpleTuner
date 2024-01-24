@@ -127,7 +127,9 @@ class MultiaspectImage:
         target_downsample_size = StateTracker.get_data_backend_config(
             data_backend_id=id
         ).get("target_downsample_size", None)
-
+        logger.debug(
+            f"Dataset: {id}, maximum_image_size: {maximum_image_size}, target_downsample_size: {target_downsample_size}"
+        )
         if crop and maximum_image_size and target_downsample_size:
             if MultiaspectImage.is_image_too_large(
                 image, maximum_image_size, resolution_type=resolution_type

@@ -66,6 +66,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     target_downsample_size = backend.get(
         "target_downsample_size", args.target_downsample_size
     )
+    output["config"]["maximum_image_size"] = maximum_image_size
+    output["config"]["target_downsample_size"] = target_downsample_size
+
     if maximum_image_size and not target_downsample_size:
         raise ValueError(
             "When a data backend is configured to use `maximum_image_size`, you must also provide a value for `target_downsample_size`."
