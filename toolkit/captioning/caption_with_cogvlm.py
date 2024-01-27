@@ -93,8 +93,8 @@ def parse_args():
     )
     parser.add_argument(
         "--disable_filename_cleaning",
-        action="store_true",
-        default=False,
+        type=bool,
+        default=True,
         help="Disable filename cleaning. This may result in filenames that are too long for some operating systems, but better captions.",
     )
     parser.add_argument(
