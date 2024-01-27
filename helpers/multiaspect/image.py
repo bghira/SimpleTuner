@@ -91,127 +91,146 @@ class MultiaspectImage:
 
     @staticmethod
     def prepare_image(
-        image: Image,
-        resolution: float,
-        resolution_type: str = "pixel",
-        id: str = "foo",
+        image: Image, resolution: float, resolution_type: str = "pixel", id: str = "foo"
     ):
+        MultiaspectImage._validate_image(image)
+        original_resolution = MultiaspectImage._prepare_resolution(resolution)
+
+        image = MultiaspectImage._strip_transparency_and_rotate(image)
+
+        (
+            downsample_before_crop,
+            target_width,
+            target_height,
+        ) = MultiaspectImage._check_downsample_requirements(
+            image, resolution, resolution_type, id
+        )
+
+        if downsample_before_crop:
+            image = MultiaspectImage._downsample_image(
+                image, target_width, target_height, resolution_type, original_resolution
+            )
+
+        crop_coordinates = (0, 0)
+        if StateTracker.get_data_backend_config(data_backend_id=id).get(
+            "crop", StateTracker.get_args().crop
+        ):
+            image, crop_coordinates = MultiaspectImage._apply_cropping(
+                image, id, target_width, target_height, original_resolution
+            )
+
+        else:
+            # Resize unconditionally if cropping is not enabled
+            image = MultiaspectImage._resize_image(image, target_width, target_height)
+
+        return image, crop_coordinates
+
+    @staticmethod
+    def _validate_image(image: Image):
         if not hasattr(image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(image)}"
             )
-        original_resolution = resolution
-        # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-        original_resolution = original_resolution * 1e3
-        # Make resolution a multiple of 64
-        original_resolution = MultiaspectImage._round_to_nearest_multiple(
-            original_resolution, 64
-        )
-        # Strip transparency
-        image = image.convert("RGB")
 
-        # Rotate, maybe.
+    @staticmethod
+    def _prepare_resolution(resolution: float):
+        # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels" and round
+        return MultiaspectImage._round_to_nearest_multiple(resolution * 1e3, 64)
+
+    @staticmethod
+    def _strip_transparency_and_rotate(image: Image):
+        image = image.convert("RGB")
         logger.debug(f"Processing image filename: {image}")
         logger.debug(f"Image size before EXIF transform: {image.size}")
         image = exif_transpose(image)
         logger.debug(f"Image size after EXIF transform: {image.size}")
+        return image
 
-        # Downsample before we handle, if necessary.
+    @staticmethod
+    def _check_downsample_requirements(
+        image: Image, resolution: float, resolution_type: str, id: str
+    ):
         downsample_before_crop = False
-        crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop", StateTracker.get_args().crop
-        )
-        maximum_image_size = StateTracker.get_data_backend_config(
-            data_backend_id=id
-        ).get("maximum_image_size", None)
-        target_downsample_size = StateTracker.get_data_backend_config(
-            data_backend_id=id
-        ).get("target_downsample_size", None)
-        logger.debug(
-            f"Dataset: {id}, maximum_image_size: {maximum_image_size}, target_downsample_size: {target_downsample_size}"
-        )
-        if crop and maximum_image_size and target_downsample_size:
-            if MultiaspectImage.is_image_too_large(
-                image, maximum_image_size, resolution_type=resolution_type
-            ):
-                # Override the target resolution with the target downsample size
-                logger.debug(
-                    f"Overriding resolution {resolution} with target downsample size: {target_downsample_size}"
-                )
-                resolution = target_downsample_size
+        config = StateTracker.get_data_backend_config(data_backend_id=id)
+        max_size = config.get("maximum_image_size", None)
+        target_size = config.get("target_downsample_size", None)
+
+        if (
+            config.get("crop", StateTracker.get_args().crop)
+            and max_size
+            and target_size
+        ):
+            if MultiaspectImage.is_image_too_large(image, max_size, resolution_type):
+                resolution = target_size
                 downsample_before_crop = True
 
-        original_width, original_height = image.size
+        target_width, target_height = MultiaspectImage._calculate_target_size(
+            image, resolution, resolution_type
+        )
+        return downsample_before_crop, target_width, target_height
 
-        # Calculate new size
+    @staticmethod
+    def _calculate_target_size(image: Image, resolution: float, resolution_type: str):
+        original_width, original_height = image.size
         if resolution_type == "pixel":
-            (
-                target_width,
-                target_height,
-            ) = MultiaspectImage.calculate_new_size_by_pixel_edge(
+            return MultiaspectImage.calculate_new_size_by_pixel_edge(
                 original_width, original_height, resolution
             )
         elif resolution_type == "area":
-            (
-                target_width,
-                target_height,
-            ) = MultiaspectImage.calculate_new_size_by_pixel_area(
+            return MultiaspectImage.calculate_new_size_by_pixel_area(
                 original_width, original_height, resolution
-            )
-            # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-            resolution = resolution * 1e3
-            # Make resolution a multiple of 64
-            resolution = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
-            logger.debug(
-                f"After area resize, our image will be {target_width}x{target_height} with an overridden resolution of {resolution} pixels."
             )
         else:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
+    @staticmethod
+    def _downsample_image(
+        image: Image,
+        target_width: int,
+        target_height: int,
+        resolution_type: str,
+        original_resolution: float,
+    ):
+        logger.debug("Resizing image before crop")
+        image = MultiaspectImage._resize_image(image, target_width, target_height)
+        if resolution_type == "area":
+            return MultiaspectImage.calculate_new_size_by_pixel_area(
+                image.width, image.height, original_resolution
+            )
+        elif resolution_type == "pixel":
+            return MultiaspectImage.calculate_new_size_by_pixel_edge(
+                image.width, image.height, original_resolution
+            )
+        return image
+
+    @staticmethod
+    def _apply_cropping(
+        image: Image,
+        id: str,
+        target_width: int,
+        target_height: int,
+        original_resolution: float,
+    ):
         crop_style = StateTracker.get_data_backend_config(data_backend_id=id).get(
             "crop_style", StateTracker.get_args().crop_style
         )
         crop_aspect = StateTracker.get_data_backend_config(data_backend_id=id).get(
             "crop_aspect", StateTracker.get_args().crop_aspect
         )
+        crop_width, crop_height = (
+            (original_resolution, original_resolution)
+            if crop_aspect == "square"
+            else (target_width, target_height)
+        )
 
-        if crop:
-            if downsample_before_crop:
-                logger.debug(
-                    f"Resizing image before crop, as its size is too large. Data backend: {id}, image size: {image.size}, target size: {target_width}x{target_height}"
-                )
-                image = MultiaspectImage._resize_image(
-                    image, target_width, target_height
-                )
-
-            logger.debug(f"We are cropping the image. Data backend: {id}")
-            crop_width, crop_height = (
-                (original_resolution, original_resolution)
-                if crop_aspect == "square"
-                else (target_width, target_height)
-            )
-
-            if crop_style == "corner":
-                image, crop_coordinates = MultiaspectImage._crop_corner(
-                    image, crop_width, crop_height
-                )
-            elif crop_style in ["centre", "center"]:
-                image, crop_coordinates = MultiaspectImage._crop_center(
-                    image, crop_width, crop_height
-                )
-            elif crop_style == "random":
-                image, crop_coordinates = MultiaspectImage._crop_random(
-                    image, crop_width, crop_height
-                )
-            else:
-                raise ValueError(f"Unknown crop style: {crop_style}")
-            logger.debug(f"After cropping, our image size: {image.size}")
+        if crop_style == "corner":
+            return MultiaspectImage._crop_corner(image, crop_width, crop_height)
+        elif crop_style in ["centre", "center"]:
+            return MultiaspectImage._crop_center(image, crop_width, crop_height)
+        elif crop_style == "random":
+            return MultiaspectImage._crop_random(image, crop_width, crop_height)
         else:
-            # Resize unconditionally if cropping is not enabled
-            image = MultiaspectImage._resize_image(image, target_width, target_height)
-            crop_coordinates = (0, 0)
-
-        return image, crop_coordinates
+            raise ValueError(f"Unknown crop style: {crop_style}")
 
     @staticmethod
     def _crop_corner(image, target_width, target_height):
