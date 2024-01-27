@@ -184,11 +184,13 @@ class MultiaspectImage:
                     image, target_width, target_height
                 )
                 if resolution_type == "area":
+                    # Convert original_resolution back from eg. 1024 pixels to 1.0 mp
+                    original_megapixel_resolution = original_resolution / 1e3
                     (
                         target_width,
                         target_height,
                     ) = MultiaspectImage.calculate_new_size_by_pixel_area(
-                        original_width, original_height, original_resolution
+                        original_width, original_height, original_megapixel_resolution
                     )
                 elif resolution_type == "pixel":
                     (
