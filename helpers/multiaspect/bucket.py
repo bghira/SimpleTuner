@@ -493,12 +493,12 @@ class BucketManager:
             )
         elif self.resolution_type == "area":
             # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
-            if minimum_image_size > 5:
+            if self.minimum_image_size > 5:
                 raise ValueError(
                     f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
                 )
             # We need to find the square image length if crop_style = square.
-            minimum_image_size = minimum_image_size * 1_000_000
+            minimum_image_size = self.minimum_image_size * 1_000_000
             if self.crop and self.crop_style == "square":
                 # When comparing the 'area' of an image but cropping to square area, one side might be too small.
                 # So we have to convert our megapixel value to a 1.0 aspect square image size.
