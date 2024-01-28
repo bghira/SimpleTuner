@@ -195,8 +195,6 @@ class BucketManager:
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
                     delete_problematic_images=self.delete_problematic_images,
-                    minimum_image_size=self.minimum_image_size,
-                    resolution_type=self.resolution_type,
                 )
                 processed_file_count += 1
                 processed_file_list.add(file)
@@ -467,8 +465,6 @@ class BucketManager:
         self,
         image_path: str = None,
         image: Image = None,
-        minimum_image_size: int = None,
-        resolution_type: str = None,
     ):
         """
         Check if an image meets the resolution requirements.
@@ -488,22 +484,34 @@ class BucketManager:
                 f" ({image_path}) or Image object ({image}), but received neither."
             )
 
-        if minimum_image_size is None:
+        if self.minimum_image_size is None:
             return True
 
-        if resolution_type == "pixel":
-            return minimum_image_size <= width and minimum_image_size <= height
-        elif resolution_type == "area":
+        if self.resolution_type == "pixel":
+            return (
+                self.minimum_image_size <= width and self.minimum_image_size <= height
+            )
+        elif self.resolution_type == "area":
             # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
             if minimum_image_size > 5:
                 raise ValueError(
                     f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
                 )
+            # We need to find the square image length if crop_style = square.
             minimum_image_size = minimum_image_size * 1_000_000
+            if self.crop and self.crop_style == "square":
+                # When comparing the 'area' of an image but cropping to square area, one side might be too small.
+                # So we have to convert our megapixel value to a 1.0 aspect square image size.
+                # We do this by taking the square root of the megapixel value.
+                pixel_edge_len = floor(np.sqrt(minimum_image_size))
+                if not (pixel_edge_len <= width and pixel_edge_len <= height):
+                    # If the square edge length is too small, then the image is too small.
+                    return False
+            # Since we've now tested whether a square-cropped image will be adequate, we can calculate the area of the image.
             return minimum_image_size <= width * height
         else:
             raise ValueError(
-                f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {resolution_type}"
+                f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {self.resolution_type}"
             )
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
