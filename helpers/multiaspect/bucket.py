@@ -455,8 +455,6 @@ class BucketManager:
                 for img in images
                 if self.meets_resolution_requirements(
                     image_path=img,
-                    minimum_image_size=self.minimum_image_size,
-                    resolution_type=self.resolution_type,
                     image=None,
                 )
             ]
