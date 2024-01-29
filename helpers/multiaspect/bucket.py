@@ -499,7 +499,11 @@ class BucketManager:
                 )
             # We need to find the square image length if crop_style = square.
             minimum_image_size = self.minimum_image_size * 1_000_000
-            if self.crop and self.crop_style == "square":
+            if (
+                StateTracker.get_data_backend_config(self.id)["crop"]
+                and StateTracker.get_data_backend_config(self.id)["crop_style"]
+                == "square"
+            ):
                 # When comparing the 'area' of an image but cropping to square area, one side might be too small.
                 # So we have to convert our megapixel value to a 1.0 aspect square image size.
                 # We do this by taking the square root of the megapixel value.
