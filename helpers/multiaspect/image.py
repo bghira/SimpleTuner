@@ -30,8 +30,6 @@ class MultiaspectImage:
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
         delete_problematic_images: bool = False,
-        minimum_image_size: int = None,
-        resolution_type: str = "pixel",
     ):
         try:
             image_metadata = {}
@@ -63,8 +61,6 @@ class MultiaspectImage:
                 )
                 if not bucket_manager.meets_resolution_requirements(
                     image=image,
-                    minimum_image_size=minimum_image_size,
-                    resolution_type=resolution_type,
                 ):
                     logger.debug(
                         f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
@@ -182,6 +178,25 @@ class MultiaspectImage:
                 )
                 image = MultiaspectImage._resize_image(
                     image, target_width, target_height
+                )
+                if resolution_type == "area":
+                    # Convert original_resolution back from eg. 1024 pixels to 1.0 mp
+                    original_megapixel_resolution = original_resolution / 1e3
+                    (
+                        target_width,
+                        target_height,
+                    ) = MultiaspectImage.calculate_new_size_by_pixel_area(
+                        original_width, original_height, original_megapixel_resolution
+                    )
+                elif resolution_type == "pixel":
+                    (
+                        target_width,
+                        target_height,
+                    ) = MultiaspectImage.calculate_new_size_by_pixel_edge(
+                        original_width, original_height, original_resolution
+                    )
+                logger.debug(
+                    f"Recalculated target_width and target_height {target_width}x{target_height} based on original_resolution: {original_resolution}"
                 )
 
             logger.debug(f"We are cropping the image. Data backend: {id}")

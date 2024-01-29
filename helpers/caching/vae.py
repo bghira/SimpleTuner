@@ -435,8 +435,6 @@ class VAECache:
                 if self.minimum_image_size is not None:
                     if not self.bucket_manager.meets_resolution_requirements(
                         image_path=filepath,
-                        minimum_image_size=self.minimum_image_size,
-                        resolution_type=self.resolution_type,
                     ):
                         self.debug_log(
                             f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
