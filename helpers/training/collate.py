@@ -155,7 +155,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     else:
         # Separate the tuples
         prompt_embeds = [t[0] for t in embeddings]
-        return (torch.stack(prompt_embeds).squeeze(dim=0), None)
+        return (torch.stack(prompt_embeds), None)
 
 
 def gather_conditional_size_features(examples, latents, weight_dtype):

@@ -72,6 +72,7 @@ class StateTracker:
     def set_model_type(cls, model_type: str):
         if model_type not in ["legacy", "sdxl"]:
             raise ValueError(f"Unknown model type: {model_type}")
+        logger.debug(f"Setting model type to {model_type}")
         cls.model_type = model_type
 
     @classmethod

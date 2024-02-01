@@ -706,7 +706,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--validation_resolution",
-        type=int,
+        type=float,
         default=256,
         help="Square resolution images will be output at this resolution (256x256).",
     )
@@ -1039,14 +1039,33 @@ def parse_args(input_args=None):
         Path(args.cache_dir_text),
     ]:
         os.makedirs(target_dir, exist_ok=True)
+    from helpers.training.state_tracker import StateTracker
+
+    if (
+        args.pretrained_vae_model_name_or_path is not None
+        and StateTracker.get_model_type() == "legacy"
+        and "sdxl" in args.pretrained_vae_model_name_or_path
+    ):
+        logger.error(
+            f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
+        )
+        args.pretrained_vae_model_name_or_path = None
+    logger.info(
+        f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
+    )
     logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
 
     if args.validation_resolution < 128:
-        raise ValueError(
-            "It seems that the value for --validation_resolution is less than 128 pixels, which is invalid."
-            f" You might have accidentally set it in megapixels: {args.validation_resolution}"
-        )
+        # Convert from megapixels to pixels:
+        log_msg = f"It seems that --validation_resolution was given in megapixels ({args.validation_resolution}). Converting to pixel measurement:"
+        if args.validation_resolution == 1:
+            args.validation_resolution = 1024
+        else:
+            args.validation_resolution = int(args.validation_resolution * 1e3)
+            # Make it divisible by 8:
+            args.validation_resolution = int(args.validation_resolution / 8) * 8
+        logger.info(f"{log_msg} {args.validation_resolution}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 

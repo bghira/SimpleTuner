@@ -193,9 +193,6 @@ class S3DataBackend(BaseDataBackend):
         # Grab a timestamp for our start time.
         start_time = time.time()
 
-        # Temporarily, we do not use prefixes in S3.
-        instance_data_root = None
-
         # Using paginator to handle potential large number of objects
         paginator = self.client.get_paginator("list_objects_v2")
 
@@ -206,11 +203,12 @@ class S3DataBackend(BaseDataBackend):
         prefix_dict = {}
         # Log the first few items, alphabetically sorted:
         logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} with search pattern: {pattern}"
+            f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_root} with search pattern: {pattern}"
         )
 
         # Paginating over the entire bucket objects
         for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=1000):
+            logger.debug(f"Page: {page}")
             for obj in page.get("Contents", []):
                 # Filter based on the provided pattern
                 if fnmatch.fnmatch(obj["Key"], pattern):
@@ -222,9 +220,12 @@ class S3DataBackend(BaseDataBackend):
                     filename = parts[-1]  # Get the file name
 
                     # Storing filenames under their respective subdirectories
+                    logger.debug(
+                        f"Found file: {obj['Key']}\n-> filename: {filename}\n-> subdir: {subdir}"
+                    )
                     if subdir not in prefix_dict:
                         prefix_dict[subdir] = []
-                    prefix_dict[subdir].append(filename)
+                    prefix_dict[subdir].append(obj["Key"])
 
         # Transforming the prefix_dict into the desired results format
         for subdir, files in prefix_dict.items():
@@ -249,7 +250,8 @@ class S3DataBackend(BaseDataBackend):
         Returns:
             str: extracted basename, or input filename if already stripped.
         """
-        return path.split("/")[-1]
+        # return path.split("/")[-1]
+        return path
 
     def read_image(self, s3_key):
         return Image.open(BytesIO(self.read(s3_key)))

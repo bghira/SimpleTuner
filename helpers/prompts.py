@@ -1,4 +1,4 @@
-import json, io
+import json, re
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 
@@ -150,6 +150,7 @@ import logging
 from helpers.data_backend.base import BaseDataBackend
 from helpers.data_backend.aws import S3DataBackend
 from pathlib import Path
+from tqdm import tqdm
 import os
 
 logger = logging.getLogger("PromptHandler")
@@ -336,7 +337,133 @@ class PromptHandler:
                 )
             captions.append(caption)
 
-        return captions
+        return PromptHandler.filter_captions(data_backend, captions)
+
+    @staticmethod
+    def filter_caption(data_backend: BaseDataBackend, caption: str) -> str:
+        """Just filter a single caption.
+
+        Args:
+            data_backend (BaseDataBackend): The data backend for the instance.
+            caption (str): The caption to filter.
+
+        Raises:
+            e: If caption filter list can not be loaded.
+            ValueError: If we have an invalid filter list.
+            FileNotFoundError: If the filter list can not be found.
+
+        Returns:
+            str: The filtered caption.
+        """
+        return PromptHandler.filter_captions(data_backend, [caption])[0]
+
+    @staticmethod
+    def filter_captions(data_backend: BaseDataBackend, captions: list) -> list:
+        """
+        If the data backend config contains the entry "caption_filter_list", this function will filter the captions.
+
+        The caption_filter file contains strings or regular expressions, one per line.
+
+        If a line doesn't have any regex control characters in it, we'll treat it as a string.
+        """
+        data_backend_config = StateTracker.get_data_backend_config(
+            data_backend_id=data_backend.id
+        )
+        caption_filter_list = data_backend_config.get("caption_filter_list", None)
+        logger.debug(
+            f"Do we have a caption filter list? {caption_filter_list}, data backend '{data_backend.id}' config: {data_backend_config}"
+        )
+        if not caption_filter_list or caption_filter_list == "":
+            logger.debug(
+                f"Data backend '{data_backend.id}' has no caption filter list."
+            )
+            return captions
+        if (
+            type(caption_filter_list) == str
+            and os.path.splitext(caption_filter_list)[1] == ".json"
+        ):
+            # It's a path to a filter list. Load it in JSON format.
+            caption_filter_list_path = Path(caption_filter_list)
+            try:
+                with open(caption_filter_list_path, "r") as caption_filter_list:
+                    caption_filter_list = json.load(caption_filter_list)
+            except Exception as e:
+                logger.error(
+                    f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}"
+                )
+                raise e
+        elif (
+            type(caption_filter_list) == str
+            and os.path.splitext(caption_filter_list)[1] == ".txt"
+        ):
+            # We have a plain text list of filter strings/regex. Load them into an array:
+            caption_filter_list_path = Path(caption_filter_list)
+            try:
+                with open(caption_filter_list_path, "r") as caption_filter_list:
+                    caption_filter_list = caption_filter_list.readlines()
+                    # Strip newlines from the ends:
+                    caption_filter_list = [x.strip("\n") for x in caption_filter_list]
+            except Exception as e:
+                logger.error(
+                    f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}"
+                )
+                raise e
+        # We have the filter list. Is it valid and non-empty?
+        if type(caption_filter_list) != list or len(caption_filter_list) == 0:
+            logger.debug(
+                f"Data backend '{data_backend.id}' has an invalid or empty caption filter list."
+            )
+            return captions
+        elif type(caption_filter_list) is not list:
+            raise ValueError(
+                f"Data backend '{data_backend.id}' has an invalid caption filter list: {caption_filter_list}"
+            )
+        # Iterate through each caption
+        filtered_captions = []
+        for caption in tqdm(
+            captions,
+            desc="Filtering captions",
+            total=len(captions),
+            ncols=125,
+            disable=True if len(captions) < 10 else False,
+        ):
+            modified_caption = caption
+            # Apply each filter to the caption
+            logger.debug(f"Filtering caption: {modified_caption}")
+            for filter_item in caption_filter_list:
+                # Check for special replace pattern 's/replace/entry/'
+                if filter_item.startswith("s/") and filter_item.count("/") == 2:
+                    _, search, replace = filter_item.split("/")
+                    regex_modified_caption = re.sub(search, replace, modified_caption)
+                    if regex_modified_caption != modified_caption:
+                        logger.debug(
+                            f"Applying regex SEARCH {filter_item} to caption: {modified_caption}"
+                        )
+                        modified_caption = regex_modified_caption
+                else:
+                    # Treat as plain string and remove occurrences
+                    modified_caption = modified_caption.replace(filter_item, "")
+                try:
+                    # Assume all filters as regex patterns for flexibility
+                    pattern = re.compile(filter_item)
+                    regex_modified_caption = pattern.sub("", modified_caption)
+                    if regex_modified_caption != modified_caption:
+                        logger.debug(
+                            f"Applying regex FILTER {filter_item} to caption: {modified_caption}"
+                        )
+                        modified_caption = regex_modified_caption
+                except re.error as e:
+                    logger.error(f"Regex error with pattern {filter_item}: {e}")
+
+            # Add the modified caption to the filtered list
+            if caption != modified_caption:
+                logger.debug(
+                    f"After all filters have finished, here is the modified caption: {modified_caption}"
+                )
+            filtered_captions.append(modified_caption)
+
+        # Return the list of modified captions
+        return filtered_captions
 
     @staticmethod
     def load_user_prompts(user_prompt_path: str = None):

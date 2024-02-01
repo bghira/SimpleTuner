@@ -240,6 +240,8 @@ class TextEmbeddingCache:
         ).squeeze(dim=1)
 
     def encode_prompt(self, prompt: str, is_validation: bool = False):
+        if not is_validation:
+            prompt = PromptHandler.filter_caption(self.data_backend, prompt)
         if self.model_type == "sdxl":
             return self.encode_sdxl_prompt(
                 self.text_encoders, self.tokenizers, prompt, is_validation
@@ -286,7 +288,10 @@ class TextEmbeddingCache:
             return None
 
         # Proceed with uncached prompts
-        prompts_to_process = uncached_prompts if uncached_prompts else all_prompts
+        raw_prompts = uncached_prompts if uncached_prompts else all_prompts
+        prompts_to_process = PromptHandler.filter_captions(
+            data_backend=self.data_backend, captions=raw_prompts
+        )
 
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
@@ -312,7 +317,6 @@ class TextEmbeddingCache:
         prompt_embeds_all = []
         add_text_embeds_all = []
         should_encode = not load_from_cache
-
         args = StateTracker.get_args()
         if (
             hasattr(args, "cache_clear_validation_prompts")
@@ -327,7 +331,8 @@ class TextEmbeddingCache:
         )
         with torch.no_grad():
             for prompt in tqdm(
-                prompts or self.prompts,
+                prompts
+                or PromptHandler.filter_captions(self.data_backend, self.prompts),
                 desc="Processing prompts",
                 disable=return_concat,
                 leave=False,
@@ -392,13 +397,17 @@ class TextEmbeddingCache:
         return prompt_embeds_all, add_text_embeds_all
 
     def compute_embeddings_for_legacy_prompts(
-        self, prompts: list = None, return_concat: bool = True
+        self,
+        prompts: list = None,
+        return_concat: bool = True,
+        load_from_cache: bool = True,
     ):
         prompt_embeds_all = []
 
         with torch.no_grad():
             for prompt in tqdm(
-                prompts or self.prompts,
+                prompts
+                or PromptHandler.filter_captions(self.data_backend, self.prompts),
                 desc="Processing prompts",
                 leave=False,
                 ncols=125,
@@ -407,9 +416,13 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                if os.path.exists(filename) and not return_concat:
+                if (
+                    load_from_cache
+                    and self.data_backend.exists(filename)
+                    and not return_concat
+                ):
                     continue
-                if os.path.exists(filename):
+                if self.data_backend.exists(filename):
                     self.debug_log(f"Loading from cache: {filename}")
                     prompt_embeds = self.load_from_cache(filename)
                 else:
@@ -421,6 +434,12 @@ class TextEmbeddingCache:
                     self.save_to_cache(filename, prompt_embeds)
 
                 prompt_embeds_all.append(prompt_embeds)
+
+            # Wait for the batch write thread to finish, showing a spinner
+            while self.write_queue.qsize() > 0:
+                # Loading spinner
+                time.sleep(0.1)
+            self.process_write_batches = False
 
             if not return_concat:
                 logger.info(
