@@ -11,6 +11,10 @@ export RESUME_CHECKPOINT="latest"
 # For the default settings with 10 gradient accumulations, more frequent checkpoints might be preferable at first.
 export CHECKPOINTING_STEPS=150
 
+# Cosine is really the main recommended scheduler.
+export LR_SCHEDULE="cosine"
+# Whether this is used, depends on whether you have epochs or num_steps in use.
+export LR_WARMUP_STEPS=0
 # polynomial LR scheduler will "peak" here after WARMUP_STEPS.
 export LEARNING_RATE=1e-6 #@param {type:"number"}
 # polynomial LR scheduler will decay to this LR after hitting LEARNING_RATE.
@@ -21,7 +25,9 @@ export LEARNING_RATE_END=4e-7 #@param {type:"number"}
 # If it is disabled, the training improvements/changes will be more limited to the captions shown.
 # Default: 0.1, Use 0 to disable. Highest recommended value: .2
 export CAPTION_DROPOUT_PROBABILITY=0.1
-# How the trainer should locate your captions.
+
+# How the trainer should locate your captions. This is a global value that will be used as the default, but
+#  each dataset has the same configuration option "caption_strategy" to specify a dataset-specific value.
 # "filename" will use the image filename, replacing underscores to spaces, and a couple other clean-ups.
 # "textfile" will use contents of a .txt file next to the image with the same filename.
 export CAPTION_STRATEGY="filename"
@@ -41,32 +47,23 @@ export INSTANCE_DIR="${BASE_DIR}/training_data"
 export OUTPUT_DIR="${BASE_DIR}/models"
 export DATALOADER_CONFIG="multidatabackend_sd2x.json"
 
-# Some data that we generate will be cached here.
-export STATE_PATH="${BASE_DIR}/training_state.json"
-# Store whether we've seen an image or not, to prevent repeats.
-export SEEN_STATE_PATH="${BASE_DIR}/training_images_seen.json"
-
 # Max number of steps OR epochs can be used. But we default to Epochs.
 export MAX_NUM_STEPS=30000
 # Will likely overtrain, but that's fine.
 export NUM_EPOCHS=25
 
-# Only polynomial is currently supported.
-export LR_SCHEDULE="polynomial"
-# Whether this is used, depends on whether you have epochs or num_steps in use.
-export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))
-# Adjust this for your GPU memory size.
-export TRAIN_BATCH_SIZE=15
+# Adjust this for your GPU memory size. Higher is generally better, but some testing may be warranted.
+export TRAIN_BATCH_SIZE=4
 
 # Leave these alone unless you know what you are doing.
-export RESOLUTION=768
-# Minimum resolution and validation resolution are measured in pixels, as it represents the image edge length.
-export MINIMUM_RESOLUTION=$RESOLUTION
 export VALIDATION_RESOLUTION=$RESOLUTION
 # If you want to have the training data resized by pixel area (Megapixels) rather than edge length,
 #  set this value to "area" instead of "pixel", and uncomment the next RESOLUTION declaration.
-export RESOLUTION_TYPE="pixel"
-#export RESOLUTION=1.0          # 1.0 Megapixel training sizes
+export RESOLUTION_TYPE="area"
+export RESOLUTION=0.6          # 0.6 Megapixel training sizes
+#export RESOLUTION=768
+# Minimum resolution and validation resolution are measured in pixels, as it represents the image edge length.
+export MINIMUM_RESOLUTION=$RESOLUTION
 
 # Training schedule options
 export GRADIENT_ACCUMULATION_STEPS=10        # Yes, it slows training down. No, you don't want to change this.
@@ -81,8 +78,8 @@ export TRAINING_DYNAMO_BACKEND='no'          # or 'inductor' if you want to brav
 export TRAINING_NUM_PROCESSES=1
 export TRAINING_NUM_MACHINES=1
 
-# For S3-based training.
-export DATA_BACKEND="local"
+# 1 = Override the dataloader config. Dangerous.
+export OVERRIDE_DATALOADER_CONFIG=0
 
 ## You may benefit from directing training toward a specific weighted subset of timesteps.
 # In this example, we train the final 25% of the timestep schedule with a 3x bias.
