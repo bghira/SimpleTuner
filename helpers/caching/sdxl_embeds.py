@@ -139,7 +139,7 @@ class TextEmbeddingCache:
 
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
         input_tokens = tokenizer(
-            prompt,
+            PromptHandler.filter_caption(self.data_backend, prompt),
             truncation=True,
             padding="max_length",
             max_length=tokenizer.model_max_length,
@@ -240,8 +240,6 @@ class TextEmbeddingCache:
         ).squeeze(dim=1)
 
     def encode_prompt(self, prompt: str, is_validation: bool = False):
-        if not is_validation:
-            prompt = PromptHandler.filter_caption(self.data_backend, prompt)
         if self.model_type == "sdxl":
             return self.encode_sdxl_prompt(
                 self.text_encoders, self.tokenizers, prompt, is_validation
@@ -289,20 +287,16 @@ class TextEmbeddingCache:
 
         # Proceed with uncached prompts
         raw_prompts = uncached_prompts if uncached_prompts else all_prompts
-        prompts_to_process = PromptHandler.filter_captions(
-            data_backend=self.data_backend, captions=raw_prompts
-        )
-
         if self.model_type == "sdxl":
             return self.compute_embeddings_for_sdxl_prompts(
-                prompts_to_process,
+                raw_prompts,
                 return_concat=return_concat,
                 is_validation=is_validation,
                 load_from_cache=load_from_cache,
             )
         elif self.model_type == "legacy":
             return self.compute_embeddings_for_legacy_prompts(
-                prompts_to_process,
+                raw_prompts,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
             )
@@ -331,8 +325,7 @@ class TextEmbeddingCache:
         )
         with torch.no_grad():
             for prompt in tqdm(
-                prompts
-                or PromptHandler.filter_captions(self.data_backend, self.prompts),
+                prompts or self.prompts,
                 desc="Processing prompts",
                 disable=return_concat,
                 leave=False,
@@ -341,6 +334,7 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
+                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
                 if return_concat and load_from_cache:
                     try:
                         # We attempt to load.
@@ -406,8 +400,7 @@ class TextEmbeddingCache:
 
         with torch.no_grad():
             for prompt in tqdm(
-                prompts
-                or PromptHandler.filter_captions(self.data_backend, self.prompts),
+                prompts or self.prompts,
                 desc="Processing prompts",
                 leave=False,
                 ncols=125,
@@ -416,6 +409,8 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
+                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+
                 if (
                     load_from_cache
                     and self.data_backend.exists(filename)
