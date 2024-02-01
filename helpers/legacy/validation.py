@@ -169,12 +169,13 @@ def log_validations(
                 # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                 ema_unet.store(unet.parameters())
                 ema_unet.copy_to(unet.parameters())
+            vae_subfolder_path = "vae"
+            if args.pretrained_vae_model_name_or_path is not None:
+                vae_subfolder_path = None
             if vae is None:
                 vae = AutoencoderKL.from_pretrained(
                     vae_path,
-                    subfolder="vae"
-                    if args.pretrained_vae_model_name_or_path is None
-                    else None,
+                    subfolder=vae_subfolder_path,
                     revision=args.revision,
                     force_upcast=False,
                 )
@@ -254,26 +255,45 @@ def log_validations(
                         desc="Generating validation images",
                     ):
                         # Each validation prompt needs its own embed.
-                        (
-                            current_validation_prompt_embeds,
-                            current_validation_pooled_embeds,
-                        ) = embed_cache.compute_embeddings_for_prompts(
-                            [validation_prompt]
-                        )
-                        if prompt_handler is not None:
-                            for text_encoder in prompt_handler.text_encoders:
-                                text_encoder.to(accelerator.device)
-                            [
+                        if StateTracker.get_model_type() == "sdxl":
+                            (
                                 current_validation_prompt_embeds,
-                                validation_negative_prompt_embeds,
-                            ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                                current_validation_pooled_embeds,
+                            ) = embed_cache.compute_embeddings_for_prompts(
+                                [validation_prompt]
+                            )
+                            if prompt_handler is not None:
+                                for text_encoder in prompt_handler.text_encoders:
+                                    text_encoder.to(accelerator.device)
                                 [
                                     current_validation_prompt_embeds,
                                     validation_negative_prompt_embeds,
-                                ]
+                                ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                                    [
+                                        current_validation_prompt_embeds,
+                                        validation_negative_prompt_embeds,
+                                    ]
+                                )
+                                for text_encoder in prompt_handler.text_encoders:
+                                    text_encoder.to("cpu")
+                        elif StateTracker.get_model_type() == "legacy":
+                            current_validation_prompt_embeds = (
+                                embed_cache.compute_embeddings_for_prompts(
+                                    [validation_prompt]
+                                )
                             )
-                            for text_encoder in prompt_handler.text_encoders:
-                                text_encoder.to("cpu")
+                            if prompt_handler is not None:
+                                prompt_handler.text_encoder.to(accelerator.device)
+                                [
+                                    current_validation_prompt_embeds,
+                                    validation_negative_prompt_embeds,
+                                ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                                    [
+                                        current_validation_prompt_embeds,
+                                        validation_negative_prompt_embeds,
+                                    ]
+                                )
+                                prompt_handler.text_encoder.to("cpu")
 
                         # logger.debug(
                         #     f"Generating validation image: {validation_prompt}"

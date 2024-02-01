@@ -139,8 +139,8 @@ def compute_null_conditioning(
 
 
 def main():
-    args = parse_args()
     StateTracker.set_model_type("sdxl")
+    args = parse_args()
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
         StateTracker.delete_cache_files()

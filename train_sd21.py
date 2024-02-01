@@ -130,8 +130,8 @@ def compute_ids(prompt: str):
 
 
 def main():
-    args = parse_args()
     StateTracker.set_model_type("legacy")
+    args = parse_args()
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
         StateTracker.delete_cache_files()
@@ -234,16 +234,16 @@ def main():
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-        if args.pretrained_vae_model_name_or_path is None:
-            logger.warning(
-                f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
-            )
+        logger.warning(
+            f'Using "--fp16" with the SD 2.x VAE model could result in NaN (Not a Number) issues. Using "--bf16" is the recommended precision level.'
+        )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        if args.pretrained_vae_model_name_or_path is None:
-            logger.warning(
-                f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
-            )
+        logger.info("Using bfloat16 precision level.")
+    else:
+        logger.warning(
+            "Neither '--bf16' or '--fp16' were provided, so we will run in float32 mode. This is very slow and memory-hungry. Use bf16 if possible."
+        )
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load the scheduler, tokenizer and models.
@@ -302,8 +302,6 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
-
-    register_file_hooks(args, accelerator, unet, text_encoder, text_encoder_cls)
 
     vae.requires_grad_(False)
     if not args.train_text_encoder:
@@ -413,6 +411,9 @@ def main():
                     "warmup_num_steps": args.lr_warmup_steps,
                 },
             }
+    register_file_hooks(
+        args, accelerator, unet, text_encoder, text_encoder_cls, use_deepspeed_optimizer
+    )
     # Initialize the optimizer
     if use_deepspeed_optimizer:
         logger.info("Using DeepSpeed optimizer.")
@@ -559,7 +560,9 @@ def main():
             prompt_handler=prompt_handler,
         )
     except Exception as e:
-        logging.error(f"{e}")
+        import traceback
+
+        logging.error(f"{e}, traceback: {traceback.format_exc()}")
         sys.exit(0)
 
     with accelerator.main_process_first():
@@ -1213,6 +1216,7 @@ def main():
                         print("\n")
                         accelerator.save_state(save_path)
                         for _, backend in StateTracker.get_data_backends().items():
+                            logger.debug(f"Saving backend state: {backend}")
                             backend["sampler"].save_state(
                                 state_path=os.path.join(
                                     save_path, "training_state.json"
@@ -1372,11 +1376,13 @@ def main():
                     # Each validation prompt needs its own embed.
                     current_validation_prompt_embeds = StateTracker.get_default_text_embed_cache().compute_embeddings_for_prompts(
                         [validation_prompt]
-                    )
+                    )[
+                        0
+                    ]
                     validation_images.extend(
                         pipeline(
                             prompt_embeds=current_validation_prompt_embeds,
-                            negative_prompt_embeds=validation_negative_prompt_embeds,
+                            negative_prompt_embeds=validation_negative_prompt_embeds[0],
                             num_images_per_prompt=1,
                             num_inference_steps=args.validation_num_inference_steps,
                             guidance_scale=args.validation_guidance,

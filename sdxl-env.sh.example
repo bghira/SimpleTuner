@@ -104,15 +104,19 @@ export USE_GRADIENT_CHECKPOINTING=true
 ##
 
 # TF32 is great on Ampere or Ada, not sure about earlier generations.
-export TRAINER_EXTRA_ARGS="--allow_tf32"
+export ALLOW_TF32=true
+# AdamW 8Bit is a robust and lightweight choice. Adafactor might reduce memory consumption, and Dadaptation is slow and experimental.
+# AdamW is the default optimizer, but it uses a lot of memory and is slower than AdamW8Bit or Adafactor.
+# Choices: adamw, adamw8bit, adafactor, dadaptation
+export OPTIMIZER="adamw8bit"
 
-# 8Bit AdamW from Bits n Bytes is the default optimizer, but you can try --use_adafactor_optimizer or --use_dadapt_optimizer
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --use_8bit_adam"
 
 # EMA is a strong regularisation method that uses a lot of extra VRAM to hold two copies of the weights.
 # This is worthwhile on large training runs, but not so much for smaller training runs.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --use_ema --ema_decay=0.999"
+export USE_EMA=false
+export EMA_DECAY=0.999
 
+export TRAINER_EXTRA_ARGS=""
 ## For offset noise training:
 # Not recommended for terminal SNR models.
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --offset_noise --noise_offset=0.02"

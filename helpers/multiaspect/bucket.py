@@ -186,8 +186,21 @@ class BucketManager:
         local_metadata_updates = {}
         processed_file_list = set()
         processed_file_count = 0
+        # Initialize statistics dictionary
+        statistics = {
+            "total_processed": 0,
+            "skipped": {
+                "already_exists": 0,
+                "metadata_missing": 0,
+                "not_found": 0,
+                "too_small": 0,
+                "other": 0,  # Add more specific reasons as needed
+            },
+        }
+
         for file in files:
             if str(file) not in existing_files_set:
+                logger.debug(f"Processing file {file}.")
                 local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
                     data_backend,
                     self,
@@ -195,9 +208,15 @@ class BucketManager:
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
                     delete_problematic_images=self.delete_problematic_images,
+                    statistics=statistics,
                 )
+                logger.debug(f"Statistics: {statistics}")
                 processed_file_count += 1
+                # Successfully processed
+                statistics["total_processed"] = processed_file_count
                 processed_file_list.add(file)
+            else:
+                statistics["skipped"]["already_exists"] += 1
             tqdm_queue.put(1)
             if processed_file_count % 500 == 0:
                 # Send updates to queues and reset the local dictionaries
@@ -218,6 +237,9 @@ class BucketManager:
             aspect_ratio_bucket_indices_queue.put(local_aspect_ratio_bucket_indices)
         if local_metadata_updates:
             metadata_updates_queue.put(local_metadata_updates)
+            # At the end of the _bucket_worker method
+            metadata_updates_queue.put(("statistics", statistics))
+        logger.debug(f"Bucket worker completed processing. Returning to main thread.")
 
     def compute_aspect_ratio_bucket_indices(self):
         """
@@ -229,12 +251,22 @@ class BucketManager:
         logger.info("Discovering new files...")
         new_files = self._discover_new_files()
 
+        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+        # Initialize aggregated statistics
+        aggregated_statistics = {
+            "total_processed": 0,
+            "skipped": {
+                "already_exists": len(existing_files_set),
+                "metadata_missing": 0,
+                "not_found": 0,
+                "too_small": 0,
+                "other": 0,
+            },
+        }
         if not new_files:
             logger.info("No new files discovered. Doing nothing.")
+            logger.info(f"Statistics: {aggregated_statistics}")
             return
-
-        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
-
         num_cpus = 8  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
 
@@ -286,6 +318,19 @@ class BucketManager:
                 # Now, pull metadata updates from the queue
                 while not metadata_updates_queue.empty():
                     metadata_update = metadata_updates_queue.get()
+                    if (
+                        type(metadata_update) is tuple
+                        and metadata_update[0] == "statistics"
+                    ):
+                        logger.debug(
+                            f"Received statistics update: {metadata_update[1]}"
+                        )
+                        for reason, count in metadata_update[1]["skipped"].items():
+                            aggregated_statistics["skipped"][reason] += count
+                        aggregated_statistics["total_processed"] += metadata_update[1][
+                            "total_processed"
+                        ]
+                        continue
                     for filepath, meta in metadata_update.items():
                         self.set_metadata_by_filepath(
                             filepath=filepath, metadata=meta, update_json=False
@@ -309,7 +354,7 @@ class BucketManager:
 
         for worker in workers:
             worker.join()
-
+        logger.info(f"Image processing statistics: {aggregated_statistics}")
         self.instance_images_path.update(new_files)
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
