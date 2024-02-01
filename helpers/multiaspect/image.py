@@ -30,6 +30,7 @@ class MultiaspectImage:
         aspect_ratio_rounding: int = 2,
         metadata_updates=None,
         delete_problematic_images: bool = False,
+        statistics: dict = {},
     ):
         try:
             image_metadata = {}
@@ -38,6 +39,7 @@ class MultiaspectImage:
                 logger.debug(
                     f"Image {image_path_str} was not found on the backend. Skipping image."
                 )
+                statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
@@ -65,6 +67,7 @@ class MultiaspectImage:
                     logger.debug(
                         f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
                     )
+                    statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
 
             # Create a new bucket if it doesn't exist

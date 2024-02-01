@@ -33,6 +33,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         ]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
+    if "caption_filter_list" in backend:
+        output["config"]["caption_filter_list"] = backend["caption_filter_list"]
     if "ignore_epochs" in backend:
         output["config"]["ignore_epochs"] = backend["ignore_epochs"]
     if "repeats" in backend:
@@ -201,7 +203,7 @@ def configure_multi_databackend(
             text_encoders=text_encoders,
             tokenizers=tokenizers,
             accelerator=accelerator,
-            cache_dir=backend.get("cache_dir", args.cache_dir_text),
+            cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_type(),
         )
 
@@ -349,10 +351,20 @@ def configure_multi_databackend(
         )
 
         # Check if there is an existing 'config' in the bucket_manager.config
-        excluded_keys = ["probability", "repeats", "ignore_epochs"]
+        excluded_keys = [
+            "probability",
+            "repeats",
+            "ignore_epochs",
+            "caption_filter_list",
+            "vae_cache_clear_each_epoch",
+            "caption_strategy",
+            "maximum_image_size",
+            "target_downsample_size",
+        ]
         if init_backend["bucket_manager"].config != {}:
             prev_config = init_backend["bucket_manager"].config
             logger.debug(f"Found existing config: {prev_config}")
+            logger.debug(f"Comparing against new config: {init_backend['config']}")
             # Check if any values differ between the 'backend' values and the 'config' values:
             for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
@@ -373,6 +385,8 @@ def configure_multi_databackend(
                             f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
                         )
                         prev_config[key] = backend[key]
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+        logger.info(f"Configured backend: {init_backend}")
 
         print_bucket_info(init_backend["bucket_manager"])
         if len(init_backend["bucket_manager"]) == 0:

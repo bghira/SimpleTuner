@@ -44,13 +44,14 @@ def freeze_text_encoder(args, component):
         if freeze_param:
             if hasattr(param, "requires_grad"):
                 param.requires_grad = False
-                logger.debug(
-                    f"Froze layer {name} with method {method} and range {first_layer} - {last_layer}"
-                )
+                # logger.debug(
+                #     f"Froze layer {name} with method {method} and range {first_layer} - {last_layer}"
+                # )
             else:
-                logger.info(
-                    f"Ignoring layer that does not mark as gradient capable: {name}"
-                )
+                # logger.info(
+                #     f"Ignoring layer that does not mark as gradient capable: {name}"
+                # )
+                pass
     logger.info(
         f"Applied {method} method with range {first_layer} - {last_layer} to {total_count} total layers."
     )
