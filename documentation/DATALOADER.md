@@ -122,3 +122,30 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 ### `preserve_data_cache_backend`
 - Like `skip_file_discovery`, this option can be set to prevent repeated lookups of file lists during startup. It takes a boolean value, and if set to be `true`, the generated cache file will not be removed at launch. This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times. Additionally, on S3, backend listing can add up in cost and should be avoided. **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
+
+## Filtering captions
+
+### `caption_filter_list`
+- This may be a JSON list, a path to a txt file, or a path to a JSON document. Filter strings can be simple terms to remove from all captions, or they can be regular expressions. Additionally, sed-style `s/search/replace/` entries may be used to *replace* strings in the caption rather than simply remove it.
+
+#### Example filter list
+
+A complete example list can be found (here)[/caption_filter_list.example.txt]. It contains common repetitive and negative strings that would be returned by BLIP (all common variety), LLaVA, and CogVLM.
+
+This is a shortened example, which will be explained below:
+
+```
+arafed 
+this .* has a
+^this is the beginning of the string
+s/this/will be found and replaced/
+```
+
+In order, the lines behave as follows:
+
+- `arafed ` (with a space at the end) will be removed from any caption it is found in. Including a space at the end means the caption will look nicer, as double-spaces won't remain. This is unnecessary, but it looks nice.
+- `this .* has a` is a regular expression that will remove anything that contains "this ... has a", including any random text in between those two strings; `.*` is a regular expression that means "everything we find" until it finds the "has a" string, when it stops matching.
+- `^this is the beginning of the string` will remove the phrase "this is the beginning of the string" from any caption, but only when it appears at the start of the caption.
+- `s/this/will be found and replaced/` will result in the first instance of the term "this" in any caption being replaced with "will be found and replaced".
+
+> ❗Use (regex 101)[https://regex101.com] for help debugging and testing regular expressions.
