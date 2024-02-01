@@ -39,7 +39,7 @@ class BucketManager:
         self.accelerator = accelerator
         self.data_backend = data_backend
         self.batch_size = batch_size
-        self.instance_data_root = Path(instance_data_root)
+        self.instance_data_root = instance_data_root
         self.cache_file = Path(cache_file)
         self.metadata_file = Path(metadata_file)
         self.aspect_ratio_bucket_indices = {}

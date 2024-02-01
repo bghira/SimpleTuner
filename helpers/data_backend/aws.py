@@ -197,7 +197,10 @@ class S3DataBackend(BaseDataBackend):
         paginator = self.client.get_paginator("list_objects_v2")
 
         # We'll use fnmatch to filter based on the provided pattern.
-        pattern = os.path.join(instance_data_root or "", str_pattern)
+        if instance_data_root:
+            pattern = os.path.join(instance_data_root or None, str_pattern)
+        else:
+            pattern = str_pattern
 
         # Using a dictionary to hold files based on their prefixes (subdirectories)
         prefix_dict = {}
@@ -208,7 +211,7 @@ class S3DataBackend(BaseDataBackend):
 
         # Paginating over the entire bucket objects
         for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=1000):
-            logger.debug(f"Page: {page}")
+            # logger.debug(f"Page: {page}")
             for obj in page.get("Contents", []):
                 # Filter based on the provided pattern
                 if fnmatch.fnmatch(obj["Key"], pattern):
