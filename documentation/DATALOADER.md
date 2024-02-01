@@ -149,4 +149,4 @@ In order, the lines behave as follows:
 - `^this is the beginning of the string` will remove the phrase "this is the beginning of the string" from any caption, but only when it appears at the start of the caption.
 - `s/this/will be found and replaced/` will result in the first instance of the term "this" in any caption being replaced with "will be found and replaced".
 
-> ❗Use (regex 101)[https://regex101.com] for help debugging and testing regular expressions.
+> ❗Use [regex 101](https://regex101.com) for help debugging and testing regular expressions.
