@@ -20,6 +20,8 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
+    if "caption_filter_list" in backend:
+        output["config"]["caption_filter_list"] = backend["caption_filter_list"]
     if backend.get("dataset_type", None) == "text":
         output["dataset_type"] = "text"
 
@@ -33,8 +35,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         ]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
-    if "caption_filter_list" in backend:
-        output["config"]["caption_filter_list"] = backend["caption_filter_list"]
     if "ignore_epochs" in backend:
         output["config"]["ignore_epochs"] = backend["ignore_epochs"]
     if "repeats" in backend:
