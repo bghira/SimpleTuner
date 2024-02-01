@@ -57,7 +57,8 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "type": "local",
         "cache_dir": "/path/to/textembed_cache"
     }
-]```
+]
+```
 
 ## Configuration Options
 
