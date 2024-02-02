@@ -20,12 +20,18 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
-    if "caption_filter_list" in backend:
-        output["config"]["caption_filter_list"] = backend["caption_filter_list"]
-    if backend.get("dataset_type", None) == "text":
-        output["dataset_type"] = "text"
+    if backend.get("dataset_type", None) == "text_embeds":
+        if "caption_filter_list" in backend:
+            output["config"]["caption_filter_list"] = backend["caption_filter_list"]
+        output["dataset_type"] = "text_embeds"
 
         return output
+    else:
+        ## Check for settings we shouldn't have for non-text datasets.
+        if "caption_filter_list" in backend:
+            raise ValueError(
+                f"caption_filter_list is only a valid setting for text datasets. It is currently set for the {backend.get('dataset_type', 'image')} dataset {backend['id']}."
+            )
 
     # Image backend config
     output["dataset_type"] = "image"
