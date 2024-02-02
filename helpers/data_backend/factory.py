@@ -172,6 +172,7 @@ def configure_multi_databackend(
         # Retrieve some config file overrides for commandline arguments,
         #  there currently isn't much for text embeds.
         init_backend = init_backend_config(backend, args, accelerator)
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"]
@@ -267,6 +268,7 @@ def configure_multi_databackend(
         logger.info(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
+        logger.info(f"Configured backend: {init_backend}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],

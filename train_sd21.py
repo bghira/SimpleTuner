@@ -588,7 +588,7 @@ def main():
     )
     total_num_batches = sum(
         [
-            len(backend["bucket_manager"])
+            len(backend["bucket_manager"] if "bucket_manager" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
@@ -679,7 +679,8 @@ def main():
 
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
-        train_dataloaders.append(backend["train_dataloader"])
+        if "train_dataloader" in backend:
+            train_dataloaders.append(backend["train_dataloader"])
 
     logger.info("Preparing accelerator..")
 
@@ -732,7 +733,8 @@ def main():
         del vae
         vae = None
         for _, backend in StateTracker.get_data_backends().items():
-            backend["vaecache"].vae = None
+            if "vaecache" in backend:
+                backend["vaecache"].vae = None
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -775,15 +777,16 @@ def main():
             logging.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             for _, backend in StateTracker.get_data_backends().items():
-                backend["sampler"].load_states(
-                    state_path=os.path.join(
-                        args.output_dir, path, "training_state.json"
-                    ),
-                )
-                backend["sampler"].log_state()
+                if "sampler" in backend:
+                    backend["sampler"].load_states(
+                        state_path=os.path.join(
+                            args.output_dir, path, "training_state.json"
+                        ),
+                    )
+                    backend["sampler"].log_state()
             first_epoch = max(
                 [
-                    backend["sampler"].current_epoch
+                    backend["sampler"].current_epoch if "sampler" in backend else 0
                     for _, backend in StateTracker.get_data_backends().items()
                 ]
             )
@@ -829,7 +832,7 @@ def main():
     logger.info("***** Running training *****")
     total_num_batches = sum(
         [
-            len(backend["train_dataset"])
+            len(backend["train_dataset"] if "train_dataset" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
@@ -918,7 +921,8 @@ def main():
             if StateTracker.backend_status(backend_id):
                 # Exclude exhausted backends.
                 continue
-            train_backends[backend_id] = backend["train_dataloader"]
+            if "train_dataloader" in backend:
+                train_backends[backend_id] = backend["train_dataloader"]
 
         for step, batch in random_dataloader_iterator(train_backends):
             if args.lr_scheduler == "cosine_with_restarts":
@@ -1216,12 +1220,13 @@ def main():
                         print("\n")
                         accelerator.save_state(save_path)
                         for _, backend in StateTracker.get_data_backends().items():
-                            logger.debug(f"Saving backend state: {backend}")
-                            backend["sampler"].save_state(
-                                state_path=os.path.join(
-                                    save_path, "training_state.json"
-                                ),
-                            )
+                            if "sampler" in backend:
+                                logger.debug(f"Saving backend state: {backend}")
+                                backend["sampler"].save_state(
+                                    state_path=os.path.join(
+                                        save_path, "training_state.json"
+                                    ),
+                                )
 
             logs = {
                 "step_loss": loss.detach().item(),

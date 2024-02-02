@@ -421,6 +421,8 @@ class PromptHandler:
             ncols=125,
             disable=True if len(captions) < 10 else False,
         ):
+            if type(caption) is list:
+                caption = caption[0]
             modified_caption = caption
             # Apply each filter to the caption
             logger.debug(f"Filtering caption: {modified_caption}")
