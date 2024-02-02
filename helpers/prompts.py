@@ -337,7 +337,7 @@ class PromptHandler:
                 )
             captions.append(caption)
 
-        return PromptHandler.filter_captions(data_backend, captions)
+        return captions
 
     @staticmethod
     def filter_caption(data_backend: BaseDataBackend, caption: str) -> str:

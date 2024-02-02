@@ -71,6 +71,7 @@ class TextEmbeddingCache:
         # Reuse the hash object
         md5_hash = hashlib.md5()
         md5_hash.update(caption.encode())
+        logger.debug(f"Hashing caption: {caption}")
         return md5_hash.hexdigest() + hash_format
 
     def hash_prompt(self, caption):
@@ -397,6 +398,19 @@ class TextEmbeddingCache:
         load_from_cache: bool = True,
     ):
         prompt_embeds_all = []
+        prompt_embeds_all = []
+        should_encode = not load_from_cache
+        args = StateTracker.get_args()
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and not load_from_cache
+        ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
+            should_encode = True
+        logger.debug(
+            f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
+        )
 
         with torch.no_grad():
             for prompt in tqdm(
@@ -411,16 +425,22 @@ class TextEmbeddingCache:
                 )
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
 
-                if (
-                    load_from_cache
-                    and self.data_backend.exists(filename)
-                    and not return_concat
-                ):
-                    continue
-                if self.data_backend.exists(filename):
-                    self.debug_log(f"Loading from cache: {filename}")
-                    prompt_embeds = self.load_from_cache(filename)
-                else:
+                if return_concat and load_from_cache:
+                    try:
+                        # We attempt to load.
+                        prompt_embeds = self.load_from_cache(filename)
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.warning(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                        )
+                        should_encode = True
+                        raise Exception("This won't work. We cannot continue.")
+
+                if should_encode:
                     self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds = self.encode_legacy_prompt(
                         self.text_encoders[0], self.tokenizers[0], [prompt]
