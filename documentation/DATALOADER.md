@@ -127,7 +127,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 ## Filtering captions
 
 ### `caption_filter_list`
-- This may be a JSON list, a path to a txt file, or a path to a JSON document. Filter strings can be simple terms to remove from all captions, or they can be regular expressions. Additionally, sed-style `s/search/replace/` entries may be used to *replace* strings in the caption rather than simply remove it.
+- **For text embed datasets only.** This may be a JSON list, a path to a txt file, or a path to a JSON document. Filter strings can be simple terms to remove from all captions, or they can be regular expressions. Additionally, sed-style `s/search/replace/` entries may be used to *replace* strings in the caption rather than simply remove it.
 
 #### Example filter list
 

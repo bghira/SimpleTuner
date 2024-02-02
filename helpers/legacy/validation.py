@@ -325,8 +325,8 @@ def log_validations(
                                 num_inference_steps=args.validation_num_inference_steps,
                                 guidance_scale=args.validation_guidance,
                                 guidance_rescale=args.validation_guidance_rescale,
-                                height=args.validation_resolution,
-                                width=args.validation_resolution,
+                                height=int(args.validation_resolution),
+                                width=int(args.validation_resolution),
                                 **extra_validation_kwargs,
                             ).images
                         )
