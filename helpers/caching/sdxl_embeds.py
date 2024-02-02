@@ -79,7 +79,9 @@ class TextEmbeddingCache:
 
     def discover_all_files(self):
         """Identify all files in the data backend."""
-        logger.info(f"(id={self.id}) Listing all text embed cache entries")
+        logger.info(
+            f"{self.rank_info}(id={self.id}) Listing all text embed cache entries"
+        )
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
             StateTracker.get_text_cache_files(data_backend_id=self.id)
@@ -103,9 +105,6 @@ class TextEmbeddingCache:
             batch = []
             while not self.write_queue.empty() and len(batch) < self.write_batch_size:
                 items = self.write_queue.get()
-                logger.debug(
-                    f"Data backend: {self.data_backend.id}, Adding item to batch: {items[1]}"
-                )
                 batch.append(items)
 
             if len(batch) >= self.write_batch_size:
@@ -147,8 +146,8 @@ class TextEmbeddingCache:
             return_tensors="pt",
         ).input_ids.to(text_encoder.device)
         output = text_encoder(input_tokens)[0]
-        self.debug_log(f"Legacy prompt shape: {output.shape}")
-        self.debug_log(f"Legacy prompt encoded: {output}")
+        # self.debug_log(f"Legacy prompt shape: {output.shape}")
+        # self.debug_log(f"Legacy prompt encoded: {output}")
         return output
 
     # Adapted from pipelines.StableDiffusionXLPipeline.encode_sdxl_prompt
@@ -283,7 +282,7 @@ class TextEmbeddingCache:
 
         # If all prompts are cached and certain conditions are met, return None
         if not uncached_prompts and not is_validation and not return_concat:
-            logger.debug(f"(id={self.id}) All prompts are cached, ignoring.")
+            self.debug_log("All prompts are cached, ignoring.")
             return None
 
         # Proceed with uncached prompts
@@ -321,7 +320,7 @@ class TextEmbeddingCache:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
-        logger.debug(
+        self.debug_log(
             f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
         )
         with torch.no_grad():
@@ -342,7 +341,7 @@ class TextEmbeddingCache:
                         prompt_embeds, add_text_embeds = self.load_from_cache(filename)
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
-                        logger.warning(
+                        logger.error(
                             f"Failed retrieving prompt from cache:"
                             f"\n-> prompt: {prompt}"
                             f"\n-> filename: {filename}"
@@ -408,7 +407,7 @@ class TextEmbeddingCache:
         ):
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             should_encode = True
-        logger.debug(
+        self.debug_log(
             f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
         )
 
@@ -431,7 +430,7 @@ class TextEmbeddingCache:
                         prompt_embeds = self.load_from_cache(filename)
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
-                        logger.warning(
+                        logger.error(
                             f"Failed retrieving prompt from cache:"
                             f"\n-> prompt: {prompt}"
                             f"\n-> filename: {filename}"

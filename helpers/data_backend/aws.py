@@ -86,10 +86,8 @@ class S3DataBackend(BaseDataBackend):
     def exists(self, s3_key) -> bool:
         """Determine whether a file exists in S3."""
         try:
-            logger.debug(f"Checking if file exists: {s3_key}")
-            self.client.head_object(
-                Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
-            )
+            # logger.debug(f"Checking if file exists: {s3_key}")
+            self.client.head_object(Bucket=self.bucket_name, Key=str(s3_key))
             return True
         # Catch the error when the file does not exist
         except (Exception, self.client.exceptions.NoSuchKey) as e:
@@ -104,7 +102,7 @@ class S3DataBackend(BaseDataBackend):
         for i in range(self.read_retry_limit):
             try:
                 response = self.client.get_object(
-                    Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+                    Bucket=self.bucket_name, Key=str(s3_key)
                 )
                 return response["Body"].read()
             except self.client.exceptions.NoSuchKey:
@@ -134,18 +132,16 @@ class S3DataBackend(BaseDataBackend):
 
     def write(self, s3_key, data):
         """Upload data to the specified S3 key."""
-        real_key = self._convert_path_to_key(str(s3_key))
+        real_key = str(s3_key)
         for i in range(self.write_retry_limit):
             try:
                 if type(data) == Tensor:
                     return self.torch_save(data, real_key)
-                logger.debug(f"Writing to S3 key {real_key}")
                 response = self.client.put_object(
                     Body=data,
                     Bucket=self.bucket_name,
                     Key=real_key,
                 )
-                logger.debug(f"(id={self.id}) S3-Key {s3_key} Response: {response}")
                 return response
             except Exception as e:
                 logger.error(f'Error writing S3 bucket key "{real_key}": {e}')
@@ -162,7 +158,7 @@ class S3DataBackend(BaseDataBackend):
             try:
                 logger.debug(f'Deleting S3 key "{s3_key}"')
                 response = self.client.delete_object(
-                    Bucket=self.bucket_name, Key=self._convert_path_to_key(str(s3_key))
+                    Bucket=self.bucket_name, Key=str(s3_key)
                 )
                 return response
             except Exception as e:
@@ -223,9 +219,6 @@ class S3DataBackend(BaseDataBackend):
                     filename = parts[-1]  # Get the file name
 
                     # Storing filenames under their respective subdirectories
-                    logger.debug(
-                        f"Found file: {obj['Key']}\n-> filename: {filename}\n-> subdir: {subdir}"
-                    )
                     if subdir not in prefix_dict:
                         prefix_dict[subdir] = []
                     prefix_dict[subdir].append(obj["Key"])
@@ -242,19 +235,6 @@ class S3DataBackend(BaseDataBackend):
         elif total_time < 60:
             logger.debug(f"Completed file list in {total_time} seconds.")
         return results
-
-    def _convert_path_to_key(self, path: str) -> str:
-        """
-        Turn a /path/to/img.png into img.png
-
-        Args:
-            path (str): Full path, or just the base name.
-
-        Returns:
-            str: extracted basename, or input filename if already stripped.
-        """
-        # return path.split("/")[-1]
-        return path
 
     def read_image(self, s3_key):
         return Image.open(BytesIO(self.read(s3_key)))
