@@ -131,7 +131,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 #### Example filter list
 
-A complete example list can be found (here)[/caption_filter_list.example.txt]. It contains common repetitive and negative strings that would be returned by BLIP (all common variety), LLaVA, and CogVLM.
+A complete example list can be found [here](/caption_filter_list.example.txt). It contains common repetitive and negative strings that would be returned by BLIP (all common variety), LLaVA, and CogVLM.
 
 This is a shortened example, which will be explained below:
 
