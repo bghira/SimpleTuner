@@ -306,6 +306,15 @@ def log_validations(
                         #     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
                         #     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
                         # )
+                        logger.debug(
+                            f"Generating validation image: {validation_prompt}"
+                            f"\n -> Number of images: {args.num_validation_images}"
+                            f"\n -> Number of inference steps: {args.validation_num_inference_steps}"
+                            f"\n -> Guidance scale: {args.validation_guidance}"
+                            f"\n -> Guidance rescale: {args.validation_guidance_rescale}"
+                            f"\n -> Resolution: {args.validation_resolution}"
+                            f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
+                        )
                         validation_images.extend(
                             pipeline(
                                 prompt_embeds=current_validation_prompt_embeds,
@@ -316,8 +325,8 @@ def log_validations(
                                 num_inference_steps=args.validation_num_inference_steps,
                                 guidance_scale=args.validation_guidance,
                                 guidance_rescale=args.validation_guidance_rescale,
-                                height=args.validation_resolution,
-                                width=args.validation_resolution,
+                                height=int(args.validation_resolution),
+                                width=int(args.validation_resolution),
                                 **extra_validation_kwargs,
                             ).images
                         )

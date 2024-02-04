@@ -496,7 +496,7 @@ def main():
     )
     total_num_batches = sum(
         [
-            len(backend["bucket_manager"])
+            len(backend["bucket_manager"] if "bucket_manager" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
@@ -749,6 +749,8 @@ def main():
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
+        if "train_dataloader" not in backend:
+            continue
         train_dataloaders.append(backend["train_dataloader"])
         break
 
@@ -768,7 +770,7 @@ def main():
 
     idx_count = 0
     for _, backend in StateTracker.get_data_backends().items():
-        if idx_count == 0:
+        if idx_count == 0 or "train_dataloader" not in backend:
             continue
         train_dataloaders.append(accelerator.prepare(backend["train_dataloader"]))
     idx_count = 0
@@ -782,7 +784,7 @@ def main():
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     total_num_batches = sum(
         [
-            len(backend["bucket_manager"])
+            len(backend["bucket_manager"] if "bucket_manager" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
@@ -809,7 +811,8 @@ def main():
         del vae
         vae = None
         for _, backend in StateTracker.get_data_backends().items():
-            backend["vaecache"].vae = None
+            if "vaecache" in backend:
+                backend["vaecache"].vae = None
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -859,11 +862,12 @@ def main():
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             for _, backend in StateTracker.get_data_backends().items():
-                backend["sampler"].load_states(
-                    state_path=os.path.join(
-                        args.output_dir, path, "training_state.json"
-                    ),
-                )
+                if "sampler" in backend:
+                    backend["sampler"].load_states(
+                        state_path=os.path.join(
+                            args.output_dir, path, "training_state.json"
+                        ),
+                    )
             resume_global_step = global_step = StateTracker.get_global_step()
             logger.debug(
                 f"Training state inside checkpoint: {StateTracker.get_training_state()}"
@@ -882,7 +886,8 @@ def main():
 
     # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
-        backend["sampler"].log_state()
+        if "sampler" in backend:
+            backend["sampler"].log_state()
 
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
@@ -925,7 +930,7 @@ def main():
     logger.info("***** Running training *****")
     total_num_batches = sum(
         [
-            len(backend["train_dataset"])
+            len(backend["train_dataset"] if "train_dataset" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
@@ -982,13 +987,14 @@ def main():
             )
             for backend_id, backend in StateTracker.get_data_backends().items():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
-                logger.debug(f"Backend config: {backend_config}")
                 if (
                     "vae_cache_clear_each_epoch" in backend_config
                     and backend_config["vae_cache_clear_each_epoch"]
+                    and "vaecache" in backend
                 ):
                     # We will clear the cache and then rebuild it. This is useful for random crops.
                     logger.debug(f"VAE Cache rebuild is enabled. Rebuilding.")
+                    logger.debug(f"Backend config: {backend_config}")
                     backend["vaecache"].rebuild_cache()
         current_epoch = epoch
         StateTracker.set_epoch(epoch)
@@ -1011,7 +1017,10 @@ def main():
             current_epoch_step = global_step % num_update_steps_per_epoch
         train_backends = {}
         for backend_id, backend in StateTracker.get_data_backends().items():
-            if StateTracker.backend_status(backend_id):
+            if (
+                StateTracker.backend_status(backend_id)
+                or "train_dataloader" not in backend
+            ):
                 # Exclude exhausted backends.
                 continue
             train_backends[backend_id] = backend["train_dataloader"]
@@ -1314,12 +1323,13 @@ def main():
                         print("\n")
                         accelerator.save_state(save_path)
                         for _, backend in StateTracker.get_data_backends().items():
-                            logger.debug(f"Backend: {backend}")
-                            backend["sampler"].save_state(
-                                state_path=os.path.join(
-                                    save_path, "training_state.json"
-                                ),
-                            )
+                            if "sampler" in backend:
+                                logger.debug(f"Backend: {backend}")
+                                backend["sampler"].save_state(
+                                    state_path=os.path.join(
+                                        save_path, "training_state.json"
+                                    ),
+                                )
 
             logs = {
                 "step_loss": loss.detach().item(),

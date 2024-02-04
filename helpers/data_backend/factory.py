@@ -20,10 +20,18 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output = {"id": backend["id"], "config": {}}
-    if backend.get("dataset_type", None) == "text":
-        output["dataset_type"] = "text"
+    if backend.get("dataset_type", None) == "text_embeds":
+        if "caption_filter_list" in backend:
+            output["config"]["caption_filter_list"] = backend["caption_filter_list"]
+        output["dataset_type"] = "text_embeds"
 
         return output
+    else:
+        ## Check for settings we shouldn't have for non-text datasets.
+        if "caption_filter_list" in backend:
+            raise ValueError(
+                f"caption_filter_list is only a valid setting for text datasets. It is currently set for the {backend.get('dataset_type', 'image')} dataset {backend['id']}."
+            )
 
     # Image backend config
     output["dataset_type"] = "image"
@@ -33,8 +41,6 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         ]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
-    if "caption_filter_list" in backend:
-        output["config"]["caption_filter_list"] = backend["caption_filter_list"]
     if "ignore_epochs" in backend:
         output["config"]["ignore_epochs"] = backend["ignore_epochs"]
     if "repeats" in backend:
@@ -172,6 +178,7 @@ def configure_multi_databackend(
         # Retrieve some config file overrides for commandline arguments,
         #  there currently isn't much for text embeds.
         init_backend = init_backend_config(backend, args, accelerator)
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"]
@@ -267,6 +274,7 @@ def configure_multi_databackend(
         logger.info(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
+        logger.info(f"Configured backend: {init_backend}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],

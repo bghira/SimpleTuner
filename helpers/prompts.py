@@ -337,7 +337,7 @@ class PromptHandler:
                 )
             captions.append(caption)
 
-        return PromptHandler.filter_captions(data_backend, captions)
+        return captions
 
     @staticmethod
     def filter_caption(data_backend: BaseDataBackend, caption: str) -> str:
@@ -370,13 +370,7 @@ class PromptHandler:
             data_backend_id=data_backend.id
         )
         caption_filter_list = data_backend_config.get("caption_filter_list", None)
-        logger.debug(
-            f"Do we have a caption filter list? {caption_filter_list}, data backend '{data_backend.id}' config: {data_backend_config}"
-        )
         if not caption_filter_list or caption_filter_list == "":
-            logger.debug(
-                f"Data backend '{data_backend.id}' has no caption filter list."
-            )
             return captions
         if (
             type(caption_filter_list) == str
@@ -427,6 +421,8 @@ class PromptHandler:
             ncols=125,
             disable=True if len(captions) < 10 else False,
         ):
+            if type(caption) is list:
+                caption = caption[0]
             modified_caption = caption
             # Apply each filter to the caption
             logger.debug(f"Filtering caption: {modified_caption}")
@@ -436,9 +432,9 @@ class PromptHandler:
                     _, search, replace = filter_item.split("/")
                     regex_modified_caption = re.sub(search, replace, modified_caption)
                     if regex_modified_caption != modified_caption:
-                        logger.debug(
-                            f"Applying regex SEARCH {filter_item} to caption: {modified_caption}"
-                        )
+                        # logger.debug(
+                        #     f"Applying regex SEARCH {filter_item} to caption: {modified_caption}"
+                        # )
                         modified_caption = regex_modified_caption
                 else:
                     # Treat as plain string and remove occurrences
@@ -448,9 +444,9 @@ class PromptHandler:
                     pattern = re.compile(filter_item)
                     regex_modified_caption = pattern.sub("", modified_caption)
                     if regex_modified_caption != modified_caption:
-                        logger.debug(
-                            f"Applying regex FILTER {filter_item} to caption: {modified_caption}"
-                        )
+                        # logger.debug(
+                        #     f"Applying regex FILTER {filter_item} to caption: {modified_caption}"
+                        # )
                         modified_caption = regex_modified_caption
                 except re.error as e:
                     logger.error(f"Regex error with pattern {filter_item}: {e}")
