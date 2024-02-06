@@ -226,23 +226,35 @@ class PromptHandler:
         image_path: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
+        prepend_folder_name_to_caption: bool,
         instance_prompt: str = None,
     ) -> str:
-        instance_prompt = Path(image_path).stem
+        output_prompt = Path(image_path).stem
         if use_captions:
             # Underscores to spaces.
-            instance_prompt = instance_prompt.replace("_", " ")
+            output_prompt = output_prompt.replace("_", " ")
             # Remove some midjourney messes.
-            instance_prompt = instance_prompt.split("upscaled by")[0]
-            instance_prompt = instance_prompt.split("upscaled beta")[0]
+            output_prompt = output_prompt.split("upscaled by")[0]
+            output_prompt = output_prompt.split("upscaled beta")[0]
             if prepend_instance_prompt:
-                instance_prompt = instance_prompt + " " + instance_prompt
-        return instance_prompt
+                output_prompt = instance_prompt + " " + output_prompt
+            if prepend_folder_name_to_caption:
+                output_prompt = Path(image_path).parent.name + " " + output_prompt
+        return output_prompt
 
     @staticmethod
     def prepare_instance_prompt_from_textfile(
-        image_path: str, data_backend: BaseDataBackend
+        image_path: str,
+        data_backend: BaseDataBackend,
+        prepend_instance_prompt: bool = False,
+        prepend_folder_name_to_caption: bool = False,
+        instance_prompt: str = None,
     ) -> str:
+        subfolder_name = None
+        if prepend_folder_name_to_caption:
+            # Get the parent folder:
+            image_path = Path(image_path)
+            subfolder_name = image_path.parent.name
         caption_file = os.path.splitext(image_path)[0] + ".txt"
         if not data_backend.exists(caption_file):
             raise FileNotFoundError(f"Caption file {caption_file} not found.")
@@ -254,6 +266,8 @@ class PromptHandler:
                 result = instance_prompt.decode("utf-8")
             else:
                 result = instance_prompt
+            if subfolder_name:
+                result = subfolder_name + " " + result
             return result
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")
@@ -264,6 +278,7 @@ class PromptHandler:
         caption_strategy: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
+        prepend_folder_name_to_caption: bool,
         data_backend: BaseDataBackend,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
@@ -285,10 +300,14 @@ class PromptHandler:
                 image_path=image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
+                prepend_folder_name_to_caption=prepend_folder_name_to_caption,
             )
         elif caption_strategy == "textfile":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
-                image_path, data_backend=data_backend
+                image_path=image_path,
+                prepend_instance_prompt=prepend_instance_prompt,
+                prepend_folder_name_to_caption=prepend_folder_name_to_caption,
+                data_backend=data_backend,
             )
         else:
             raise ValueError(f"Unsupported caption strategy: {caption_strategy}")
@@ -299,22 +318,26 @@ class PromptHandler:
         instance_data_root: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
-        data_backend: BaseDataBackend,
+        prepend_folder_name_to_caption: bool,
+        sample_data_backend: BaseDataBackend,
         caption_strategy: str,
     ) -> list:
         captions = []
         all_image_files = StateTracker.get_image_files(
-            data_backend_id=data_backend.id
-        ) or data_backend.list_files(
+            data_backend_id=sample_data_backend.id
+        ) or sample_data_backend.list_files(
             instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
         )
         backend_config = StateTracker.get_data_backend_config(
-            data_backend_id=data_backend.id
+            data_backend_id=sample_data_backend.id
         )
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
 
+        instance_prompt = backend_config.get(
+            "instance_prompt", StateTracker.get_args().instance_prompt
+        )
         for image_path in tqdm(
             all_image_files,
             desc="Loading captions",
@@ -326,10 +349,16 @@ class PromptHandler:
                     image_path=str(image_path),
                     use_captions=use_captions,
                     prepend_instance_prompt=prepend_instance_prompt,
+                    prepend_folder_name_to_caption=prepend_folder_name_to_caption,
+                    instance_prompt=instance_prompt,
                 )
             elif caption_strategy == "textfile":
                 caption = PromptHandler.prepare_instance_prompt_from_textfile(
-                    image_path, data_backend=data_backend
+                    image_path,
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    prepend_folder_name_to_caption=prepend_folder_name_to_caption,
+                    instance_prompt=instance_prompt,
+                    data_backend=sample_data_backend,
                 )
             elif caption_strategy == "instanceprompt":
                 return backend_config.get(
@@ -340,11 +369,11 @@ class PromptHandler:
         return captions
 
     @staticmethod
-    def filter_caption(data_backend: BaseDataBackend, caption: str) -> str:
+    def filter_caption(data_backend_id: str, caption: str) -> str:
         """Just filter a single caption.
 
         Args:
-            data_backend (BaseDataBackend): The data backend for the instance.
+            data_backend_id (str): The data backend for the instance.
             caption (str): The caption to filter.
 
         Raises:
@@ -355,10 +384,10 @@ class PromptHandler:
         Returns:
             str: The filtered caption.
         """
-        return PromptHandler.filter_captions(data_backend, [caption])[0]
+        return PromptHandler.filter_captions(data_backend_id, [caption])[0]
 
     @staticmethod
-    def filter_captions(data_backend: BaseDataBackend, captions: list) -> list:
+    def filter_captions(data_backend_id: str, captions: list) -> list:
         """
         If the data backend config contains the entry "caption_filter_list", this function will filter the captions.
 
@@ -367,7 +396,7 @@ class PromptHandler:
         If a line doesn't have any regex control characters in it, we'll treat it as a string.
         """
         data_backend_config = StateTracker.get_data_backend_config(
-            data_backend_id=data_backend.id
+            data_backend_id=data_backend_id
         )
         caption_filter_list = data_backend_config.get("caption_filter_list", None)
         if not caption_filter_list or caption_filter_list == "":
@@ -383,7 +412,7 @@ class PromptHandler:
                     caption_filter_list = json.load(caption_filter_list)
             except Exception as e:
                 logger.error(
-                    f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}"
+                    f"Caption filter list for data backend '{data_backend_id}' could not be loaded: {e}"
                 )
                 raise e
         elif (
@@ -399,18 +428,18 @@ class PromptHandler:
                     caption_filter_list = [x.strip("\n") for x in caption_filter_list]
             except Exception as e:
                 logger.error(
-                    f"Caption filter list for data backend '{data_backend.id}' could not be loaded: {e}"
+                    f"Caption filter list for data backend '{data_backend_id}' could not be loaded: {e}"
                 )
                 raise e
         # We have the filter list. Is it valid and non-empty?
         if type(caption_filter_list) != list or len(caption_filter_list) == 0:
             logger.debug(
-                f"Data backend '{data_backend.id}' has an invalid or empty caption filter list."
+                f"Data backend '{data_backend_id}' has an invalid or empty caption filter list."
             )
             return captions
         elif type(caption_filter_list) is not list:
             raise ValueError(
-                f"Data backend '{data_backend.id}' has an invalid caption filter list: {caption_filter_list}"
+                f"Data backend '{data_backend_id}' has an invalid caption filter list: {caption_filter_list}"
             )
         # Iterate through each caption
         filtered_captions = []

@@ -68,7 +68,10 @@ def prepare_validation_prompt_list(args, embed_cache):
         validation_prompts = validation_prompts + [args.validation_prompt]
         validation_shortnames = validation_shortnames + ["validation"]
         embed_cache.compute_embeddings_for_prompts(
-            [args.validation_prompt], is_validation=True, load_from_cache=False
+            [args.validation_prompt],
+            is_validation=True,
+            load_from_cache=False,
+            sample_backend_id=StateTracker.get_default_text_embed_cache().id,
         )
 
     # Compute negative embed for validation prompts, if any are set.
@@ -82,6 +85,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 [StateTracker.get_args().validation_negative_prompt],
                 is_validation=True,
                 load_from_cache=False,
+                sample_backend_id=StateTracker.get_default_text_embed_cache().id,
             )
             return (
                 validation_prompts,
@@ -94,6 +98,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 embed_cache.compute_embeddings_for_prompts(
                     [StateTracker.get_args().validation_negative_prompt],
                     load_from_cache=False,
+                    sample_backend_id=StateTracker.get_default_text_embed_cache().id,
                 )
             )
 

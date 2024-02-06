@@ -87,36 +87,30 @@ class VAECache:
         base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
         # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
         subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
-        logger.debug(f"Base name: {base_filename}, subfolders: {subfolders}")
         if subfolders[0] == "/":
             subfolders = subfolders[1:]
-        logger.debug(f"Combining: {self.cache_dir}, {subfolders}, {base_filename}")
         full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
         generated_names = self.generate_vae_cache_filename(filepath)
         test_filepath_png = f"{os.path.splitext(generated_names[0])[0]}.png"
-        logger.debug(f"Checking for {test_filepath_png}")
         if str(self.cache_dir) in test_filepath_png:
-            logger.debug(f"Replacing {self.cache_dir} with {self.instance_data_root}")
             # replace cache_dir with instance_data_root:
             test_filepath_png = test_filepath_png.replace(
                 self.cache_dir, self.instance_data_root
             )
         elif str(self.instance_data_root) not in test_filepath_png:
-            logger.debug(f"Adding {self.instance_data_root} to {test_filepath_png}")
             test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
 
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
-        logger.debug(f"Checking for {test_filepath_jpg}")
         return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
         test_path = self.generate_vae_cache_filename(filepath)[0]
-        if self.data_backend.exists(test_path):
-            self.debug_log(f"Skipping {test_path} because it is already in the cache")
-            return True
+        # if self.data_backend.exists(test_path):
+        #     self.debug_log(f"Skipping {test_path} because it is already in the cache")
+        #     return True
         return False
 
     def _read_from_storage(self, filename: str) -> torch.Tensor:

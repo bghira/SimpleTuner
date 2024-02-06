@@ -900,13 +900,20 @@ def parse_args(input_args=None):
         "--prepend_instance_prompt",
         action="store_true",
         help=(
-            "When determining the captions from the filename, prepend the instance prompt as an enforced keyword."
+            "When determining the captions from the filename, prepend the instance prompt as an enforced keyword. This can also be set as a dataloader backend property instead of globally."
+        ),
+    )
+    parser.add_argument(
+        "--prepend_folder_name_to_caption",
+        action="store_true",
+        help=(
+            "The folder name of the image will be added to the front of the caption. This can also be set as a dataloader backend property instead of globally."
         ),
     )
     parser.add_argument(
         "--only_instance_prompt",
         action="store_true",
-        help="Use the instance prompt instead of the caption from filename.",
+        help="Use the instance prompt instead of the caption from filename. This can also be set as a dataloader backend property instead of globally.",
     )
     parser.add_argument(
         "--caption_dropout_probability",

@@ -39,6 +39,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["vae_cache_clear_each_epoch"] = backend[
             "vae_cache_clear_each_epoch"
         ]
+    if "instance_prompt" in backend:
+        output["config"]["instance_prompt"] = backend["instance_prompt"]
     if "probability" in backend:
         output["config"]["probability"] = backend["probability"]
     if "ignore_epochs" in backend:
@@ -225,7 +227,10 @@ def configure_multi_databackend(
                 logger.info("Pre-computing null embedding for caption dropout")
                 with accelerator.main_process_first():
                     init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [""], return_concat=False, load_from_cache=False
+                        [""],
+                        return_concat=False,
+                        load_from_cache=False,
+                        sample_backend_id=default_text_embed_backend_id,
                     )
                 accelerator.wait_for_everyone()
             else:
@@ -448,10 +453,14 @@ def configure_multi_databackend(
         with accelerator.main_process_first():
             # We get captions from the IMAGE dataset. Not the text embeds dataset.
             captions = PromptHandler.get_all_captions(
-                data_backend=init_backend["data_backend"],
+                sample_data_backend=init_backend["data_backend"],
                 instance_data_root=init_backend["instance_data_root"],
                 prepend_instance_prompt=backend.get(
                     "prepend_instance_prompt", args.prepend_instance_prompt
+                ),
+                prepend_folder_name_to_caption=backend.get(
+                    "prepend_folder_name_to_caption",
+                    args.prepend_folder_name_to_caption,
                 ),
                 use_captions=use_captions,
                 caption_strategy=backend.get("caption_strategy", args.caption_strategy),
@@ -469,7 +478,10 @@ def configure_multi_databackend(
                     f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
                 )
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                    captions, return_concat=False, load_from_cache=False
+                    captions,
+                    return_concat=False,
+                    load_from_cache=False,
+                    sample_backend_id=init_backend["id"],
                 )
 
         accelerator.wait_for_everyone()

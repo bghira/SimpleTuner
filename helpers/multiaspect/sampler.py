@@ -38,6 +38,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         caption_strategy: str = "filename",
         use_captions=True,
         prepend_instance_prompt=False,
+        prepend_folder_name_to_caption=False,
     ):
         """
         Initializes the sampler with provided settings.
@@ -75,6 +76,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.use_captions = use_captions
         self.caption_strategy = caption_strategy
         self.prepend_instance_prompt = prepend_instance_prompt
+        self.prepend_folder_name_to_caption = prepend_folder_name_to_caption
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.state_manager = BucketStateManager(self.id)
@@ -295,11 +297,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             # Use the magic prompt handler to retrieve the captions.
             image_metadata["instance_prompt_text"] = PromptHandler.magic_prompt(
-                data_backend=self.data_backend,
                 image_path=image_metadata["image_path"],
                 caption_strategy=self.caption_strategy,
                 use_captions=self.use_captions,
                 prepend_instance_prompt=self.prepend_instance_prompt,
+                prepend_folder_name_to_caption=self.prepend_folder_name_to_caption,
+                data_backend=self.data_backend,
             )
 
             to_yield.append(image_metadata)
