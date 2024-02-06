@@ -88,10 +88,12 @@ class VAECache:
         # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
         subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
         logger.debug(f"Base name: {base_filename}, subfolders: {subfolders}")
-        if subfolders[0] == "/":
+        if len(subfolders) > 0 and subfolders[0] == "/":
             subfolders = subfolders[1:]
-        logger.debug(f"Combining: {self.cache_dir}, {subfolders}, {base_filename}")
-        full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
+            logger.debug(f"Combining: {self.cache_dir}, {subfolders}, {base_filename}")
+            full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
+        else:
+            full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
