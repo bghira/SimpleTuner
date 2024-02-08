@@ -462,6 +462,12 @@ def parse_args(input_args=None):
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
+        "--text_encoder_lr",
+        type=float,
+        default=None,
+        help="Learning rate for the text encoder. If not provided, the value of --learning_rate will be used.",
+    )
+    parser.add_argument(
         "--lr_scale",
         action="store_true",
         default=False,
@@ -541,6 +547,38 @@ def parse_args(input_args=None):
         action="store_true",
         help="Whether or not to use the Adafactor optimizer.",
     )
+    parser.add_argument(
+        "--use_prodigy_optimizer",
+        action="store_true",
+        help="Whether or not to use the Prodigy optimizer.",
+    )
+    parser.add_argument(
+        "--prodigy_beta3",
+        type=float,
+        default=None,
+        help="coefficients for computing the Prodidy stepsize using running averages. If set to None, "
+        "uses the value of square root of beta2. Ignored if optimizer is adamW",
+    )
+    parser.add_argument(
+        "--prodigy_decouple",
+        type=bool,
+        default=True,
+        help="Use AdamW style decoupled weight decay",
+    )
+    parser.add_argument(
+        "--prodigy_use_bias_correction",
+        type=bool,
+        default=True,
+        help="Turn on Adam's bias correction. True by default. Ignored if optimizer is adamW",
+    )
+    parser.add_argument(
+        "--prodigy_safeguard_warmup",
+        type=bool,
+        default=True,
+        help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage. True by default. "
+        "Ignored if optimizer is adamW",
+    )
+
     parser.add_argument(
         "--use_dadapt_optimizer",
         action="store_true",

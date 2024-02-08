@@ -8,13 +8,13 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
-torch = "^2.1.0+cu118"
-torchvision = "^0.16.0+cu118"
+torch = {version = "^2.2.0+cu118", allow-prereleases = true}
+torchvision = {version = "^0.17.0+cu118", allow-prereleases = true}
 diffusers = "^0.26.2"
 transformers = "^4.36.2"
 datasets = "^2.14.3"
-xformers = "^0.0.23.post1+cu118"
-bitsandbytes = "^0.42.0"
+xformers = {version = "^0.0.25.dev741", allow-prereleases = true}
+bitsandbytes = {version = "^0.42.0", allow-prereleases = true}
 dadaptation = "^3.1"
 wandb = "^0.16.1"
 requests = "^2.31.0"
@@ -40,6 +40,8 @@ colorama = "^0.4.6"
 numpy = "1.26"
 peft = "^0.7.1"
 tensorboard = "^2.15.1"
+triton = {version = "^2.2.0", allow-prereleases = true}
+prodigyopt = "^1.0"
 
 
 [build-system]

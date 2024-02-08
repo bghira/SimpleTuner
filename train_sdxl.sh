@@ -168,6 +168,9 @@ case $OPTIMIZER in
     "dadaptation")
         export OPTIMIZER_ARG="--use_dadaptation_optimizer"
         ;;
+    "prodigy")
+        export OPTIMIZER_ARG="--use_prodigy_optimizer"
+        ;;
     *)
         echo "Unknown optimizer requested: $OPTIMIZER"
         exit 1
