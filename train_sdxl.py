@@ -631,7 +631,7 @@ def main():
 
         optimizer_class = Adafactor
         extra_optimizer_args = {}
-        extra_optimizer_args["lr"] = None
+        extra_optimizer_args["lr"] = args.learning_rate
         extra_optimizer_args["relative_step"] = True
         extra_optimizer_args["scale_parameter"] = False
     else:
