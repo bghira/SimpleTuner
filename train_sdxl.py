@@ -621,6 +621,7 @@ def main():
             extra_optimizer_args["lr"] = args.learning_rate
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
+        logger.info("Using Adafactor optimizer.")
         try:
             from transformers.optimization import Adafactor, AdafactorSchedule
         except ImportError:
