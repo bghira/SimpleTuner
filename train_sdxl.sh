@@ -191,7 +191,7 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
 fi
 
 export SNR_GAMMA_ARG=""
-if ! [ -z "$MIN_SNR_GAMMA" ]; then
+if [ -n "$MIN_SNR_GAMMA" ]; then
     export SNR_GAMMA_ARG="--snr_gamma=${MIN_SNR_GAMMA}"
 fi
 

@@ -1162,7 +1162,7 @@ def main():
                 if noise_scheduler.config.prediction_type == "sample":
                     model_pred = model_pred - noise
 
-                if args.snr_gamma is None:
+                if args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug(f"Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"

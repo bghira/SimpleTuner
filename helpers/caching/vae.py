@@ -85,23 +85,33 @@ class VAECache:
         """Get the cache filename for a given image filepath and its base name."""
         # Extract the base name from the filepath and replace the image extension with .pt
         base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
-        full_filename = os.path.join(self.cache_dir, base_filename)
+        # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
+        subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
+        logger.debug(f"Base name: {base_filename}, subfolders: {subfolders}")
+        if len(subfolders) > 0 and subfolders[0] == "/":
+            subfolders = subfolders[1:]
+            logger.debug(f"Combining: {self.cache_dir}, {subfolders}, {base_filename}")
+            full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
+        else:
+            full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
-        test_filepath_png = (
-            f"{os.path.splitext(self.generate_vae_cache_filename(filepath)[0])[0]}.png"
-        )
+        generated_names = self.generate_vae_cache_filename(filepath)
+        test_filepath_png = f"{os.path.splitext(generated_names[0])[0]}.png"
+        logger.debug(f"Checking for {test_filepath_png}")
         if str(self.cache_dir) in test_filepath_png:
+            logger.debug(f"Replacing {self.cache_dir} with {self.instance_data_root}")
             # replace cache_dir with instance_data_root:
             test_filepath_png = test_filepath_png.replace(
                 self.cache_dir, self.instance_data_root
             )
         elif str(self.instance_data_root) not in test_filepath_png:
+            logger.debug(f"Adding {self.instance_data_root} to {test_filepath_png}")
             test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
 
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
-
+        logger.debug(f"Checking for {test_filepath_jpg}")
         return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
@@ -248,12 +258,12 @@ class VAECache:
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
         existing_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-        # self.debug_log(
-        #     f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
-        # )
-        # self.debug_log(
-        #     f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
-        # )
+        self.debug_log(
+            f"discover_unprocessed_files found {len(all_image_files)} images from StateTracker (truncated): {list(all_image_files)[:5]}"
+        )
+        self.debug_log(
+            f"discover_unprocessed_files found {len(existing_cache_files)} already-processed cache files (truncated): {list(existing_cache_files)[:5]}"
+        )
 
         # Convert cache filenames to their corresponding image filenames
         existing_image_filenames = {
@@ -270,9 +280,9 @@ class VAECache:
             if os.path.splitext(file)[0] not in existing_image_filenames
         ]
 
-        # self.debug_log(
-        #     f"discover_unprocessed_files found {len(unprocessed_files)} unprocessed files (truncated): {list(unprocessed_files)[:5]}"
-        # )
+        self.debug_log(
+            f"discover_unprocessed_files found {len(unprocessed_files)} unprocessed files (truncated): {list(unprocessed_files)[:5]}"
+        )
         return unprocessed_files
 
     def _reduce_bucket(
@@ -587,7 +597,12 @@ class VAECache:
                 )
                 if len(relevant_files) == 0:
                     continue
-
+                statistics = {
+                    "not_local": 0,
+                    "already_cached": 0,
+                    "cached": 0,
+                    "total": 0,
+                }
                 for raw_filepath in tqdm(
                     relevant_files,
                     desc=f"Processing bucket {bucket}",
@@ -595,6 +610,7 @@ class VAECache:
                     ncols=125,
                     leave=False,
                 ):
+                    statistics["total"] += 1
                     filepath = self._process_raw_filepath(raw_filepath)
                     (
                         test_filepath_png,
@@ -604,17 +620,20 @@ class VAECache:
                         test_filepath_png not in self.local_unprocessed_files
                         and test_filepath_jpg not in self.local_unprocessed_files
                     ):
-                        # self.debug_log(
-                        #     f"Skipping {raw_filepath} because it is not in local unprocessed files:"
-                        #     f"\n -> {test_filepath_jpg}"
-                        #     f"\n -> {test_filepath_png}"
-                        # )
+                        self.debug_log(
+                            f"Skipping {raw_filepath} because it is not in local unprocessed files:"
+                            f"\n -> {test_filepath_jpg}"
+                            f"\n -> {test_filepath_png}"
+                            f"\n -> {self.local_unprocessed_files[:5]}"
+                        )
+                        statistics["not_local"] += 1
                         continue
                     try:
                         # Convert whatever we have, into the VAE cache basename.
                         filepath = self._process_raw_filepath(raw_filepath)
                         # Does it exist on the backend?
                         if self.already_cached(filepath):
+                            statistics["already_cached"] += 1
                             continue
                         # It does not exist. We can add it to the read queue.
                         self.debug_log(f"Adding {filepath} to the read queue.")
@@ -634,6 +653,7 @@ class VAECache:
 
                         # Now we encode the images.
                         if self.vae_input_queue.qsize() >= self.vae_batch_size:
+                            statistics["cached"] += 1
                             future_to_process = executor.submit(
                                 self._encode_images_in_batch
                             )
@@ -690,6 +710,7 @@ class VAECache:
                         futures.append(future_to_write)
 
                     futures = self._process_futures(futures, executor)
+                    logger.debug(f"Statistics: {statistics}")
                     self.debug_log(
                         "Completed process_buckets, all futures have been returned."
                     )

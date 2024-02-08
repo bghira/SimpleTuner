@@ -13,31 +13,33 @@ files = [
 
 [[package]]
 name = "accelerate"
-version = "0.21.0"
+version = "0.26.1"
 description = "Accelerate"
 optional = false
 python-versions = ">=3.8.0"
 files = [
-    {file = "accelerate-0.21.0-py3-none-any.whl", hash = "sha256:e2609d37f2c6a56e36a0612feae6ff6d9daac9759f4899432b86b1dc97024ebb"},
-    {file = "accelerate-0.21.0.tar.gz", hash = "sha256:e2959a0bf74d97c0b3c0e036ed96065142a060242281d27970d4c4e34f11ca59"},
+    {file = "accelerate-0.26.1-py3-none-any.whl", hash = "sha256:04df826b84ac7bad8a0a8ab90e6aeacdecb1ea5a2d744d7e94f6735c29183227"},
+    {file = "accelerate-0.26.1.tar.gz", hash = "sha256:bf63716b6bd9460d87da970cf4d833abb824ca0aa633be36b741e63a1b504f89"},
 ]
 
 [package.dependencies]
+huggingface-hub = "*"
 numpy = ">=1.17"
 packaging = ">=20.0"
 psutil = "*"
 pyyaml = "*"
+safetensors = ">=0.3.1"
 torch = ">=1.10.0"
 
 [package.extras]
-dev = ["black (>=23.1,<24.0)", "datasets", "deepspeed", "evaluate", "hf-doc-builder (>=0.3.0)", "parameterized", "pytest", "pytest-subtests", "pytest-xdist", "rich", "ruff (>=0.0.241)", "scikit-learn", "scipy", "tqdm", "transformers", "urllib3 (<2.0.0)"]
+dev = ["bitsandbytes", "black (>=23.1,<24.0)", "datasets", "deepspeed", "evaluate", "hf-doc-builder (>=0.3.0)", "parameterized", "pytest", "pytest-subtests", "pytest-xdist", "rich", "ruff (>=0.0.241)", "scikit-learn", "scipy", "timm", "tqdm", "transformers", "urllib3 (<2.0.0)"]
 quality = ["black (>=23.1,<24.0)", "hf-doc-builder (>=0.3.0)", "ruff (>=0.0.241)", "urllib3 (<2.0.0)"]
 rich = ["rich"]
 sagemaker = ["sagemaker"]
-test-dev = ["datasets", "deepspeed", "evaluate", "scikit-learn", "scipy", "tqdm", "transformers"]
+test-dev = ["bitsandbytes", "datasets", "deepspeed", "evaluate", "scikit-learn", "scipy", "timm", "tqdm", "transformers"]
 test-prod = ["parameterized", "pytest", "pytest-subtests", "pytest-xdist"]
-test-trackers = ["comet-ml", "tensorboard", "wandb"]
-testing = ["datasets", "deepspeed", "evaluate", "parameterized", "pytest", "pytest-subtests", "pytest-xdist", "scikit-learn", "scipy", "tqdm", "transformers"]
+test-trackers = ["comet-ml", "dvclive", "tensorboard", "wandb"]
+testing = ["bitsandbytes", "datasets", "deepspeed", "evaluate", "parameterized", "pytest", "pytest-subtests", "pytest-xdist", "scikit-learn", "scipy", "timm", "tqdm", "transformers"]
 
 [[package]]
 name = "aiohttp"
@@ -192,14 +194,17 @@ tests-no-zope = ["attrs[tests-mypy]", "cloudpickle", "hypothesis", "pympler", "p
 
 [[package]]
 name = "bitsandbytes"
-version = "0.41.3.post2"
+version = "0.42.0"
 description = "k-bit optimizers and matrix multiplication routines."
 optional = false
 python-versions = "*"
 files = [
-    {file = "bitsandbytes-0.41.3.post2-py3-none-any.whl", hash = "sha256:ceb301a3d4e6bf52bdad8d09f3064ac194bdfdeae535994c0315bd2ef7639cca"},
-    {file = "bitsandbytes-0.41.3.post2.tar.gz", hash = "sha256:7d25a51fb3b74b58e569473f8b70a5239124c0593dc053479c41cf2cd6730502"},
+    {file = "bitsandbytes-0.42.0-py3-none-any.whl", hash = "sha256:63798680912cc63bb77b535a2d0860af024e290a52e157f777ad2a52e2585967"},
+    {file = "bitsandbytes-0.42.0.tar.gz", hash = "sha256:fc1505f184f0d275766f2a6c663f1a43b734c1409b5c5a406f3a6073d9f329fd"},
 ]
+
+[package.dependencies]
+scipy = "*"
 
 [[package]]
 name = "boto3"
@@ -520,17 +525,19 @@ triton = ["triton (>=2.1.0)"]
 
 [[package]]
 name = "diffusers"
-version = "0.26.0.dev0"
+version = "0.26.2"
 description = "State-of-the-art diffusion in PyTorch and JAX."
 optional = false
 python-versions = ">=3.8.0"
-files = []
-develop = false
+files = [
+    {file = "diffusers-0.26.2-py3-none-any.whl", hash = "sha256:d7731838b9c06073e5c65c547937fbef9f89fc71197cba0e500035d418ee7645"},
+    {file = "diffusers-0.26.2.tar.gz", hash = "sha256:b9b2d7295e76523b8e49b9a5ec6b9719e0ca996b64d551cb0816c8e0b29be455"},
+]
 
 [package.dependencies]
 filelock = "*"
 huggingface-hub = ">=0.20.2"
-importlib_metadata = "*"
+importlib-metadata = "*"
 numpy = "*"
 Pillow = "*"
 regex = "!=2019.12.17"
@@ -538,19 +545,13 @@ requests = "*"
 safetensors = ">=0.3.1"
 
 [package.extras]
-dev = ["GitPython (<3.1.19)", "Jinja2", "Jinja2", "accelerate (>=0.11.0)", "accelerate (>=0.11.0)", "compel (==0.1.8)", "datasets", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "omegaconf", "parameterized", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.1.5)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "torch (>=1.4)", "torchvision", "transformers (>=4.25.1)", "urllib3 (<=2.0.0)"]
+dev = ["GitPython (<3.1.19)", "Jinja2", "accelerate (>=0.11.0)", "compel (==0.1.8)", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.1.5)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "torch (>=1.4,<2.2.0)", "torchvision (<0.17)", "transformers (>=4.25.1)", "urllib3 (<=2.0.0)"]
 docs = ["hf-doc-builder (>=0.3.0)"]
 flax = ["flax (>=0.4.1)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)"]
 quality = ["hf-doc-builder (>=0.3.0)", "isort (>=5.5.4)", "ruff (==0.1.5)", "urllib3 (<=2.0.0)"]
-test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "omegaconf", "parameterized", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "torchvision", "transformers (>=4.25.1)"]
-torch = ["accelerate (>=0.11.0)", "torch (>=1.4)"]
+test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "torchvision (<0.17)", "transformers (>=4.25.1)"]
+torch = ["accelerate (>=0.11.0)", "torch (>=1.4,<2.2.0)"]
 training = ["Jinja2", "accelerate (>=0.11.0)", "datasets", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "tensorboard"]
-
-[package.source]
-type = "git"
-url = "https://github.com/huggingface/diffusers"
-reference = "HEAD"
-resolved_reference = "ac61eefc9f2fbd4d2190d5673a4fcd77da9a93ab"
 
 [[package]]
 name = "dill"
@@ -3225,4 +3226,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "34bf093f9f3f5b5adb99aaf5c32a6f3252331f09396c58fab922ede9a825ee0f"
+content-hash = "70a2d93c7238c68aa8a17868b21fce18ccd1107149f33795946250e6358ac532"
