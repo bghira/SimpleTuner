@@ -1104,7 +1104,10 @@ def main():
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    lr = lr_scheduler.get_last_lr()[0]
+                    if args.use_adafactor_optimizer:
+                        lr = lr_scheduler.get_lr()[0]
+                    else:
+                        lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
