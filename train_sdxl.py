@@ -1251,7 +1251,7 @@ def main():
                     logs["ema_decay_value"] = ema_decay_value
 
                 # Log scatter plot to wandb
-                if args.report_to == "wandb":
+                if args.report_to == "wandb" and accelerator.is_main_process:
                     # Prepare the data for the scatter plot
                     data = [
                         [iteration, timestep]
