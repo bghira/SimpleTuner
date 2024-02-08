@@ -660,6 +660,8 @@ def main():
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
 
     if args.model_type == "full":
         params_to_optimize = unet.parameters()
