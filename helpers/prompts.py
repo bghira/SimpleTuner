@@ -425,7 +425,7 @@ class PromptHandler:
                 caption = caption[0]
             modified_caption = caption
             # Apply each filter to the caption
-            logger.debug(f"Filtering caption: {modified_caption}")
+            # logger.debug(f"Filtering caption: {modified_caption}")
             for filter_item in caption_filter_list:
                 # Check for special replace pattern 's/replace/entry/'
                 if filter_item.startswith("s/") and filter_item.count("/") == 2:
@@ -452,10 +452,10 @@ class PromptHandler:
                     logger.error(f"Regex error with pattern {filter_item}: {e}")
 
             # Add the modified caption to the filtered list
-            if caption != modified_caption:
-                logger.debug(
-                    f"After all filters have finished, here is the modified caption: {modified_caption}"
-                )
+            # if caption != modified_caption:
+            #     logger.debug(
+            #         f"After all filters have finished, here is the modified caption: {modified_caption}"
+            #     )
             filtered_captions.append(modified_caption)
 
         # Return the list of modified captions
@@ -473,7 +473,7 @@ class PromptHandler:
         try:
             with user_prompt_path.open("r") as f:
                 user_prompts = json.load(f)
-                logger.debug(f"Loaded user prompts: {user_prompts}")
+                # logger.debug(f"Loaded user prompts: {user_prompts}")
             return user_prompts
         except Exception as e:
             logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")

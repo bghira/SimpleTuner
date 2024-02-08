@@ -71,7 +71,6 @@ class TextEmbeddingCache:
         # Reuse the hash object
         md5_hash = hashlib.md5()
         md5_hash.update(caption.encode())
-        logger.debug(f"Hashing caption: {caption}")
         return md5_hash.hexdigest() + hash_format
 
     def hash_prompt(self, caption):
@@ -320,9 +319,9 @@ class TextEmbeddingCache:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
-        self.debug_log(
-            f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
-        )
+        # self.debug_log(
+        #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
+        # )
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -351,7 +350,7 @@ class TextEmbeddingCache:
                         raise Exception("This won't work. We cannot continue.")
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    self.debug_log(f"Encoding prompt: {prompt}")
+                    # self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
                         self.text_encoders,
                         self.tokenizers,
@@ -359,7 +358,7 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
-                    self.debug_log(f"Adding embed to write queue: {filename}")
+                    # self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
@@ -407,9 +406,9 @@ class TextEmbeddingCache:
         ):
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             should_encode = True
-        self.debug_log(
-            f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
-        )
+        # self.debug_log(
+        #     f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
+        # )
 
         with torch.no_grad():
             for prompt in tqdm(
@@ -440,7 +439,7 @@ class TextEmbeddingCache:
                         raise Exception("This won't work. We cannot continue.")
 
                 if should_encode:
-                    self.debug_log(f"Encoding prompt: {prompt}")
+                    # self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds = self.encode_legacy_prompt(
                         self.text_encoders[0], self.tokenizers[0], [prompt]
                     )
