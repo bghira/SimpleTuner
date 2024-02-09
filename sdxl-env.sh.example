@@ -1,5 +1,10 @@
 # Configure these values.
 
+# 'lora' or 'full'
+# lora - train a small network for a character or style, or both. quite versatile.
+# full - requires lots of vram, trains very slowly, needs a lot of data and concepts.
+export MODEL_TYPE='lora'
+
 # Restart where we left off. Change this to "checkpoint-1234" to start from a specific checkpoint.
 export RESUME_CHECKPOINT="latest"
 
@@ -160,4 +165,5 @@ export ACCELERATE_EXTRA_ARGS=""                          # --multi_gpu or other 
 
 # With Pytorch 2.1, you might have pretty good luck here.
 # If you're using aspect bucketing however, each resolution change will recompile. Seriously, just don't do it.
+# Well, then again... Pytorch 2.2 has support for dynamic shapes. Why not?
 export TRAINING_DYNAMO_BACKEND='inductor'                # or 'no' if you want to disable torch compile in case of performance issues or lack of support (eg. AMD)

@@ -324,9 +324,10 @@ def main():
         # Set correct lora layers
         unet.requires_grad_(False)
         unet_lora_config = LoraConfig(
-            r=args.rank,
-            lora_alpha=args.rank,
-            init_lora_weights="gaussian",
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            init_lora_weights="loftq",
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
         )
 

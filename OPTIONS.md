@@ -163,7 +163,9 @@ This is a basic overview meant to help you get started. For a complete list of o
 
 ```
 usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
-                     [--rank RANK] --pretrained_model_name_or_path
+                     [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
+                     [--lora_dropout LORA_DROPOUT]
+                     --pretrained_model_name_or_path
                      PRETRAINED_MODEL_NAME_OR_PATH
                      [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                      [--prediction_type {epsilon,v_prediction,sample}]
@@ -193,7 +195,10 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--seed_for_each_device SEED_FOR_EACH_DEVICE]
                      [--resolution RESOLUTION]
                      [--resolution_type {pixel,area}]
-                     [--minimum_image_size MINIMUM_IMAGE_SIZE] [--crop CROP]
+                     [--minimum_image_size MINIMUM_IMAGE_SIZE]
+                     [--maximum_image_size MAXIMUM_IMAGE_SIZE]
+                     [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
+                     [--crop CROP]
                      [--crop_style {center,centre,corner,random}]
                      [--crop_aspect {square,preserve}] [--train_text_encoder]
                      [--train_batch_size TRAIN_BATCH_SIZE]
@@ -204,7 +209,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
                      [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
                      [--gradient_checkpointing]
-                     [--learning_rate LEARNING_RATE] [--lr_scale]
+                     [--learning_rate LEARNING_RATE]
+                     [--text_encoder_lr TEXT_ENCODER_LR] [--lr_scale]
                      [--lr_scheduler {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                      [--lr_warmup_steps LR_WARMUP_STEPS]
                      [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
@@ -212,6 +218,14 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--non_ema_revision NON_EMA_REVISION]
                      [--offload_param_path OFFLOAD_PARAM_PATH]
                      [--use_8bit_adam] [--use_adafactor_optimizer]
+                     [--adafactor_relative_step ADAFACTOR_RELATIVE_STEP]
+                     [--use_prodigy_optimizer] [--prodigy_beta3 PRODIGY_BETA3]
+                     [--prodigy_decouple PRODIGY_DECOUPLE]
+                     [--prodigy_use_bias_correction PRODIGY_USE_BIAS_CORRECTION]
+                     [--prodigy_safeguard_warmup PRODIGY_SAFEGUARD_WARMUP]
+                     [--prodigy_learning_rate PRODIGY_LEARNING_RATE]
+                     [--prodigy_weight_decay PRODIGY_WEIGHT_DECAY]
+                     [--prodigy_epsilon PRODIGY_EPSILON]
                      [--use_dadapt_optimizer]
                      [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE]
                      [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2]
@@ -221,7 +235,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--hub_token HUB_TOKEN] [--hub_model_id HUB_MODEL_ID]
                      [--logging_dir LOGGING_DIR]
                      [--validation_torch_compile VALIDATION_TORCH_COMPILE]
-                     [--validation_torch_compile_mode {reduce-overhead,default}]
+                     [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
                      [--allow_tf32] [--report_to REPORT_TO]
                      [--tracker_run_name TRACKER_RUN_NAME]
                      [--tracker_project_name TRACKER_PROJECT_NAME]
@@ -272,7 +286,14 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
-  --rank RANK           The dimension of the LoRA update matrices.
+  --lora_rank LORA_RANK
+                        The dimension of the LoRA update matrices.
+  --lora_alpha LORA_ALPHA
+                        The alpha value for the LoRA model. This is the
+                        learning rate for the LoRA update matrices.
+  --lora_dropout LORA_DROPOUT
+                        LoRA dropout randomly ignores neurons during training.
+                        This can help prevent overfitting.
   --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
                         huggingface.co/models.
@@ -460,6 +481,23 @@ options:
                         option is not provided, it is possible that images
                         will be destructively upsampled, harming model
                         performance.
+  --maximum_image_size MAXIMUM_IMAGE_SIZE
+                        When cropping images that are excessively large, the
+                        entire scene context may be lost, eg. the crop might
+                        just end up being a portion of the background. To
+                        avoid this, a maximum image size may be provided,
+                        which will result in very-large images being
+                        downsampled before cropping them. This value uses
+                        --resolution_type to determine whether it is a pixel
+                        edge or megapixel value.
+  --target_downsample_size TARGET_DOWNSAMPLE_SIZE
+                        When using --maximum_image_size, very-large images
+                        exceeding that value will be downsampled to this
+                        target size before cropping. If --resolution_type=area
+                        and --maximum_image_size=4.0,
+                        --target_downsample_size=2.0 would result in a 4
+                        megapixel image being resized to 2 megapixel before
+                        cropping to 1 megapixel.
   --crop CROP           Whether to crop the input images to the resolution. If
                         not set, the images will be downsampled instead. When
                         cropping is enabled, the images will not be resized
@@ -517,6 +555,9 @@ options:
   --learning_rate LEARNING_RATE
                         Initial learning rate (after the potential warmup
                         period) to use.
+  --text_encoder_lr TEXT_ENCODER_LR
+                        Learning rate for the text encoder. If not provided,
+                        the value of --learning_rate will be used.
   --lr_scale            Scale the learning rate by the number of GPUs,
                         gradient accumulation steps, and batch size.
   --lr_scheduler {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}
@@ -544,6 +585,38 @@ options:
   --use_8bit_adam       Whether or not to use 8-bit Adam from bitsandbytes.
   --use_adafactor_optimizer
                         Whether or not to use the Adafactor optimizer.
+  --adafactor_relative_step ADAFACTOR_RELATIVE_STEP
+                        When set, will use the experimental Adafactor mode for
+                        relative step computations instead of the value set by
+                        --learning_rate. This is an experimental feature, and
+                        you are on your own for support.
+  --use_prodigy_optimizer
+                        Whether or not to use the Prodigy optimizer.
+  --prodigy_beta3 PRODIGY_BETA3
+                        coefficients for computing the Prodidy stepsize using
+                        running averages. If set to None, uses the value of
+                        square root of beta2. Ignored if optimizer is adamW
+  --prodigy_decouple PRODIGY_DECOUPLE
+                        Use AdamW style decoupled weight decay
+  --prodigy_use_bias_correction PRODIGY_USE_BIAS_CORRECTION
+                        Turn on Adam's bias correction. True by default.
+                        Ignored if optimizer is adamW
+  --prodigy_safeguard_warmup PRODIGY_SAFEGUARD_WARMUP
+                        Remove lr from the denominator of D estimate to avoid
+                        issues during warm-up stage. True by default. Ignored
+                        if optimizer is adamW
+  --prodigy_learning_rate PRODIGY_LEARNING_RATE
+                        Though this is called the prodigy learning rate, it
+                        corresponds to the d_coef parameter in the Prodigy
+                        optimizer. This acts as a coefficient in the
+                        expression for the estimate of d. Default for this
+                        trainer is 0.5, but the Prodigy default is 1.0, which
+                        ends up over-cooking models.
+  --prodigy_weight_decay PRODIGY_WEIGHT_DECAY
+                        Weight decay to use. Prodigy default is 0, but
+                        SimpleTuner uses 1e-2.
+  --prodigy_epsilon PRODIGY_EPSILON
+                        Epsilon value for the Adam optimizer
   --use_dadapt_optimizer
                         Whether or not to use the discriminator adaptation
                         optimizer.
@@ -551,9 +624,9 @@ options:
                         Learning rate for the discriminator adaptation.
                         Default: 1.0
   --adam_beta1 ADAM_BETA1
-                        The beta1 parameter for the Adam optimizer.
+                        The beta1 parameter for the Adam and other optimizers.
   --adam_beta2 ADAM_BETA2
-                        The beta2 parameter for the Adam optimizer.
+                        The beta2 parameter for the Adam and other optimizers.
   --adam_weight_decay ADAM_WEIGHT_DECAY
                         Weight decay to use.
   --adam_epsilon ADAM_EPSILON
@@ -562,7 +635,10 @@ options:
                         Max gradient norm.
   --push_to_hub         Whether or not to push the model to the Hub.
   --hub_token HUB_TOKEN
-                        The token to use to push to the Model Hub.
+                        The token to use to push to the Model Hub. Do not use
+                        in combination with --report_to=wandb, as this value
+                        will be exposed in the logs. Instead, use
+                        `huggingface-cli login` on the command line.
   --hub_model_id HUB_MODEL_ID
                         The name of the repository to keep in sync with the
                         local `output_dir`.
@@ -577,9 +653,9 @@ options:
                         dependent on PyTorch version, phase of the moon, but
                         if it works, you should leave it enabled for a great
                         speed-up.
-  --validation_torch_compile_mode {reduce-overhead,default}
+  --validation_torch_compile_mode {max-autotune,reduce-overhead,default}
                         PyTorch provides different modes for the Torch
-                        Inductor when compiling graphs. reduce-overhead, the
+                        Inductor when compiling graphs. max-autotune, the
                         default mode, provides the most benefit.
   --allow_tf32          Whether or not to allow TF32 on Ampere GPUs. Can be
                         used to speed up training. For more information, see h

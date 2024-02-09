@@ -368,9 +368,10 @@ def main():
         # Set correct lora layers
         unet.requires_grad_(False)
         unet_lora_config = LoraConfig(
-            r=args.rank,
-            lora_alpha=args.rank,
-            init_lora_weights="gaussian",
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            init_lora_weights="loftq",
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
         )
 
@@ -602,11 +603,12 @@ def main():
         extra_optimizer_args["lr"] = args.learning_rate
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["beta3"] = args.prodigy_beta3
-        extra_optimizer_args["weight_decay"] = args.adam_weight_decay
-        extra_optimizer_args["eps"] = args.adam_epsilon
+        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
+        extra_optimizer_args["eps"] = args.prodigy_epsilon
         extra_optimizer_args["decouple"] = args.prodigy_decouple
         extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
+        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -654,10 +656,16 @@ def main():
 
         optimizer_class = Adafactor
         extra_optimizer_args = {}
-        extra_optimizer_args["lr"] = None
-        extra_optimizer_args["relative_step"] = True
-        extra_optimizer_args["scale_parameter"] = False
-        extra_optimizer_args["warmup_init"] = True
+        if args.adafactor_relative_step:
+            extra_optimizer_args["lr"] = None
+            extra_optimizer_args["relative_step"] = True
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = True
+        else:
+            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["relative_step"] = False
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
@@ -683,7 +691,7 @@ def main():
         optimizer = optimizer_class(params_to_optimize)
     else:
         logger.info(
-            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
+            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}, extra_arguments={extra_optimizer_args}"
         )
         if args.train_text_encoder and args.text_encoder_lr:
             logger.warn(
@@ -707,9 +715,14 @@ def main():
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
         )
-    elif args.use_adafactor_optimizer:
+    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
         # Use the AdafactorScheduler.
-        lr_scheduler = AdafactorSchedule(optimizer)
+        logger.info(
+            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
+        )
+        lr_scheduler = AdafactorSchedule(
+            optimizer=optimizer, initial_lr=args.learning_rate
+        )
     elif args.lr_scheduler == "cosine_with_restarts":
         from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
@@ -1141,7 +1154,7 @@ def main():
                 )
 
                 # SDXL additional inputs - probabilistic dropout
-                encoder_hidden_states = batch["prompt_embeds"]
+                encoder_hidden_states = batch["prompt_embeds"].to(weight_dtype)
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
@@ -1249,7 +1262,8 @@ def main():
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     training_logger.debug(f"Backwards pass.")
                     accelerator.backward(loss)
-                    if accelerator.sync_gradients:
+                    if accelerator.sync_gradients and not args.use_adafactor_optimizer:
+                        # Adafactor shouldn't have gradient clipping applied.
                         accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
