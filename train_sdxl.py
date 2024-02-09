@@ -657,6 +657,7 @@ def main():
         extra_optimizer_args["lr"] = None
         extra_optimizer_args["relative_step"] = True
         extra_optimizer_args["scale_parameter"] = False
+        extra_optimizer_args["warmup_init"] = True
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
