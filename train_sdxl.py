@@ -158,7 +158,7 @@ def main():
     StateTracker.set_accelerator(accelerator)
 
     # Make one log on every process with the configuration for debugging.
-    logger.info(accelerator.state, main_process_only=True)
+    # logger.info(accelerator.state, main_process_only=True)
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
@@ -286,19 +286,12 @@ def main():
     )
 
     # Load scheduler and models
-    betas_scheduler = DDIMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="scheduler",
-        prediction_type=args.prediction_type,
-        timestep_spacing=args.training_scheduler_timestep_spacing,
-        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-    )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type=args.prediction_type,
+        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         timestep_spacing=args.training_scheduler_timestep_spacing,
-        trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
