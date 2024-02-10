@@ -71,6 +71,7 @@ class TextEmbeddingCache:
         # Reuse the hash object
         md5_hash = hashlib.md5()
         md5_hash.update(caption.encode())
+        logger.debug(f"Hashing caption: {caption}")
         return md5_hash.hexdigest() + hash_format
 
     def hash_prompt(self, caption):
@@ -333,7 +334,10 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                logger.debug(debug_msg)
                 if return_concat and load_from_cache:
                     try:
                         # We attempt to load.
@@ -345,6 +349,7 @@ class TextEmbeddingCache:
                             f"\n-> prompt: {prompt}"
                             f"\n-> filename: {filename}"
                             f"\n-> error: {e}"
+                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
                         )
                         should_encode = True
                         raise Exception("This won't work. We cannot continue.")
@@ -358,7 +363,7 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
-                    # self.debug_log(f"Adding embed to write queue: {filename}")
+                    self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)

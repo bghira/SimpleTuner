@@ -435,10 +435,16 @@ class BucketManager:
         Args:
             existing_files (set): A set of existing files.
         """
+        logger.debug(
+            f"Before updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices])}."
+        )
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             self.aspect_ratio_bucket_indices[bucket] = [
                 img for img in images if img in existing_files
             ]
+        logger.debug(
+            f"After updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices])}."
+        )
         # Save the updated cache
         self.save_cache()
 
@@ -450,6 +456,9 @@ class BucketManager:
         self.compute_aspect_ratio_bucket_indices()
 
         # Get the list of existing files
+        logger.debug(
+            f"Refreshing buckets for rank {rank} via data_backend id {self.id}."
+        )
         existing_files = StateTracker.get_image_files(data_backend_id=self.id)
 
         # Update bucket indices to remove entries that no longer exist
