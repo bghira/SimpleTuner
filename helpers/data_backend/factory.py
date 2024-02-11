@@ -212,6 +212,7 @@ def configure_multi_databackend(
             accelerator=accelerator,
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_type(),
+            write_batch_size=backend.get("write_batch_size", 1024),
         )
 
         if backend.get("default", False):
