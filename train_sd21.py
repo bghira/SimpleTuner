@@ -523,8 +523,18 @@ def main():
         optimizer = optimizer_class(params_to_optimize)
     else:
         logger.info(
-            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
+            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}, extra_arguments={extra_optimizer_args}"
         )
+        if args.train_text_encoder and args.text_encoder_lr:
+            logger.warn(
+                f"Learning rates were provided both for the unet and the text encoder- e.g. text_encoder_lr:"
+                f" {args.text_encoder_lr} and learning_rate: {args.learning_rate}. "
+                f"When using prodigy only learning_rate is used as the initial learning rate."
+            )
+            # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
+            # --learning_rate
+            params_to_optimize[1]["lr"] = args.learning_rate
+            params_to_optimize[2]["lr"] = args.learning_rate
         optimizer = optimizer_class(
             params_to_optimize,
             **extra_optimizer_args,
@@ -644,9 +654,14 @@ def main():
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
         )
-    elif args.use_adafactor_optimizer:
+    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
         # Use the AdafactorScheduler.
-        lr_scheduler = AdafactorSchedule(optimizer)
+        logger.info(
+            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
+        )
+        lr_scheduler = AdafactorSchedule(
+            optimizer=optimizer, initial_lr=args.learning_rate
+        )
     elif args.lr_scheduler == "cosine_with_restarts":
         from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
@@ -1120,7 +1135,8 @@ def main():
 
                 logger.debug(f"Backwards pass.")
                 accelerator.backward(loss)
-                if accelerator.sync_gradients:
+                if accelerator.sync_gradients and not args.use_adafactor_optimizer:
+                    # Adafactor shouldn't have gradient clipping applied.
                     accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
                 training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
@@ -1164,7 +1180,7 @@ def main():
                     logs["ema_decay_value"] = ema_decay_value
 
                 # Log scatter plot to wandb
-                if args.report_to == "wandb":
+                if args.report_to == "wandb" and accelerator.is_main_process:
                     # Prepare the data for the scatter plot
                     data = [
                         [iteration, timestep]
