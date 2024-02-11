@@ -380,20 +380,10 @@ class TextEmbeddingCache:
                     if written_queue_messages > 0:
                         write_thread_bar.update(written_queue_messages)
                     if current_size > 1000:
-                        # Grab log formatter from 'logger' and use it to format a message.
-                        log_formatter = logger.handlers[0].formatter
-                        formatted_message = log_formatter.format(
-                            logging.LogRecord(
-                                "TextEmbeddingCache",
-                                logging.WARNING,
-                                "helpers/caching/sdxl_embeds.py",
-                                0,
-                                f"Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.",
-                                (),
-                                None,
-                            )
+                        log_msg = (
+                            f"[WARNING] Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.",
                         )
-                        progress_bar.write(formatted_message)
+                        progress_bar.write(log_msg)
                         while self.write_queue.qsize() > 0:
                             time.sleep(0.1)
 
