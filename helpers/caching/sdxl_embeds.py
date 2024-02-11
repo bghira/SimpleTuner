@@ -134,6 +134,7 @@ class TextEmbeddingCache:
             ]
             for future in futures:
                 future.result()  # Wait for all writes to complete
+        logger.debug(f"Completed write batch of {len(batch)} items")
 
     def load_from_cache(self, filename):
         result = self.data_backend.torch_load(filename)
