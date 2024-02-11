@@ -5,6 +5,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
 from queue import Queue
+import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 
@@ -101,28 +102,26 @@ class TextEmbeddingCache:
 
     def batch_write_embeddings(self):
         """Process write requests in batches."""
-        while True:
-            batch = []
-            while not self.write_queue.empty() and len(batch) < self.write_batch_size:
-                items = self.write_queue.get()
-                batch.append(items)
+        while self.process_write_batches:
+            try:
+                # Block until an item is available or timeout occurs
+                first_item = self.write_queue.get(timeout=1)
+                batch = [first_item]
 
-            if len(batch) >= self.write_batch_size:
-                self.process_write_batch(batch)
-            elif self.write_queue.empty() and len(batch) > 0:
+                # Try to get more items without blocking
+                while (
+                    not self.write_queue.empty() and len(batch) < self.write_batch_size
+                ):
+                    items = self.write_queue.get_nowait()
+                    batch.append(items)
+
                 self.process_write_batch(batch)
 
-            check_interval = 5
-            # How many items exist in the queue should influence the interval. If the queue is empty, we can wait longer.
-            if self.write_queue.qsize() > 0:
-                check_interval = 0.001
-            time.sleep(
-                float(
-                    os.environ.get(
-                        "SIMPLETUNER_BATCH_WRITE_SLEEP_INTERVAL", check_interval
-                    )
-                )
-            )  # Prevents the thread from being too busy-waiting
+            except queue.Empty:
+                # Timeout occurred, no items were ready
+                pass
+            except Exception as e:
+                logger.exception("An error occurred while writing embeddings to disk.")
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
@@ -455,9 +454,17 @@ class TextEmbeddingCache:
                 prompt_embeds_all.append(prompt_embeds)
 
             # Wait for the batch write thread to finish, showing a spinner
+            if self.write_queue.qsize() > 0:
+                progress_bar = tqdm(
+                    desc="Waiting for write queue",
+                    leave=False,
+                    ncols=125,
+                    disable=return_concat,
+                )
             while self.write_queue.qsize() > 0:
                 # Loading spinner
                 time.sleep(0.1)
+                progress_bar.update(0)
             self.process_write_batches = False
 
             if not return_concat:
