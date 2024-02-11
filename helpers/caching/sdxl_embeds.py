@@ -377,12 +377,12 @@ class TextEmbeddingCache:
                     add_text_embeds = pooled_prompt_embeds
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
-                    if current_size > 1000:
+                    if current_size >= 2048:
                         log_msg = str(
                             f"[WARNING] Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.\n"
                         )
                         self.write_thread_bar.write(log_msg)
-                        while self.write_queue.qsize() > 0:
+                        while self.write_queue.qsize() > 100:
                             time.sleep(0.1)
 
                     self.debug_log(f"Adding embed to write queue: {filename}")
