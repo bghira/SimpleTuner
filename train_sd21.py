@@ -486,10 +486,16 @@ def main():
             )
 
         optimizer_class = Adafactor
-        extra_optimizer_args = {}
-        extra_optimizer_args["lr"] = None
-        extra_optimizer_args["relative_step"] = False
-        extra_optimizer_args["scale_parameter"] = False
+        if args.adafactor_relative_step:
+            extra_optimizer_args["lr"] = None
+            extra_optimizer_args["relative_step"] = True
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = True
+        else:
+            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["relative_step"] = False
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
