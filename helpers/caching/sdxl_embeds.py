@@ -378,23 +378,34 @@ class TextEmbeddingCache:
                     prompt_embeds_all.append(prompt_embeds)
                     add_text_embeds_all.append(add_text_embeds)
 
-            # Wait for the batch write thread to finish, showing a spinner
+            # Before starting the loop, create a tqdm progress bar
             progress_bar = tqdm(
+                total=self.write_queue.qsize(),
                 desc="Waiting for write queue",
                 leave=False,
                 ncols=125,
                 disable=return_concat,
             )
-            current_size = self.write_queue.qsize()
+
+            # Initial size of the queue to calculate updates
+            initial_size = self.write_queue.qsize()
+
             while self.write_queue.qsize() > 0:
-                new_size = self.write_queue.qsize()
-                update = current_size - new_size
-                current_size = new_size
-                progress_bar.update(update)
+                # Calculate the number of tasks done by comparing previous and current queue size
+                tasks_done = initial_size - self.write_queue.qsize()
+                initial_size = (
+                    self.write_queue.qsize()
+                )  # Update initial size for the next iteration
+                progress_bar.update(
+                    tasks_done
+                )  # Update the progress bar with the number of tasks done
                 logger.debug(
-                    f"Waiting for write queue thread to exit. Size: {new_size}"
+                    f"Waiting for write queue thread to exit. Size: {initial_size}"
                 )
-                time.sleep(0.1)
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            progress_bar.close()
             self.process_write_batches = False
 
             if not return_concat:
@@ -466,23 +477,34 @@ class TextEmbeddingCache:
 
                 prompt_embeds_all.append(prompt_embeds)
 
-            # Wait for the batch write thread to finish, showing a spinner
+            # Before starting the loop, create a tqdm progress bar
             progress_bar = tqdm(
+                total=self.write_queue.qsize(),
                 desc="Waiting for write queue",
                 leave=False,
                 ncols=125,
                 disable=return_concat,
             )
-            current_size = self.write_queue.qsize()
+
+            # Initial size of the queue to calculate updates
+            initial_size = self.write_queue.qsize()
+
             while self.write_queue.qsize() > 0:
-                new_size = self.write_queue.qsize()
-                update = current_size - new_size
-                current_size = new_size
-                progress_bar.update(update)
+                # Calculate the number of tasks done by comparing previous and current queue size
+                tasks_done = initial_size - self.write_queue.qsize()
+                initial_size = (
+                    self.write_queue.qsize()
+                )  # Update initial size for the next iteration
+                progress_bar.update(
+                    tasks_done
+                )  # Update the progress bar with the number of tasks done
                 logger.debug(
-                    f"Waiting for write queue thread to exit. Size: {new_size}"
+                    f"Waiting for write queue thread to exit. Size: {initial_size}"
                 )
-                time.sleep(0.1)
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            progress_bar.close()
             self.process_write_batches = False
 
             if not return_concat:
