@@ -383,7 +383,7 @@ class TextEmbeddingCache:
                         log_msg = (
                             f"[WARNING] Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.",
                         )
-                        progress_bar.write(log_msg)
+                        write_thread_bar.write(log_msg)
                         while self.write_queue.qsize() > 0:
                             time.sleep(0.1)
 
