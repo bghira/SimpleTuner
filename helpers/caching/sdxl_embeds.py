@@ -98,6 +98,14 @@ class TextEmbeddingCache:
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
+        # Get the current size of the queue.
+        current_size = self.write_queue.qsize()
+        if current_size > 1000:
+            logger.warning(
+                f"Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up."
+            )
+            while self.write_queue.qsize() > 0:
+                time.sleep(0.1)
         self.write_queue.put((embeddings, filename))
 
     def batch_write_embeddings(self):
