@@ -454,17 +454,22 @@ class TextEmbeddingCache:
                 prompt_embeds_all.append(prompt_embeds)
 
             # Wait for the batch write thread to finish, showing a spinner
-            if self.write_queue.qsize() > 0:
-                progress_bar = tqdm(
-                    desc="Waiting for write queue",
-                    leave=False,
-                    ncols=125,
-                    disable=return_concat,
-                )
+            progress_bar = tqdm(
+                desc="Waiting for write queue",
+                leave=False,
+                ncols=125,
+                disable=return_concat,
+            )
+            current_size = self.write_queue.qsize()
             while self.write_queue.qsize() > 0:
-                # Loading spinner
+                new_size = self.write_queue.qsize()
+                update = current_size - new_size
+                current_size = new_size
+                progress_bar.update(update)
+                logger.debug(
+                    f"Waiting for write queue thread to exit. Size: {new_size}"
+                )
                 time.sleep(0.1)
-                progress_bar.update(0)
             self.process_write_batches = False
 
             if not return_concat:
