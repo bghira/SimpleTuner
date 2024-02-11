@@ -333,7 +333,6 @@ class TextEmbeddingCache:
             total=len(prompts or self.prompts),
             position=0,
         )
-        last_write_queue_size = 0
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -438,7 +437,14 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
         # )
-
+        self.write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(prompts or self.prompts),
+            position=0,
+        )
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -469,6 +475,16 @@ class TextEmbeddingCache:
 
                 if should_encode:
                     # self.debug_log(f"Encoding prompt: {prompt}")
+                    # Get the current size of the queue.
+                    current_size = self.write_queue.qsize()
+                    if current_size >= 2048:
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large."
+                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
+                        )
+                        self.write_thread_bar.write(log_msg)
+                        while self.write_queue.qsize() > 100:
+                            time.sleep(0.1)
                     prompt_embeds = self.encode_legacy_prompt(
                         self.text_encoders[0], self.tokenizers[0], [prompt]
                     )
@@ -477,34 +493,11 @@ class TextEmbeddingCache:
 
                 prompt_embeds_all.append(prompt_embeds)
 
-            # Before starting the loop, create a tqdm progress bar
-            progress_bar = tqdm(
-                total=self.write_queue.qsize(),
-                desc="Waiting for write queue",
-                leave=False,
-                ncols=125,
-                disable=return_concat,
-            )
-
-            # Initial size of the queue to calculate updates
-            initial_size = self.write_queue.qsize()
-
             while self.write_queue.qsize() > 0:
-                # Calculate the number of tasks done by comparing previous and current queue size
-                tasks_done = initial_size - self.write_queue.qsize()
-                initial_size = (
-                    self.write_queue.qsize()
-                )  # Update initial size for the next iteration
-                progress_bar.update(
-                    tasks_done
-                )  # Update the progress bar with the number of tasks done
-                logger.debug(
-                    f"Waiting for write queue thread to exit. Size: {initial_size}"
-                )
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
 
             # Close the tqdm progress bar after the loop
-            progress_bar.close()
+            self.write_thread_bar.close()
             self.process_write_batches = False
 
             if not return_concat:
