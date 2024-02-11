@@ -380,8 +380,8 @@ class TextEmbeddingCache:
                     if written_queue_messages > 0:
                         write_thread_bar.update(written_queue_messages)
                     if current_size > 1000:
-                        log_msg = (
-                            f"[WARNING] Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.",
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.\n"
                         )
                         write_thread_bar.write(log_msg)
                         while self.write_queue.qsize() > 0:
