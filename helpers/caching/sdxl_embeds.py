@@ -47,6 +47,7 @@ class TextEmbeddingCache:
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
         self.process_queue_size = process_queue_size
+        self.write_thread_bar = None
         self.text_encoder_batch_size = text_encoder_batch_size
         self.max_workers = max_workers
         self.rank_info = rank_info()
@@ -116,6 +117,7 @@ class TextEmbeddingCache:
                     batch.append(items)
 
                 self.process_write_batch(batch)
+                self.write_thread_bar.update(len(batch))
 
             except queue.Empty:
                 # Timeout occurred, no items were ready
@@ -323,7 +325,7 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
         # )
-        write_thread_bar = tqdm(
+        self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
             ncols=125,
@@ -375,15 +377,11 @@ class TextEmbeddingCache:
                     add_text_embeds = pooled_prompt_embeds
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
-                    written_queue_messages = current_size - last_write_queue_size
-                    last_write_queue_size = current_size
-                    if written_queue_messages > 0:
-                        write_thread_bar.update(written_queue_messages)
                     if current_size > 1000:
                         log_msg = str(
                             f"[WARNING] Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.\n"
                         )
-                        write_thread_bar.write(log_msg)
+                        self.write_thread_bar.write(log_msg)
                         while self.write_queue.qsize() > 0:
                             time.sleep(0.1)
 
@@ -430,7 +428,7 @@ class TextEmbeddingCache:
 
             # Close the tqdm progress bar after the loop
             progress_bar.close()
-            write_thread_bar.close()
+            self.write_thread_bar.close()
             self.process_write_batches = False
 
             if not return_concat:
