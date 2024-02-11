@@ -416,6 +416,30 @@ def main():
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
+    elif args.use_prodigy_optimizer:
+        logger.info("Using Prodigy optimizer. Experimental.")
+        try:
+            import prodigyopt
+        except ImportError:
+            raise ImportError(
+                "To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`"
+            )
+
+        optimizer_class = prodigyopt.Prodigy
+
+        if args.learning_rate <= 0.1:
+            logger.warn(
+                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
+            )
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["beta3"] = args.prodigy_beta3
+        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
+        extra_optimizer_args["eps"] = args.prodigy_epsilon
+        extra_optimizer_args["decouple"] = args.prodigy_decouple
+        extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
+        extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
+        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:

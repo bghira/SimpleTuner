@@ -580,6 +580,7 @@ def main():
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
     elif args.use_prodigy_optimizer:
+        logger.info("Using Prodigy optimizer. Experimental.")
         try:
             import prodigyopt
         except ImportError:
