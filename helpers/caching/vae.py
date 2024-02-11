@@ -450,12 +450,6 @@ class VAECache:
                     self.resolution_type,
                     self.id,
                 )
-                # Write the test images into /tmp/test.img/{time.time()}.png so that we can validate their quality:
-                import time
-
-                # get the basename of the /file/path
-                test_filepath = os.path.basename(filepath)
-                image.save(f"/tmp/test.img/{test_filepath}.png")
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
