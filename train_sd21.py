@@ -264,19 +264,12 @@ def main():
     )
 
     # Load scheduler and models
-    betas_scheduler = DDIMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="scheduler",
-        timestep_spacing="trailing",
-        prediction_type="v_prediction",
-        rescale_betas_zero_snr=True,
-    )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type="v_prediction",
-        timestep_spacing=args.training_scheduler_timestep_spacing,
-        trained_betas=betas_scheduler.betas.clone().detach(),
+        timestep_spacing="trailing",
+        rescale_betas_zero_snr=True,
     )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
