@@ -430,6 +430,7 @@ class TextEmbeddingCache:
 
             # Close the tqdm progress bar after the loop
             progress_bar.close()
+            write_thread_bar.close()
             self.process_write_batches = False
 
             if not return_concat:
