@@ -103,6 +103,12 @@ def compute_latents(filepaths, data_backend_id: str):
 
 def compute_single_embedding(caption, text_embed_cache, is_sdxl):
     """Worker function to compute embedding for a single caption."""
+    if caption == "" or not caption:
+        # Grab the default text embed backend for null caption.
+        text_embed_cache = StateTracker.get_default_text_embed_cache()
+        logger.debug(
+            f"Hashing caption '{caption}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
+        )
     if is_sdxl:
         (
             prompt_embeds,

@@ -264,19 +264,12 @@ def main():
     )
 
     # Load scheduler and models
-    betas_scheduler = DDIMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="scheduler",
-        timestep_spacing="trailing",
-        prediction_type="v_prediction",
-        rescale_betas_zero_snr=True,
-    )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type="v_prediction",
-        timestep_spacing=args.training_scheduler_timestep_spacing,
-        trained_betas=betas_scheduler.betas.clone().detach(),
+        timestep_spacing="trailing",
+        rescale_betas_zero_snr=True,
     )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
@@ -324,9 +317,10 @@ def main():
         # Set correct lora layers
         unet.requires_grad_(False)
         unet_lora_config = LoraConfig(
-            r=args.rank,
-            lora_alpha=args.rank,
-            init_lora_weights="gaussian",
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            init_lora_weights="loftq",
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
         )
 
@@ -422,6 +416,30 @@ def main():
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
+    elif args.use_prodigy_optimizer:
+        logger.info("Using Prodigy optimizer. Experimental.")
+        try:
+            import prodigyopt
+        except ImportError:
+            raise ImportError(
+                "To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`"
+            )
+
+        optimizer_class = prodigyopt.Prodigy
+
+        if args.learning_rate <= 0.1:
+            logger.warn(
+                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
+            )
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["beta3"] = args.prodigy_beta3
+        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
+        extra_optimizer_args["eps"] = args.prodigy_epsilon
+        extra_optimizer_args["decouple"] = args.prodigy_decouple
+        extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
+        extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
+        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -458,6 +476,7 @@ def main():
             extra_optimizer_args["lr"] = args.learning_rate
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
+        logger.info("Using Adafactor optimizer.")
         try:
             from transformers.optimization import Adafactor, AdafactorSchedule
         except ImportError:
@@ -467,13 +486,21 @@ def main():
             )
 
         optimizer_class = Adafactor
-        extra_optimizer_args = {}
-        extra_optimizer_args["lr"] = None
-        extra_optimizer_args["relative_step"] = False
-        extra_optimizer_args["scale_parameter"] = False
+        if args.adafactor_relative_step:
+            extra_optimizer_args["lr"] = None
+            extra_optimizer_args["relative_step"] = True
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = True
+        else:
+            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["relative_step"] = False
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
 
     # Optimizer creation
     if args.model_type == "full":
@@ -1103,7 +1130,10 @@ def main():
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    lr = lr_scheduler.get_last_lr()[0]
+                    if args.use_adafactor_optimizer:
+                        lr = lr_scheduler.get_lr()[0]
+                    else:
+                        lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"

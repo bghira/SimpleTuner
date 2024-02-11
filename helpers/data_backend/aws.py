@@ -313,6 +313,7 @@ class S3DataBackend(BaseDataBackend):
             try:
                 buffer = BytesIO()
                 torch.save(data, buffer)
+                logger.debug(f"Writing torch file: {s3_key}")
                 return self.write(s3_key, buffer.getvalue())
             except Exception as e:
                 logger.error(f"Could not torch save to backend: {e}")

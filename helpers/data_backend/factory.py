@@ -212,6 +212,7 @@ def configure_multi_databackend(
             accelerator=accelerator,
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_type(),
+            write_batch_size=backend.get("write_batch_size", 1024),
         )
 
         if backend.get("default", False):
@@ -339,20 +340,26 @@ def configure_multi_databackend(
             delete_problematic_images=args.delete_problematic_images or False,
         )
 
+        if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
+            "skip_file_discovery", ""
+        ):
+            if accelerator.is_local_main_process:
+                logger.info(
+                    f"(id={init_backend['id']}) Refreshing aspect buckets on main process."
+                )
+                init_backend["bucket_manager"].refresh_buckets(rank_info())
+        accelerator.wait_for_everyone()
+        if not accelerator.is_main_process:
+            logger.info(
+                f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
+            )
+            init_backend["bucket_manager"].reload_cache()
+        accelerator.wait_for_everyone()
         if init_backend["bucket_manager"].has_single_underfilled_bucket():
             raise Exception(
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
                 f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
             )
-        if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
-            "skip_file_discovery", ""
-        ):
-            if accelerator.is_local_main_process:
-                logger.info(f"(id={init_backend['id']}) Refreshing aspect buckets.")
-                init_backend["bucket_manager"].refresh_buckets(rank_info())
-        accelerator.wait_for_everyone()
-        logger.info(f"(id={init_backend['id']}) Reloading bucket manager cache.")
-        init_backend["bucket_manager"].reload_cache()
         # Now split the contents of these buckets between all processes
         init_backend["bucket_manager"].split_buckets_between_processes(
             gradient_accumulation_steps=args.gradient_accumulation_steps,

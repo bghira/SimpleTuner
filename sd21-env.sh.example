@@ -1,3 +1,8 @@
+# Configure these values.
+
+# This is the model type. "lora" is the default, and "full" is to impact the full u-net and possibly text encoder.
+export MODEL_TYPE="lora"
+
 # Valid choices: DEBUG, INFO, WARNING, ERROR
 export SIMPLETUNER_LOG_LEVEL=INFO
 

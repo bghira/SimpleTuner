@@ -1308,6 +1308,131 @@ files = [
 ]
 
 [[package]]
+name = "nvidia-cublas-cu11"
+version = "11.11.3.6"
+description = "CUBLAS native runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cublas_cu11-11.11.3.6-py3-none-manylinux1_x86_64.whl", hash = "sha256:39fb40e8f486dd8a2ddb8fdeefe1d5b28f5b99df01c87ab3676f057a74a5a6f3"},
+    {file = "nvidia_cublas_cu11-11.11.3.6-py3-none-win_amd64.whl", hash = "sha256:6ab12b1302bef8ac1ff4414edd1c059e57f4833abef9151683fb8f4de25900be"},
+]
+
+[[package]]
+name = "nvidia-cuda-cupti-cu11"
+version = "11.8.87"
+description = "CUDA profiling tools runtime libs."
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cuda_cupti_cu11-11.8.87-py3-none-manylinux1_x86_64.whl", hash = "sha256:0e50c707df56c75a2c0703dc6b886f3c97a22f37d6f63839f75b7418ba672a8d"},
+    {file = "nvidia_cuda_cupti_cu11-11.8.87-py3-none-win_amd64.whl", hash = "sha256:4332d8550ad5f5b673f98d08e4e4f82030cb604c66d8d5ee919399ea01312e58"},
+]
+
+[[package]]
+name = "nvidia-cuda-nvrtc-cu11"
+version = "11.8.89"
+description = "NVRTC native runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cuda_nvrtc_cu11-11.8.89-py3-none-manylinux1_x86_64.whl", hash = "sha256:1f27d67b0f72902e9065ae568b4f6268dfe49ba3ed269c9a3da99bb86d1d2008"},
+    {file = "nvidia_cuda_nvrtc_cu11-11.8.89-py3-none-win_amd64.whl", hash = "sha256:e18a23a8f4064664a6f1c4a64f38c581cbebfb5935280e94a4943ea8ae3791b1"},
+]
+
+[[package]]
+name = "nvidia-cuda-runtime-cu11"
+version = "11.8.89"
+description = "CUDA Runtime native Libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cuda_runtime_cu11-11.8.89-py3-none-manylinux1_x86_64.whl", hash = "sha256:f587bd726eb2f7612cf77ce38a2c1e65cf23251ff49437f6161ce0d647f64f7c"},
+    {file = "nvidia_cuda_runtime_cu11-11.8.89-py3-none-win_amd64.whl", hash = "sha256:f60c9fdaed8065b38de8097867240efc5556a8a710007146daeb9082334a6e63"},
+]
+
+[[package]]
+name = "nvidia-cudnn-cu11"
+version = "8.7.0.84"
+description = "cuDNN runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cudnn_cu11-8.7.0.84-py3-none-manylinux1_x86_64.whl", hash = "sha256:b3e062498fbbb1c1930435a6a454c1b41c903e1e65b7063bd2b4021e8285408e"},
+]
+
+[package.dependencies]
+nvidia-cublas-cu11 = "*"
+
+[[package]]
+name = "nvidia-cufft-cu11"
+version = "10.9.0.58"
+description = "CUFFT native runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cufft_cu11-10.9.0.58-py3-none-manylinux1_x86_64.whl", hash = "sha256:222f9da70c80384632fd6035e4c3f16762d64ea7a843829cb278f98b3cb7dd81"},
+    {file = "nvidia_cufft_cu11-10.9.0.58-py3-none-win_amd64.whl", hash = "sha256:c4d316f17c745ec9c728e30409612eaf77a8404c3733cdf6c9c1569634d1ca03"},
+]
+
+[[package]]
+name = "nvidia-curand-cu11"
+version = "10.3.0.86"
+description = "CURAND native runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_curand_cu11-10.3.0.86-py3-none-manylinux1_x86_64.whl", hash = "sha256:ac439548c88580269a1eb6aeb602a5aed32f0dbb20809a31d9ed7d01d77f6bf5"},
+    {file = "nvidia_curand_cu11-10.3.0.86-py3-none-win_amd64.whl", hash = "sha256:8fa8365065fc3e3760d7437b08f164a6bcf8f7124f3b544d2463ded01e6bdc70"},
+]
+
+[[package]]
+name = "nvidia-cusolver-cu11"
+version = "11.4.1.48"
+description = "CUDA solver native runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cusolver_cu11-11.4.1.48-py3-none-manylinux1_x86_64.whl", hash = "sha256:ca538f545645b7e6629140786d3127fe067b3d5a085bd794cde5bfe877c8926f"},
+    {file = "nvidia_cusolver_cu11-11.4.1.48-py3-none-win_amd64.whl", hash = "sha256:7efe43b113495a64e2cf9a0b4365bd53b0a82afb2e2cf91e9f993c9ef5e69ee8"},
+]
+
+[package.dependencies]
+nvidia-cublas-cu11 = "*"
+
+[[package]]
+name = "nvidia-cusparse-cu11"
+version = "11.7.5.86"
+description = "CUSPARSE native runtime libraries"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_cusparse_cu11-11.7.5.86-py3-none-manylinux1_x86_64.whl", hash = "sha256:4ae709fe78d3f23f60acaba8c54b8ad556cf16ca486e0cc1aa92dca7555d2d2b"},
+    {file = "nvidia_cusparse_cu11-11.7.5.86-py3-none-win_amd64.whl", hash = "sha256:a0f6ee81cd91be606fc2f55992d06b09cd4e86d74b6ae5e8dd1631cf7f5a8706"},
+]
+
+[[package]]
+name = "nvidia-nccl-cu11"
+version = "2.19.3"
+description = "NVIDIA Collective Communication Library (NCCL) Runtime"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_nccl_cu11-2.19.3-py3-none-manylinux1_x86_64.whl", hash = "sha256:7c58afbeddf7f7c6b7dd7d84a7f4e85462610ee0c656287388b96d89dcf046d5"},
+]
+
+[[package]]
+name = "nvidia-nvtx-cu11"
+version = "11.8.86"
+description = "NVIDIA Tools Extension"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_nvtx_cu11-11.8.86-py3-none-manylinux1_x86_64.whl", hash = "sha256:890656d8bd9b4e280231c832e1f0d03459200ba4824ddda3dcb59b1e1989b9f5"},
+    {file = "nvidia_nvtx_cu11-11.8.86-py3-none-win_amd64.whl", hash = "sha256:54031010ee38d774b2991004d88f90bbd7bbc1458a96bbc4b42662756508c252"},
+]
+
+[[package]]
 name = "oauthlib"
 version = "3.2.2"
 description = "A generic, spec-compliant, thorough implementation of the OAuth request-signing logic"
@@ -1568,6 +1693,17 @@ mic = ["olefile"]
 tests = ["check-manifest", "coverage", "defusedxml", "markdown2", "olefile", "packaging", "pyroma", "pytest", "pytest-cov", "pytest-timeout"]
 typing = ["typing-extensions"]
 xmp = ["defusedxml"]
+
+[[package]]
+name = "prodigyopt"
+version = "1.0"
+description = "An Adam-like optimizer for neural networks with adaptive estimation of learning rate"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "prodigyopt-1.0-py3-none-any.whl", hash = "sha256:3ca9c44754949e344802fd14868007a05bf16fe4e025c39814e41b1491c783c9"},
+    {file = "prodigyopt-1.0.tar.gz", hash = "sha256:cdbbd99e836fa6eb90afa49f5eb1a7760d634a15976e77e3e8114349abe910ac"},
+]
 
 [[package]]
 name = "protobuf"
@@ -2579,19 +2715,21 @@ testing = ["black (==22.3)", "datasets", "numpy", "pytest", "requests"]
 
 [[package]]
 name = "torch"
-version = "2.1.2+cu118"
+version = "2.2.0+cu118"
 description = "Tensors and Dynamic neural networks in Python with strong GPU acceleration"
 optional = false
 python-versions = ">=3.8.0"
 files = [
-    {file = "torch-2.1.2+cu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:60396358193f238888540f4a38d78485f161e28ec17fa445f0373b5350ef21f0"},
-    {file = "torch-2.1.2+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:0ddfa0336d678316ff4c35172d85cddab5aa5ded4f781158e725096926491db9"},
-    {file = "torch-2.1.2+cu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:051833f6174e672eb313ee1c70dbcaf97e558dc46237215407933d28f40bca85"},
-    {file = "torch-2.1.2+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:623af3c2b94c58951b71e247f39b1b7377cc94d13162a548c59ed9cf81b2b0b2"},
-    {file = "torch-2.1.2+cu118-cp38-cp38-linux_x86_64.whl", hash = "sha256:5f0a8085343b55935052f85447f4649641b45cd07fe940023aef4d8f6a7c4c65"},
-    {file = "torch-2.1.2+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:0fb6318c4895d0700c6479b9c89309ffff62bd86c4fc0ee8673319945c78b275"},
-    {file = "torch-2.1.2+cu118-cp39-cp39-linux_x86_64.whl", hash = "sha256:9a36473dd38eeae4e54b2235d06b92d5e63cedbcc15877eab4a15f152fd90b4a"},
-    {file = "torch-2.1.2+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:256589349b9611195fe585a5aaf616945477f73a22c481311e3dadf12fbc5cb2"},
+    {file = "torch-2.2.0+cu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:4377e0a7fe8ff8ffc4f7c9c6130c1dcd3874050ae4fc28b7ff1d35234fbca423"},
+    {file = "torch-2.2.0+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:fa305dc0e5a20d450cd4d288c7f5045ce788f9c65e0f7a159477f9d835f18c9b"},
+    {file = "torch-2.2.0+cu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:01f947d4dbae6631f33040521c2a7c32fd835d67d190083db154c54e53d6e34f"},
+    {file = "torch-2.2.0+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:a8eda58ee69e6b0eeab2c25674da6a99d8bbf1e6bf4fda96761f953031097b08"},
+    {file = "torch-2.2.0+cu118-cp312-cp312-linux_x86_64.whl", hash = "sha256:e46a40d6a1055a4a4ee8c8ac5a8dfb2c70b7382a00c411b0e9f2c86029b6efc4"},
+    {file = "torch-2.2.0+cu118-cp312-cp312-win_amd64.whl", hash = "sha256:183b17fced6d344cd93a385a0c5f98e3f31abd254b0aed4741e921115d8de7a8"},
+    {file = "torch-2.2.0+cu118-cp38-cp38-linux_x86_64.whl", hash = "sha256:d586b01aaa4ba15ffc3892b87d44803a1138d6372a6eea4d0290ef68f9c809cb"},
+    {file = "torch-2.2.0+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:71801c8c77d2d42f81b220fa15769d4ba48f8f977ca89e7ba928af0c33bcdce3"},
+    {file = "torch-2.2.0+cu118-cp39-cp39-linux_x86_64.whl", hash = "sha256:565c16fb26b035f3845a019732d292d7a167ef15b9732dc8e26ba32dc163436d"},
+    {file = "torch-2.2.0+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:796ce23ee21da57157f10baee7ee5244c6cddb13186408b7bdd9b5f8dea2ae19"},
 ]
 
 [package.dependencies]
@@ -2599,13 +2737,24 @@ filelock = "*"
 fsspec = "*"
 jinja2 = "*"
 networkx = "*"
+nvidia-cublas-cu11 = {version = "11.11.3.6", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cuda-cupti-cu11 = {version = "11.8.87", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cuda-nvrtc-cu11 = {version = "11.8.89", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cuda-runtime-cu11 = {version = "11.8.89", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cudnn-cu11 = {version = "8.7.0.84", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cufft-cu11 = {version = "10.9.0.58", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-curand-cu11 = {version = "10.3.0.86", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cusolver-cu11 = {version = "11.4.1.48", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-cusparse-cu11 = {version = "11.7.5.86", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-nccl-cu11 = {version = "2.19.3", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+nvidia-nvtx-cu11 = {version = "11.8.86", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
 sympy = "*"
-triton = {version = "2.1.0", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
-typing-extensions = "*"
+triton = {version = "2.2.0", markers = "platform_system == \"Linux\" and platform_machine == \"x86_64\""}
+typing-extensions = ">=4.8.0"
 
 [package.extras]
-dynamo = ["jinja2"]
 opt-einsum = ["opt-einsum (>=3.3)"]
+optree = ["optree (>=0.9.1)"]
 
 [package.source]
 type = "legacy"
@@ -2614,23 +2763,25 @@ reference = "pytorch"
 
 [[package]]
 name = "torchaudio"
-version = "2.1.2+cu118"
+version = "2.2.0+cu118"
 description = "An audio package for PyTorch"
 optional = false
 python-versions = "*"
 files = [
-    {file = "torchaudio-2.1.2+cu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:b39468862d34a3a89af4db333bc935a02525a509b2c8949f638f83eb6061da02"},
-    {file = "torchaudio-2.1.2+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:0d02bc0336ee4b3553f0d13f88f61121db2fc21de7b147f4957ecdbcc1dc1c89"},
-    {file = "torchaudio-2.1.2+cu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:f762d7f7dbc2bc49cc53ab0830ae222485d54e34835db549a0d1ad40eb609af3"},
-    {file = "torchaudio-2.1.2+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:598e885648ac94c24920104f185e72fe9f4a9519c2d29b009e47cbc0866e6244"},
-    {file = "torchaudio-2.1.2+cu118-cp38-cp38-linux_x86_64.whl", hash = "sha256:f9504717938c3ebdd7e21b3264f00d5d70ea658d3fb447ecc840e1fd65340463"},
-    {file = "torchaudio-2.1.2+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:94b687ae31db6fb082e975055244199088d58fc2f4111319d7f9baad9e41d4de"},
-    {file = "torchaudio-2.1.2+cu118-cp39-cp39-linux_x86_64.whl", hash = "sha256:8826c91462be0fd214fef2236902e011bc0184a2d677135964e806d332b85450"},
-    {file = "torchaudio-2.1.2+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:1777d348d68abb8b011f862fd169efc248a024d28cb60031a0d767781585b030"},
+    {file = "torchaudio-2.2.0+cu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:c932803b158f8ad66bcf13eff4f1fc3f7c9e6e02c13fb6eda42c0e5fcea99588"},
+    {file = "torchaudio-2.2.0+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:098bff79ca038d491cd166209bcf3a21733ed25a3d14f9e1e4dc2bb36f9a282a"},
+    {file = "torchaudio-2.2.0+cu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:276fa4c68101d3f3f8d4e6921997d423a878aff6c6232dd4c280b4299557a65f"},
+    {file = "torchaudio-2.2.0+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:2b199fed7927e1db913929bdc6558aa8f8a64c6d39c72f4984b16536d7caa55d"},
+    {file = "torchaudio-2.2.0+cu118-cp312-cp312-linux_x86_64.whl", hash = "sha256:05a4cb5b9c0f400609bf657bb51a394b0bdc73a116f52142686cdca002fb69ad"},
+    {file = "torchaudio-2.2.0+cu118-cp312-cp312-win_amd64.whl", hash = "sha256:e693082798dc6a50025aacb933c6eed491db3ca359bb5c284e3114f2ff4d39c9"},
+    {file = "torchaudio-2.2.0+cu118-cp38-cp38-linux_x86_64.whl", hash = "sha256:c4de5a3c8c7ba15767d54df9176dd7dcba00bd77491084617c5e22e8c3e1d8e7"},
+    {file = "torchaudio-2.2.0+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:bed56544c3be1b6bff9954aa7bb923a6f2a12e4d7470efbbd16285ec135d8b0c"},
+    {file = "torchaudio-2.2.0+cu118-cp39-cp39-linux_x86_64.whl", hash = "sha256:32e6f019dc06b113fb312ff54d83919351465e1bb3b7f8fd73a07b05c2887234"},
+    {file = "torchaudio-2.2.0+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:7945d99b68fb910cfc65d7e12774bb3934ce25b61ecba7aca80e9669ff484457"},
 ]
 
 [package.dependencies]
-torch = "2.1.2"
+torch = "2.2.0"
 
 [package.source]
 type = "legacy"
@@ -2684,26 +2835,28 @@ trampoline = ">=0.1.2"
 
 [[package]]
 name = "torchvision"
-version = "0.16.2+cu118"
+version = "0.17.0+cu118"
 description = "image and video datasets and models for torch deep learning"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "torchvision-0.16.2+cu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:18470aef0bbde73f5a6a96135cd457f4d8be31f60be7ceae4ef5174f02f73add"},
-    {file = "torchvision-0.16.2+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:689f2458e8924c47b7ba9f50dca353423b75214184b905d540f69d9b962b2fdf"},
-    {file = "torchvision-0.16.2+cu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:9a784073e801c04066a5e4453306010b67bacfbff12bd57e5d65c1a638584a89"},
-    {file = "torchvision-0.16.2+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:036391a65f3c2ac6dbe4b73ea0acc303dd1c0a667e2a3592a194b2d2db377da1"},
-    {file = "torchvision-0.16.2+cu118-cp38-cp38-linux_x86_64.whl", hash = "sha256:5e4c9f43f3b379c8ce9bc75da0378606fd5ca01c8a82493cc25639bffbd66c74"},
-    {file = "torchvision-0.16.2+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:d3c207437b8be6f451218aa0bcc50ed949b072813bc7f36aa1debdb17f71768e"},
-    {file = "torchvision-0.16.2+cu118-cp39-cp39-linux_x86_64.whl", hash = "sha256:88999dceabb6652b6ede49509722a29753c9206df09ccaa69754f21b58fbdb63"},
-    {file = "torchvision-0.16.2+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:63c70ba3b83915bc165e539103e2e03a69dc63e9660de9adb12bd460428fbffa"},
+    {file = "torchvision-0.17.0+cu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:2e63d62e09d9b48b407d3e1b30eb8ae4e3abad6968e8d33093b60d0657542428"},
+    {file = "torchvision-0.17.0+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:739fb1cedfad4a62f82306c6d819046c6bfa8825857784c7565636d4b92ea104"},
+    {file = "torchvision-0.17.0+cu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:91daefe5523a2052fcb0bd650e12e7037ce7ae51296edd75291cb65ac066808b"},
+    {file = "torchvision-0.17.0+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:af7762d6371187590b1928cb666a6deb609261006d47444a440070775f0769c1"},
+    {file = "torchvision-0.17.0+cu118-cp312-cp312-linux_x86_64.whl", hash = "sha256:b8190f351cd095ca72de9805fc8bd92a52d65c5833c958f40bd1a98981fe77cf"},
+    {file = "torchvision-0.17.0+cu118-cp312-cp312-win_amd64.whl", hash = "sha256:2fb781e00a5b249b94239dcfbec7047e424b4de7b87b8f5b765929e2178f7961"},
+    {file = "torchvision-0.17.0+cu118-cp38-cp38-linux_x86_64.whl", hash = "sha256:2cd9bad00894760edfd486445bcf824411cd03c8ab3dbea5d8b69dd8fdb4aaee"},
+    {file = "torchvision-0.17.0+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:8399e5ef78bf7e69078ec9c1e9d39499baec7441b2a9bacfce0c95318700e59d"},
+    {file = "torchvision-0.17.0+cu118-cp39-cp39-linux_x86_64.whl", hash = "sha256:330d9e845409ec11fe04524b0ecf180d431178ea23f5d8f02929e940e2eeeb4d"},
+    {file = "torchvision-0.17.0+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:b41db55124ce925ace72e2b465250b9f395b8f921ea0568b7158efb999aba5d3"},
 ]
 
 [package.dependencies]
 numpy = "*"
 pillow = ">=5.3.0,<8.3.dev0 || >=8.4.dev0"
 requests = "*"
-torch = "2.1.2"
+torch = "2.2.0"
 
 [package.extras]
 scipy = ["scipy"]
@@ -2813,28 +2966,26 @@ vision = ["Pillow (>=10.0.1,<=15.0)"]
 
 [[package]]
 name = "triton"
-version = "2.1.0"
+version = "2.2.0"
 description = "A language and compiler for custom Deep Learning operations"
 optional = false
 python-versions = "*"
 files = [
-    {file = "triton-2.1.0-0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:66439923a30d5d48399b08a9eae10370f6c261a5ec864a64983bae63152d39d7"},
-    {file = "triton-2.1.0-0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:919b06453f0033ea52c13eaf7833de0e57db3178d23d4e04f9fc71c4f2c32bf8"},
-    {file = "triton-2.1.0-0-cp37-cp37m-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ae4bb8a91de790e1866405211c4d618379781188f40d5c4c399766914e84cd94"},
-    {file = "triton-2.1.0-0-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:39f6fb6bdccb3e98f3152e3fbea724f1aeae7d749412bbb1fa9c441d474eba26"},
-    {file = "triton-2.1.0-0-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:21544e522c02005a626c8ad63d39bdff2f31d41069592919ef281e964ed26446"},
-    {file = "triton-2.1.0-0-pp37-pypy37_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:143582ca31dd89cd982bd3bf53666bab1c7527d41e185f9e3d8a3051ce1b663b"},
-    {file = "triton-2.1.0-0-pp38-pypy38_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:82fc5aeeedf6e36be4e4530cbdcba81a09d65c18e02f52dc298696d45721f3bd"},
-    {file = "triton-2.1.0-0-pp39-pypy39_pp73-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:81a96d110a738ff63339fc892ded095b31bd0d205e3aace262af8400d40b6fa8"},
+    {file = "triton-2.2.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a2294514340cfe4e8f4f9e5c66c702744c4a117d25e618bd08469d0bfed1e2e5"},
+    {file = "triton-2.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:da58a152bddb62cafa9a857dd2bc1f886dbf9f9c90a2b5da82157cd2b34392b0"},
+    {file = "triton-2.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0af58716e721460a61886668b205963dc4d1e4ac20508cc3f623aef0d70283d5"},
+    {file = "triton-2.2.0-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e8fe46d3ab94a8103e291bd44c741cc294b91d1d81c1a2888254cbf7ff846dab"},
+    {file = "triton-2.2.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b8ce26093e539d727e7cf6f6f0d932b1ab0574dc02567e684377630d86723ace"},
+    {file = "triton-2.2.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:227cc6f357c5efcb357f3867ac2a8e7ecea2298cd4606a8ba1e931d1d5a947df"},
 ]
 
 [package.dependencies]
 filelock = "*"
 
 [package.extras]
-build = ["cmake (>=3.18)", "lit"]
-tests = ["autopep8", "flake8", "isort", "numpy", "pytest", "scipy (>=1.7.1)"]
-tutorials = ["matplotlib", "pandas", "tabulate"]
+build = ["cmake (>=3.20)", "lit"]
+tests = ["autopep8", "flake8", "isort", "numpy", "pytest", "scipy (>=1.7.1)", "torch"]
+tutorials = ["matplotlib", "pandas", "tabulate", "torch"]
 
 [[package]]
 name = "triton-library"
@@ -2964,24 +3115,24 @@ watchdog = ["watchdog (>=2.3)"]
 
 [[package]]
 name = "xformers"
-version = "0.0.23.post1+cu118"
+version = "0.0.24+cu118"
 description = "XFormers: A collection of composable Transformer building blocks."
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "xformers-0.0.23.post1+cu118-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:dc5f828dbe187c1bf69d41853a55170d2506ff4c40fc0dfbea3bc7e18daed2e5"},
-    {file = "xformers-0.0.23.post1+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:bb845f1dfe21dec3ccaf2c94adabf46bd604ac5bbfb35379340816914b1ce00a"},
-    {file = "xformers-0.0.23.post1+cu118-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:40930e63a16ca3bc0e12984490a5e74d3a13cbe7a26a23124e4d83205aa69d74"},
-    {file = "xformers-0.0.23.post1+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:8c232bccf88e19de91b545a2b29886c5684bf5d1f7014b6a3d126e481b5e01ee"},
-    {file = "xformers-0.0.23.post1+cu118-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:ab216c008c23c09e0658b760fd683d057178287620ae0a9a2a6e2f2d421348cd"},
-    {file = "xformers-0.0.23.post1+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:6f3102134d300c59d31463cc12aae4864cb8dade2668bcd34198fcfd58ea08f8"},
-    {file = "xformers-0.0.23.post1+cu118-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:0905e12df37c9027e8286c1382d459cae675f10a82d9ddb4a9312f93439583cd"},
-    {file = "xformers-0.0.23.post1+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:103820665654b3e21257b1d5711b9fdda34b4a272f9de4b7c047bc4af292e60c"},
+    {file = "xformers-0.0.24+cu118-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:e15b3b4e6c3aec8ea66c6fd96c60c8220bf48256d3331c4f085b873fa072c10d"},
+    {file = "xformers-0.0.24+cu118-cp310-cp310-win_amd64.whl", hash = "sha256:9a701ee428eb1f44f854a77d70f345650e9bfc91cc73be27026f13f4a1d03bdd"},
+    {file = "xformers-0.0.24+cu118-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:387dc0def94db0367b4b8e350b1402a0b336d91d8d718b49c51030b60a1bead2"},
+    {file = "xformers-0.0.24+cu118-cp311-cp311-win_amd64.whl", hash = "sha256:deb9ceac347f478e4b1ebaed969c0e0389107c268195023860d20b1504eeedbf"},
+    {file = "xformers-0.0.24+cu118-cp38-cp38-manylinux2014_x86_64.whl", hash = "sha256:21339dbdb4bfe149ba37f77ec049351b1e4dc57bde2ebdda255c71daffef18c4"},
+    {file = "xformers-0.0.24+cu118-cp38-cp38-win_amd64.whl", hash = "sha256:0cf379d0a88cd3abcc6e05221a5dc9cb1b7dfac1e5a3ab366e9d5ea624f648ca"},
+    {file = "xformers-0.0.24+cu118-cp39-cp39-manylinux2014_x86_64.whl", hash = "sha256:d5c7eb29a3bba26aeaeaa314253f4deac26e7bbfddabb839a5f430f38bf632d3"},
+    {file = "xformers-0.0.24+cu118-cp39-cp39-win_amd64.whl", hash = "sha256:c5ea36fd8e86ded344ccb82a3af92fd6e59082c1866fb30012188d62577f0654"},
 ]
 
 [package.dependencies]
 numpy = "*"
-torch = "2.1.2"
+torch = "2.2.0"
 
 [package.source]
 type = "legacy"
@@ -3226,4 +3377,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "70a2d93c7238c68aa8a17868b21fce18ccd1107149f33795946250e6358ac532"
+content-hash = "c90aac001d9674c6e5fac34204f134f5b22ffe293e31b9af98358892cb55ad2f"

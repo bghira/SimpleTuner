@@ -29,10 +29,26 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--rank",
+        "--lora_rank",
         type=int,
-        default=4,
+        default=16,
         help=("The dimension of the LoRA update matrices."),
+    )
+    parser.add_argument(
+        "--lora_alpha",
+        type=float,
+        default=16,
+        help=(
+            "The alpha value for the LoRA model. This is the learning rate for the LoRA update matrices."
+        ),
+    )
+    parser.add_argument(
+        "--lora_dropout",
+        type=float,
+        default=0.1,
+        help=(
+            "LoRA dropout randomly ignores neurons during training. This can help prevent overfitting."
+        ),
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",
@@ -462,6 +478,12 @@ def parse_args(input_args=None):
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
+        "--text_encoder_lr",
+        type=float,
+        default=None,
+        help="Learning rate for the text encoder. If not provided, the value of --learning_rate will be used.",
+    )
+    parser.add_argument(
         "--lr_scale",
         action="store_true",
         default=False,
@@ -542,6 +564,68 @@ def parse_args(input_args=None):
         help="Whether or not to use the Adafactor optimizer.",
     )
     parser.add_argument(
+        "--adafactor_relative_step",
+        type=bool,
+        default=False,
+        help=(
+            "When set, will use the experimental Adafactor mode for relative step computations instead of the value set by --learning_rate."
+            " This is an experimental feature, and you are on your own for support."
+        ),
+    )
+    parser.add_argument(
+        "--use_prodigy_optimizer",
+        action="store_true",
+        help="Whether or not to use the Prodigy optimizer.",
+    )
+    parser.add_argument(
+        "--prodigy_beta3",
+        type=float,
+        default=None,
+        help="coefficients for computing the Prodidy stepsize using running averages. If set to None, "
+        "uses the value of square root of beta2. Ignored if optimizer is adamW",
+    )
+    parser.add_argument(
+        "--prodigy_decouple",
+        type=bool,
+        default=True,
+        help="Use AdamW style decoupled weight decay",
+    )
+    parser.add_argument(
+        "--prodigy_use_bias_correction",
+        type=bool,
+        default=True,
+        help="Turn on Adam's bias correction. True by default. Ignored if optimizer is adamW",
+    )
+    parser.add_argument(
+        "--prodigy_safeguard_warmup",
+        type=bool,
+        default=True,
+        help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage. True by default. "
+        "Ignored if optimizer is adamW",
+    )
+    parser.add_argument(
+        "--prodigy_learning_rate",
+        type=float,
+        default=0.5,
+        help=(
+            "Though this is called the prodigy learning rate, it corresponds to the d_coef parameter in the Prodigy optimizer."
+            " This acts as a coefficient in the expression for the estimate of d. Default for this trainer is 0.5, but the Prodigy"
+            " default is 1.0, which ends up over-cooking models."
+        ),
+    )
+    parser.add_argument(
+        "--prodigy_weight_decay",
+        type=float,
+        default=1e-2,
+        help="Weight decay to use. Prodigy default is 0, but SimpleTuner uses 1e-2.",
+    )
+    parser.add_argument(
+        "--prodigy_epsilon",
+        type=float,
+        default=1e-08,
+        help="Epsilon value for the Adam optimizer",
+    )
+    parser.add_argument(
         "--use_dadapt_optimizer",
         action="store_true",
         help="Whether or not to use the discriminator adaptation optimizer.",
@@ -556,13 +640,13 @@ def parse_args(input_args=None):
         "--adam_beta1",
         type=float,
         default=0.9,
-        help="The beta1 parameter for the Adam optimizer.",
+        help="The beta1 parameter for the Adam and other optimizers.",
     )
     parser.add_argument(
         "--adam_beta2",
         type=float,
         default=0.999,
-        help="The beta2 parameter for the Adam optimizer.",
+        help="The beta2 parameter for the Adam and other optimizers.",
     )
     parser.add_argument(
         "--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use."
@@ -585,7 +669,10 @@ def parse_args(input_args=None):
         "--hub_token",
         type=str,
         default=None,
-        help="The token to use to push to the Model Hub.",
+        help=(
+            "The token to use to push to the Model Hub. Do not use in combination with --report_to=wandb,"
+            " as this value will be exposed in the logs. Instead, use `huggingface-cli login` on the command line."
+        ),
     )
     parser.add_argument(
         "--hub_model_id",
@@ -970,6 +1057,12 @@ def parse_args(input_args=None):
         args = parser.parse_args(input_args)
     else:
         args = parser.parse_args()
+
+    if args.report_to == "wandb" and args.hub_token is not None:
+        raise ValueError(
+            "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
+            " Please use `huggingface-cli login` to authenticate with the Hub."
+        )
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:

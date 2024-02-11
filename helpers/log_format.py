@@ -67,3 +67,19 @@ warnings.filterwarnings(
     module="transformers.deepspeed",
     message="transformers.deepspeed module is deprecated and will be removed in a future version. Please import deepspeed modules directly from transformers.integrations",
 )
+
+# Ignore torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module="torch.utils._pytree",
+    message="torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.",
+)
+
+warnings.filterwarnings(
+    "ignore",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*is deprecated.*",
+)

@@ -5,6 +5,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.prompts import PromptHandler
 from helpers.training.multi_process import rank_info
 from queue import Queue
+import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 
@@ -46,6 +47,7 @@ class TextEmbeddingCache:
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
         self.process_queue_size = process_queue_size
+        self.write_thread_bar = None
         self.text_encoder_batch_size = text_encoder_batch_size
         self.max_workers = max_workers
         self.rank_info = rank_info()
@@ -101,31 +103,31 @@ class TextEmbeddingCache:
 
     def batch_write_embeddings(self):
         """Process write requests in batches."""
-        while True:
-            batch = []
-            while not self.write_queue.empty() and len(batch) < self.write_batch_size:
-                items = self.write_queue.get()
-                batch.append(items)
+        while self.process_write_batches:
+            try:
+                # Block until an item is available or timeout occurs
+                first_item = self.write_queue.get(timeout=1)
+                batch = [first_item]
 
-            if len(batch) >= self.write_batch_size:
-                self.process_write_batch(batch)
-            elif self.write_queue.empty() and len(batch) > 0:
-                self.process_write_batch(batch)
+                # Try to get more items without blocking
+                while (
+                    not self.write_queue.empty() and len(batch) < self.write_batch_size
+                ):
+                    items = self.write_queue.get_nowait()
+                    batch.append(items)
 
-            check_interval = 5
-            # How many items exist in the queue should influence the interval. If the queue is empty, we can wait longer.
-            if self.write_queue.qsize() > 0:
-                check_interval = 0.001
-            time.sleep(
-                float(
-                    os.environ.get(
-                        "SIMPLETUNER_BATCH_WRITE_SLEEP_INTERVAL", check_interval
-                    )
-                )
-            )  # Prevents the thread from being too busy-waiting
+                self.process_write_batch(batch)
+                self.write_thread_bar.update(len(batch))
+
+            except queue.Empty:
+                # Timeout occurred, no items were ready
+                pass
+            except Exception as e:
+                logger.exception("An error occurred while writing embeddings to disk.")
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
+        logger.debug(f"Writing {len(batch)} items to disk")
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = [
                 executor.submit(self.data_backend.torch_save, *args) for args in batch
@@ -320,9 +322,18 @@ class TextEmbeddingCache:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
-        self.debug_log(
-            f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
+        # self.debug_log(
+        #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
+        # )
+        self.write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(prompts or self.prompts),
+            position=0,
         )
+        last_write_queue_size = 0
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -330,11 +341,15 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
+                position=1,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                logger.debug(debug_msg)
                 if return_concat and load_from_cache:
                     try:
                         # We attempt to load.
@@ -346,12 +361,13 @@ class TextEmbeddingCache:
                             f"\n-> prompt: {prompt}"
                             f"\n-> filename: {filename}"
                             f"\n-> error: {e}"
+                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
                         )
                         should_encode = True
                         raise Exception("This won't work. We cannot continue.")
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    self.debug_log(f"Encoding prompt: {prompt}")
+                    # self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sdxl_prompts(
                         self.text_encoders,
                         self.tokenizers,
@@ -359,6 +375,17 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
+                    # Get the current size of the queue.
+                    current_size = self.write_queue.qsize()
+                    if current_size >= 2048:
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large."
+                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
+                        )
+                        self.write_thread_bar.write(log_msg)
+                        while self.write_queue.qsize() > 100:
+                            time.sleep(0.1)
+
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
@@ -374,10 +401,35 @@ class TextEmbeddingCache:
                     prompt_embeds_all.append(prompt_embeds)
                     add_text_embeds_all.append(add_text_embeds)
 
-            # Wait for the batch write thread to finish, showing a spinner
+            # Before starting the loop, create a tqdm progress bar
+            progress_bar = tqdm(
+                total=self.write_queue.qsize(),
+                desc="Waiting for write queue",
+                leave=False,
+                ncols=125,
+                disable=return_concat,
+            )
+
+            # Initial size of the queue to calculate updates
+            initial_size = self.write_queue.qsize()
+
             while self.write_queue.qsize() > 0:
-                # Loading spinner
-                time.sleep(0.1)
+                # Calculate the number of tasks done by comparing previous and current queue size
+                tasks_done = initial_size - self.write_queue.qsize()
+                initial_size = (
+                    self.write_queue.qsize()
+                )  # Update initial size for the next iteration
+                progress_bar.update(
+                    tasks_done
+                )  # Update the progress bar with the number of tasks done
+                logger.debug(
+                    f"Waiting for write queue thread to exit. Size: {initial_size}"
+                )
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            progress_bar.close()
+            self.write_thread_bar.close()
             self.process_write_batches = False
 
             if not return_concat:
@@ -407,9 +459,9 @@ class TextEmbeddingCache:
         ):
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             should_encode = True
-        self.debug_log(
-            f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
-        )
+        # self.debug_log(
+        #     f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
+        # )
 
         with torch.no_grad():
             for prompt in tqdm(
@@ -440,7 +492,7 @@ class TextEmbeddingCache:
                         raise Exception("This won't work. We cannot continue.")
 
                 if should_encode:
-                    self.debug_log(f"Encoding prompt: {prompt}")
+                    # self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds = self.encode_legacy_prompt(
                         self.text_encoders[0], self.tokenizers[0], [prompt]
                     )
@@ -449,10 +501,34 @@ class TextEmbeddingCache:
 
                 prompt_embeds_all.append(prompt_embeds)
 
-            # Wait for the batch write thread to finish, showing a spinner
+            # Before starting the loop, create a tqdm progress bar
+            progress_bar = tqdm(
+                total=self.write_queue.qsize(),
+                desc="Waiting for write queue",
+                leave=False,
+                ncols=125,
+                disable=return_concat,
+            )
+
+            # Initial size of the queue to calculate updates
+            initial_size = self.write_queue.qsize()
+
             while self.write_queue.qsize() > 0:
-                # Loading spinner
-                time.sleep(0.1)
+                # Calculate the number of tasks done by comparing previous and current queue size
+                tasks_done = initial_size - self.write_queue.qsize()
+                initial_size = (
+                    self.write_queue.qsize()
+                )  # Update initial size for the next iteration
+                progress_bar.update(
+                    tasks_done
+                )  # Update the progress bar with the number of tasks done
+                logger.debug(
+                    f"Waiting for write queue thread to exit. Size: {initial_size}"
+                )
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            progress_bar.close()
             self.process_write_batches = False
 
             if not return_concat:

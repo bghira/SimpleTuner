@@ -158,7 +158,7 @@ def main():
     StateTracker.set_accelerator(accelerator)
 
     # Make one log on every process with the configuration for debugging.
-    logger.info(accelerator.state, main_process_only=True)
+    # logger.info(accelerator.state, main_process_only=True)
     if accelerator.is_local_main_process:
         transformers.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
@@ -286,19 +286,12 @@ def main():
     )
 
     # Load scheduler and models
-    betas_scheduler = DDIMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="scheduler",
-        prediction_type=args.prediction_type,
-        timestep_spacing=args.training_scheduler_timestep_spacing,
-        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-    )
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
         prediction_type=args.prediction_type,
+        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
         timestep_spacing=args.training_scheduler_timestep_spacing,
-        trained_betas=betas_scheduler.betas.numpy().tolist(),
     )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
@@ -368,9 +361,10 @@ def main():
         # Set correct lora layers
         unet.requires_grad_(False)
         unet_lora_config = LoraConfig(
-            r=args.rank,
-            lora_alpha=args.rank,
-            init_lora_weights="gaussian",
+            r=args.lora_rank,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            init_lora_weights="loftq",
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
         )
 
@@ -585,6 +579,30 @@ def main():
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
+    elif args.use_prodigy_optimizer:
+        logger.info("Using Prodigy optimizer. Experimental.")
+        try:
+            import prodigyopt
+        except ImportError:
+            raise ImportError(
+                "To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`"
+            )
+
+        optimizer_class = prodigyopt.Prodigy
+
+        if args.learning_rate <= 0.1:
+            logger.warn(
+                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
+            )
+        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["beta3"] = args.prodigy_beta3
+        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
+        extra_optimizer_args["eps"] = args.prodigy_epsilon
+        extra_optimizer_args["decouple"] = args.prodigy_decouple
+        extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
+        extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
+        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -621,6 +639,7 @@ def main():
             extra_optimizer_args["lr"] = args.learning_rate
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
+        logger.info("Using Adafactor optimizer.")
         try:
             from transformers.optimization import Adafactor, AdafactorSchedule
         except ImportError:
@@ -631,12 +650,21 @@ def main():
 
         optimizer_class = Adafactor
         extra_optimizer_args = {}
-        extra_optimizer_args["lr"] = None
-        extra_optimizer_args["relative_step"] = True
-        extra_optimizer_args["scale_parameter"] = False
+        if args.adafactor_relative_step:
+            extra_optimizer_args["lr"] = None
+            extra_optimizer_args["relative_step"] = True
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = True
+        else:
+            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["relative_step"] = False
+            extra_optimizer_args["scale_parameter"] = False
+            extra_optimizer_args["warmup_init"] = False
     else:
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
 
     if args.model_type == "full":
         params_to_optimize = unet.parameters()
@@ -657,8 +685,18 @@ def main():
         optimizer = optimizer_class(params_to_optimize)
     else:
         logger.info(
-            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}"
+            f"Optimizer arguments, weight_decay={args.adam_weight_decay} eps={args.adam_epsilon}, extra_arguments={extra_optimizer_args}"
         )
+        if args.train_text_encoder and args.text_encoder_lr:
+            logger.warn(
+                f"Learning rates were provided both for the unet and the text encoder- e.g. text_encoder_lr:"
+                f" {args.text_encoder_lr} and learning_rate: {args.learning_rate}. "
+                f"When using prodigy only learning_rate is used as the initial learning rate."
+            )
+            # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
+            # --learning_rate
+            params_to_optimize[1]["lr"] = args.learning_rate
+            params_to_optimize[2]["lr"] = args.learning_rate
         optimizer = optimizer_class(
             params_to_optimize,
             **extra_optimizer_args,
@@ -671,9 +709,14 @@ def main():
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
         )
-    elif args.use_adafactor_optimizer:
+    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
         # Use the AdafactorScheduler.
-        lr_scheduler = AdafactorSchedule(optimizer)
+        logger.info(
+            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
+        )
+        lr_scheduler = AdafactorSchedule(
+            optimizer=optimizer, initial_lr=args.learning_rate
+        )
     elif args.lr_scheduler == "cosine_with_restarts":
         from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
@@ -1105,7 +1148,7 @@ def main():
                 )
 
                 # SDXL additional inputs - probabilistic dropout
-                encoder_hidden_states = batch["prompt_embeds"]
+                encoder_hidden_states = batch["prompt_embeds"].to(weight_dtype)
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
@@ -1213,7 +1256,8 @@ def main():
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     training_logger.debug(f"Backwards pass.")
                     accelerator.backward(loss)
-                    if accelerator.sync_gradients:
+                    if accelerator.sync_gradients and not args.use_adafactor_optimizer:
+                        # Adafactor shouldn't have gradient clipping applied.
                         accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
@@ -1225,7 +1269,10 @@ def main():
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    lr = lr_scheduler.get_last_lr()[0]
+                    if args.use_adafactor_optimizer:
+                        lr = lr_scheduler.get_lr()[0]
+                    else:
+                        lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
@@ -1251,7 +1298,7 @@ def main():
                     logs["ema_decay_value"] = ema_decay_value
 
                 # Log scatter plot to wandb
-                if args.report_to == "wandb":
+                if args.report_to == "wandb" and accelerator.is_main_process:
                     # Prepare the data for the scatter plot
                     data = [
                         [iteration, timestep]
