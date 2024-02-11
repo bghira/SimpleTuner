@@ -98,14 +98,6 @@ class TextEmbeddingCache:
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
-        # Get the current size of the queue.
-        current_size = self.write_queue.qsize()
-        if current_size > 1000:
-            logger.warning(
-                f"Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up."
-            )
-            while self.write_queue.qsize() > 0:
-                time.sleep(0.1)
         self.write_queue.put((embeddings, filename))
 
     def batch_write_embeddings(self):
@@ -331,6 +323,15 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
         # )
+        write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(prompts or self.prompts),
+            position=0,
+        )
+        last_write_queue_size = 0
         with torch.no_grad():
             for prompt in tqdm(
                 prompts or self.prompts,
@@ -338,6 +339,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
+                position=1,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -371,6 +373,30 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
+                    # Get the current size of the queue.
+                    current_size = self.write_queue.qsize()
+                    written_queue_messages = current_size - last_write_queue_size
+                    last_write_queue_size = current_size
+                    if written_queue_messages > 0:
+                        write_thread_bar.update(written_queue_messages)
+                    if current_size > 1000:
+                        # Grab log formatter from 'logger' and use it to format a message.
+                        log_formatter = logger.handlers[0].formatter
+                        formatted_message = log_formatter.format(
+                            logging.LogRecord(
+                                "TextEmbeddingCache",
+                                logging.WARNING,
+                                "helpers/caching/sdxl_embeds.py",
+                                0,
+                                f"Write queue size is {current_size}. This is quite large. Consider increasing the write batch size. Delaying encode so that writes can catch up.",
+                                (),
+                                None,
+                            )
+                        )
+                        progress_bar.write(formatted_message)
+                        while self.write_queue.qsize() > 0:
+                            time.sleep(0.1)
+
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
                     if return_concat:
