@@ -99,11 +99,15 @@ class TextEmbeddingCache:
 
     def save_to_cache(self, filename, embeddings):
         """Add write requests to the queue instead of writing directly."""
+        self.process_write_batches = True
         self.write_queue.put((embeddings, filename))
+        logger.debug(
+            f"save_to_cache called for {filename}, write queue has {self.write_queue.qsize()} items, and the write thread's status: {self.batch_write_thread.is_alive()}"
+        )
 
     def batch_write_embeddings(self):
         """Process write requests in batches."""
-        while self.process_write_batches:
+        while True:
             try:
                 # Block until an item is available or timeout occurs
                 first_item = self.write_queue.get(timeout=1)
@@ -124,6 +128,7 @@ class TextEmbeddingCache:
                 pass
             except Exception as e:
                 logger.exception("An error occurred while writing embeddings to disk.")
+        logger.debug("Exiting background batch write thread.")
 
     def process_write_batch(self, batch):
         """Write a batch of embeddings to the cache."""
@@ -260,6 +265,7 @@ class TextEmbeddingCache:
         load_from_cache: bool = True,
     ):
         if not self.batch_write_thread.is_alive():
+            logger.debug("Restarting background write thread.")
             # Start the thread again.
             self.process_write_batches = True
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)
@@ -485,7 +491,8 @@ class TextEmbeddingCache:
                         )
                         self.write_thread_bar.write(log_msg)
                         while self.write_queue.qsize() > 100:
-                            time.sleep(0.1)
+                            logger.debug(f"Waiting for write thread to catch up.")
+                            time.sleep(5)
                     prompt_embeds = self.encode_legacy_prompt(
                         self.text_encoders[0], self.tokenizers[0], [prompt]
                     )
