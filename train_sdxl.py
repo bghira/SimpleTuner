@@ -718,6 +718,10 @@ def main():
             optimizer=optimizer, initial_lr=args.learning_rate
         )
     elif args.lr_scheduler == "cosine_with_restarts":
+        logger.info(f"Using Cosine with Restarts learning rate scheduler.")
+        logger.warning(
+            f"cosine_with_restarts is currently misbehaving, and may not do what you expect. sine is recommended instead."
+        )
         from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
         lr_scheduler = CosineAnnealingHardRestarts(
@@ -729,7 +733,21 @@ def main():
             verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
             == "true",
         )
+    elif args.lr_scheduler == "sine":
+        logger.info(f"Using Sine learning rate scheduler.")
+        from helpers.training.custom_schedule import Sine
+
+        lr_scheduler = Sine(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
     elif args.lr_scheduler == "cosine":
+        logger.info(f"Using Cosine learning rate scheduler.")
         from helpers.training.custom_schedule import Cosine
 
         lr_scheduler = Cosine(
@@ -742,6 +760,7 @@ def main():
             == "true",
         )
     elif args.lr_scheduler == "polynomial":
+        logger.info(f"Using Polynomial learning rate scheduler.")
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
@@ -751,6 +770,7 @@ def main():
             last_epoch=-1,
         )
     else:
+        logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
             optimizer=optimizer,
@@ -1256,7 +1276,11 @@ def main():
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     training_logger.debug(f"Backwards pass.")
                     accelerator.backward(loss)
-                    if accelerator.sync_gradients and not args.use_adafactor_optimizer:
+                    if (
+                        accelerator.sync_gradients
+                        and not args.use_adafactor_optimizer
+                        and args.max_grad_norm > 0
+                    ):
                         # Adafactor shouldn't have gradient clipping applied.
                         accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
