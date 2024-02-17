@@ -228,33 +228,47 @@ class PromptHandler:
         prepend_instance_prompt: bool,
         instance_prompt: str = None,
     ) -> str:
+        if not use_captions:
+            if not instance_prompt:
+                raise ValueError(
+                    "Instance prompt is required when instance_prompt_only is enabled."
+                )
+            return instance_prompt
         image_caption = Path(image_path).stem
-        if use_captions:
-            # Underscores to spaces.
-            image_caption = image_caption.replace("_", " ")
-            # Remove some midjourney messes.
-            image_caption = image_caption.split("upscaled by")[0]
-            image_caption = image_caption.split("upscaled beta")[0]
-            if prepend_instance_prompt:
-                image_caption = image_caption + " " + instance_prompt
+        # Underscores to spaces.
+        image_caption = image_caption.replace("_", " ")
+        if prepend_instance_prompt:
+            image_caption = instance_prompt + " " + image_caption
         return image_caption
 
     @staticmethod
     def prepare_instance_prompt_from_textfile(
-        image_path: str, data_backend: BaseDataBackend
+        image_path: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
+        instance_prompt: str = None,
     ) -> str:
+        if not use_captions:
+            if not instance_prompt:
+                raise ValueError(
+                    "Instance prompt is required when instance_prompt_only is enabled."
+                )
+            return instance_prompt
         caption_file = os.path.splitext(image_path)[0] + ".txt"
         if not data_backend.exists(caption_file):
             raise FileNotFoundError(f"Caption file {caption_file} not found.")
         try:
-            instance_prompt = data_backend.read(caption_file)
-
+            image_caption = data_backend.read(caption_file)
             # Convert from bytes to str:
-            if type(instance_prompt) == bytes:
-                result = instance_prompt.decode("utf-8")
+            if type(image_caption) == bytes:
+                image_caption = image_caption.decode("utf-8")
             else:
-                result = instance_prompt
-            return result
+                image_caption = image_caption
+            if prepend_instance_prompt:
+                image_caption = instance_prompt + " " + image_caption
+
+            return image_caption
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")
 
@@ -344,9 +358,7 @@ class PromptHandler:
                     data_backend=data_backend,
                 )
             elif caption_strategy == "instanceprompt":
-                return backend_config.get(
-                    "instance_prompt", StateTracker.get_args().instance_prompt
-                )
+                return instance_prompt
             captions.append(caption)
 
         return captions
