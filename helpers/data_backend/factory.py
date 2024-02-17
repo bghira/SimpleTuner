@@ -436,6 +436,7 @@ def configure_multi_databackend(
             prepend_instance_prompt=backend.get(
                 "prepend_instance_prompt", args.prepend_instance_prompt
             ),
+            instance_prompt=backend.get("instance_prompt", args.instance_prompt),
         )
 
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
@@ -451,15 +452,22 @@ def configure_multi_databackend(
         init_backend["text_embed_cache"] = text_embed_backends[text_embed_id][
             "text_embed_cache"
         ]
+        prepend_instance_prompt = backend.get(
+            "prepend_instance_prompt", args.prepend_instance_prompt
+        )
+        instance_prompt = backend.get("instance_prompt", args.instance_prompt)
+        if prepend_instance_prompt and instance_prompt is None:
+            raise ValueError(
+                f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
+            )
 
         with accelerator.main_process_first():
             # We get captions from the IMAGE dataset. Not the text embeds dataset.
             captions = PromptHandler.get_all_captions(
                 data_backend=init_backend["data_backend"],
                 instance_data_root=init_backend["instance_data_root"],
-                prepend_instance_prompt=backend.get(
-                    "prepend_instance_prompt", args.prepend_instance_prompt
-                ),
+                prepend_instance_prompt=prepend_instance_prompt,
+                instance_prompt=instance_prompt,
                 use_captions=use_captions,
                 caption_strategy=backend.get("caption_strategy", args.caption_strategy),
             )

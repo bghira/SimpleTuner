@@ -222,22 +222,22 @@ class PromptHandler:
         self.tokenizers = tokenizers
 
     @staticmethod
-    def prepare_instance_prompt(
+    def prepare_instance_prompt_from_filename(
         image_path: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
         instance_prompt: str = None,
     ) -> str:
-        instance_prompt = Path(image_path).stem
+        image_caption = Path(image_path).stem
         if use_captions:
             # Underscores to spaces.
-            instance_prompt = instance_prompt.replace("_", " ")
+            image_caption = image_caption.replace("_", " ")
             # Remove some midjourney messes.
-            instance_prompt = instance_prompt.split("upscaled by")[0]
-            instance_prompt = instance_prompt.split("upscaled beta")[0]
+            image_caption = image_caption.split("upscaled by")[0]
+            image_caption = image_caption.split("upscaled beta")[0]
             if prepend_instance_prompt:
-                instance_prompt = instance_prompt + " " + instance_prompt
-        return instance_prompt
+                image_caption = image_caption + " " + instance_prompt
+        return image_caption
 
     @staticmethod
     def prepare_instance_prompt_from_textfile(
@@ -261,10 +261,11 @@ class PromptHandler:
     @staticmethod
     def magic_prompt(
         image_path: str,
-        caption_strategy: str,
         use_captions: bool,
+        caption_strategy: str,
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
+        instance_prompt: str = None,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -281,14 +282,19 @@ class PromptHandler:
             _type_: _description_
         """
         if caption_strategy == "filename":
-            instance_prompt = PromptHandler.prepare_instance_prompt(
+            instance_prompt = PromptHandler.prepare_instance_prompt_from_filename(
                 image_path=image_path,
                 use_captions=use_captions,
                 prepend_instance_prompt=prepend_instance_prompt,
+                instance_prompt=instance_prompt,
             )
         elif caption_strategy == "textfile":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
-                image_path, data_backend=data_backend
+                image_path,
+                use_captions=use_captions,
+                prepend_instance_prompt=prepend_instance_prompt,
+                instance_prompt=instance_prompt,
+                data_backend=data_backend,
             )
         else:
             raise ValueError(f"Unsupported caption strategy: {caption_strategy}")
@@ -301,6 +307,7 @@ class PromptHandler:
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
         caption_strategy: str,
+        instance_prompt: str = None,
     ) -> list:
         captions = []
         all_image_files = StateTracker.get_image_files(
@@ -322,14 +329,19 @@ class PromptHandler:
             ncols=125,
         ):
             if caption_strategy == "filename":
-                caption = PromptHandler.prepare_instance_prompt(
+                caption = PromptHandler.prepare_instance_prompt_from_filename(
                     image_path=str(image_path),
                     use_captions=use_captions,
                     prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
                 )
             elif caption_strategy == "textfile":
                 caption = PromptHandler.prepare_instance_prompt_from_textfile(
-                    image_path, data_backend=data_backend
+                    image_path,
+                    use_captions=use_captions,
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
+                    data_backend=data_backend,
                 )
             elif caption_strategy == "instanceprompt":
                 return backend_config.get(
