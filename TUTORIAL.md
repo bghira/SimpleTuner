@@ -24,6 +24,14 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
   - Use the instructions in the below section [Example Environment File Explained](#example-environment-file-explained) to modify these values.
 5. Run the [train_sdxl.py](/train_sdxl.py) script.
 
+## Advanced users: Kohya config conversion
+
+If you are accustomed to training on Kohya, you can convert your Kohya config to a command-line string for SimpleTuner by using `kohya_config.py --config_path=/path/to/kohya/config.json`.
+
+This isn't as ideal as going through the parameters and setting them manually, but it can be a good starting point if you just want to dive right in.
+
+The script prints out many warnings and errors to help you get a better understanding of what you need to change.
+
 ## Hardware Requirements
 
 Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRA.
