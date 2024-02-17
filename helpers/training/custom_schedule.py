@@ -351,3 +351,78 @@ class CosineAnnealingHardRestarts(LRScheduler):
                     "Epoch {}: adjusting learning rate"
                     " of group {} to {:.8e}.".format(epoch_str, group, lr)
                 )
+
+
+class Sine(LRScheduler):
+    def __init__(
+        self,
+        optimizer,
+        T_0,
+        steps_per_epoch=-1,
+        T_mult=1,
+        eta_min=0,
+        last_step=-1,
+        verbose=False,
+    ):
+        if T_0 <= 0 or not isinstance(T_0, int):
+            raise ValueError(
+                f"Sine learning rate expects to use warmup steps as its interval. Expected positive integer T_0, but got {T_0}"
+            )
+        if T_mult < 1 or not isinstance(T_mult, int):
+            raise ValueError(f"Expected integer T_mult >= 1, but got {T_mult}")
+
+        self.T_0 = T_0
+        self.steps_per_epoch = steps_per_epoch
+        self.T_i = T_0
+        self.T_mult = T_mult
+        self.eta_min = eta_min
+        self.T_cur = last_step
+        super(Sine, self).__init__(optimizer, last_step, verbose)
+
+    def get_lr(self):
+        lrs = [
+            self.eta_min
+            + (base_lr - self.eta_min)
+            * (1 - math.cos(math.pi / 2 + math.pi * self.T_cur / self.T_i))
+            / 2
+            for base_lr in self.base_lrs
+        ]
+        return lrs
+
+    def step(self, step=None):
+        if step is None:
+            step = self.last_epoch + 1
+        self.T_cur = step % self.T_i
+
+        if step != 0 and step % self.T_i == 0:
+            self.T_i *= self.T_mult
+
+        self.last_epoch = step
+        # This context manager ensures that the learning rate is updated correctly
+        with _enable_get_lr_call(self):
+            # Loop through each parameter group and its corresponding learning rate
+            for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
+                param_group, lr = data
+                # Update the learning rate for this parameter group
+                # We use math.floor to truncate the precision to avoid numerical issues
+                param_group["lr"] = math.floor(lr * 1e9) / 1e9
+                # Print the updated learning rate if verbose mode is enabled
+                self.print_lr(self.verbose, i, lr, step)
+
+        # Update the last learning rate values for each parameter group
+        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+
+    def print_lr(self, is_verbose, group, lr, epoch=None):
+        """Display the current learning rate."""
+        if is_verbose:
+            if epoch is None:
+                print(
+                    "Adjusting learning rate"
+                    " of group {} to {:.8e}.".format(group, lr)
+                )
+            else:
+                epoch_str = ("%.2f" if isinstance(epoch, float) else "%.5d") % epoch
+                print(
+                    "Epoch {}: adjusting learning rate"
+                    " of group {} to {:.8e}.".format(epoch_str, group, lr)
+                )

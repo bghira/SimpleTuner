@@ -22,8 +22,8 @@ export CHECKPOINTING_LIMIT=3
 export LEARNING_RATE=1e-6 #@param {type:"number"}
 # polynomial LR scheduler will decay to this LR after hitting LEARNING_RATE.
 export LEARNING_RATE_END=4e-7 #@param {type:"number"}
-# cosine is the recommended LR scheduler, but polynomial and constant also work.
-export LR_SCHEDULE="cosine"
+# sine is the recommended LR scheduler, but polynomial and constant also work.
+export LR_SCHEDULE="sine"
 # Whether this is used, depends on whether you have epochs or num_steps in use.
 export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))
 #export LR_WARMUP_STEPS=0

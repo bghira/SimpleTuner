@@ -163,8 +163,8 @@ This is a basic overview meant to help you get started. For a complete list of o
 
 ```
 usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
-                     [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
-                     [--lora_dropout LORA_DROPOUT]
+                     [--lora_type {Standard}] [--lora_rank LORA_RANK]
+                     [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
                      --pretrained_model_name_or_path
                      PRETRAINED_MODEL_NAME_OR_PATH
                      [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
@@ -211,7 +211,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--gradient_checkpointing]
                      [--learning_rate LEARNING_RATE]
                      [--text_encoder_lr TEXT_ENCODER_LR] [--lr_scale]
-                     [--lr_scheduler {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
+                     [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                      [--lr_warmup_steps LR_WARMUP_STEPS]
                      [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
                      [--use_ema] [--ema_decay EMA_DECAY]
@@ -265,7 +265,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--print_filenames] [--print_sampler_statistics]
                      [--metadata_update_interval METADATA_UPDATE_INTERVAL]
                      [--debug_aspect_buckets] [--debug_dataset_loader]
-                     [--freeze_encoder]
+                     [--freeze_encoder FREEZE_ENCODER]
                      [--text_encoder_limit TEXT_ENCODER_LIMIT]
                      [--prepend_instance_prompt] [--only_instance_prompt]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
@@ -286,6 +286,11 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --lora_type {Standard}
+                        When training using --model_type=lora, you may specify
+                        a different type of LoRA to train here. Currently,
+                        only 'Standard' type is supported. This option exists
+                        for compatibility with Kohya configuration files.
   --lora_rank LORA_RANK
                         The dimension of the LoRA update matrices.
   --lora_alpha LORA_ALPHA
@@ -554,14 +559,15 @@ options:
                         memory at the expense of slower backward pass.
   --learning_rate LEARNING_RATE
                         Initial learning rate (after the potential warmup
-                        period) to use.
+                        period) to use. When using a cosine or sine schedule,
+                        --learning_rate defines the maximum learning rate.
   --text_encoder_lr TEXT_ENCODER_LR
                         Learning rate for the text encoder. If not provided,
                         the value of --learning_rate will be used.
   --lr_scale            Scale the learning rate by the number of GPUs,
                         gradient accumulation steps, and batch size.
-  --lr_scheduler {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}
-                        The scheduler type to use. Default: cosine
+  --lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}
+                        The scheduler type to use. Default: sine
   --lr_warmup_steps LR_WARMUP_STEPS
                         Number of steps for the warmup in the lr scheduler.
   --lr_num_cycles LR_NUM_CYCLES
@@ -795,7 +801,8 @@ options:
   --debug_dataset_loader
                         If set, will print excessive debugging for data loader
                         operations.
-  --freeze_encoder      Whether or not to freeze the text_encoder. The default
+  --freeze_encoder FREEZE_ENCODER
+                        Whether or not to freeze the text_encoder. The default
                         is true.
   --text_encoder_limit TEXT_ENCODER_LIMIT
                         When training the text_encoder, we want to limit how
@@ -837,5 +844,7 @@ options:
                         https://www.crosslabs.org//blog/diffusion-with-offset-
                         noise for more information.
   --lr_end LR_END       A polynomial learning rate will end up at this value
-                        after the specified number of warmup steps.
+                        after the specified number of warmup steps. A sine or
+                        cosine wave will use this value as its lower bound for
+                        the learning rate.
 ```

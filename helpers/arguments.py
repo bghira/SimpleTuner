@@ -29,6 +29,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--lora_type",
+        type=str,
+        choices=["Standard"],
+        help=(
+            "When training using --model_type=lora, you may specify a different type of LoRA to train here."
+            " Currently, only 'Standard' type is supported. This option exists for compatibility with Kohya configuration files."
+        )
+    )
+    parser.add_argument(
         "--lora_rank",
         type=int,
         default=16,
@@ -492,16 +501,17 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lr_scheduler",
         type=str,
-        default="cosine",
+        default="sine",
         choices=[
             "linear",
+            "sine",
             "cosine",
             "cosine_with_restarts",
             "polynomial",
             "constant",
             "constant_with_warmup",
         ],
-        help=("The scheduler type to use. Default: cosine"),
+        help=("The scheduler type to use. Default: sine"),
     )
     parser.add_argument(
         "--lr_warmup_steps",
@@ -971,7 +981,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--freeze_encoder",
-        action="store_true",
+        type=bool,
         default=True,
         help="Whether or not to freeze the text_encoder. The default is true.",
     )

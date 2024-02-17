@@ -71,9 +71,12 @@ export TRAIN_BATCH_SIZE=10
 export GRADIENT_ACCUMULATION_STEPS=4
 
 # Use any standard scheduler type. constant, polynomial, constant_with_warmup
-export LR_SCHEDULE="constant"
+export LR_SCHEDULE="sine"
 # A warmup period allows the model and the EMA weights more importantly to familiarise itself with the current quanta.
-export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))
+# For the cosine or sine type schedules, the warmup period defines the interval between peaks or valleys.
+# Use a sine schedule to simulate a warmup period, or a Cosine period to simulate a polynomial start.
+#export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))
+export LR_WARMUP_STEPS=1000
 
 # Caption dropout probability. Set to 0.1 for 10% of captions dropped out. Set to 0 to disable.
 # You may wish to disable dropout if you want to limit your changes strictly to the prompts you show the model.

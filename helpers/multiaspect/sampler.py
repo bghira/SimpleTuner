@@ -20,9 +20,6 @@ pil_logger.setLevel(logging.WARNING)
 
 
 class MultiAspectSampler(torch.utils.data.Sampler):
-    current_epoch = 1
-    vae_cache = None
-
     def __init__(
         self,
         id: str,
@@ -38,6 +35,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         caption_strategy: str = "filename",
         use_captions=True,
         prepend_instance_prompt=False,
+        instance_prompt: str = None,
     ):
         """
         Initializes the sampler with provided settings.
@@ -65,6 +63,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.bucket_manager = bucket_manager
         self.data_backend = data_backend
         self.current_bucket = None
+        self.current_epoch = 1
         self.batch_size = batch_size
         if debug_aspect_buckets:
             self.logger.setLevel(logging.DEBUG)
@@ -75,6 +74,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.use_captions = use_captions
         self.caption_strategy = caption_strategy
         self.prepend_instance_prompt = prepend_instance_prompt
+        self.instance_prompt = instance_prompt
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.state_manager = BucketStateManager(self.id)
@@ -300,6 +300,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 caption_strategy=self.caption_strategy,
                 use_captions=self.use_captions,
                 prepend_instance_prompt=self.prepend_instance_prompt,
+                instance_prompt=self.instance_prompt,
             )
 
             to_yield.append(image_metadata)
