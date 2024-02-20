@@ -271,7 +271,7 @@ class MultiaspectImage:
     def _resize_image(
         input_image: Image, target_width: int, target_height: int
     ) -> Image:
-        """Resize the input image to the target width and height."""
+        """Resize the input image to the target width and height in stages, ensuring a higher quality end result."""
         if not hasattr(input_image, "convert"):
             raise Exception(
                 f"Unknown data received instead of PIL.Image object: {type(input_image)}"
@@ -279,11 +279,40 @@ class MultiaspectImage:
         logger.debug(f"Received image for processing: {input_image}")
         input_image = input_image.convert("RGB")
         logger.debug(f"Converted image to RGB for processing: {input_image}")
-        if (target_width, target_height) == input_image.size:
+        current_width, current_height = input_image.size
+
+        if (target_width, target_height) == (current_width, current_height):
             return input_image
+
         msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
         logger.debug(msg)
-        return input_image.resize((target_width, target_height), resample=Image.LANCZOS)
+
+        # Resize in stages
+        while (
+            current_width > target_width * 1.5 or current_height > target_height * 1.5
+        ):
+            # Calculate intermediate size
+            intermediate_width = int(current_width * 0.75)
+            intermediate_height = int(current_height * 0.75)
+
+            # Ensure intermediate size is not smaller than the target size
+            intermediate_width = max(intermediate_width, target_width)
+            intermediate_height = max(intermediate_height, target_height)
+
+            input_image = input_image.resize(
+                (intermediate_width, intermediate_height), resample=Image.LANCZOS
+            )
+            current_width, current_height = input_image.size
+            logger.debug(
+                f"Resized image to intermediate size: {current_width}x{current_height}."
+            )
+
+        # Final resize to target dimensions
+        input_image = input_image.resize(
+            (target_width, target_height), resample=Image.LANCZOS
+        )
+        logger.debug(f"Final image size: {input_image.size}.")
+        return input_image
 
     @staticmethod
     def is_image_too_large(image, resolution: float, resolution_type: str):
