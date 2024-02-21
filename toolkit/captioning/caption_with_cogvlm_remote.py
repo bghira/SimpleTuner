@@ -158,91 +158,99 @@ def main():
 
     # Query backend for tasks, and loop.
     while True:
-        # Query backend for tasks
-        response = requests.get(
-            f"{args.backend_url}/?action=list_jobs",
-            timeout=10,
-            params={"client_id": args.client_id, "secret": args.secret},
-        )
-        # 403? Exit.
-        if response.status_code == 403:
-            logger.error("Access denied. Exiting.")
-            break
-        # 500? Wait.
-        if response.status_code == 500:
-            logger.error("Server error. Waiting.")
-            time.sleep(30)
-            continue
-        # Decode the JSON response?
         try:
-            response_json = response.json()
-        except:
-            logger.error("Could not decode JSON response. Exiting.")
-            break
-        # Example:
-        # [
-        #     {
-        #         "data_id": 474,
-        #         "URL": "https://images.pexels.com/photos/474/black-and-white-car-vehicle-vintage.jpg?cs=srgb&dl=pexels-gratisography-474.jpg&fm=jpg",
-        #         "pending": 0,
-        #         "result": None,
-        #         "submitted_at": None,
-        #         "attempts": 0,
-        #         "error": None,
-        #         "client_id": None,
-        #         "updated_at": "2024-02-21 02:32:32",
-        #     }
-        # ]
-
-        # Now, we evaluate the caption for each image.
-        for task in response_json:
-            # Skip if the task is pending or has a result
-            if task["pending"] == 1 or task["result"]:
-                continue
-            # Load the image
-            try:
-                logger.info(f"Loading image from {task['URL']}.")
-                response = requests.get(task["URL"], timeout=10)
-                image = Image.open(io.BytesIO(response.content)).convert("RGB")
-            except Exception as e:
-                logger.error(f"Could not load image from {task['URL']}.")
-                # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
-                requests.post(
-                    f"{args.backend_url}/?action=submit_job",
-                    params={
-                        "client_id": args.client_id,
-                        "secret": args.secret,
-                        "error": e,
-                        "job_id": {task["data_id"]},
-                    },
-                )
-                continue
-            # Generate the caption
-            caption_source = "cogvlm"
-            if args.eval_backend == "transformers":
-                caption = eval_image(
-                    image, model, tokenizer, torch_dtype, args.query_str
-                )
-            elif args.eval_backend == "oobabooga":
-                # only really llava is supported by oobabooga, so we will assume here.
-                caption_source = "llava"
-                image_to_bytes = io.BytesIO()
-                image.save(image_to_bytes, format="JPEG")
-                image_to_bytes = image_to_bytes.getvalue()
-                caption = eval_image_with_ooba(image_to_bytes, args.query_str)
-            # Upload the caption using endpoint?action=submit_job&job_id=data_id&result=caption&status=success
-            submission_response = requests.post(
-                f"{args.backend_url}/?action=submit_job",
+            # Query backend for tasks
+            response = requests.get(
+                f"{args.backend_url}/?action=list_jobs",
+                timeout=30,
                 params={
-                    "result": caption,
-                    "job_id": task["data_id"],
                     "client_id": args.client_id,
                     "secret": args.secret,
-                    "caption_source": caption_source,
-                    "status": "success",
+                    "count": 16,
                 },
             )
-            logger.info(f"Result: {caption}")
+            # 403? Exit.
+            if response.status_code == 403:
+                logger.error("Access denied. Exiting.")
+                break
+            # 500? Wait.
+            if response.status_code == 500:
+                logger.error("Server error. Waiting.")
+                time.sleep(30)
+                continue
+            # Decode the JSON response?
+            try:
+                response_json = response.json()
+            except:
+                logger.error("Could not decode JSON response. Exiting.")
+                break
+            # Example:
+            # [
+            #     {
+            #         "data_id": 474,
+            #         "URL": "https://images.pexels.com/photos/474/black-and-white-car-vehicle-vintage.jpg?cs=srgb&dl=pexels-gratisography-474.jpg&fm=jpg",
+            #         "pending": 0,
+            #         "result": None,
+            #         "submitted_at": None,
+            #         "attempts": 0,
+            #         "error": None,
+            #         "client_id": None,
+            #         "updated_at": "2024-02-21 02:32:32",
+            #     }
+            # ]
+
+            # Now, we evaluate the caption for each image.
+            for task in response_json:
+                # Skip if the task is pending or has a result
+                if task["pending"] == 1 or task["result"]:
+                    continue
+                # Load the image
+                try:
+                    logger.info(f"Loading image from {task['URL']}.")
+                    response = requests.get(task["URL"], timeout=10)
+                    image = Image.open(io.BytesIO(response.content)).convert("RGB")
+                except Exception as e:
+                    logger.error(f"Could not load image from {task['URL']}.")
+                    # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
+                    requests.post(
+                        f"{args.backend_url}/?action=submit_job",
+                        params={
+                            "client_id": args.client_id,
+                            "secret": args.secret,
+                            "error": e,
+                            "job_id": {task["data_id"]},
+                        },
+                    )
+                    continue
+                # Generate the caption
+                caption_source = "cogvlm"
+                if args.eval_backend == "transformers":
+                    caption = eval_image(
+                        image, model, tokenizer, torch_dtype, args.query_str
+                    )
+                elif args.eval_backend == "oobabooga":
+                    # only really llava is supported by oobabooga, so we will assume here.
+                    caption_source = "llava"
+                    image_to_bytes = io.BytesIO()
+                    image.save(image_to_bytes, format="JPEG")
+                    image_to_bytes = image_to_bytes.getvalue()
+                    caption = eval_image_with_ooba(image_to_bytes, args.query_str)
+                # Upload the caption using endpoint?action=submit_job&job_id=data_id&result=caption&status=success
+                submission_response = requests.post(
+                    f"{args.backend_url}/?action=submit_job",
+                    params={
+                        "result": caption,
+                        "job_id": task["data_id"],
+                        "client_id": args.client_id,
+                        "secret": args.secret,
+                        "caption_source": caption_source,
+                        "status": "success",
+                    },
+                )
+                logger.info(f"Result: {caption}")
+        except Exception as e:
+            logger.error(f"An error occurred: {e}")
+            time.sleep(15)
 
 
 if __name__ == "__main__":

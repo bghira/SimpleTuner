@@ -46,7 +46,7 @@ try {
     switch ($action) {
         case 'list_jobs':
             $count = $_GET['count'] ?? 1;
-            $stmt = $pdo->prepare("SELECT * FROM dataset WHERE pending = 0 OR (submitted_at IS NOT NULL AND submitted_at < NOW() - INTERVAL 1 HOUR) AND result IS NULL LIMIT ?");
+            $stmt = $pdo->prepare("SELECT * FROM dataset WHERE pending = 0 OR (submitted_at IS NOT NULL AND submitted_at < NOW() - INTERVAL 1 HOUR) AND result IS NULL ORDER BY RAND() LIMIT ?");
             $stmt->bindValue(1, $count, PDO::PARAM_INT);
             $stmt->execute();
             $jobs = $stmt->fetchAll();
