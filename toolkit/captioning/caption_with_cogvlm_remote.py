@@ -1,7 +1,6 @@
-import os, torch, logging, accelerate, re, random, argparse, io, base64
+import torch, logging, argparse, io, base64
 from PIL import Image
 import requests, time
-from botocore.config import Config
 
 logger = logging.getLogger("Captioner")
 
