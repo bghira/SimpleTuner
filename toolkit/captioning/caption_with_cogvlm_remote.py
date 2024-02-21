@@ -1,6 +1,9 @@
 import torch, logging, argparse, io, base64
 from PIL import Image
 import requests, time
+from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration, set_seed
+
 
 logger = logging.getLogger("Captioner")
 
@@ -132,6 +135,14 @@ def main():
 
         tokenizer = LlamaTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
         logger.info(f"Loading CogVLM in {args.precision} precision.")
+        accelerator_project_config = ProjectConfiguration()
+        accelerator = Accelerator(
+            mixed_precision="fp16",
+            log_with=None,
+            project_config=accelerator_project_config,
+        )
+        print(f"Device: {accelerator.device}")
+
         model = AutoModelForCausalLM.from_pretrained(
             "THUDM/cogvlm-chat-hf",
             torch_dtype=torch_dtype,
@@ -142,7 +153,7 @@ def main():
         ).eval()
         if send_to_cuda:
             logger.info(f"Sending model to CUDA.")
-            model.to("cuda")
+            model.to(accelerator.device)
         logger.info("Completed loading model.")
 
     # Query backend for tasks, and loop.
@@ -192,7 +203,7 @@ def main():
             try:
                 logger.info(f"Loading image from {task['URL']}.")
                 response = requests.get(task["URL"], timeout=10)
-                image = Image.open(io.BytesIO(response.content))
+                image = Image.open(io.BytesIO(response.content)).convert("RGB")
             except Exception as e:
                 logger.error(f"Could not load image from {task['URL']}.")
                 # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
