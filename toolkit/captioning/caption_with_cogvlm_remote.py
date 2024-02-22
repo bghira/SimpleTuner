@@ -113,6 +113,16 @@ def eval_image_with_ooba(image: Image, query: str) -> str:
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
+    import warnings
+
+    warnings.filterwarnings("ignore")
+    accelerator_project_config = ProjectConfiguration()
+    accelerator = Accelerator(
+        mixed_precision="fp16",
+        log_with=None,
+        project_config=accelerator_project_config,
+    )
+
     if args.eval_backend == "transformers":
         send_to_cuda = load_in_4bit = load_in_8bit = False
         torch_dtype = torch.bfloat16
@@ -127,18 +137,13 @@ def main():
         elif args.precision == "fp8":
             load_in_8bit = True
 
-        tq.write("Loading CogVLM model. This should only occur once.")
+        if accelerator.is_main_process:
+            tq.write("Loading CogVLM model. This should only occur once.")
         from transformers import AutoModelForCausalLM, LlamaTokenizer
 
         tokenizer = LlamaTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
-        tq.write(f"Loading CogVLM in {args.precision} precision.")
-        accelerator_project_config = ProjectConfiguration()
-        accelerator = Accelerator(
-            mixed_precision="fp16",
-            log_with=None,
-            project_config=accelerator_project_config,
-        )
-        print(f"Device: {accelerator.device}")
+        if accelerator.is_main_process:
+            tq.write(f"Loading CogVLM in {args.precision} precision.")
 
         model = AutoModelForCausalLM.from_pretrained(
             "THUDM/cogvlm-chat-hf",
@@ -149,25 +154,36 @@ def main():
             load_in_8bit=load_in_8bit,
         ).eval()
         if send_to_cuda:
-            tq.write(f"Sending model to CUDA.")
+            if accelerator.is_main_process:
+                tq.write(f"Sending model to CUDA.")
             model.to(accelerator.device)
-        tq.write("Completed loading model.")
+        if accelerator.is_main_process:
+            tq.write("Completed loading model.")
+    # Split device by : and use 2nd half as position
+    local_bar_pos = 1
+    cuda_device = f"{accelerator.device}"
+    if ":" in cuda_device:
+        local_bar_pos = int(cuda_device.split(":")[1]) + 1
     local_progress_bar = tq(
         desc="Local progress         ",
         dynamic_ncols=False,
         ascii=False,
-        position=0,
+        # We want this to be positioned by the accelerator rank
+        position=local_bar_pos,
         leave=True,
         ncols=125,
+        disable=not accelerator.is_main_process,
     )
     initial_cluster_progress = 0
     global_progress_bar = tq(
         desc="Global cluster progress",
         dynamic_ncols=False,
         ascii=False,
-        position=1,
+        position=0,
         leave=True,
         ncols=125,
+        # We want to disable if not on main proc.
+        disable=not accelerator.is_main_process,
     )
 
     # Query backend for tasks, and loop.
@@ -181,7 +197,7 @@ def main():
                 params={
                     "client_id": args.client_id,
                     "secret": args.secret,
-                    "count": 1,
+                    "count": 16,
                 },
             )
             # 403? Exit.
@@ -224,7 +240,7 @@ def main():
                 # Skip if the task is pending or has a result
                 if task["pending"] == 1 or task["result"]:
                     tq.write(
-                        f"-> [WARNING] Task {task['data_id']} is pending or has a result. Skipping."
+                        f"-> [warning] Task {task['data_id']} is pending? {task['pending']} or has a result {task['result']}. Skipping."
                     )
                     local_progress_bar.update(1)
                     continue
@@ -235,9 +251,10 @@ def main():
                         # tq.write(f"Loading image from {task['URL']}.")
                         response = requests.get(task["URL"], timeout=10)
                         image = Image.open(io.BytesIO(response.content)).convert("RGB")
+                        break
                     except Exception as e:
                         tq.write(
-                            f'-> [ERROR] Could not load image from {task["URL"]}. {"Retrying..." if attempt_count < 2 else "Exiting."}'
+                            f'-> [error] Could not load image from {task["URL"]}. {"Retrying..." if attempt_count < 2 else "Exiting."}'
                         )
                         # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
                         requests.post(
@@ -252,7 +269,7 @@ def main():
                         attempt_count += 1
                         time.sleep(5)
                 if attempt_count == 3:
-                    tq.write(f"-> [ERROR] Failed to load image from {task['URL']}.")
+                    tq.write(f"-> [error] Failed to load image from {task['URL']}.")
                     local_progress_bar.update(1)
                     continue
 
@@ -281,7 +298,7 @@ def main():
                         "status": "success",
                     },
                 )
-                tq.write(f"Result: {caption}")
+                tq.write(f"- [result] - {caption}")
                 current_cluster_progress = (
                     task["completed_jobs"] - initial_cluster_progress
                 )
