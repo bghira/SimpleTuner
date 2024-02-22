@@ -46,15 +46,21 @@ try {
     switch ($action) {
         case 'list_jobs':
             $count = $_GET['count'] ?? 1;
+            $total_jobs = $pdo->query("SELECT COUNT(*) FROM dataset")->fetchColumn();
+            $remaining_jobs = $pdo->query("SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL")->fetchColumn();
+            $completed_jobs = $total_jobs - $remaining_jobs;
             $stmt = $pdo->prepare("SELECT * FROM dataset WHERE pending = 0 OR (submitted_at IS NOT NULL AND submitted_at < NOW() - INTERVAL 1 HOUR) AND result IS NULL ORDER BY RAND() LIMIT ?");
             $stmt->bindValue(1, $count, PDO::PARAM_INT);
             $stmt->execute();
             $jobs = $stmt->fetchAll();
             
             // Update pending and submitted_at for retrieved jobs
-           foreach ($jobs as $job) {
+           foreach ($jobs as $idx => $job) {
                $updateStmt = $pdo->prepare("UPDATE dataset SET pending = 1, submitted_at = NOW(), attempts = attempts + 1 WHERE data_id = ?");
                $updateStmt->execute([$job['data_id']]);
+               $jobs[$idx]['total_jobs'] = $total_jobs;
+               $jobs[$idx]['remaining_jobs'] = $remaining_jobs;
+               $jobs[$idx]['completed_jobs'] = $completed_jobs;
            }
             
             echo json_encode($jobs);

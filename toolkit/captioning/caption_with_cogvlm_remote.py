@@ -3,9 +3,7 @@ from PIL import Image
 import requests, time
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
-
-
-logger = logging.getLogger("Captioner")
+from tqdm import tqdm as tq
 
 
 def parse_args():
@@ -115,7 +113,6 @@ def eval_image_with_ooba(image: Image, query: str) -> str:
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
-
     if args.eval_backend == "transformers":
         send_to_cuda = load_in_4bit = load_in_8bit = False
         torch_dtype = torch.bfloat16
@@ -130,11 +127,11 @@ def main():
         elif args.precision == "fp8":
             load_in_8bit = True
 
-        logger.info("Loading CogVLM model. This should only occur once.")
+        tq.write("Loading CogVLM model. This should only occur once.")
         from transformers import AutoModelForCausalLM, LlamaTokenizer
 
         tokenizer = LlamaTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
-        logger.info(f"Loading CogVLM in {args.precision} precision.")
+        tq.write(f"Loading CogVLM in {args.precision} precision.")
         accelerator_project_config = ProjectConfiguration()
         accelerator = Accelerator(
             mixed_precision="fp16",
@@ -152,11 +149,29 @@ def main():
             load_in_8bit=load_in_8bit,
         ).eval()
         if send_to_cuda:
-            logger.info(f"Sending model to CUDA.")
+            tq.write(f"Sending model to CUDA.")
             model.to(accelerator.device)
-        logger.info("Completed loading model.")
+        tq.write("Completed loading model.")
+    local_progress_bar = tq(
+        desc="Local progress         ",
+        dynamic_ncols=False,
+        ascii=False,
+        position=0,
+        leave=True,
+        ncols=125,
+    )
+    initial_cluster_progress = 0
+    global_progress_bar = tq(
+        desc="Global cluster progress",
+        dynamic_ncols=False,
+        ascii=False,
+        position=1,
+        leave=True,
+        ncols=125,
+    )
 
     # Query backend for tasks, and loop.
+    has_set_total = False
     while True:
         try:
             # Query backend for tasks
@@ -166,23 +181,23 @@ def main():
                 params={
                     "client_id": args.client_id,
                     "secret": args.secret,
-                    "count": 16,
+                    "count": 1,
                 },
             )
             # 403? Exit.
             if response.status_code == 403:
-                logger.error("Access denied. Exiting.")
+                tq.write("Access denied. Exiting.")
                 break
             # 500? Wait.
             if response.status_code == 500:
-                logger.error("Server error. Waiting.")
+                tq.write("Server error. Waiting.")
                 time.sleep(30)
                 continue
             # Decode the JSON response?
             try:
                 response_json = response.json()
             except:
-                logger.error("Could not decode JSON response. Exiting.")
+                tq.write("Could not decode JSON response. Exiting.")
                 break
             # Example:
             # [
@@ -201,27 +216,46 @@ def main():
 
             # Now, we evaluate the caption for each image.
             for task in response_json:
+                if not has_set_total:
+                    initial_cluster_progress = task["completed_jobs"]
+                    global_progress_bar.total = task["remaining_jobs"]
+                    local_progress_bar.total = task["remaining_jobs"]
+                    has_set_total = True
                 # Skip if the task is pending or has a result
                 if task["pending"] == 1 or task["result"]:
+                    tq.write(
+                        f"-> [WARNING] Task {task['data_id']} is pending or has a result. Skipping."
+                    )
+                    local_progress_bar.update(1)
                     continue
                 # Load the image
-                try:
-                    logger.info(f"Loading image from {task['URL']}.")
-                    response = requests.get(task["URL"], timeout=10)
-                    image = Image.open(io.BytesIO(response.content)).convert("RGB")
-                except Exception as e:
-                    logger.error(f"Could not load image from {task['URL']}.")
-                    # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
-                    requests.post(
-                        f"{args.backend_url}/?action=submit_job",
-                        params={
-                            "client_id": args.client_id,
-                            "secret": args.secret,
-                            "error": e,
-                            "job_id": {task["data_id"]},
-                        },
-                    )
+                attempt_count = 0
+                while attempt_count < 3:
+                    try:
+                        # tq.write(f"Loading image from {task['URL']}.")
+                        response = requests.get(task["URL"], timeout=10)
+                        image = Image.open(io.BytesIO(response.content)).convert("RGB")
+                    except Exception as e:
+                        tq.write(
+                            f'-> [ERROR] Could not load image from {task["URL"]}. {"Retrying..." if attempt_count < 2 else "Exiting."}'
+                        )
+                        # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
+                        requests.post(
+                            f"{args.backend_url}/?action=submit_job",
+                            params={
+                                "client_id": args.client_id,
+                                "secret": args.secret,
+                                "error": e,
+                                "job_id": {task["data_id"]},
+                            },
+                        )
+                        attempt_count += 1
+                        time.sleep(5)
+                if attempt_count == 3:
+                    tq.write(f"-> [ERROR] Failed to load image from {task['URL']}.")
+                    local_progress_bar.update(1)
                     continue
+
                 # Generate the caption
                 caption_source = "cogvlm"
                 if args.eval_backend == "transformers":
@@ -247,9 +281,16 @@ def main():
                         "status": "success",
                     },
                 )
-                logger.info(f"Result: {caption}")
+                tq.write(f"Result: {caption}")
+                current_cluster_progress = (
+                    task["completed_jobs"] - initial_cluster_progress
+                )
+                global_progress_bar.n = current_cluster_progress
+                global_progress_bar.refresh()
+                local_progress_bar.update(1)
+
         except Exception as e:
-            logger.error(f"An error occurred: {e}")
+            tq.write(f"An error occurred: {e}")
             time.sleep(15)
 
 
