@@ -298,13 +298,13 @@ def main():
                         "status": "success",
                     },
                 )
-                tq.write(f"- [result] - {caption}")
+                # tq.write(f"- [result] - {caption}")
                 current_cluster_progress = (
                     task["completed_jobs"] - initial_cluster_progress
                 )
                 global_progress_bar.n = current_cluster_progress
-                global_progress_bar.refresh()
                 local_progress_bar.update(1)
+            global_progress_bar.refresh()
 
         except Exception as e:
             tq.write(f"An error occurred: {e}")
