@@ -298,7 +298,6 @@ def main():
                         "status": "success",
                     },
                 )
-                # tq.write(f"- [result] - {caption}")
                 current_cluster_progress = (
                     task["completed_jobs"] - initial_cluster_progress
                 )
