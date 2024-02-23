@@ -78,11 +78,16 @@ class BackendController {
 			}           
 
             if ($status !== 'error') {
-                $stmt = $this->pdo->prepare('SELECT filename FROM dataset WHERE data_id = ?');
+                $stmt = $this->pdo->prepare('SELECT data_id FROM dataset WHERE data_id = ?');
                 $stmt->execute([$dataId]);
                 $filename = $stmt->fetchColumn();
+				if (!$filename) {
+					echo 'Job ID not found';
+					exit;
+				}
                 if ($this->job_type === 'vae') {
-                    $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename);
+                    $result = $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename . '.pt');
+                    $result = $this->s3_uploader->uploadImage($_FILES['image_file']['tmp_name'], $filename . '.png');
                 } else if ($this->job_type === 'text') {
                     $result = $this->s3_uploader->uploadTextCache($_FILES['result_file']['tmp_name'], $filename);
                 } else {

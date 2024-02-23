@@ -44,7 +44,8 @@ $s3_uploader = new S3Uploader(
     $aws_config['aws_secret_access_key'],
     $aws_config['aws_endpoint_url'],
     $aws_config['vae_cache_prefix'],
-    $aws_config['text_cache_prefix']
+    $aws_config['text_cache_prefix'],
+    $aws_config['image_data_prefix']
 );
 
 $backendController = new BackendController($pdo, $s3_uploader);

@@ -375,11 +375,13 @@ def main():
                         target_height,
                     ) = calculate_new_size_by_pixel_area(image.width, image.height)
                     # Resize image
-                    image = image.resize(
+                    resized_image = image.resize(
                         (target_width, target_height), resample=Image.LANCZOS
                     )
                     # Generate the latent vector
-                    latents = encode_images(accelerator, vae, [image], image_transforms)
+                    latents = encode_images(
+                        accelerator, vae, [resized_image], image_transforms
+                    )
                     # Unsqueeze the latents into separate objects:
                     latents = latents[0]
                     # Save the tensor to a BytesIO object (in-memory file)
@@ -389,12 +391,19 @@ def main():
                         0
                     )  # Important: move back to the start of the buffer
                     # Prepare the file data for uploading
+                    image_buffer = BytesIO()
+                    image.save(image_buffer, format="PNG")
                     files = {
                         "result_file": (
                             "latents.pt",
                             latents_buffer,
                             "application/octet-stream",
-                        )
+                        ),
+                        "image_file": (
+                            "image.png",
+                            image_buffer,
+                            "image/png",
+                        ),
                     }
                     submission_response = requests.post(
                         f"{args.backend_url}/?action=submit_job",
