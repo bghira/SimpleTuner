@@ -78,10 +78,13 @@ class BackendController {
 			}           
 
             if ($status !== 'error') {
+                $stmt = $this->pdo->prepare('SELECT filename FROM dataset WHERE data_id = ?');
+                $stmt->execute([$dataId]);
+                $filename = $stmt->fetchColumn();
                 if ($this->job_type === 'vae') {
-                    $this->s3_uploader->uploadVAECache($_FILES['file']['tmp_name'], $dataId);
+                    $this->s3_uploader->uploadVAECache($_FILES['file']['result_file'], $filename);
                 } else if ($this->job_type === 'text') {
-                    $this->s3_uploader->uploadTextCache($_FILES['file']['tmp_name'], $dataId);
+                    $this->s3_uploader->uploadTextCache($_FILES['file']['result_file'], $filename);
                 } else {
                     echo 'Invalid job type';
                     exit;
@@ -93,7 +96,7 @@ class BackendController {
 
 			return ['status' => 'success', 'result' => 'Job submitted successfully'];
 		} catch (\Throwable $ex) {
-			echo 'An error occurred: ' . $ex->getMessage();
+			echo 'An error occurred: ' . $ex->getMessage() . ', traceback: ' . $ex->getTraceAsString();
 		}
 	}
 }
