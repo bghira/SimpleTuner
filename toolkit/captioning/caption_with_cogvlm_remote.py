@@ -303,11 +303,14 @@ def main():
             # Now, we evaluate the caption for each image.
             for task in response_json:
                 if not has_set_total:
-                    initial_cluster_progress = task["completed_jobs"]
-                    global_progress_bar.total = task["remaining_jobs"]
-                    local_progress_bar.total = task["remaining_jobs"]
+                    initial_cluster_progress = task.get("completed_jobs", 0)
+                    global_progress_bar.total = task.get("remaining_jobs", 0)
+                    local_progress_bar.total = task.get("remaining_jobs", 0)
                     has_set_total = True
                 # Skip if the task is pending or has a result
+                if "pending" not in task:
+                    tq.write(f"Received invalid task: {task}. Skipping.")
+                    continue
                 if task["pending"] == 1 or task["result"]:
                     tq.write(
                         f"-> [warning] Task {task['data_id']} is pending? {task['pending']} or has a result {task['result']}. Skipping."
