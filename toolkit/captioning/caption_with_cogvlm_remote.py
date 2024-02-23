@@ -4,6 +4,7 @@ import requests, time
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
 from tqdm import tqdm as tq
+from io import BytesIO
 
 
 def parse_args():
@@ -32,6 +33,13 @@ def parse_args():
         help=(
             "The URL of the backend to use for processing. This should be the URL of the backend that will be used to process the images."
         ),
+    )
+    parser.add_argument(
+        "--job_type",
+        type=str,
+        choices=["caption", "vae"],
+        required=True,
+        help=("The type of encoding to produce."),
     )
     parser.add_argument(
         "--client_id",
@@ -110,6 +118,51 @@ def eval_image_with_ooba(image: Image, query: str) -> str:
         return response.json()["choices"][0]["message"]["content"]
 
 
+def encode_images(accelerator, vae, images, image_transform):
+    """
+    Encode a batch of input images. Images must be the same dimension.
+    """
+
+    pixel_values = [
+        image_transform(image).to(accelerator.device, dtype=vae.dtype)
+        for image in images
+    ]
+
+    with torch.no_grad():
+        processed_images = torch.stack(pixel_values).to(
+            accelerator.device, dtype=torch.bfloat16
+        )
+        tq.write(f"Processed images: {processed_images.size()}")
+        tq.write(f"dtype: {processed_images.dtype}")
+        latents = vae.encode(processed_images).latent_dist.sample()
+        tq.write(f"latents dtype: {latents.dtype}")
+        latents = latents * vae.config.scaling_factor
+    return latents
+
+
+from math import sqrt
+
+
+def round_to_nearest_multiple(value, multiple):
+    """Round a value to the nearest multiple."""
+    rounded = round(value / multiple) * multiple
+    return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
+
+
+def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float = 1.0):
+    aspect_ratio = W / H
+    total_pixels = megapixels * 1e6  # Convert megapixels to pixels
+
+    W_new = int(round(sqrt(total_pixels * aspect_ratio)))
+    H_new = int(round(sqrt(total_pixels / aspect_ratio)))
+
+    # Ensure they are divisible by 64
+    W_new = round_to_nearest_multiple(W_new, 64)
+    H_new = round_to_nearest_multiple(H_new, 64)
+
+    return W_new, H_new
+
+
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
@@ -123,7 +176,24 @@ def main():
         project_config=accelerator_project_config,
     )
 
-    if args.eval_backend == "transformers":
+    if args.job_type == "vae":
+        from diffusers import AutoencoderKL
+
+        vae = AutoencoderKL.from_pretrained(
+            "madebyollin/sdxl-vae-fp16-fix",
+            force_upcast=False,
+            torch_dtype=torch.bfloat16,
+        ).to(accelerator.device)
+        from torchvision import transforms
+
+        image_transforms = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
+
+    elif args.eval_backend == "transformers" and not args.job_type == "vae":
         send_to_cuda = load_in_4bit = load_in_8bit = False
         torch_dtype = torch.bfloat16
         if args.precision == "bf16" or args.precision == "fp16":
@@ -198,6 +268,7 @@ def main():
                     "client_id": args.client_id,
                     "secret": args.secret,
                     "count": 16,
+                    "job_type": args.job_type,
                 },
             )
             # 403? Exit.
@@ -215,6 +286,7 @@ def main():
             except:
                 tq.write("Could not decode JSON response. Exiting.")
                 break
+            tq.write(f"Job response: {response.json()}")
             # Example:
             # [
             #     {
@@ -273,31 +345,76 @@ def main():
                     local_progress_bar.update(1)
                     continue
 
-                # Generate the caption
-                caption_source = "cogvlm"
-                if args.eval_backend == "transformers":
-                    caption = eval_image(
-                        image, model, tokenizer, torch_dtype, args.query_str
+                if task["job_type"] == "caption":
+                    # Generate the caption
+                    caption_source = "cogvlm"
+                    if args.eval_backend == "transformers":
+                        caption = eval_image(
+                            image, model, tokenizer, torch_dtype, args.query_str
+                        )
+                    elif args.eval_backend == "oobabooga":
+                        # only really llava is supported by oobabooga, so we will assume here.
+                        caption_source = "llava"
+                        image_to_bytes = io.BytesIO()
+                        image.save(image_to_bytes, format="JPEG")
+                        image_to_bytes = image_to_bytes.getvalue()
+                        caption = eval_image_with_ooba(image_to_bytes, args.query_str)
+                    # Upload the caption using endpoint?action=submit_job&job_id=data_id&result=caption&status=success
+                    submission_response = requests.post(
+                        f"{args.backend_url}/?action=submit_job",
+                        params={
+                            "result": caption,
+                            "job_id": task["data_id"],
+                            "client_id": args.client_id,
+                            "secret": args.secret,
+                            "caption_source": caption_source,
+                            "status": "success",
+                        },
                     )
-                elif args.eval_backend == "oobabooga":
-                    # only really llava is supported by oobabooga, so we will assume here.
-                    caption_source = "llava"
-                    image_to_bytes = io.BytesIO()
-                    image.save(image_to_bytes, format="JPEG")
-                    image_to_bytes = image_to_bytes.getvalue()
-                    caption = eval_image_with_ooba(image_to_bytes, args.query_str)
-                # Upload the caption using endpoint?action=submit_job&job_id=data_id&result=caption&status=success
-                submission_response = requests.post(
-                    f"{args.backend_url}/?action=submit_job",
-                    params={
-                        "result": caption,
-                        "job_id": task["data_id"],
-                        "client_id": args.client_id,
-                        "secret": args.secret,
-                        "caption_source": caption_source,
-                        "status": "success",
-                    },
-                )
+                elif task["job_type"] == "vae":
+                    (
+                        target_width,
+                        target_height,
+                    ) = calculate_new_size_by_pixel_area(image.width, image.height)
+                    # Resize image
+                    tq.write(f"Image original size: {image.size}")
+                    image = image.resize(
+                        (target_width, target_height), resample=Image.LANCZOS
+                    )
+                    tq.write(f"Image target size: {image.size}")
+                    # Generate the latent vector
+                    latents = encode_images(accelerator, vae, [image], image_transforms)
+                    tq.write(f"Latents: {latents.shape}")
+                    # Unsqueeze the latents into separate objects:
+                    latents = latents[0]
+                    tq.write(f"Unpacked latents size: {latents.shape}")
+                    # Save the tensor to a BytesIO object (in-memory file)
+                    latents_buffer = BytesIO()
+                    torch.save(latents, latents_buffer)
+                    latents_buffer.seek(
+                        0
+                    )  # Important: move back to the start of the buffer
+                    # Prepare the file data for uploading
+                    files = {
+                        "result_file": (
+                            "latents.pt",
+                            latents_buffer,
+                            "application/octet-stream",
+                        )
+                    }
+                    submission_response = requests.post(
+                        f"{args.backend_url}/?action=submit_job",
+                        files=files,
+                        params={
+                            "result": "encoded latents",
+                            "job_id": task["data_id"],
+                            "client_id": args.client_id,
+                            "secret": args.secret,
+                            "status": "success",
+                            "job_type": "vae",
+                        },
+                    )
+
                 current_cluster_progress = (
                     task["completed_jobs"] - initial_cluster_progress
                 )
@@ -306,7 +423,9 @@ def main():
             global_progress_bar.refresh()
 
         except Exception as e:
-            tq.write(f"An error occurred: {e}")
+            import traceback
+
+            tq.write(f"An error occurred: {e}, traceback: {traceback.format_exc()}")
             time.sleep(15)
 
 
