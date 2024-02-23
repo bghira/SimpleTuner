@@ -282,7 +282,7 @@ def main():
             try:
                 response_json = response.json()
             except:
-                tq.write("Could not decode JSON response. Exiting.")
+                tq.write(f"Could not decode JSON response: {response.text}")
                 break
             # Example:
             # [
