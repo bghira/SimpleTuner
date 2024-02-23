@@ -1,13 +1,18 @@
 <?php
 
+require_once __DIR__ . '/classes/Authorization.php';
+require_once __DIR__ . '/classes/BackendController.php';
+
+$authorization = new Authorization('/var/www/.users.json');
+
 // Load MySQL credentials
-$credentials = json_decode(file_get_contents("/var/www/.mysql.json"), true);
+$mysql_credentials = json_decode(file_get_contents("/var/www/.mysql.json"), true);
 $users = json_decode(file_get_contents("/var/www/.users.json"), true);
 
 // Create PDO connection
-$dsn = "mysql:host={$credentials['host']};dbname={$credentials['database']};charset=utf8mb4";
+$dsn = "mysql:host={$mysql_credentials['host']};dbname={$mysql_credentials['database']};charset=utf8mb4";
 try {
-    $pdo = new PDO($dsn, $credentials['user'], $credentials['password'], [
+    $pdo = new PDO($dsn, $mysql_credentials['user'], $mysql_credentials['password'], [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
@@ -17,25 +22,22 @@ try {
 
 // Create the `dataset` table if it does not exist
 $pdo->exec("CREATE TABLE IF NOT EXISTS dataset (
-    data_id INT AUTO_INCREMENT PRIMARY KEY,
-    URL VARCHAR(255) NOT NULL,
-    pending BOOLEAN NOT NULL DEFAULT 0,
-    result TEXT,
-    submitted_at DATETIME,
-    attempts INT DEFAULT 0,
-    error TEXT
+  data_id int AUTO_INCREMENT PRIMARY KEY,
+  URL varchar(255) NOT NULL,
+  pending tinyint(1) NOT NULL DEFAULT '0',
+  result longtext,
+  submitted_at datetime DEFAULT NULL,
+  attempts int DEFAULT '0',
+  error text,
+  client_id varchar(255) DEFAULT NULL,
+  updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  caption_source varchar(255) DEFAULT NULL
 )");
 
 // Action handling
 $action = $_GET['action'] ?? '';
 $client_id = $_GET['client_id'];
 $secret = $_GET['secret'];
-
-if (!in_array($client_id, array_keys($users)) || $secret !== $users[$client_id]) {
-        http_response_code(403);
-        echo "Unauthorized.";
-        exit;
-}
 
 $filter_strings = [
     '</s>',
@@ -49,7 +51,7 @@ try {
             $total_jobs = $pdo->query("SELECT COUNT(*) FROM dataset")->fetchColumn();
             $remaining_jobs = $pdo->query("SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL")->fetchColumn();
             $completed_jobs = $total_jobs - $remaining_jobs;
-            $stmt = $pdo->prepare("SELECT * FROM dataset WHERE pending = 0 OR (submitted_at IS NOT NULL AND submitted_at < NOW() - INTERVAL 1 HOUR) AND result IS NULL ORDER BY RAND() LIMIT ?");
+            $stmt = $pdo->prepare("SELECT * FROM dataset WHERE pending = 0 AND result IS NULL ORDER BY RAND() LIMIT ?");
             $stmt->bindValue(1, $count, PDO::PARAM_INT);
             $stmt->execute();
             $jobs = $stmt->fetchAll();
