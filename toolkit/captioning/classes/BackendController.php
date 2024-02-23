@@ -42,7 +42,8 @@ class BackendController {
 			$limit = 500; // Number of rows to fetch and randomize in PHP
 			$count = $_GET['count'] ?? 1; // Number of rows to actually return
 
-			$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL')->fetchColumn();
+			$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
+			$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL')->fetchColumn();
 
 			// Fetch the rows
 			$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 AND result IS NULL LIMIT ?');
@@ -61,8 +62,8 @@ class BackendController {
 				$updateStmt = $this->pdo->prepare('UPDATE dataset SET pending = 1, submitted_at = NOW(), attempts = attempts + 1 WHERE data_id = ?');
 				$updateStmt->execute([$job['data_id']]);
 				$jobs[$idx]['total_jobs'] = $total_jobs;
-				$jobs[$idx]['remaining_jobs'] = $total_jobs - count($jobs); // Update remaining jobs count
-				$jobs[$idx]['completed_jobs'] = $total_jobs - $jobs[$idx]['remaining_jobs'];
+				$jobs[$idx]['remaining_jobs'] = $remaining_jobs; // Update remaining jobs count
+				$jobs[$idx]['completed_jobs'] = $total_jobs - $remaining_jobs;
 				$jobs[$idx]['job_type'] = $this->job_type;
 			}
 
