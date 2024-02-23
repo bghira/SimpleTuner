@@ -377,17 +377,13 @@ def main():
                         target_height,
                     ) = calculate_new_size_by_pixel_area(image.width, image.height)
                     # Resize image
-                    tq.write(f"Image original size: {image.size}")
                     image = image.resize(
                         (target_width, target_height), resample=Image.LANCZOS
                     )
-                    tq.write(f"Image target size: {image.size}")
                     # Generate the latent vector
                     latents = encode_images(accelerator, vae, [image], image_transforms)
-                    tq.write(f"Latents: {latents.shape}")
                     # Unsqueeze the latents into separate objects:
                     latents = latents[0]
-                    tq.write(f"Unpacked latents size: {latents.shape}")
                     # Save the tensor to a BytesIO object (in-memory file)
                     latents_buffer = BytesIO()
                     torch.save(latents, latents_buffer)
