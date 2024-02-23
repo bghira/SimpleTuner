@@ -85,7 +85,7 @@ class BackendController {
 					echo 'Job ID not found';
 					exit;
 				}
-				if (!in_array('image_file', $_FILES) || !in_array('result_file', $_FILES)) {
+				if (!in_array('image_file', array_keys($_FILES)) || !in_array('result_file', array_keys($_FILES))) {
 					echo 'Image and result files are required.';
 					if (in_array('result_file', $_FILES)) {
 						echo ' Only the result file was provided.';
