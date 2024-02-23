@@ -36,7 +36,7 @@ class S3Uploader {
      * A Client worker will POST this to us, we need to accept and forward to S3.
      */
     public function uploadVAECache($file, $key) {
-        return $this->uploadFile($file, $this->vae_cache_prefix .'/'. $key . '.pt');
+        return $this->uploadFile($file, $this->vae_cache_prefix .'/'. $key);
     }
 
     /**
@@ -45,7 +45,7 @@ class S3Uploader {
      * A Client worker will POST this to us, we need to accept and forward to S3.
      */
     public function uploadTextCache($file, $key) {
-        return $this->uploadFile($file, $this->text_cache_prefix .'/'. $key . '.pt');
+        return $this->uploadFile($file, $this->text_cache_prefix .'/'. $key);
     }
 
     public function uploadFile($file, $key) {
