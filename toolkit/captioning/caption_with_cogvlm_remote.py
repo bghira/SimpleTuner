@@ -417,6 +417,7 @@ def main():
                             "job_type": "vae",
                         },
                     )
+                    print(f"Submission response: {submission_response.text}")
 
                 current_cluster_progress = (
                     task["completed_jobs"] - initial_cluster_progress
