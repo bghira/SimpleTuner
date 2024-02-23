@@ -324,7 +324,7 @@ def main():
                         break
                     except Exception as e:
                         tq.write(
-                            f'-> [error] Could not load image from {task["URL"]}. {"Retrying..." if attempt_count < 2 else "Exiting."}'
+                            f'-> [error] Could not load image from {task["URL"]}. {"Retrying..." if attempt_count < 2 else "Dropping sample."}'
                         )
                         # Upload the error using endpoint?action=submit_job&job_id=data_id&error=message&status=error
                         requests.post(
