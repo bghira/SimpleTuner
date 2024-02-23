@@ -90,6 +90,7 @@ class BackendController {
 					if (in_array('result_file', $_FILES)) {
 						echo ' Only the result file was provided.';
 					}
+					echo 'Provided files: ' . json_encode($_FILES);
 					exit;
 				}
                 if ($this->job_type === 'vae') {
