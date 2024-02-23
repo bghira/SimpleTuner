@@ -43,7 +43,7 @@ class BackendController {
 			$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
 			$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL')->fetchColumn();
 			$completed_jobs = $total_jobs - $remaining_jobs;
-			$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 AND result IS NULL ORDER BY RAND() LIMIT ?');
+			$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 AND result IS NULL LIMIT ?');
 			$stmt->bindValue(1, $count, PDO::PARAM_INT);
 			$stmt->execute();
 			$jobs = $stmt->fetchAll();
