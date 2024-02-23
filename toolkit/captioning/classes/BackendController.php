@@ -88,7 +88,7 @@ class BackendController {
 				if (!in_array('image_file', $_FILES) || !in_array('result_file', $_FILES)) {
 					echo 'Image and result files are required.';
 					if (in_array('result_file', $_FILES)) {
-						echo ' Only the result file was provided.'
+						echo ' Only the result file was provided.';
 					}
 					exit;
 				}
