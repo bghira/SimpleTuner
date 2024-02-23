@@ -36,10 +36,5 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS dataset (
 
 
 $backendController = new BackendController($pdo);
-
-
-$filter_strings = [
-    '</s>',
-    'The image showcases '
-];
-
+$result = $backendController->handleRequest();
+echo json_encode($result);
