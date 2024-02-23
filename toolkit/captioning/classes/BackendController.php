@@ -12,20 +12,25 @@ class BackendController {
 	/** @var string */
 	private $action;
 	/** @var string */
+	private $error;
+    /** @var string */
 	private $client_id;
 	/** @var string */
 	private $job_type;
+    /** @var S3Uploader */
+    private $s3_uploader;
 
-	public function __construct(PDO $pdo) {
+	public function __construct(PDO $pdo, S3Uploader $s3_uploader) {
 		$this->pdo = $pdo;
+        $this->s3_uploader = $s3_uploader;
 		$this->getParameters();
-		$this->handleRequest();
 	}
 
 	public function getParameters() {
 		// Action handling
 		$this->action = $_GET['action'] ?? '';
 		$this->job_type = $_GET['job_type'] ?? '';
+        $this->error = $_REQUEST['error'] ?? '';
 	}
 
 	public function handleRequest() {
@@ -49,6 +54,7 @@ class BackendController {
 				$jobs[$idx]['total_jobs'] = $total_jobs;
 				$jobs[$idx]['remaining_jobs'] = $remaining_jobs;
 				$jobs[$idx]['completed_jobs'] = $completed_jobs;
+                $jobs[$idx]['job_type'] = $this->job_type;
 			}
 
 			return $jobs;
@@ -62,20 +68,28 @@ class BackendController {
 			$dataId = $_REQUEST['job_id'] ?? '';
 			$result = $_REQUEST['result'] ?? '';
 			$status = $_REQUEST['status'] ?? 'success';
-			$error = $_REQUEST['error'] ?? '';
-
-			if ($status == 'error' && !$error) {
-				echo "Error message required for status 'error'";
-				exit;
-			}
-
 			if (!$result || !$dataId) {
 				echo 'Job ID and result are required';
 				exit;
 			}
+            if ($status == 'error' && !$this->error) {
+				echo "Error message required for status 'error'";
+				exit;
+			}           
 
+            if ($status !== 'error') {
+                if ($this->job_type === 'vae') {
+                    $this->s3_uploader->uploadVAECache($_FILES['file']['tmp_name'], $dataId);
+                } else if ($this->job_type === 'text') {
+                    $this->s3_uploader->uploadTextCache($_FILES['file']['tmp_name'], $dataId);
+                } else {
+                    echo 'Invalid job type';
+                    exit;
+                }
+            }
+ 
 			$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, result = ?, pending = 0, error = ? WHERE data_id = ?');
-			$updateStmt->execute([$this->client_id, $result, $error, $dataId]);
+			$updateStmt->execute([$this->client_id, $result, $this->error, $dataId]);
 
 			return ['status' => 'success', 'result' => 'Job submitted successfully'];
 		} catch (\Throwable $ex) {
