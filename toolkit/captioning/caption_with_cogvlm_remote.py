@@ -132,10 +132,7 @@ def encode_images(accelerator, vae, images, image_transform):
         processed_images = torch.stack(pixel_values).to(
             accelerator.device, dtype=torch.bfloat16
         )
-        tq.write(f"Processed images: {processed_images.size()}")
-        tq.write(f"dtype: {processed_images.dtype}")
         latents = vae.encode(processed_images).latent_dist.sample()
-        tq.write(f"latents dtype: {latents.dtype}")
         latents = latents * vae.config.scaling_factor
     return latents
 
@@ -286,7 +283,6 @@ def main():
             except:
                 tq.write("Could not decode JSON response. Exiting.")
                 break
-            tq.write(f"Job response: {response.json()}")
             # Example:
             # [
             #     {
