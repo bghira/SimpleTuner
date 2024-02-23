@@ -62,6 +62,32 @@ def parse_args():
             "If transformers is provided, it will load the model using the transformers library. If oobabooga is provided, it will use the API for a running installation of Oobabooga's text-generation-webui."
         ),
     )
+    parser.add_argument(
+        "--aws_config",
+        type=str,
+        default=None,
+        help=("If provided, can post images directly to S3."),
+    )
+    parser.add_argument(
+        "--aws_endpoint_url",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--aws_region_name",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--aws_access_key_id",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--aws_secret_access_key",
+        type=str,
+        default=None,
+    )
     return parser.parse_args()
 
 
@@ -160,8 +186,36 @@ def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float = 1.0):
     return W_new, H_new
 
 
+def initialize_s3_client(args):
+    """Initialize the boto3 S3 client using the provided AWS credentials and settings."""
+    import boto3
+    from botocore.config import Config
+
+    s3_config = Config(max_pool_connections=100)
+
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=args.aws_endpoint_url,
+        region_name=args.aws_region_name,
+        aws_access_key_id=args.aws_access_key_id,
+        aws_secret_access_key=args.aws_secret_access_key,
+        config=s3_config,
+    )
+    return s3_client
+
+
 def main():
     args = parse_args()
+    if args.aws_config:
+        with open(args.aws_config, "r") as f:
+            import json
+
+            aws_config = json.load(f)
+            args.aws_endpoint_url = aws_config["aws_endpoint_url"]
+            args.aws_region_name = aws_config["aws_region_name"]
+            args.aws_access_key_id = aws_config["aws_access_key_id"]
+            args.aws_secret_access_key = aws_config["aws_secret_access_key"]
+            args.aws_bucket_name = aws_config["aws_bucket_name"]
     logging.basicConfig(level=logging.INFO)
     import warnings
 
@@ -256,6 +310,8 @@ def main():
 
     # Query backend for tasks, and loop.
     has_set_total = False
+    if args.aws_config:
+        s3_client = initialize_s3_client(args)
     while True:
         try:
             # Query backend for tasks
@@ -399,18 +455,47 @@ def main():
                     image_buffer = BytesIO()
                     image.save(image_buffer, format="PNG")
                     image_buffer.seek(0)
-                    files = {
-                        "result_file": (
-                            "latents.pt",
-                            latents_buffer,
-                            "application/octet-stream",
-                        ),
-                        "image_file": (
-                            "image.png",
-                            image_buffer,
-                            "image/png",
-                        ),
-                    }
+                    if args.aws_config:
+                        files = {
+                            "result_file": (
+                                "latents.pt",
+                                latents_buffer,
+                                "application/octet-stream",
+                            ),
+                        }
+                        # post the image to s3
+                        attempt = 0
+                        while attempt < 3:
+                            try:
+                                s3_client.put_object(
+                                    Bucket=args.aws_bucket_name,
+                                    Key=f"image_data/{task['data_id']}.png",
+                                    Body=image_buffer,
+                                )
+                                break
+                            except Exception as e:
+                                tq.write(
+                                    f"Failed to upload image to s3: {e}. Attempting again."
+                                )
+                                attempt += 1
+                                time.sleep(5)
+                        if attempt == 3:
+                            tq.write(f"Failed to upload image to s3. Skipping.")
+                            local_progress_bar.update(1)
+                            continue
+                    else:
+                        files = {
+                            "result_file": (
+                                "latents.pt",
+                                latents_buffer,
+                                "application/octet-stream",
+                            ),
+                            "image_file": (
+                                "image.png",
+                                image_buffer,
+                                "image/png",
+                            ),
+                        }
                     submission_response = requests.post(
                         f"{args.backend_url}/?action=submit_job",
                         files=files,
