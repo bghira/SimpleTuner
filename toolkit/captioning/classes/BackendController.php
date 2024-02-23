@@ -96,7 +96,7 @@ class BackendController {
 
 			return ['status' => 'success', 'result' => 'Job submitted successfully, FILES: ' . json_encode($_FILES)];
 		} catch (\Throwable $ex) {
-			echo 'An error occurred: ' . $ex->getMessage() . ', traceback: ' . $ex->getTraceAsString();
+			echo 'An error occurred for FILES ' . json_encode($_FILES) . ': ' . $ex->getMessage() . ', traceback: ' . $ex->getTraceAsString();
 		}
 	}
 }
