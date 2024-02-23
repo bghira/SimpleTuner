@@ -82,9 +82,9 @@ class BackendController {
                 $stmt->execute([$dataId]);
                 $filename = $stmt->fetchColumn();
                 if ($this->job_type === 'vae') {
-                    $this->s3_uploader->uploadVAECache($_FILES['file']['result_file'], $filename);
+                    $this->s3_uploader->uploadVAECache($_FILES['result_file'], $filename);
                 } else if ($this->job_type === 'text') {
-                    $this->s3_uploader->uploadTextCache($_FILES['file']['result_file'], $filename);
+                    $this->s3_uploader->uploadTextCache($_FILES['result_file'], $filename);
                 } else {
                     echo 'Invalid job type: ' . $this->job_type . ' - must be "vae" or "text"';
                     exit;
@@ -94,7 +94,7 @@ class BackendController {
 			$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, result = ?, pending = 0, error = ? WHERE data_id = ?');
 			$updateStmt->execute([$this->client_id, $result, $this->error, $dataId]);
 
-			return ['status' => 'success', 'result' => 'Job submitted successfully'];
+			return ['status' => 'success', 'result' => 'Job submitted successfully, FILES: ' . json_encode($_FILES)];
 		} catch (\Throwable $ex) {
 			echo 'An error occurred: ' . $ex->getMessage() . ', traceback: ' . $ex->getTraceAsString();
 		}
