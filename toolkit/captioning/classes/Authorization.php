@@ -16,13 +16,13 @@ class Authorization {
 
 	public function __construct(string $user_config_path, bool $test_authorization = true) {
 		// Retrieve client_id and secret from POST params:
-		if (!isset($_POST['client_id']) || !isset($_POST['secret'])) {
+		if (!isset($_REQUEST['client_id']) || !isset($_REQUEST['secret'])) {
 			http_response_code(403);
 			echo 'Unauthorized.';
 			exit;
 		}
-		$this->client_id = $_POST['client_id'];
-		$this->secret = $_POST['secret'];
+		$this->client_id = $_REQUEST['client_id'];
+		$this->secret = $_REQUEST['secret'];
 		$this->user_config_path = $user_config_path;
 		$this->load_user_database();
         if ($test_authorization) $this->authorize();
