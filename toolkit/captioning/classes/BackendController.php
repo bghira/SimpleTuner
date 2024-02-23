@@ -86,7 +86,7 @@ class BackendController {
                 } else if ($this->job_type === 'text') {
                     $this->s3_uploader->uploadTextCache($_FILES['file']['result_file'], $filename);
                 } else {
-                    echo 'Invalid job type';
+                    echo 'Invalid job type: ' . $this->job_type . ' - must be "vae" or "text"';
                     exit;
                 }
             }
