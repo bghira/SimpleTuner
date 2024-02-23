@@ -15,7 +15,7 @@ class S3Uploader {
     /** @var string */
     private $text_cache_prefix;
 
-    public function __construct($bucket, $region, $key, $secret, $vae_cache_prefix, $text_cache_prefix) {
+    public function __construct($bucket, $region, $key, $secret, $endpoint, $vae_cache_prefix, $text_cache_prefix) {
         $this->s3Client = new S3Client([
             'version' => 'latest',
             'region'  => $region,
@@ -23,6 +23,7 @@ class S3Uploader {
                 'key'    => $key,
                 'secret' => $secret,
             ],
+            'endpoint' => $endpoint,
         ]);
         $this->bucket = $bucket;
         $this->vae_cache_prefix = $vae_cache_prefix;
