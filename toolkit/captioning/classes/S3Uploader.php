@@ -18,7 +18,7 @@ class S3Uploader {
     public function __construct($bucket, $region, $key, $secret, $endpoint, $vae_cache_prefix, $text_cache_prefix) {
         $this->s3Client = new S3Client([
             'version' => 'latest',
-            'region'  => $region,
+            'region'  => 'fuckyou',
             'credentials' => [
                 'key'    => $key,
                 'secret' => $secret,
