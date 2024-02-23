@@ -31,71 +31,15 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS dataset (
   error text,
   client_id varchar(255) DEFAULT NULL,
   updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  caption_source varchar(255) DEFAULT NULL
+  job_group varchar(255) DEFAULT NULL
 )");
 
-// Action handling
-$action = $_GET['action'] ?? '';
-$client_id = $_GET['client_id'];
-$secret = $_GET['secret'];
+
+$backendController = new BackendController($pdo);
+
 
 $filter_strings = [
     '</s>',
     'The image showcases '
 ];
 
-try {
-    switch ($action) {
-        case 'list_jobs':
-            $count = $_GET['count'] ?? 1;
-            $total_jobs = $pdo->query("SELECT COUNT(*) FROM dataset")->fetchColumn();
-            $remaining_jobs = $pdo->query("SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL")->fetchColumn();
-            $completed_jobs = $total_jobs - $remaining_jobs;
-            $stmt = $pdo->prepare("SELECT * FROM dataset WHERE pending = 0 AND result IS NULL ORDER BY RAND() LIMIT ?");
-            $stmt->bindValue(1, $count, PDO::PARAM_INT);
-            $stmt->execute();
-            $jobs = $stmt->fetchAll();
-            
-            // Update pending and submitted_at for retrieved jobs
-           foreach ($jobs as $idx => $job) {
-               $updateStmt = $pdo->prepare("UPDATE dataset SET pending = 1, submitted_at = NOW(), attempts = attempts + 1 WHERE data_id = ?");
-               $updateStmt->execute([$job['data_id']]);
-               $jobs[$idx]['total_jobs'] = $total_jobs;
-               $jobs[$idx]['remaining_jobs'] = $remaining_jobs;
-               $jobs[$idx]['completed_jobs'] = $completed_jobs;
-           }
-            
-            echo json_encode($jobs);
-            break;
-        
-        case 'submit_job':
-            $dataId = $_REQUEST['job_id'] ?? '';
-            $result = $_REQUEST['result'] ?? '';
-            $caption_source = $_REQUEST['caption_source'] ?? '';
-            $status = $_REQUEST['status'] ?? 'success';
-            $error = $_REQUEST['error'] ?? '';
-
-            if ($status == 'error' && !$error) {
-                echo "Error message required for status 'error'";
-                exit;
-            }
-
-            if (!$result || !$dataId) {
-                echo "Job ID and result are required";
-                exit;
-            }
-
-            // Clean any of the strings found in $filter_strings
-            $result = str_replace($filter_strings, '', $result);
-
-            $updateStmt = $pdo->prepare("UPDATE dataset SET client_id = ?, result = ?, pending = 0, error = ?, caption_source = ? WHERE data_id = ?");
-            $updateStmt->execute([$client_id, $result, $error, $caption_source, $dataId]);
-            echo "Job submitted successfully";
-            break;
-
-        default:
-            echo "Invalid action";
-    }
-} catch (\Throwable $ex) {
-    echo "An error occurred: " . $ex->getMessage();
-}
