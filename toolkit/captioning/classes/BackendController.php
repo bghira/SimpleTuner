@@ -13,16 +13,16 @@ class BackendController {
 	private $action;
 	/** @var string */
 	private $error;
-    /** @var string */
+	/** @var string */
 	private $client_id;
 	/** @var string */
 	private $job_type;
-    /** @var S3Uploader */
-    private $s3_uploader;
+	/** @var S3Uploader */
+	private $s3_uploader;
 
 	public function __construct(PDO $pdo, S3Uploader $s3_uploader) {
 		$this->pdo = $pdo;
-        $this->s3_uploader = $s3_uploader;
+		$this->s3_uploader = $s3_uploader;
 		$this->getParameters();
 	}
 
@@ -30,7 +30,7 @@ class BackendController {
 		// Action handling
 		$this->action = $_REQUEST['action'] ?? '';
 		$this->job_type = $_REQUEST['job_type'] ?? '';
-        $this->error = $_REQUEST['error'] ?? '';
+		$this->error = $_REQUEST['error'] ?? '';
 	}
 
 	public function handleRequest() {
@@ -39,24 +39,29 @@ class BackendController {
 
 	public function list_jobs() {
 		try {
-			$count = $_GET['count'] ?? 1;
-			$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
-			$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL')->fetchColumn();
-			$completed_jobs = $total_jobs - $remaining_jobs;
+			$limit = 500; // Number of rows to fetch and randomize in PHP
+			$count = $_GET['count'] ?? 1; // Number of rows to actually return
+
+			// Fetch the rows
 			$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 AND result IS NULL LIMIT ?');
-			$stmt->bindValue(1, $count, PDO::PARAM_INT);
+			$stmt->bindValue(1, $limit, PDO::PARAM_INT);
 			$stmt->execute();
 			$jobs = $stmt->fetchAll();
 
+			// Shuffle the array in PHP
+			shuffle($jobs);
+
+			// Slice the array to get only the number of rows specified by $count
+			$jobs = array_slice($jobs, 0, $count);
+
+			// Update the database for the selected jobs
 			foreach ($jobs as $idx => $job) {
 				$updateStmt = $this->pdo->prepare('UPDATE dataset SET pending = 1, submitted_at = NOW(), attempts = attempts + 1 WHERE data_id = ?');
 				$updateStmt->execute([$job['data_id']]);
-				$jobs[$idx]['total_jobs'] = $total_jobs;
-				$jobs[$idx]['remaining_jobs'] = $remaining_jobs;
-				$jobs[$idx]['completed_jobs'] = $completed_jobs;
-                $jobs[$idx]['job_type'] = $this->job_type;
+				// Add or update additional information for each job if necessary
 			}
 
+			// Return the selected jobs
 			return $jobs;
 		} catch (\Throwable $ex) {
 			echo 'An error occurred: ' . $ex->getMessage();
@@ -72,15 +77,15 @@ class BackendController {
 				echo 'Job ID and result are required';
 				exit;
 			}
-            if ($status == 'error' && !$this->error) {
+			if ($status == 'error' && !$this->error) {
 				echo "Error message required for status 'error'";
 				exit;
-			}           
+			}
 
-            if ($status !== 'error') {
-                $stmt = $this->pdo->prepare('SELECT data_id FROM dataset WHERE data_id = ?');
-                $stmt->execute([$dataId]);
-                $filename = $stmt->fetchColumn();
+			if ($status !== 'error') {
+				$stmt = $this->pdo->prepare('SELECT data_id FROM dataset WHERE data_id = ?');
+				$stmt->execute([$dataId]);
+				$filename = $stmt->fetchColumn();
 				if (!$filename) {
 					echo 'Job ID not found';
 					exit;
@@ -93,17 +98,17 @@ class BackendController {
 					echo 'Provided files: ' . json_encode($_FILES);
 					exit;
 				}
-                if ($this->job_type === 'vae') {
-                    $result = $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename . '.pt');
-                    $result = $this->s3_uploader->uploadImage($_FILES['image_file']['tmp_name'], $filename . '.png');
-                } else if ($this->job_type === 'text') {
-                    $result = $this->s3_uploader->uploadTextCache($_FILES['result_file']['tmp_name'], $filename);
-                } else {
-                    echo 'Invalid job type: ' . $this->job_type . ' - must be "vae" or "text"';
-                    exit;
-                }
-            }
- 
+				if ($this->job_type === 'vae') {
+					$result = $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename . '.pt');
+					$result = $this->s3_uploader->uploadImage($_FILES['image_file']['tmp_name'], $filename . '.png');
+				} elseif ($this->job_type === 'text') {
+					$result = $this->s3_uploader->uploadTextCache($_FILES['result_file']['tmp_name'], $filename);
+				} else {
+					echo 'Invalid job type: ' . $this->job_type . ' - must be "vae" or "text"';
+					exit;
+				}
+			}
+
 			$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, result = ?, pending = 0, error = ? WHERE data_id = ?');
 			$updateStmt->execute([$this->client_id, $result, $this->error, $dataId]);
 
