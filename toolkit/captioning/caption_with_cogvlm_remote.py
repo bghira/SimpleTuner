@@ -394,9 +394,6 @@ def main():
                     image_buffer = BytesIO()
                     image.save(image_buffer, format="PNG")
                     image_buffer.seek(0)
-                    tq.write(
-                        f"Image buffer will result in a file of size: {len(image_buffer.getvalue())} bytes."
-                    )
                     files = {
                         "result_file": (
                             "latents.pt",
@@ -421,7 +418,7 @@ def main():
                             "job_type": "vae",
                         },
                     )
-                    print(f"Submission response: {submission_response.text}")
+                    # print(f"Submission response: {submission_response.text}")
 
                 current_cluster_progress = (
                     task["completed_jobs"] - initial_cluster_progress

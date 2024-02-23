@@ -107,7 +107,7 @@ class BackendController {
 			$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, result = ?, pending = 0, error = ? WHERE data_id = ?');
 			$updateStmt->execute([$this->client_id, $result, $this->error, $dataId]);
 
-			return ['status' => 'success', 'result' => 'Job submitted successfully, FILES: ' . json_encode($_FILES)];
+			return ['status' => 'success', 'result' => 'Job submitted successfully'];
 		} catch (\Throwable $ex) {
 			echo 'An error occurred for FILES ' . json_encode($_FILES) . ': ' . $ex->getMessage() . ', traceback: ' . $ex->getTraceAsString();
 		}
