@@ -28,8 +28,8 @@ class BackendController {
 
 	public function getParameters() {
 		// Action handling
-		$this->action = $_GET['action'] ?? '';
-		$this->job_type = $_GET['job_type'] ?? '';
+		$this->action = $_REQUEST['action'] ?? '';
+		$this->job_type = $_REQUEST['job_type'] ?? '';
         $this->error = $_REQUEST['error'] ?? '';
 	}
 
