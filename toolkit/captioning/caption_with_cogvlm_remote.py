@@ -181,6 +181,7 @@ def main():
             force_upcast=False,
             torch_dtype=torch.bfloat16,
         ).to(accelerator.device)
+        vae = torch.compile(vae, fullgraph=True)
         from torchvision import transforms
 
         image_transforms = transforms.Compose(
