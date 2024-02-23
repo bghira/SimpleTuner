@@ -393,6 +393,10 @@ def main():
                     # Prepare the file data for uploading
                     image_buffer = BytesIO()
                     image.save(image_buffer, format="PNG")
+                    image_buffer.seek(0)
+                    tq.write(
+                        f"Image buffer will result in a file of size: {len(image_buffer.getvalue())} bytes."
+                    )
                     files = {
                         "result_file": (
                             "latents.pt",
