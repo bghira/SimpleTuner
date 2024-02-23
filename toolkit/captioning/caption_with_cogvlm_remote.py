@@ -342,7 +342,9 @@ def main():
                     tq.write(f"-> [error] Failed to load image from {task['URL']}.")
                     local_progress_bar.update(1)
                     continue
-
+                if "job_type" not in task:
+                    tq.write(f"Received invalid task: {task}. Skipping.")
+                    continue
                 if task["job_type"] == "caption":
                     # Generate the caption
                     caption_source = "cogvlm"
@@ -421,7 +423,7 @@ def main():
                     # print(f"Submission response: {submission_response.text}")
 
                 current_cluster_progress = (
-                    task["completed_jobs"] - initial_cluster_progress
+                    task.get("completed_jobs", 0) - initial_cluster_progress
                 )
                 global_progress_bar.n = current_cluster_progress
                 local_progress_bar.update(1)
