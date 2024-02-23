@@ -82,9 +82,9 @@ class BackendController {
                 $stmt->execute([$dataId]);
                 $filename = $stmt->fetchColumn();
                 if ($this->job_type === 'vae') {
-                    $this->s3_uploader->uploadVAECache($_FILES['result_file'], $filename);
+                    $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename);
                 } else if ($this->job_type === 'text') {
-                    $this->s3_uploader->uploadTextCache($_FILES['result_file'], $filename);
+                    $this->s3_uploader->uploadTextCache($_FILES['result_file']['tmp_name'], $filename);
                 } else {
                     echo 'Invalid job type: ' . $this->job_type . ' - must be "vae" or "text"';
                     exit;
