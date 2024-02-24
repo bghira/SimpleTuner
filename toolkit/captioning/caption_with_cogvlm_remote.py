@@ -1,10 +1,18 @@
-import torch, logging, argparse, io, base64
+import threading
+import queue
+import requests
+import torch, base64, logging, io, time
+import argparse
 from PIL import Image
-import requests, time
+from io import BytesIO
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
 from tqdm import tqdm as tq
 from io import BytesIO
+
+# Initialize queues
+job_queue = queue.Queue(maxsize=64)
+submission_queue = queue.Queue()
 
 
 def parse_args():
@@ -20,6 +28,15 @@ def parse_args():
             "When loading CogVLM, you can load it in fp16, bf16, fp8 or fp4 precision to reduce memory. Default: fp4"
         ),
     )
+    parser.add_argument(
+        "--disable_compile",
+        type=bool,
+        default=False,
+        help=(
+            "Provide --disable_compile=true to disable Torch compile. Required on Mac and AMD, perhaps. Default: false."
+        ),
+    )
+
     parser.add_argument(
         "--query_str",
         type=str,
@@ -235,7 +252,8 @@ def main():
             force_upcast=False,
             torch_dtype=torch.bfloat16,
         ).to(accelerator.device)
-        vae = torch.compile(vae, fullgraph=True)
+        if not args.disable_compile:
+            vae = torch.compile(vae, fullgraph=True)
         from torchvision import transforms
 
         image_transforms = transforms.Compose(
@@ -451,23 +469,37 @@ def main():
                     latents_buffer.seek(
                         0
                     )  # Important: move back to the start of the buffer
+                    files = {
+                        "result_file": (
+                            "latents.pt",
+                            latents_buffer,
+                            "application/octet-stream",
+                        ),
+                    }
+                    submission_response = requests.post(
+                        f"{args.backend_url}/?action=submit_job",
+                        files=files,
+                        params={
+                            "result": "encoded latents",
+                            "job_id": task["data_id"],
+                            "client_id": args.client_id,
+                            "secret": args.secret,
+                            "status": "success",
+                            "job_type": "vae",
+                        },
+                    )
+                    # print(f"Submission response: {submission_response.text}")
+                elif task["job_type"] == "data_upload":
                     # Prepare the file data for uploading
                     image_buffer = BytesIO()
                     image.save(image_buffer, format="PNG")
                     image_buffer.seek(0)
                     if args.aws_config:
-                        files = {
-                            "result_file": (
-                                "latents.pt",
-                                latents_buffer,
-                                "application/octet-stream",
-                            ),
-                        }
                         # post the image to s3
                         attempt = 0
                         while attempt < 3:
                             try:
-                                s3_client.put_object(
+                                object_url = s3_client.put_object(
                                     Bucket=args.aws_bucket_name,
                                     Key=f"image_data/{task['data_id']}.png",
                                     Body=image_buffer,
@@ -484,12 +516,8 @@ def main():
                             local_progress_bar.update(1)
                             continue
                     else:
+                        object_url = None
                         files = {
-                            "result_file": (
-                                "latents.pt",
-                                latents_buffer,
-                                "application/octet-stream",
-                            ),
                             "image_file": (
                                 "image.png",
                                 image_buffer,
@@ -500,15 +528,16 @@ def main():
                         f"{args.backend_url}/?action=submit_job",
                         files=files,
                         params={
-                            "result": "encoded latents",
+                            "result": object_url,
                             "job_id": task["data_id"],
                             "client_id": args.client_id,
                             "secret": args.secret,
                             "status": "success",
-                            "job_type": "vae",
+                            "job_type": "dataset_upload",
                         },
                     )
                     # print(f"Submission response: {submission_response.text}")
+                image.close()
 
                 current_cluster_progress = (
                     task.get("completed_jobs", 0) - initial_cluster_progress

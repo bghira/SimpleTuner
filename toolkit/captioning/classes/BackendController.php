@@ -42,11 +42,16 @@ class BackendController {
 			$limit = 500; // Number of rows to fetch and randomize in PHP
 			$count = $_GET['count'] ?? 1; // Number of rows to actually return
 
-			$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
-			$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE pending = 0 AND result IS NULL')->fetchColumn();
-
 			// Fetch the rows
-			$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 AND result IS NULL LIMIT ?');
+			if ($this->job_type === 'vae') {
+				$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
+				$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE pending = 0')->fetchColumn();
+				$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 LIMIT ?');
+			} elseif ($this->job_type === 'dataset_upload') {
+				$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
+				$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE result IS NULL')->fetchColumn();
+				$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE result IS NULL LIMIT ?');
+			}
 			$stmt->bindValue(1, $limit, PDO::PARAM_INT);
 			$stmt->execute();
 			$jobs = $stmt->fetchAll();
@@ -59,7 +64,11 @@ class BackendController {
 
 			// Update the database for the selected jobs
 			foreach ($jobs as $idx => $job) {
-				$updateStmt = $this->pdo->prepare('UPDATE dataset SET pending = 1, submitted_at = NOW(), attempts = attempts + 1 WHERE data_id = ?');
+				if ($this->job_type === 'vae') {
+					$updateStmt = $this->pdo->prepare('UPDATE dataset SET pending = 1, submitted_at = NOW(), attempts = attempts + 1 WHERE data_id = ?');
+				} elseif ($this->job_type === 'dataset_upload') {
+					$updateStmt = $this->pdo->prepare('UPDATE dataset SET upload_pending = 1 WHERE data_id = ?');
+				}
 				$updateStmt->execute([$job['data_id']]);
 				$jobs[$idx]['total_jobs'] = $total_jobs;
 				$jobs[$idx]['remaining_jobs'] = $remaining_jobs; // Update remaining jobs count
@@ -106,7 +115,12 @@ class BackendController {
 				}
 				if ($this->job_type === 'vae') {
 					$result = $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename . '.pt');
+					$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, error = ? WHERE data_id = ?');
+					$updateStmt->execute([$this->client_id, $this->error, $dataId]);
+				} elseif ($this->job_type === 'dataset_upload') {
 					$result = $this->s3_uploader->uploadImage($_FILES['image_file']['tmp_name'], $filename . '.png');
+					$updateStmt = $this->pdo->prepare('UPDATE dataset SET result = ? WHERE data_id = ?');
+					$updateStmt->execute([$result, $dataId]);
 				} elseif ($this->job_type === 'text') {
 					$result = $this->s3_uploader->uploadTextCache($_FILES['result_file']['tmp_name'], $filename);
 				} else {
@@ -114,10 +128,6 @@ class BackendController {
 					exit;
 				}
 			}
-
-			$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, result = ?, pending = 0, error = ? WHERE data_id = ?');
-			$updateStmt->execute([$this->client_id, $result, $this->error, $dataId]);
-
 			return ['status' => 'success', 'result' => 'Job submitted successfully'];
 		} catch (\Throwable $ex) {
 			echo 'An error occurred for FILES ' . json_encode($_FILES) . ': ' . $ex->getMessage() . ', traceback: ' . $ex->getTraceAsString();
