@@ -511,6 +511,8 @@ def main():
                                     Key=f"image_data/{task['data_id']}.png",
                                     Body=image_buffer,
                                 )
+                                object_etag = object_url["ETag"]
+                                tq.write(f"Object Etag: {object_etag}")
                                 break
                             except Exception as e:
                                 tq.write(
@@ -535,7 +537,7 @@ def main():
                         f"{args.backend_url}/?action=submit_job",
                         files=files,
                         params={
-                            "result": object_url,
+                            "result": object_etag,
                             "job_id": task["data_id"],
                             "client_id": args.client_id,
                             "secret": args.secret,
@@ -543,7 +545,7 @@ def main():
                             "job_type": "dataset_upload",
                         },
                     )
-                    # print(f"Submission response: {submission_response.text}")
+                    tq.write(f"Submission response: {submission_response.text}")
                 image.close()
 
                 current_cluster_progress = (
