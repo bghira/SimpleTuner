@@ -105,15 +105,12 @@ class BackendController {
 					echo 'Job ID not found';
 					exit;
 				}
-				if (!in_array('image_file', array_keys($_FILES)) || !in_array('result_file', array_keys($_FILES))) {
-					echo 'Image and result files are required.';
-					if (in_array('result_file', $_FILES)) {
-						echo ' Only the result file was provided.';
-					}
-					echo 'Provided files: ' . json_encode($_FILES);
-					exit;
-				}
 				if ($this->job_type === 'vae') {
+					if (!in_array('result_file', array_keys($_FILES))) {
+						echo 'Result files are required for VAE tasks.';
+						echo 'Provided files: ' . json_encode($_FILES);
+						exit;
+					}
 					$result = $this->s3_uploader->uploadVAECache($_FILES['result_file']['tmp_name'], $filename . '.pt');
 					$updateStmt = $this->pdo->prepare('UPDATE dataset SET client_id = ?, error = ? WHERE data_id = ?');
 					$updateStmt->execute([$this->client_id, $this->error, $dataId]);
