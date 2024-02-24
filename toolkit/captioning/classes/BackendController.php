@@ -49,7 +49,7 @@ class BackendController {
 				$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE pending = 0 LIMIT ?');
 			} elseif ($this->job_type === 'dataset_upload') {
 				$total_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset')->fetchColumn();
-				$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE result IS NULL')->fetchColumn();
+				$remaining_jobs = $this->pdo->query('SELECT COUNT(*) FROM dataset WHERE upload_pending = 0 AND result IS NULL')->fetchColumn();
 				$stmt = $this->pdo->prepare('SELECT * FROM dataset WHERE result IS NULL LIMIT ?');
 			}
 			$stmt->bindValue(1, $limit, PDO::PARAM_INT);
