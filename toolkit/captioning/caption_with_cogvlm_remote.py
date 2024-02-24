@@ -54,7 +54,7 @@ def parse_args():
     parser.add_argument(
         "--job_type",
         type=str,
-        choices=["caption", "vae"],
+        choices=["caption", "vae", "dataset_upload"],
         required=True,
         help=("The type of encoding to produce."),
     )
