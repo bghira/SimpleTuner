@@ -9,6 +9,7 @@ from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
 from tqdm import tqdm as tq
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Initialize queues
 job_queue = queue.Queue(maxsize=64)
@@ -104,6 +105,14 @@ def parse_args():
         "--aws_secret_access_key",
         type=str,
         default=None,
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+        help=(
+            "When querying the backend, how many jobs to request at once. Decreasing this will put more load on the remote server. Do not do that. Default: 16"
+        ),
     )
     return parser.parse_args()
 
@@ -236,6 +245,96 @@ def submit_response(args, files, object_etag, task):
     )
 
 
+def upload_sample(args, image, task, local_progress_bar, files=None):
+    if args.aws_config:
+        s3_client = initialize_s3_client(args)
+    if image is None:
+        return None
+    image_buffer = BytesIO()
+    image.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+    files = None
+    if args.aws_config:
+        # post the image to s3
+        attempt = 0
+        while attempt < 3:
+            try:
+                tq.write(
+                    f"Attempting to upload to {args.aws_bucket_name}: image_data/{task['data_id']}.png"
+                )
+                before_time = time.time()
+                response_meta = s3_client.put_object(
+                    Bucket=args.aws_bucket_name,
+                    Key=f"image_data/{task['data_id']}.png",
+                    Body=image_buffer,
+                )
+                after_time = time.time()
+                tq.write(f"Received data in {after_time - before_time} seconds.")
+                object_etag = response_meta["ETag"]
+                tq.write(f"Object Etag: {object_etag}")
+                break
+            except Exception as e:
+                tq.write(f"Failed to upload image to s3: {e}. Attempting again.")
+                attempt += 1
+                time.sleep(5)
+        if attempt == 3:
+            tq.write(f"Failed to upload image to s3. Skipping.")
+            local_progress_bar.update(1)
+            return None
+    else:
+        object_etag = None
+        files = {
+            "image_file": (
+                "image.png",
+                image_buffer,
+                "image/png",
+            ),
+        }
+    before_time = time.time()
+    submit_response(args, files, object_etag, task)
+    after_time = time.time()
+    tq.write(f"Submitted result in {after_time - before_time} seconds.")
+
+
+def load_image_from_url(url):
+    tq.write(f"Begin load URL: {url}")
+    before_time = time.time()
+    attempts = 0
+    while attempts < 3:
+        try:
+            result = Image.open(
+                io.BytesIO(requests.get(url, timeout=10).content)
+            ).convert("RGB")
+            break
+        except Exception as e:
+            tq.write(f"-> [error] Could not load image from {url}. Retrying...")
+            attempts += 1
+            time.sleep(5)
+    if attempts == 3:
+        tq.write(f"-> [error] Failed to load image from {url}.")
+        return None
+    after_time = time.time()
+    tq.write(f"Received image in {after_time - before_time} seconds.")
+    return result
+
+
+def load_images_in_parallel(tasks):
+    images = {}
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_url = {
+            executor.submit(load_image_from_url, task["URL"]): task for task in tasks
+        }
+        for future in as_completed(future_to_url):
+            task = future_to_url[future]
+            try:
+                image = future.result()
+                if image is not None:
+                    images[task["data_id"]] = image
+            except Exception as exc:
+                print(f'{task["data_id"]} generated an exception: {exc}')
+    return images
+
+
 def main():
     args = parse_args()
     if args.aws_config:
@@ -343,8 +442,6 @@ def main():
 
     # Query backend for tasks, and loop.
     has_set_total = False
-    if args.aws_config:
-        s3_client = initialize_s3_client(args)
     while True:
         try:
             # Query backend for tasks
@@ -355,7 +452,7 @@ def main():
                 params={
                     "client_id": args.client_id,
                     "secret": args.secret,
-                    "count": 16,
+                    "count": args.batch_size,
                     "job_type": args.job_type,
                 },
             )
@@ -393,6 +490,29 @@ def main():
             # ]
 
             # Now, we evaluate the caption for each image.
+            if response_json[0]["job_type"] == "dataset_upload":
+                # Prepare the file data for uploading
+                tq.write(f"Received data upload job: {response_json[0]['data_id']}.")
+                # Grab all images in the batch at once via threads:
+                images = load_images_in_parallel(response_json)
+                with ThreadPoolExecutor(max_workers=20) as executor:
+                    future_to_task = {
+                        executor.submit(
+                            upload_sample,
+                            args,
+                            image,
+                            {"data_id": data_id},
+                            local_progress_bar,
+                        ): data_id
+                        for data_id, image in images.items()
+                    }
+                    for future in as_completed(future_to_task):
+                        data_id = future_to_task[future]
+                        try:
+                            future.result()
+                        except Exception as exc:
+                            print(f"{data_id} upload generated an exception: {exc}")
+                continue
             for task in response_json:
                 if not has_set_total:
                     initial_cluster_progress = task.get("completed_jobs", 0)
@@ -509,62 +629,6 @@ def main():
                         },
                     )
                     # print(f"Submission response: {submission_response.text}")
-                elif task["job_type"] == "dataset_upload":
-                    # Prepare the file data for uploading
-                    tq.write(f"Received data upload job: {task['data_id']}.")
-                    image_buffer = BytesIO()
-                    image.save(image_buffer, format="PNG")
-                    image_buffer.seek(0)
-                    files = None
-                    if args.aws_config:
-                        # post the image to s3
-                        attempt = 0
-                        while attempt < 3:
-                            try:
-                                tq.write(
-                                    f"Attempting to upload to {args.aws_bucket_name}: image_data/{task['data_id']}.png"
-                                )
-                                before_time = time.time()
-                                object_url = s3_client.put_object(
-                                    Bucket=args.aws_bucket_name,
-                                    Key=f"image_data/{task['data_id']}.png",
-                                    Body=image_buffer,
-                                )
-                                after_time = time.time()
-                                tq.write(
-                                    f"Received data in {after_time - before_time} seconds."
-                                )
-                                object_etag = object_url["ETag"]
-                                tq.write(f"Object Etag: {object_etag}")
-                                break
-                            except Exception as e:
-                                tq.write(
-                                    f"Failed to upload image to s3: {e}. Attempting again."
-                                )
-                                attempt += 1
-                                time.sleep(5)
-                        if attempt == 3:
-                            tq.write(f"Failed to upload image to s3. Skipping.")
-                            local_progress_bar.update(1)
-                            continue
-                    else:
-                        object_url = None
-                        files = {
-                            "image_file": (
-                                "image.png",
-                                image_buffer,
-                                "image/png",
-                            ),
-                        }
-                    before_time = time.time()
-                    # Spawn the submission thread
-                    submission_thread = threading.Thread(
-                        target=submit_response,
-                        args=(args, files, object_etag, task),
-                    )
-                    submission_thread.start()
-                    after_time = time.time()
-                    tq.write(f"Submitted result in {after_time - before_time} seconds.")
                 image.close()
 
                 current_cluster_progress = (
