@@ -333,6 +333,7 @@ def main():
     while True:
         try:
             # Query backend for tasks
+            before_time = time.time()
             response = requests.get(
                 f"{args.backend_url}/?action=list_jobs",
                 timeout=30,
@@ -343,6 +344,8 @@ def main():
                     "job_type": args.job_type,
                 },
             )
+            after_time = time.time()
+            tq.write(f"Received job in {after_time - before_time} seconds.")
             # 403? Exit.
             if response.status_code == 403:
                 tq.write("Access denied. Exiting.")
@@ -506,10 +509,15 @@ def main():
                                 tq.write(
                                     f"Attempting to upload to {args.aws_bucket_name}: image_data/{task['data_id']}.png"
                                 )
+                                before_time = time.time()
                                 object_url = s3_client.put_object(
                                     Bucket=args.aws_bucket_name,
                                     Key=f"image_data/{task['data_id']}.png",
                                     Body=image_buffer,
+                                )
+                                after_time = time.time()
+                                tq.write(
+                                    f"Received data in {after_time - before_time} seconds."
                                 )
                                 object_etag = object_url["ETag"]
                                 tq.write(f"Object Etag: {object_etag}")
@@ -533,6 +541,7 @@ def main():
                                 "image/png",
                             ),
                         }
+                    before_time = time.time()
                     submission_response = requests.post(
                         f"{args.backend_url}/?action=submit_job",
                         files=files,
@@ -545,7 +554,8 @@ def main():
                             "job_type": "dataset_upload",
                         },
                     )
-                    tq.write(f"Submission response: {submission_response.text}")
+                    after_time = time.time()
+                    tq.write(f"Submitted result in {after_time - before_time} seconds.")
                 image.close()
 
                 current_cluster_progress = (
