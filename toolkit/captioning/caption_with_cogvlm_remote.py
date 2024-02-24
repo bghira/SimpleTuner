@@ -385,7 +385,9 @@ def main():
                 if "pending" not in task:
                     tq.write(f"Received invalid task: {task}. Skipping.")
                     continue
-                if task["pending"] == 1 or task["result"]:
+                if (task["pending"] == 1 and args.job_type == "vae") or (
+                    task["result"] and args.job_type == "dataset_upload"
+                ):
                     tq.write(
                         f"-> [warning] Task {task['data_id']} is pending? {task['pending']} or has a result {task['result']}. Skipping."
                     )
