@@ -263,7 +263,7 @@ def main():
             ]
         )
 
-    elif args.eval_backend == "transformers" and not args.job_type == "vae":
+    elif args.eval_backend == "transformers" and args.job_type == "caption":
         send_to_cuda = load_in_4bit = load_in_8bit = False
         torch_dtype = torch.bfloat16
         if args.precision == "bf16" or args.precision == "fp16":
@@ -491,16 +491,21 @@ def main():
                         },
                     )
                     # print(f"Submission response: {submission_response.text}")
-                elif task["job_type"] == "data_upload":
+                elif task["job_type"] == "dataset_upload":
                     # Prepare the file data for uploading
+                    tq.write(f"Received data upload job: {task['data_id']}.")
                     image_buffer = BytesIO()
                     image.save(image_buffer, format="PNG")
                     image_buffer.seek(0)
+                    files = None
                     if args.aws_config:
                         # post the image to s3
                         attempt = 0
                         while attempt < 3:
                             try:
+                                tq.write(
+                                    f"Attempting to upload to {args.aws_bucket_name}: image_data/{task['data_id']}.png"
+                                )
                                 object_url = s3_client.put_object(
                                     Bucket=args.aws_bucket_name,
                                     Key=f"image_data/{task['data_id']}.png",
