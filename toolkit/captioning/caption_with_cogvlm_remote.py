@@ -512,6 +512,9 @@ def main():
                             future.result()
                         except Exception as exc:
                             print(f"{data_id} upload generated an exception: {exc}")
+                # close all images
+                for image in images.values():
+                    image.close()
                 continue
             for task in response_json:
                 if not has_set_total:
