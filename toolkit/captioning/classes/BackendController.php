@@ -116,7 +116,7 @@ class BackendController {
 					$updateStmt->execute([$this->client_id, $this->error, $dataId]);
 				} elseif ($this->job_type === 'dataset_upload') {
 					if (in_array('image_file', $_FILES)) $result = $this->s3_uploader->uploadImage($_FILES['image_file']['tmp_name'], $filename . '.png');
-					$updateStmt = $this->pdo->prepare('UPDATE dataset SET result = ? WHERE data_id = ?');
+					$updateStmt = $this->pdo->prepare('UPDATE dataset SET result = ?, upload_pending = 1 WHERE data_id = ?');
 					$updateStmt->execute([$result, $dataId]);
 				} elseif ($this->job_type === 'text') {
 					$result = $this->s3_uploader->uploadTextCache($_FILES['result_file']['tmp_name'], $filename);
