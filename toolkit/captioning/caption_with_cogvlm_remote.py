@@ -221,6 +221,21 @@ def initialize_s3_client(args):
     return s3_client
 
 
+def submit_response(args, files, object_etag, task):
+    submission_response = requests.post(
+        f"{args.backend_url}/?action=submit_job",
+        files=files,
+        params={
+            "result": object_etag,
+            "job_id": task["data_id"],
+            "client_id": args.client_id,
+            "secret": args.secret,
+            "status": "success",
+            "job_type": "dataset_upload",
+        },
+    )
+
+
 def main():
     args = parse_args()
     if args.aws_config:
@@ -542,18 +557,12 @@ def main():
                             ),
                         }
                     before_time = time.time()
-                    submission_response = requests.post(
-                        f"{args.backend_url}/?action=submit_job",
-                        files=files,
-                        params={
-                            "result": object_etag,
-                            "job_id": task["data_id"],
-                            "client_id": args.client_id,
-                            "secret": args.secret,
-                            "status": "success",
-                            "job_type": "dataset_upload",
-                        },
+                    # Spawn the submission thread
+                    submission_thread = threading.Thread(
+                        target=submit_response,
+                        args=(args, files, object_etag, task),
                     )
+                    submission_thread.start()
                     after_time = time.time()
                     tq.write(f"Submitted result in {after_time - before_time} seconds.")
                 image.close()
