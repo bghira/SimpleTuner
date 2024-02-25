@@ -16,11 +16,8 @@ class TestPromptHandler(unittest.TestCase):
         self.model_type = "sdxl"
         self.data_backend = MagicMock()
 
-    @patch("pandas.DataFrame")
     @patch("helpers.training.state_tracker.StateTracker.get_parquet_database")
-    def test_prepare_instance_prompt_from_parquet(
-        self, mock_get_parquet_database, mock_df
-    ):
+    def test_prepare_instance_prompt_from_parquet(self, mock_get_parquet_database):
         # Setup
         image_path = "path/to/image_3.jpg"
         use_captions = True
@@ -28,15 +25,20 @@ class TestPromptHandler(unittest.TestCase):
         data_backend = MagicMock()
         instance_prompt = "Instance Prompt"
         sampler_backend_id = "sampler1"
-
-        # Mocking the parquet database response
         filename_column = "filename"
         caption_column = "caption"
-        mock_df.loc = MagicMock(
-            return_value=pd.DataFrame(
-                [{caption_column: "a giant arcade game type claw..."}]
-            )
+
+        # Simulate the DataFrame structure and the expected row
+        mock_df = pd.DataFrame(
+            [
+                {
+                    filename_column: "image_3",
+                    caption_column: "a giant arcade game type claw...",
+                }
+            ]
         )
+
+        # Configure the mock to return the simulated DataFrame
         mock_get_parquet_database.return_value = (
             mock_df,
             filename_column,
@@ -54,11 +56,9 @@ class TestPromptHandler(unittest.TestCase):
         )
 
         # Verify
-        print(f"Resulting caption: {str(result_caption)}")
-        self.assertIn(instance_prompt, result_caption)
-        self.assertIn("a giant arcade game type claw", result_caption)
+        expected_caption = f"{instance_prompt} a giant arcade game type claw..."
+        self.assertEqual(result_caption, expected_caption)
         mock_get_parquet_database.assert_called_once_with(sampler_backend_id)
-        mock_df.loc.assert_called()  # Verify that .loc was called, can be more specific
 
     def test_raises_value_error_on_missing_sampler_backend_id(self):
         with self.assertRaises(ValueError):
