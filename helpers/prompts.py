@@ -238,7 +238,7 @@ class PromptHandler:
                     "Instance prompt is required when instance_prompt_only is enabled."
                 )
             return instance_prompt
-        image_filename_stem = os.path.splitext(image_path)[0]
+        image_filename_stem = os.path.splitext(os.path.split(image_path)[1])[0]
         parquet_db, filename_column, caption_column = StateTracker.get_parquet_database(
             sampler_backend_id
         )
