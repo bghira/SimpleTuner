@@ -132,6 +132,58 @@ def print_bucket_info(bucket_manager):
         print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
+def configure_parquet_database(backend: dict, args):
+    """When given a backend config dictionary, configure a parquet database."""
+    parquet_path = backend.get("parquet_path", None)
+    if not parquet_path:
+        raise ValueError(
+            "Parquet backend must have a 'parquet_path' field in the backend config."
+        )
+    if not os.path.exists(parquet_path):
+        raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
+    # Load the dataframe
+    import pandas as pd
+
+    df = pd.read_parquet(parquet_path)
+    caption_column = backend.get(
+        "parquet_caption_column", args.parquet_caption_column or "description"
+    )
+    filename_column = backend.get(
+        "parquet_filename_column", args.parquet_filename_column or "id"
+    )
+    # Check the columns exist
+    if caption_column not in df.columns:
+        raise ValueError(
+            f"Parquet file {parquet_path} does not contain a column named '{caption_column}'."
+        )
+    if filename_column not in df.columns:
+        raise ValueError(
+            f"Parquet file {parquet_path} does not contain a column named '{filename_column}'."
+        )
+    # Check for null values
+    if df[caption_column].isnull().values.any():
+        raise ValueError(
+            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column."
+        )
+    if df[filename_column].isnull().values.any():
+        raise ValueError(
+            f"Parquet file {parquet_path} contains null values in the '{filename_column}' column."
+        )
+    # Check for empty strings
+    if (df[caption_column] == "").sum() > 0:
+        raise ValueError(
+            f"Parquet file {parquet_path} contains empty strings in the '{caption_column}' column."
+        )
+    if (df[filename_column] == "").sum() > 0:
+        raise ValueError(
+            f"Parquet file {parquet_path} contains empty strings in the '{filename_column}' column."
+        )
+    # Store the database in StateTracker
+    StateTracker.set_parquet_database(
+        backend["id"], (df, filename_column, caption_column)
+    )
+
+
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, prompt_handler
 ):
@@ -197,9 +249,9 @@ def configure_multi_databackend(
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
-            if backend["aws_data_prefix"][-1] != "/":
+            if "aws_data_prefix" in backend and backend["aws_data_prefix"][-1] != "/":
                 backend["aws_data_prefix"] += "/"
-            init_backend["cache_dir"] = backend["aws_data_prefix"]
+            init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
