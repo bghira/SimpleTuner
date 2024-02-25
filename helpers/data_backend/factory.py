@@ -430,6 +430,7 @@ def configure_multi_databackend(
             "caption_strategy",
             "maximum_image_size",
             "target_downsample_size",
+            "parquet_path",
         ]
         if init_backend["bucket_manager"].config != {}:
             prev_config = init_backend["bucket_manager"].config
@@ -493,7 +494,8 @@ def configure_multi_databackend(
             ),
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
         )
-
+        if init_backend["sampler"].caption_strategy == "parquet":
+            configure_parquet_database(backend, args)
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,  # The sampler handles batching

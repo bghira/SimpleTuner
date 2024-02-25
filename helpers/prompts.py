@@ -408,6 +408,15 @@ class PromptHandler:
                     instance_prompt=instance_prompt,
                     data_backend=data_backend,
                 )
+            elif caption_strategy == "parquet":
+                caption = PromptHandler.prepare_instance_prompt_from_parquet(
+                    image_path,
+                    use_captions=use_captions,
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
+                    data_backend=data_backend,
+                    sampler_backend_id=backend_config.get("sampler_backend_id", None),
+                )
             elif caption_strategy == "instanceprompt":
                 return instance_prompt
             captions.append(caption)
