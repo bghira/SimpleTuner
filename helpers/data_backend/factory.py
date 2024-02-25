@@ -249,8 +249,6 @@ def configure_multi_databackend(
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
-            if "aws_data_prefix" in backend and backend["aws_data_prefix"][-1] != "/":
-                backend["aws_data_prefix"] += "/"
             init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
