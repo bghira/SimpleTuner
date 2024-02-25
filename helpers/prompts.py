@@ -250,9 +250,6 @@ class PromptHandler:
         try:
             # Are the types incorrect, eg. the column is int64 vs str stem?
             if "int" in str(parquet_db[filename_column].dtype):
-                logger.info(
-                    f"Converting image_filename_stem from {type(image_filename_stem)} to int"
-                )
                 image_filename_stem = int(image_filename_stem)
             image_caption = parquet_db.loc[
                 parquet_db[filename_column] == image_filename_stem

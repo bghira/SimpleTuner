@@ -67,6 +67,9 @@ class TextEmbeddingCache:
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
 
     def create_hash(self, caption):
+        if caption is None:
+            # It's gross, but some images do not have captions.
+            caption = ""
         # Precomputed part of the format string
         hash_format = f"-{self.model_type}"
 
