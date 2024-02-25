@@ -242,7 +242,9 @@ class PromptHandler:
         )
         # parquet_db is a dataframe. let's find the row that matches the image filename.
         if parquet_db is None:
-            raise ValueError("Parquet database not found.")
+            raise ValueError(
+                f"Parquet database not found for sampler {sampler_backend_id}."
+            )
         try:
             image_caption = parquet_db.loc[
                 parquet_db[filename_column] == image_filename_stem
