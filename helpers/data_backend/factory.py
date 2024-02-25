@@ -182,6 +182,7 @@ def configure_parquet_database(backend: dict, args):
     StateTracker.set_parquet_database(
         backend["id"], (df, filename_column, caption_column)
     )
+    logger.info(f"Configured parquet database for backend {backend['id']}")
 
 
 def configure_multi_databackend(
