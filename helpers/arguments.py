@@ -35,7 +35,7 @@ def parse_args(input_args=None):
         help=(
             "When training using --model_type=lora, you may specify a different type of LoRA to train here."
             " Currently, only 'Standard' type is supported. This option exists for compatibility with Kohya configuration files."
-        )
+        ),
     )
     parser.add_argument(
         "--lora_rank",
@@ -308,10 +308,20 @@ def parse_args(input_args=None):
         "--caption_strategy",
         type=str,
         default="filename",
-        choices=["filename", "textfile", "instance_prompt"],
+        choices=["filename", "textfile", "instance_prompt", "parquet"],
         help=(
             "The default captioning strategy, 'filename', will use the filename as the caption, after stripping some characters like underscores."
-            "The 'textfile' strategy will use the contents of a text file with the same name as the image."
+            " The 'textfile' strategy will use the contents of a text file with the same name as the image."
+            " The 'parquet' strategy requires a parquet file with the same name as the image, containing a 'caption' column."
+        ),
+    )
+    parser.add_argument(
+        "--parquet_caption_field",
+        type=str,
+        default=None,
+        help=(
+            "When using caption_strategy=parquet, this option will allow you to globally set the default caption field across all datasets"
+            " that do not have an override set."
         ),
     )
     parser.add_argument(
@@ -484,7 +494,10 @@ def parse_args(input_args=None):
         "--learning_rate",
         type=float,
         default=4e-7,
-        help="Initial learning rate (after the potential warmup period) to use.",
+        help=(
+            "Initial learning rate (after the potential warmup period) to use."
+            " When using a cosine or sine schedule, --learning_rate defines the maximum learning rate."
+        ),
     )
     parser.add_argument(
         "--text_encoder_lr",
@@ -1060,7 +1073,10 @@ def parse_args(input_args=None):
         "--lr_end",
         type=str,
         default="4e-7",
-        help="A polynomial learning rate will end up at this value after the specified number of warmup steps.",
+        help=(
+            "A polynomial learning rate will end up at this value after the specified number of warmup steps."
+            " A sine or cosine wave will use this value as its lower bound for the learning rate."
+        ),
     )
 
     if input_args is not None:
