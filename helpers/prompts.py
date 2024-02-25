@@ -230,6 +230,8 @@ class PromptHandler:
         instance_prompt: str = None,
         sampler_backend_id: str = None,
     ) -> str:
+        if sampler_backend_id is None:
+            raise ValueError("Sampler backend ID is required.")
         if not use_captions:
             if not instance_prompt:
                 raise ValueError(
@@ -417,7 +419,7 @@ class PromptHandler:
                     prepend_instance_prompt=prepend_instance_prompt,
                     instance_prompt=instance_prompt,
                     data_backend=data_backend,
-                    sampler_backend_id=backend_config.get("sampler_backend_id", None),
+                    sampler_backend_id=data_backend.id,
                 )
             elif caption_strategy == "instanceprompt":
                 return instance_prompt
