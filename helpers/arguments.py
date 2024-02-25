@@ -316,11 +316,20 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--parquet_caption_field",
+        "--parquet_caption_column",
         type=str,
         default=None,
         help=(
             "When using caption_strategy=parquet, this option will allow you to globally set the default caption field across all datasets"
+            " that do not have an override set."
+        ),
+    )
+    parser.add_argument(
+        "--parquet_filename_column",
+        type=str,
+        default=None,
+        help=(
+            "When using caption_strategy=parquet, this option will allow you to globally set the default filename field across all datasets"
             " that do not have an override set."
         ),
     )
