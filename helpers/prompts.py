@@ -248,6 +248,12 @@ class PromptHandler:
                 f"Parquet database not found for sampler {sampler_backend_id}."
             )
         try:
+            # Are the types incorrect, eg. the column is int64 vs str stem?
+            if "int" in str(parquet_db[filename_column].dtype):
+                logger.info(
+                    f"Converting image_filename_stem from {type(image_filename_stem)} to int"
+                )
+                image_filename_stem = int(image_filename_stem)
             image_caption = parquet_db.loc[
                 parquet_db[filename_column] == image_filename_stem
             ][caption_column].values[0]
@@ -258,6 +264,9 @@ class PromptHandler:
                 image_caption = image_caption
             if prepend_instance_prompt:
                 image_caption = instance_prompt + " " + image_caption
+
+            # Remove surrounding space
+            image_caption = image_caption.strip()
 
             return image_caption
         except Exception as e:
