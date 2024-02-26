@@ -162,16 +162,16 @@ def configure_parquet_database(backend: dict, args):
             f"Parquet file {parquet_path} does not contain a column named '{filename_column}'."
         )
     # Check for null values
-    if df[caption_column].isnull().values.any():
+    if df[caption_column].isnull().values.any() and not fallback_caption_column:
         raise ValueError(
-            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column."
+            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no parquet_fallback_caption_column was set."
         )
     if df[filename_column].isnull().values.any():
         raise ValueError(
             f"Parquet file {parquet_path} contains null values in the '{filename_column}' column."
         )
     # Check for empty strings
-    if (df[caption_column] == "").sum() > 0:
+    if (df[caption_column] == "").sum() > 0 and not fallback_caption_column:
         raise ValueError(
             f"Parquet file {parquet_path} contains empty strings in the '{caption_column}' column."
         )

@@ -250,33 +250,30 @@ class PromptHandler:
             raise ValueError(
                 f"Parquet database not found for sampler {sampler_backend_id}."
             )
-        try:
-            # Are the types incorrect, eg. the column is int64 vs str stem?
-            if "int" in str(parquet_db[filename_column].dtype):
+        image_caption = None
+        # Are the types incorrect, eg. the column is int64 vs str stem?
+        if "int" in str(parquet_db[filename_column].dtype):
+            if image_filename_stem.isdigit():
                 image_filename_stem = int(image_filename_stem)
-            found_column = parquet_db[filename_column] == image_filename_stem
-            if not found_column.any():
+        item = parquet_db[parquet_db[filename_column] == image_filename_stem]
+        image_caption = item[caption_column].values[0]
+        if not image_caption and fallback_caption_column:
+            image_caption = item[fallback_caption_column].values[0]
+            if not image_caption:
                 raise ValueError(
-                    f"Could not locate image {image_filename_stem} in sampler backend {sampler_backend_id}."
+                    f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
                 )
-            image_caption = parquet_db.loc[found_column][caption_column].values[0]
-            # Convert from bytes to str:
-            if type(image_caption) == bytes:
-                image_caption = image_caption.decode("utf-8")
-            else:
-                image_caption = image_caption
-            if prepend_instance_prompt:
-                image_caption = instance_prompt + " " + image_caption
-
-            # Remove surrounding space
-            image_caption = image_caption.strip()
-
-            return image_caption
-        except Exception as e:
-            logger.error(
-                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id}"
-                f" with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries:\n{e}"
+        elif not fallback_caption_column:
+            raise ValueError(
+                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
+        if type(image_caption) == bytes:
+            image_caption = image_caption.decode("utf-8")
+        if image_caption:
+            image_caption = image_caption.strip()
+        if prepend_instance_prompt:
+            image_caption = instance_prompt + " " + image_caption
+        return image_caption
 
     @staticmethod
     def prepare_instance_prompt_from_filename(

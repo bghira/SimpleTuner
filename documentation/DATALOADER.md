@@ -150,3 +150,57 @@ In order, the lines behave as follows:
 - `s/this/will be found and replaced/` will result in the first instance of the term "this" in any caption being replaced with "will be found and replaced".
 
 > ❗Use [regex 101](https://regex101.com) for help debugging and testing regular expressions.
+
+## Parquet caption strategy
+
+> ⚠️ This is an advanced feature, and will not be necessary for most users.
+
+When training a model with a very-large dataset numbering in the hundreds of thousands or millions of images, it is expedient to store your metadata inside a parquet database instead of txt files - especially when your training data is stored on an S3 bucket.
+
+Using the parquet caption strategy allows you to name all of your files by their `id` value, and change their caption column via a config value rather than updating many text files, or having to rename the files to update their captions.
+
+Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/ptx0/photo-concept-bucket) dataset:
+
+```json
+{
+    "id": "photo-concept-bucket",
+    "type": "local",
+    "instance_data_dir": "/models/training/datasets/photo-concept-bucket-downloads",
+    "caption_strategy": "parquet",
+    "parquet_path": "/models/training/datasets/photo-concept-bucket/photo-concept-bucket.parquet",
+    "parquet_filename_column": "id",
+    "parquet_caption_column": "cogvlm_caption",
+    "parquet_fallback_caption_column": "tags",
+    "minimum_image_size": 0.25,
+    "prepend_instance_prompt": false,
+    "instance_prompt": null,
+    "only_instance_prompt": false,
+    "disable": false,
+    "cache_dir_vae": "/models/training/vae_cache/photo-concept-bucket",
+    "probability": 1.0,
+    "skip_file_discovery": "",
+    "preserve_data_backend_cache": false,
+    "vae_cache_clear_each_epoch": true,
+    "repeats": 1,
+    "crop": true,
+    "crop_aspect": "square",
+    "crop_style": "random",
+    "resolution": 0.5,
+    "resolution_type": "area"
+}
+```
+
+In this configuration:
+
+- `caption_strategy` is set to `parquet`.
+- `parquet_path` is the path to the parquet file.
+- `parquet_filename_column` is the name of the column in the parquet file that contains the filenames. For this case, we are using the numeric `id` column (recommended).
+- `parquet_caption_column` is the name of the column in the parquet file that contains the captions. For this case, we are using the `cogvlm_caption` column. For LAION datasets, this would be the TEXT field.
+- `parquet_fallback_caption_column` is an optional name of a column in the parquet file that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
+
+> ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [toolkit/datasets](toolkit/datasets) directory for ideas.
+
+As with other dataloader configurations:
+
+- `prepend_instance_prompt` and `instance_prompt` behave as normal.
+- Updating a sample's caption in between training runs will cache the new embed, but not remove the old (orphaned) unit.
