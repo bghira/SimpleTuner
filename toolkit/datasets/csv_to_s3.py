@@ -3,6 +3,7 @@ import random
 import argparse
 import logging
 import boto3
+from io import BytesIO
 import pandas as pd
 from pathlib import Path
 from PIL import Image, ExifTags
@@ -134,11 +135,7 @@ def fetch_image(info, args):
     try:
         r = http.get(url, timeout=timeouts, stream=True)
         if r.status_code == 200:
-            with open(current_file_path, "wb") as f:
-                r.raw.decode_content = True
-                shutil.copyfileobj(r.raw, f)
-            r.close()
-            image = Image.open(current_file_path)
+            image = Image.open(BytesIO(r.content))
             width, height = image.size
             if width < args.minimum_resolution or height < args.minimum_resolution:
                 os.remove(current_file_path)
@@ -155,12 +152,13 @@ def fetch_image(info, args):
                     os.remove(current_file_path)
                     return
             image = resize_for_condition_image(image, args.condition_image_size)
-            image.save(current_file_path, format="PNG")
-            image.close()
+            return image
         else:
             pass
     except Exception as e:
-        logger.error(f"Error: {e}")
+        import traceback
+
+        logger.error(f"Error: {e}, traceback: {traceback.format_exc()}")
         raise e
 
 
@@ -405,7 +403,7 @@ def content_to_filename(content, args):
         # Remove URLs
         filename = re.sub(r"https?://\S*", "", filename)
         # Replace non-alphanumeric characters with underscore
-        filename = re.sub(r"[^a-zA-Z0-9\s]", "_", filename)
+        # filename = re.sub(r"[^a-zA-Z0-9\s]", "_", filename)
         # Remove leading and trailing underscores
         filename = filename.strip("_")
         # Strip multiple whitespaces, replace with single whitespace
@@ -413,7 +411,7 @@ def content_to_filename(content, args):
         # Strip surrounding whitespace
         filename = filename.strip()
         # Convert to lowercase and limit the length to accommodate the image number and extension
-        max_length = 251 - len(image_num_text) - 4  # 4 for the ".png"
+        max_length = 2048 - len(image_num_text) - 4  # 4 for the ".png"
         filename = (filename.lower()[:max_length] + image_num_text).rstrip("_") + ".png"
         logger.debug(f"-> Resulting filename: {filename}")
         return filename
@@ -457,13 +455,29 @@ def valid_exif_data(image_path):
 def list_all_s3_objects(s3_client, bucket_name):
     paginator = s3_client.get_paginator("list_objects_v2")
     existing_files = set()
-
+    png_files = set()
     for page in paginator.paginate(Bucket=bucket_name, MaxKeys=1000):
         if "Contents" in page:
             for item in page["Contents"]:
                 existing_files.add(item["Key"])
+                if item["Key"].endswith(".png"):
+                    png_files.add(item["Key"])
+                    logger.info(
+                        f"Found {len(png_files)} existing png files in the S3 bucket."
+                    )
 
     return existing_files
+
+
+def upload_pil_to_s3(image: Image, filename, args, s3_client):
+    """Upload a PIL Image directly to S3 bucket"""
+    if object_exists_in_s3(s3_client, args.aws_bucket_name, filename):
+        return
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    s3_client.upload_fileobj(buffer, args.aws_bucket_name, filename)
+    buffer.close()
 
 
 def upload_to_s3(filename, args, s3_client):
@@ -600,11 +614,11 @@ def fetch_and_upload_image(info, args):
     """Fetch the image, process it, and upload it to S3."""
     try:
         s3_client = initialize_s3_client(args)
-        fetch_image(info, args)
+        image = fetch_image(info, args)
     except Exception as e:
         if args.print_nonfatal_errors:
             logger.error(f"Encountered error fetching file: {e}")
-    upload_to_s3(info["filename"], args, s3_client)
+    upload_pil_to_s3(image, info["filename"], args, s3_client)
 
 
 def fetch_data(data, args, uri_column):
