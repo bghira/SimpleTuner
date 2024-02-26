@@ -132,6 +132,62 @@ def print_bucket_info(bucket_manager):
         print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
+def configure_parquet_database(backend: dict, args):
+    """When given a backend config dictionary, configure a parquet database."""
+    parquet_path = backend.get("parquet_path", None)
+    if not parquet_path:
+        raise ValueError(
+            "Parquet backend must have a 'parquet_path' field in the backend config."
+        )
+    if not os.path.exists(parquet_path):
+        raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
+    # Load the dataframe
+    import pandas as pd
+
+    df = pd.read_parquet(parquet_path)
+    caption_column = backend.get(
+        "parquet_caption_column", args.parquet_caption_column or "description"
+    )
+    fallback_caption_column = backend.get("parquet_fallback_caption_column", None)
+    filename_column = backend.get(
+        "parquet_filename_column", args.parquet_filename_column or "id"
+    )
+    # Check the columns exist
+    if caption_column not in df.columns:
+        raise ValueError(
+            f"Parquet file {parquet_path} does not contain a column named '{caption_column}'."
+        )
+    if filename_column not in df.columns:
+        raise ValueError(
+            f"Parquet file {parquet_path} does not contain a column named '{filename_column}'."
+        )
+    # Check for null values
+    if df[caption_column].isnull().values.any() and not fallback_caption_column:
+        raise ValueError(
+            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no parquet_fallback_caption_column was set."
+        )
+    if df[filename_column].isnull().values.any():
+        raise ValueError(
+            f"Parquet file {parquet_path} contains null values in the '{filename_column}' column."
+        )
+    # Check for empty strings
+    if (df[caption_column] == "").sum() > 0 and not fallback_caption_column:
+        raise ValueError(
+            f"Parquet file {parquet_path} contains empty strings in the '{caption_column}' column."
+        )
+    if (df[filename_column] == "").sum() > 0:
+        raise ValueError(
+            f"Parquet file {parquet_path} contains empty strings in the '{filename_column}' column."
+        )
+    # Store the database in StateTracker
+    StateTracker.set_parquet_database(
+        backend["id"], (df, filename_column, caption_column, fallback_caption_column)
+    )
+    logger.info(
+        f"Configured parquet database for backend {backend['id']}. Caption column: {caption_column}. Filename column: {filename_column}."
+    )
+
+
 def configure_multi_databackend(
     args: dict, accelerator, text_encoders, tokenizers, prompt_handler
 ):
@@ -196,7 +252,8 @@ def configure_multi_databackend(
                 accelerator=accelerator,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
-            init_backend["cache_dir"] = backend["aws_data_prefix"]
+            # Ensure we have a trailing slash on the prefix:
+            init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -375,6 +432,7 @@ def configure_multi_databackend(
             "caption_strategy",
             "maximum_image_size",
             "target_downsample_size",
+            "parquet_path",
         ]
         if init_backend["bucket_manager"].config != {}:
             prev_config = init_backend["bucket_manager"].config
@@ -438,7 +496,8 @@ def configure_multi_databackend(
             ),
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
         )
-
+        if init_backend["sampler"].caption_strategy == "parquet":
+            configure_parquet_database(backend, args)
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,  # The sampler handles batching

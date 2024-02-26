@@ -1,4 +1,5 @@
 import unittest
+import pandas as pd
 from unittest.mock import patch, MagicMock
 from helpers.prompts import (
     PromptHandler,
@@ -14,6 +15,64 @@ class TestPromptHandler(unittest.TestCase):
         self.accelerator = MagicMock()
         self.model_type = "sdxl"
         self.data_backend = MagicMock()
+
+    @patch("helpers.training.state_tracker.StateTracker.get_parquet_database")
+    def test_prepare_instance_prompt_from_parquet(self, mock_get_parquet_database):
+        # Setup
+        image_path = "path/to/image_3.jpg"
+        use_captions = True
+        prepend_instance_prompt = True
+        data_backend = MagicMock()
+        instance_prompt = "Instance Prompt"
+        sampler_backend_id = "sampler1"
+        filename_column = "filename"
+        caption_column = "caption"
+
+        # Simulate the DataFrame structure and the expected row
+        fallback_caption_column = "tags"
+        mock_df = pd.DataFrame(
+            [
+                {
+                    filename_column: "image_3",
+                    caption_column: "a giant arcade game type claw...",
+                    fallback_caption_column: "tags for image_3",
+                }
+            ]
+        )
+
+        # Configure the mock to return the simulated DataFrame
+        mock_get_parquet_database.return_value = (
+            mock_df,
+            filename_column,
+            caption_column,
+            fallback_caption_column,
+        )
+
+        # Execute
+        result_caption = PromptHandler.prepare_instance_prompt_from_parquet(
+            image_path=image_path,
+            use_captions=use_captions,
+            prepend_instance_prompt=prepend_instance_prompt,
+            data_backend=data_backend,
+            instance_prompt=instance_prompt,
+            sampler_backend_id=sampler_backend_id,
+        )
+
+        # Verify
+        expected_caption = f"{instance_prompt} a giant arcade game type claw..."
+        self.assertEqual(result_caption, expected_caption)
+        mock_get_parquet_database.assert_called_once_with(sampler_backend_id)
+
+    def test_raises_value_error_on_missing_sampler_backend_id(self):
+        with self.assertRaises(ValueError):
+            PromptHandler.prepare_instance_prompt_from_parquet(
+                image_path="path/to/image.jpg",
+                use_captions=True,
+                prepend_instance_prompt=True,
+                data_backend=MagicMock(),
+                instance_prompt="Instance Prompt",
+                sampler_backend_id=None,  # This should cause a ValueError
+            )
 
     @patch("builtins.open")
     @patch("helpers.prompts.BaseDataBackend")

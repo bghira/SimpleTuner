@@ -14,12 +14,30 @@ def parse_args():
         description="Process images and generate captions."
     )
     parser.add_argument(
-        "--input_dir", type=str, required=True, help="Directory containing the images."
+        "--input_dir", type=str, required=False, help="Directory containing the images."
+    )
+    parser.add_argument(
+        "--input_parquet",
+        type=str,
+        default=None,
+        help="Path to the input Parquet dataset.",
+    )
+    parser.add_argument(
+        "--parquet_image_column",
+        type=str,
+        default="image_url",
+        help="Column name in the Parquet file that contains the image URLs.",
+    )
+    parser.add_argument(
+        "--parquet_target_column",
+        type=str,
+        default="llava_caption",
+        help="Column name in the Parquet file where the generated captions will be saved.",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        required=True,
+        required=False,
         help="Directory to save processed images.",
     )
     parser.add_argument(
@@ -93,8 +111,53 @@ def parse_args():
         ),
     )
     args = parser.parse_args()
+    if not args.input_dir and not args.input_parquet:
+        parser.error("Either --input_dir or --input_parquet must be provided.")
+    if args.input_dir and args.input_parquet:
+        parser.error("Only one of --input_dir or --input_parquet can be provided.")
+    if args.output_dir and args.input_parquet:
+        parser.error(
+            "--output_dir cannot be provided when --input_parquet is provided."
+        )
+    if not args.output_dir and args.input_dir:
+        parser.error("--output_dir must be provided when --input_dir is provided.")
 
     return parser.parse_args()
+
+
+import pandas as pd
+
+
+def process_parquet_dataset(args, model, processor):
+    df = pd.read_parquet(args.input_parquet)
+    if args.parquet_image_column not in df.columns:
+        logger.error(
+            f"Image column '{args.parquet_image_column}' not found in the Parquet file."
+        )
+        return
+    if args.parquet_target_column not in df.columns:
+        df[args.parquet_target_column] = ""
+
+    for index, row in tqdm(
+        df.iterrows(), total=df.shape[0], desc="Processing Parquet Dataset"
+    ):
+        image_url = row[args.parquet_image_column]
+        if not image_url:
+            continue
+        if row[args.parquet_target_column]:
+            continue
+        try:
+            caption = process_and_evaluate_image(args, image_url, model, processor)
+            df.at[index, args.parquet_target_column] = caption
+            # Save the DataFrame back to a Parquet file
+            output_parquet_path = (
+                args.input_parquet.rsplit(".", 1)[0] + "_captioned.parquet"
+            )
+            df.to_parquet(output_parquet_path, engine="pyarrow")
+        except Exception as e:
+            logger.error(f"Error processing image at {image_url}: {str(e)}")
+
+    logger.info(f"Processed Parquet file saved to {output_parquet_path}")
 
 
 # Function to load LLaVA model
@@ -168,7 +231,9 @@ def process_and_evaluate_image(args, image_path: str, model, processor):
         img = input_image.resize((W, H), resample=Image.LANCZOS)
         return img
 
-    return eval_model(args, resize_for_condition_image(image, 256), model, processor)
+    result = eval_model(args, resize_for_condition_image(image, 256), model, processor)
+    print(f"Result for captioning: {result}")
+    return result
 
 
 # Function to convert content to filename
@@ -289,21 +354,25 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     # Ensure output directory exists
-    if not os.path.exists(args.output_dir):
+    if args.output_dir is not None and not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
     # Load model
     model, processor = load_llava_model(args.model_path, args.precision)
 
-    # Process directory
-    process_directory(
-        args,
-        args.input_dir,
-        args.output_dir,
-        args.progress_file,
-        model,
-        processor,
-    )
+    if args.input_parquet:
+        # Process Parquet dataset
+        process_parquet_dataset(args, model, processor)
+    else:
+        # Process directory
+        process_directory(
+            args,
+            args.input_dir,
+            args.output_dir,
+            args.progress_file,
+            model,
+            processor,
+        )
 
 
 if __name__ == "__main__":

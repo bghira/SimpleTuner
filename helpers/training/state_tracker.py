@@ -26,6 +26,7 @@ class StateTracker:
     default_text_embed_cache = None
     accelerator = None
     data_backends = {}
+    parquet_databases = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
     # A dict of backend IDs to the number of times they have been repeated.
@@ -78,6 +79,15 @@ class StateTracker:
     @classmethod
     def get_model_type(cls):
         return cls.model_type
+
+    @classmethod
+    def set_parquet_database(cls, data_backend_id: str, parquet_database: tuple):
+        """parquet_database is a tuple (dataframe, filename_column, caption_column, fallback_caption_column)"""
+        cls.parquet_databases[data_backend_id] = parquet_database
+
+    @classmethod
+    def get_parquet_database(cls, data_backend_id: str):
+        return cls.parquet_databases.get(data_backend_id, (None, None, None, None))
 
     @classmethod
     def set_image_files(cls, raw_file_list: list, data_backend_id: str):

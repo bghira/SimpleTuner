@@ -222,6 +222,60 @@ class PromptHandler:
         self.tokenizers = tokenizers
 
     @staticmethod
+    def prepare_instance_prompt_from_parquet(
+        image_path: str,
+        use_captions: bool,
+        prepend_instance_prompt: bool,
+        data_backend: BaseDataBackend,
+        instance_prompt: str = None,
+        sampler_backend_id: str = None,
+    ) -> str:
+        if sampler_backend_id is None:
+            raise ValueError("Sampler backend ID is required.")
+        if not use_captions:
+            if not instance_prompt:
+                raise ValueError(
+                    "Instance prompt is required when instance_prompt_only is enabled."
+                )
+            return instance_prompt
+        image_filename_stem = os.path.splitext(os.path.split(image_path)[1])[0]
+        (
+            parquet_db,
+            filename_column,
+            caption_column,
+            fallback_caption_column,
+        ) = StateTracker.get_parquet_database(sampler_backend_id)
+        # parquet_db is a dataframe. let's find the row that matches the image filename.
+        if parquet_db is None:
+            raise ValueError(
+                f"Parquet database not found for sampler {sampler_backend_id}."
+            )
+        image_caption = None
+        # Are the types incorrect, eg. the column is int64 vs str stem?
+        if "int" in str(parquet_db[filename_column].dtype):
+            if image_filename_stem.isdigit():
+                image_filename_stem = int(image_filename_stem)
+        item = parquet_db[parquet_db[filename_column] == image_filename_stem]
+        image_caption = item[caption_column].values[0]
+        if not image_caption and fallback_caption_column:
+            image_caption = item[fallback_caption_column].values[0]
+            if not image_caption:
+                raise ValueError(
+                    f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
+                )
+        elif not fallback_caption_column:
+            raise ValueError(
+                f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
+            )
+        if type(image_caption) == bytes:
+            image_caption = image_caption.decode("utf-8")
+        if image_caption:
+            image_caption = image_caption.strip()
+        if prepend_instance_prompt:
+            image_caption = instance_prompt + " " + image_caption
+        return image_caption
+
+    @staticmethod
     def prepare_instance_prompt_from_filename(
         image_path: str,
         use_captions: bool,
@@ -280,6 +334,7 @@ class PromptHandler:
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
         instance_prompt: str = None,
+        sampler_backend_id: str = None,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -309,6 +364,15 @@ class PromptHandler:
                 prepend_instance_prompt=prepend_instance_prompt,
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
+            )
+        elif caption_strategy == "parquet":
+            instance_prompt = PromptHandler.prepare_instance_prompt_from_parquet(
+                image_path,
+                use_captions=use_captions,
+                prepend_instance_prompt=prepend_instance_prompt,
+                instance_prompt=instance_prompt,
+                data_backend=data_backend,
+                sampler_backend_id=sampler_backend_id,
             )
         else:
             raise ValueError(f"Unsupported caption strategy: {caption_strategy}")
@@ -356,6 +420,15 @@ class PromptHandler:
                     prepend_instance_prompt=prepend_instance_prompt,
                     instance_prompt=instance_prompt,
                     data_backend=data_backend,
+                )
+            elif caption_strategy == "parquet":
+                caption = PromptHandler.prepare_instance_prompt_from_parquet(
+                    image_path,
+                    use_captions=use_captions,
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
+                    data_backend=data_backend,
+                    sampler_backend_id=data_backend.id,
                 )
             elif caption_strategy == "instanceprompt":
                 return instance_prompt

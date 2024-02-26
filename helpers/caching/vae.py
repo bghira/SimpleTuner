@@ -527,9 +527,11 @@ class VAECache:
         available_filepaths, batch_output = self.data_backend.read_image_batch(
             filepaths, delete_problematic_images=self.delete_problematic_images
         )
+        missing_image_count = len(filepaths) - len(available_filepaths)
         if len(available_filepaths) != len(filepaths):
             logging.warning(
-                f"Received {len(batch_output)} items from the batch read, when we requested {len(filepaths)}: {batch_output}"
+                f"Failed to request {missing_image_count} sample{'s' if missing_image_count > 1 else ''} during batched read, out of {len(filepaths)} total samples requested."
+                " These samples likely do not exist in the storage pool any longer."
             )
         for filepath, element in zip(available_filepaths, batch_output):
             if type(filepath) != str:

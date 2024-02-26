@@ -67,8 +67,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--caption_strategy`
 
-- **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`
-- **Why**: Determines how captions are generated for training images. `textfile` will use the contents of a `.txt` file with the same filename as the image, and `filename` will apply some cleanup to the filename before using it as the caption.
+- **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`, `parquet`
+- **Why**: Determines how captions are generated for training images. `textfile` will use the contents of a `.txt` file with the same filename as the image, and `filename` will apply some cleanup to the filename before using it as the caption. `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
 
 ### `--crop`
 
@@ -189,7 +189,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
                      [--cache_dir CACHE_DIR]
                      [--cache_clear_validation_prompts]
-                     [--caption_strategy {filename,textfile,instance_prompt}]
+                     [--caption_strategy {filename,textfile,instance_prompt,parquet}]
+                     [--parquet_caption_column PARQUET_CAPTION_COLUMN]
+                     [--parquet_filename_column PARQUET_FILENAME_COLUMN]
                      [--instance_prompt INSTANCE_PROMPT]
                      [--output_dir OUTPUT_DIR] [--seed SEED]
                      [--seed_for_each_device SEED_FOR_EACH_DEVICE]
@@ -446,12 +448,22 @@ options:
                         text embed cache will be recreated. This is useful if
                         you've modified any of the existing prompts, or,
                         disabled/enabled Compel, via `--disable_compel`
-  --caption_strategy {filename,textfile,instance_prompt}
+  --caption_strategy {filename,textfile,instance_prompt,parquet}
                         The default captioning strategy, 'filename', will use
                         the filename as the caption, after stripping some
-                        characters like underscores.The 'textfile' strategy
+                        characters like underscores. The 'textfile' strategy
                         will use the contents of a text file with the same
-                        name as the image.
+                        name as the image. The 'parquet' strategy requires a
+                        parquet file with the same name as the image,
+                        containing a 'caption' column.
+  --parquet_caption_column PARQUET_CAPTION_COLUMN
+                        When using caption_strategy=parquet, this option will
+                        allow you to globally set the default caption field
+                        across all datasets that do not have an override set.
+  --parquet_filename_column PARQUET_FILENAME_COLUMN
+                        When using caption_strategy=parquet, this option will
+                        allow you to globally set the default filename field
+                        across all datasets that do not have an override set.
   --instance_prompt INSTANCE_PROMPT
                         This is unused. Filenames will be the captions
                         instead.

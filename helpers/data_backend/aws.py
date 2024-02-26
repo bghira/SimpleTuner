@@ -91,11 +91,11 @@ class S3DataBackend(BaseDataBackend):
             return True
         # Catch the error when the file does not exist
         except (Exception, self.client.exceptions.NoSuchKey) as e:
-            if "Not Found" not in str(e):
+            if "Not Found" not in str(e) and "Bad Request" not in str(e):
                 raise
             return False
         except:
-            raise
+            return False
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""

@@ -548,9 +548,6 @@ def main():
     vae.to(accelerator.device, dtype=weight_dtype)
     logging.info("Moving text encoder to GPU..")
     text_encoder.to(accelerator.device, dtype=weight_dtype)
-    if args.use_ema:
-        logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
@@ -735,6 +732,8 @@ def main():
             decay=args.ema_decay,
         )
         logger.info("EMA model creation complete.")
+        logger.info("Moving EMA model weights to accelerator...")
+        ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():

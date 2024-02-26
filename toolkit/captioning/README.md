@@ -33,3 +33,15 @@
 ### Known Issues
 
 - Ensure there are no cyclic references in the directory structure, as this could lead to infinite recursion.
+
+## caption_with_cogvlm_remote.py
+
+`caption_with_cogvlm_remote.py` is a script that uses the CogVLM model to generate captions for images, or the SDXL VAE to generate embed vectors.
+
+This script functions in concert with the `caption_backend_server.php` script that runs on a central orchestrator node with a MySQL daemon storing the dataset.
+
+Workers connect to the backend via a static key that you can assign. The backend then assigns tasks to the workers, and the workers return the results to the backend.
+
+If your workers have an AWS S3 configuration present, they can bypass the relay system and upload the samples directly. However, you can also use a high-performance relay server to handle the data transfer.
+
+> ⚠️ This script is not intended for general use and is provided as an example of a specific use case. It is in use by the Terminus Research Group for volunteer compute contributions for massively parallel tasks.
