@@ -82,7 +82,7 @@ class StateTracker:
 
     @classmethod
     def set_parquet_database(cls, data_backend_id: str, parquet_database: tuple):
-        """parquet_database is a tuple (dataframe, filename_column, caption_column)"""
+        """parquet_database is a tuple (dataframe, filename_column, caption_column, fallback_caption_column)"""
         cls.parquet_databases[data_backend_id] = parquet_database
 
     @classmethod
