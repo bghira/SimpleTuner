@@ -29,11 +29,13 @@ class TestPromptHandler(unittest.TestCase):
         caption_column = "caption"
 
         # Simulate the DataFrame structure and the expected row
+        fallback_caption_column = "tags"
         mock_df = pd.DataFrame(
             [
                 {
                     filename_column: "image_3",
                     caption_column: "a giant arcade game type claw...",
+                    fallback_caption_column: "tags for image_3",
                 }
             ]
         )
@@ -43,6 +45,7 @@ class TestPromptHandler(unittest.TestCase):
             mock_df,
             filename_column,
             caption_column,
+            fallback_caption_column,
         )
 
         # Execute

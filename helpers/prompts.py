@@ -239,9 +239,12 @@ class PromptHandler:
                 )
             return instance_prompt
         image_filename_stem = os.path.splitext(os.path.split(image_path)[1])[0]
-        parquet_db, filename_column, caption_column = StateTracker.get_parquet_database(
-            sampler_backend_id
-        )
+        (
+            parquet_db,
+            filename_column,
+            caption_column,
+            fallback_caption_column,
+        ) = StateTracker.get_parquet_database(sampler_backend_id)
         # parquet_db is a dataframe. let's find the row that matches the image filename.
         if parquet_db is None:
             raise ValueError(
@@ -251,9 +254,12 @@ class PromptHandler:
             # Are the types incorrect, eg. the column is int64 vs str stem?
             if "int" in str(parquet_db[filename_column].dtype):
                 image_filename_stem = int(image_filename_stem)
-            image_caption = parquet_db.loc[
-                parquet_db[filename_column] == image_filename_stem
-            ][caption_column].values[0]
+            found_column = parquet_db[filename_column] == image_filename_stem
+            if not found_column.any():
+                raise ValueError(
+                    f"Could not locate image {image_filename_stem} in sampler backend {sampler_backend_id}."
+                )
+            image_caption = parquet_db.loc[found_column][caption_column].values[0]
             # Convert from bytes to str:
             if type(image_caption) == bytes:
                 image_caption = image_caption.decode("utf-8")

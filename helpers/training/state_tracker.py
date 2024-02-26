@@ -87,7 +87,7 @@ class StateTracker:
 
     @classmethod
     def get_parquet_database(cls, data_backend_id: str):
-        return cls.parquet_databases.get(data_backend_id, (None, None, None))
+        return cls.parquet_databases.get(data_backend_id, (None, None, None, None))
 
     @classmethod
     def set_image_files(cls, raw_file_list: list, data_backend_id: str):

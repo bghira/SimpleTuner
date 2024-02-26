@@ -295,6 +295,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             # Use the magic prompt handler to retrieve the captions.
             image_metadata["instance_prompt_text"] = PromptHandler.magic_prompt(
+                sampler_backend_id=self.id,
                 data_backend=self.data_backend,
                 image_path=image_metadata["image_path"],
                 caption_strategy=self.caption_strategy,

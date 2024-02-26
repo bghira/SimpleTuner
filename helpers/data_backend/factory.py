@@ -148,6 +148,7 @@ def configure_parquet_database(backend: dict, args):
     caption_column = backend.get(
         "parquet_caption_column", args.parquet_caption_column or "description"
     )
+    fallback_caption_column = backend.get("parquet_fallback_caption_column", None)
     filename_column = backend.get(
         "parquet_filename_column", args.parquet_filename_column or "id"
     )
@@ -180,7 +181,7 @@ def configure_parquet_database(backend: dict, args):
         )
     # Store the database in StateTracker
     StateTracker.set_parquet_database(
-        backend["id"], (df, filename_column, caption_column)
+        backend["id"], (df, filename_column, caption_column, fallback_caption_column)
     )
     logger.info(
         f"Configured parquet database for backend {backend['id']}. Caption column: {caption_column}. Filename column: {filename_column}."
