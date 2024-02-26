@@ -53,3 +53,5 @@ sdxl-env.sh
 wandb/
 cache/
 vae_cache/
+vendor/
+inference/
