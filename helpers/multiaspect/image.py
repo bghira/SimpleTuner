@@ -27,7 +27,7 @@ class MultiaspectImage:
         bucket_manager,
         image_path_str,
         aspect_ratio_bucket_indices,
-        aspect_ratio_rounding: int = 2,
+        aspect_ratio_rounding: int = 3,
         metadata_updates=None,
         delete_problematic_images: bool = False,
         statistics: dict = {},
@@ -341,7 +341,7 @@ class MultiaspectImage:
 
     @staticmethod
     def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: float):
-        aspect_ratio = W / H
+        aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
         if W < H:
             W = resolution
             H = MultiaspectImage._round_to_nearest_multiple(
@@ -358,7 +358,7 @@ class MultiaspectImage:
 
     @staticmethod
     def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float):
-        aspect_ratio = W / H
+        aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
         total_pixels = megapixels * 1e6  # Convert megapixels to pixels
 
         W_new = int(round(sqrt(total_pixels * aspect_ratio)))
@@ -382,7 +382,13 @@ class MultiaspectImage:
         Returns:
             float: The rounded aspect ratio of the image.
         """
-        aspect_ratio = round(image.width / image.height, rounding)
+        if isinstance(image, Image.Image):
+            width, height = image.size
+        elif isinstance(image, tuple):
+            width, height = image
+        else:
+            width, height = image.size
+        aspect_ratio = round(width / height, rounding)
         return aspect_ratio
 
     @staticmethod
