@@ -430,20 +430,22 @@ class BucketManager:
 
     def update_buckets_with_existing_files(self, existing_files: set):
         """
-        Update bucket indices to remove entries that no longer exist.
+        Update bucket indices to remove entries that no longer exist and remove duplicates.
 
         Args:
             existing_files (set): A set of existing files.
         """
         logger.debug(
-            f"Before updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices])}."
+            f"Before updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}."
         )
         for bucket, images in self.aspect_ratio_bucket_indices.items():
-            self.aspect_ratio_bucket_indices[bucket] = [
-                img for img in images if img in existing_files
-            ]
+            # Remove non-existing files and duplicates while preserving order
+            filtered_images = list(
+                dict.fromkeys(img for img in images if img in existing_files)
+            )
+            self.aspect_ratio_bucket_indices[bucket] = filtered_images
         logger.debug(
-            f"After updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices])}."
+            f"After updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}."
         )
         # Save the updated cache
         self.save_cache()
