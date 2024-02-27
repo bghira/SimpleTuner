@@ -96,14 +96,22 @@ class VAECache:
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
         generated_names = self.generate_vae_cache_filename(filepath)
+        logger.debug(f"VAE cache generated names: {generated_names}")
         test_filepath_png = f"{os.path.splitext(generated_names[0])[0]}.png"
+        logger.debug(f"Translated into test_filepath_png: {test_filepath_png}")
         if str(self.cache_dir) in test_filepath_png:
             # replace cache_dir with instance_data_root:
             test_filepath_png = test_filepath_png.replace(
                 self.cache_dir, self.instance_data_root
             )
+            logger.debug(
+                f"Replacing cache_dir value {self.cache_dir} with {self.instance_data_root} in {test_filepath_png}"
+            )
         elif str(self.instance_data_root) not in test_filepath_png:
             test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
+            logger.debug(
+                f"Joining instance_data_root value {self.instance_data_root} with {test_filepath_png}"
+            )
 
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
         return test_filepath_png, test_filepath_jpg
