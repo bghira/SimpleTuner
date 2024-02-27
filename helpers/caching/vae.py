@@ -54,6 +54,9 @@ class VAECache:
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
+            # Remove trailing slash
+            self.cache_dir = self.cache_dir[:-1]
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
