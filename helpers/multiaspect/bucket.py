@@ -414,7 +414,7 @@ class BucketManager:
         """Reset the seen images."""
         self.seen_images.clear()
 
-    def remove_image(self, image_path, bucket):
+    def remove_image(self, image_path, bucket: str = None):
         """
         Used by other classes to reliably remove images from a bucket.
 
@@ -425,6 +425,11 @@ class BucketManager:
         Returns:
             dict: The aspect ratio bucket indices.
         """
+        if not bucket:
+            for bucket, images in self.aspect_ratio_bucket_indices.items():
+                if image_path in images:
+                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+                    break
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
