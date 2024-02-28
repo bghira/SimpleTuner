@@ -106,7 +106,9 @@ class S3DataBackend(BaseDataBackend):
                 )
                 return response["Body"].read()
             except self.client.exceptions.NoSuchKey:
-                logger.debug(f"File {s3_key} does not exist in S3 bucket.")
+                logger.debug(
+                    f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})"
+                )
                 return None
             except (NoCredentialsError, PartialCredentialsError) as e:
                 raise e  # Raise credential errors to the caller
@@ -176,9 +178,11 @@ class S3DataBackend(BaseDataBackend):
         bucket_prefix = f"{self.bucket_name}/"
 
         return [
-            item["Key"][len(bucket_prefix) :]
-            if item["Key"].startswith(bucket_prefix)
-            else item["Key"]
+            (
+                item["Key"][len(bucket_prefix) :]
+                if item["Key"].startswith(bucket_prefix)
+                else item["Key"]
+            )
             for item in response.get("Contents", [])
         ]
 

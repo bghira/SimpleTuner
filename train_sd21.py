@@ -82,7 +82,7 @@ from diffusers import (
     AutoencoderKL,
     DDIMScheduler,
     DDPMScheduler,
-    DiffusionPipeline,
+    StableDiffusionPipeline,
     DPMSolverMultistepScheduler,
     UNet2DConditionModel,
     EulerDiscreteScheduler,
@@ -405,9 +405,6 @@ def main():
                     "warmup_num_steps": args.lr_warmup_steps,
                 },
             }
-    register_file_hooks(
-        args, accelerator, unet, text_encoder, text_encoder_cls, use_deepspeed_optimizer
-    )
     # Initialize the optimizer
     if use_deepspeed_optimizer:
         logger.info("Using DeepSpeed optimizer.")
@@ -557,9 +554,9 @@ def main():
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
+        if args.vae_dtype == "bf16" or args.mixed_precision == "fp16":
             vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
+        elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
             vae_dtype = torch.float16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
@@ -732,8 +729,15 @@ def main():
             decay=args.ema_decay,
         )
         logger.info("EMA model creation complete.")
-        logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device, dtype=weight_dtype)
+    register_file_hooks(
+        args,
+        accelerator,
+        unet,
+        text_encoder,
+        text_encoder_cls,
+        use_deepspeed_optimizer,
+        ema_unet,
+    )
 
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
@@ -756,7 +760,9 @@ def main():
 
     # Conditionally prepare the EMA model if required
     if args.use_ema:
-        ema_model = accelerator.prepare(ema_model)
+        ema_unet = accelerator.prepare(ema_unet)
+        logger.info("Moving EMA model weights to accelerator...")
+        ema_unet.to(accelerator.device, dtype=weight_dtype)
 
     idx_count = 0
     for _, backend in StateTracker.get_data_backends().items():
@@ -1315,7 +1321,7 @@ def main():
                 weight_dtype=accelerator.unwrap_model(unet).dtype,
                 embed_cache=StateTracker.get_default_text_embed_cache(),
                 validation_negative_pooled_embeds=None,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+                validation_negative_prompt_embeds=validation_negative_prompt_embeds[0],
                 text_encoder_2=None,
                 tokenizer_2=None,
                 ema_unet=ema_unet,
@@ -1353,7 +1359,7 @@ def main():
             else:
                 text_encoder_lora_layers = None
 
-            DiffusionPipeline.save_lora_weights(
+            StableDiffusionPipeline.save_lora_weights(
                 save_directory=args.output_dir,
                 unet_lora_layers=unet_lora_layers,
                 text_encoder_lora_layers=text_encoder_lora_layers,
@@ -1370,14 +1376,16 @@ def main():
             StateTracker.set_vae(
                 AutoencoderKL.from_pretrained(
                     args.pretrained_vae_model_name_or_path,
-                    subfolder="vae"
-                    if args.pretrained_vae_model_name_or_path is None
-                    else None,
+                    subfolder=(
+                        "vae"
+                        if args.pretrained_vae_model_name_or_path is None
+                        else None
+                    ),
                     revision=args.revision,
                     force_upcast=False,
                 )
             )
-        pipeline = DiffusionPipeline.from_pretrained(
+        pipeline = StableDiffusionPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
             text_encoder=text_encoder,
             vae=StateTracker.get_vae(),
@@ -1418,9 +1426,11 @@ def main():
             )
             upload_folder(
                 repo_id=repo_id,
-                folder_path=os.path.join(args.output_dir, "pipeline")
-                if args.model_type == "full"
-                else args.output_dir,
+                folder_path=(
+                    os.path.join(args.output_dir, "pipeline")
+                    if args.model_type == "full"
+                    else args.output_dir
+                ),
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )
@@ -1483,9 +1493,9 @@ def main():
                             )
                         # Compute the mean luminance across all samples:
                         validation_luminance = torch.tensor(validation_luminance)
-                        validation_document[
-                            "validation_luminance"
-                        ] = validation_luminance.mean()
+                        validation_document["validation_luminance"] = (
+                            validation_luminance.mean()
+                        )
                         del validation_luminance
                         tracker.log(validation_document, step=global_step)
 

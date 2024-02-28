@@ -254,6 +254,7 @@ def log_validations(
                         ncols=125,
                         desc="Generating validation images",
                     ):
+                        logger.debug(f"Validation image: {validation_prompt}")
                         # Each validation prompt needs its own embed.
                         if StateTracker.get_model_type() == "sdxl":
                             (
@@ -277,13 +278,20 @@ def log_validations(
                                 for text_encoder in prompt_handler.text_encoders:
                                     text_encoder.to("cpu")
                         elif StateTracker.get_model_type() == "legacy":
+                            validation_negative_pooled_embeds = None
+                            current_validation_pooled_embeds = None
                             current_validation_prompt_embeds = (
                                 embed_cache.compute_embeddings_for_prompts(
                                     [validation_prompt]
                                 )
+                            )[0]
+                            logger.debug(
+                                f"Validations received the prompt embed: positive={current_validation_prompt_embeds.shape}, negative={validation_negative_prompt_embeds.shape}"
                             )
                             if prompt_handler is not None:
-                                prompt_handler.text_encoder.to(accelerator.device)
+                                for text_encoder in prompt_handler.text_encoders:
+                                    if text_encoder:
+                                        text_encoder.to(accelerator.device)
                                 [
                                     current_validation_prompt_embeds,
                                     validation_negative_prompt_embeds,
@@ -293,7 +301,9 @@ def log_validations(
                                         validation_negative_prompt_embeds,
                                     ]
                                 )
-                                prompt_handler.text_encoder.to("cpu")
+                                for text_encoder in prompt_handler.text_encoders:
+                                    if text_encoder:
+                                        text_encoder.to(accelerator.device)
 
                         # logger.debug(
                         #     f"Generating validation image: {validation_prompt}"
@@ -338,18 +348,18 @@ def log_validations(
                         validation_luminance = []
                         for idx, validation_image in enumerate(validation_images):
                             # Create a WandB entry containing each image.
-                            validation_document[
-                                validation_shortnames[idx]
-                            ] = wandb.Image(validation_image)
+                            validation_document[validation_shortnames[idx]] = (
+                                wandb.Image(validation_image)
+                            )
                             # Compute the luminance of each image.
                             validation_luminance.append(
                                 calculate_luminance(validation_image)
                             )
                         # Compute the mean luminance across all samples:
                         validation_luminance = torch.tensor(validation_luminance)
-                        validation_document[
-                            "validation_luminance"
-                        ] = validation_luminance.mean()
+                        validation_document["validation_luminance"] = (
+                            validation_luminance.mean()
+                        )
                         del validation_luminance
                         tracker.log(validation_document, step=global_step)
                 val_img_idx = 0

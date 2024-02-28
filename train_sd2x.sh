@@ -257,7 +257,6 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
     --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" \
-    --train_text_encoder --text_encoder_limit="${TEXT_ENCODER_LIMIT}" \
     --freeze_encoder=true --freeze_encoder_strategy="${TEXT_ENCODER_FREEZE_STRATEGY}" --freeze_encoder_before="${TEXT_ENCODER_FREEZE_BEFORE}" --freeze_encoder_after="${TEXT_ENCODER_FREEZE_AFTER}" \
     --caption_strategy="${DEFAULT_CAPTION_STRATEGY}" ${EMA_ARGS}
 

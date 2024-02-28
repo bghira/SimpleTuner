@@ -46,6 +46,7 @@ class BucketManager:
         self.image_metadata = {}  # Store image metadata
         self.instance_images_path = set()
         self.seen_images = {}
+        self.config = {}
         self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
@@ -809,7 +810,10 @@ class BucketManager:
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
                 if self.is_cache_inconsistent(cache_file, cache_content):
-                    self.data_backend.delete(cache_file)
+                    # self.data_backend.delete(cache_file)
+                    logger.warning(
+                        f"Deleting cache entries is currently HARD DISABLED. This is a warning to allow you to fix the issue manually."
+                    )
 
         # Update any state or metadata post-processing
         self.save_cache()

@@ -214,7 +214,7 @@ def configure_multi_databackend(
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is None or dataset_type != "text_embeds":
-            # Skip configuration of image data backends. It is done earlier.
+            # Skip configuration of image data backends. It is done later.
             continue
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
@@ -275,6 +275,7 @@ def configure_multi_databackend(
         if backend.get("default", False):
             # The default embed cache will be used for eg. validation prompts.
             StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
+            logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
             # We will compute the null embedding for caption dropout here.
             if (
                 args.caption_dropout_probability is not None
