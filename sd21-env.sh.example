@@ -3,6 +3,11 @@
 # This is the model type. "lora" is the default, and "full" is to impact the full u-net and possibly text encoder.
 export MODEL_TYPE="lora"
 
+# DoRA enhances the training style of LoRA, but it will run more slowly at the same rank.
+# See: https://arxiv.org/abs/2402.09353
+# See: https://github.com/huggingface/peft/pull/1474
+export USE_DORA=false
+
 # Valid choices: DEBUG, INFO, WARNING, ERROR
 export SIMPLETUNER_LOG_LEVEL=INFO
 
@@ -22,7 +27,7 @@ export CHECKPOINTING_LIMIT=3
 export LEARNING_RATE=1e-6 #@param {type:"number"}
 # polynomial LR scheduler will decay to this LR after hitting LEARNING_RATE.
 export LEARNING_RATE_END=4e-7 #@param {type:"number"}
-# sine is the recommended LR scheduler, but polynomial and constant also work.
+# Sine is the recommended LR scheduler, but polynomial and constant also work.
 export LR_SCHEDULE="sine"
 # Whether this is used, depends on whether you have epochs or num_steps in use.
 export LR_WARMUP_STEPS=$((MAX_NUM_STEPS / 10))

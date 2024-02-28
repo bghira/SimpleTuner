@@ -240,6 +240,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--use_dora",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will use the DoRA-enhanced LoRA training. This is an experimental feature, may slow down training,"
+            " and is not recommended for general use."
+        ),
+    )
+    parser.add_argument(
         "--override_dataset_config",
         action="store_true",
         default=False,

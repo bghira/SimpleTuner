@@ -5,6 +5,11 @@
 # full - requires lots of vram, trains very slowly, needs a lot of data and concepts.
 export MODEL_TYPE='lora'
 
+# DoRA enhances the training style of LoRA, but it will run more slowly at the same rank.
+# See: https://arxiv.org/abs/2402.09353
+# See: https://github.com/huggingface/peft/pull/1474
+export USE_DORA=false
+
 # Restart where we left off. Change this to "checkpoint-1234" to start from a specific checkpoint.
 export RESUME_CHECKPOINT="latest"
 

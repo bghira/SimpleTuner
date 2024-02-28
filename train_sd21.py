@@ -269,7 +269,7 @@ def main():
         subfolder="scheduler",
         prediction_type="v_prediction",
         timestep_spacing="trailing",
-        rescale_betas_zero_snr=True,
+        rescale_betas_zero_snr=False,
     )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
@@ -316,12 +316,16 @@ def main():
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
+        lora_weight_init_type = "loftq"
+        if args.use_dora:
+            lora_weight_init_type = "gaussian"
         unet_lora_config = LoraConfig(
             r=args.lora_rank,
             lora_alpha=args.lora_alpha,
             lora_dropout=args.lora_dropout,
-            init_lora_weights="loftq",
+            init_lora_weights=lora_weight_init_type,
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+            use_dora=args.use_dora,
         )
 
         logger.info("Adding LoRA adapter to the unet model..")
@@ -1400,7 +1404,7 @@ def main():
             subfolder="scheduler",
             prediction_type=args.prediction_type,
             timestep_spacing="trailing",
-            rescale_betas_zero_snr=True,
+            rescale_betas_zero_snr=False,
         )
         if args.model_type == "full":
             pipeline.save_pretrained(
@@ -1445,7 +1449,7 @@ def main():
                 subfolder="scheduler",
                 prediction_type=args.prediction_type,
                 timestep_spacing="trailing",
-                rescale_betas_zero_snr=True,
+                rescale_betas_zero_snr=False,
             )
             with torch.autocast(str(accelerator.device).replace(":0", "")):
                 validation_generator = torch.Generator(

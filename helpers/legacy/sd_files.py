@@ -125,20 +125,21 @@ def register_file_hooks(
             logger.warning(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
+
+        while len(models) > 0:
+            model = models.pop()
+
+            if isinstance(model, type(unwrap_model(accelerator, unet))):
+                unet_ = model
+            elif isinstance(model, type(unwrap_model(accelerator, text_encoder))):
+                text_encoder = model
+            else:
+                raise ValueError(f"unexpected save model: {model.__class__}")
+
         if args.model_type == "lora":
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
             unet_ = None
             text_encoder = None
-
-            while len(models) > 0:
-                model = models.pop()
-
-                if isinstance(model, type(unwrap_model(accelerator, unet))):
-                    unet_ = model
-                elif isinstance(model, type(unwrap_model(accelerator, text_encoder))):
-                    text_encoder = model
-                else:
-                    raise ValueError(f"unexpected save model: {model.__class__}")
 
             lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
 
