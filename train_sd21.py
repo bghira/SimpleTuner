@@ -269,7 +269,7 @@ def main():
         subfolder="scheduler",
         prediction_type="v_prediction",
         timestep_spacing="trailing",
-        rescale_betas_zero_snr=False,
+        rescale_betas_zero_snr=True,
     )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
@@ -1404,7 +1404,7 @@ def main():
             subfolder="scheduler",
             prediction_type=args.prediction_type,
             timestep_spacing="trailing",
-            rescale_betas_zero_snr=False,
+            rescale_betas_zero_snr=True,
         )
         if args.model_type == "full":
             pipeline.save_pretrained(
@@ -1449,7 +1449,7 @@ def main():
                 subfolder="scheduler",
                 prediction_type=args.prediction_type,
                 timestep_spacing="trailing",
-                rescale_betas_zero_snr=False,
+                rescale_betas_zero_snr=True,
             )
             with torch.autocast(str(accelerator.device).replace(":0", "")):
                 validation_generator = torch.Generator(
