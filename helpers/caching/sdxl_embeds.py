@@ -77,7 +77,9 @@ class TextEmbeddingCache:
         md5_hash = hashlib.md5()
         md5_hash.update(caption.encode())
         logger.debug(f"Hashing caption: {caption}")
-        return md5_hash.hexdigest() + hash_format
+        result = md5_hash.hexdigest() + hash_format
+        logger.debug(f"-> {result}")
+        return result
 
     def hash_prompt(self, caption):
         return self.create_hash(caption) + ".pt"
@@ -267,6 +269,7 @@ class TextEmbeddingCache:
         is_validation: bool = False,
         load_from_cache: bool = True,
     ):
+        logger.debug("Initialising validations...")
         if not self.batch_write_thread.is_alive():
             logger.debug("Restarting background write thread.")
             # Start the thread again.
@@ -294,24 +297,33 @@ class TextEmbeddingCache:
 
         # If all prompts are cached and certain conditions are met, return None
         if not uncached_prompts and not is_validation and not return_concat:
-            self.debug_log("All prompts are cached, ignoring.")
+            self.debug_log(
+                f"All prompts are cached, ignoring (uncached_prompts={uncached_prompts}, is_validation={is_validation}, return_concat={return_concat})"
+            )
             return None
+        else:
+            self.debug_log(
+                f"(uncached_prompts={uncached_prompts}, is_validation={is_validation}, return_concat={return_concat})"
+            )
 
         # Proceed with uncached prompts
         raw_prompts = uncached_prompts if uncached_prompts else all_prompts
+        output = None
         if self.model_type == "sdxl":
-            return self.compute_embeddings_for_sdxl_prompts(
+            output = self.compute_embeddings_for_sdxl_prompts(
                 raw_prompts,
                 return_concat=return_concat,
                 is_validation=is_validation,
                 load_from_cache=load_from_cache,
             )
         elif self.model_type == "legacy":
-            return self.compute_embeddings_for_legacy_prompts(
+            output = self.compute_embeddings_for_legacy_prompts(
                 raw_prompts,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
             )
+        logger.debug(f"Returning output: {output}")
+        return output
 
     def compute_embeddings_for_sdxl_prompts(
         self,
@@ -433,6 +445,9 @@ class TextEmbeddingCache:
         return_concat: bool = True,
         load_from_cache: bool = True,
     ):
+        logger.debug(
+            f"compute_embeddings_for_legacy_prompts arguments: prompts={prompts}, return_concat={return_concat}, load_from_cache={load_from_cache}"
+        )
         prompt_embeds_all = []
         prompt_embeds_all = []
         should_encode = not load_from_cache
@@ -444,6 +459,7 @@ class TextEmbeddingCache:
         ):
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             should_encode = True
+            logger.debug("Setting should_encode = True")
         # self.debug_log(
         #     f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
         # )
@@ -466,12 +482,15 @@ class TextEmbeddingCache:
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
                 )
-                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                if prompt != "":
+                    prompt = PromptHandler.filter_caption(self.data_backend, prompt)
 
                 if return_concat and load_from_cache:
                     try:
                         # We attempt to load.
+                        logging.debug("Loading embed from cache.")
                         prompt_embeds = self.load_from_cache(filename)
+                        logging.debug(f"Loaded embeds: {prompt_embeds.shape}")
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
                         logger.error(
@@ -518,6 +537,7 @@ class TextEmbeddingCache:
                 del prompt_embeds_all
                 return
 
+        logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
         return prompt_embeds_all
 
     def split_cache_between_processes(self, prompts: list):

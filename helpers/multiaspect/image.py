@@ -27,7 +27,7 @@ class MultiaspectImage:
         bucket_manager,
         image_path_str,
         aspect_ratio_bucket_indices,
-        aspect_ratio_rounding: int = 2,
+        aspect_ratio_rounding: int = 3,
         metadata_updates=None,
         delete_problematic_images: bool = False,
         statistics: dict = {},
@@ -43,12 +43,22 @@ class MultiaspectImage:
                 return aspect_ratio_bucket_indices
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
+                if not bucket_manager.meets_resolution_requirements(
+                    image=image,
+                ):
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
+                    )
+                    statistics["skipped"]["too_small"] += 1
+                    return aspect_ratio_bucket_indices
                 image_metadata["original_size"] = image.size
-                image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image,
-                    bucket_manager.resolution,
-                    bucket_manager.resolution_type,
-                    data_backend.id,
+                image, crop_coordinates, new_aspect_ratio = (
+                    MultiaspectImage.prepare_image(
+                        image,
+                        bucket_manager.resolution,
+                        bucket_manager.resolution_type,
+                        data_backend.id,
+                    )
                 )
                 image_metadata["crop_coordinates"] = crop_coordinates
                 image_metadata["target_size"] = image.size
@@ -61,14 +71,6 @@ class MultiaspectImage:
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
                 )
-                if not bucket_manager.meets_resolution_requirements(
-                    image=image,
-                ):
-                    logger.debug(
-                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
-                    )
-                    statistics["skipped"]["too_small"] += 1
-                    return aspect_ratio_bucket_indices
 
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:
@@ -81,7 +83,7 @@ class MultiaspectImage:
             import traceback
 
             logger.error(f"Error processing image: {e}")
-            logger.debug(f"Error traceback: {traceback.format_exc()}")
+            logger.error(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
             if delete_problematic_images:
                 logger.error(f"Deleting image.")
@@ -144,18 +146,16 @@ class MultiaspectImage:
 
         # Calculate new size
         if resolution_type == "pixel":
-            (
-                target_width,
-                target_height,
-            ) = MultiaspectImage.calculate_new_size_by_pixel_edge(
-                original_width, original_height, resolution
+            (target_width, target_height, new_aspect_ratio) = (
+                MultiaspectImage.calculate_new_size_by_pixel_edge(
+                    original_width, original_height, resolution
+                )
             )
         elif resolution_type == "area":
-            (
-                target_width,
-                target_height,
-            ) = MultiaspectImage.calculate_new_size_by_pixel_area(
-                original_width, original_height, resolution
+            (target_width, target_height, new_aspect_ratio) = (
+                MultiaspectImage.calculate_new_size_by_pixel_area(
+                    original_width, original_height, resolution
+                )
             )
             # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
             resolution = resolution * 1e3
@@ -185,18 +185,18 @@ class MultiaspectImage:
                 if resolution_type == "area":
                     # Convert original_resolution back from eg. 1024 pixels to 1.0 mp
                     original_megapixel_resolution = original_resolution / 1e3
-                    (
-                        target_width,
-                        target_height,
-                    ) = MultiaspectImage.calculate_new_size_by_pixel_area(
-                        original_width, original_height, original_megapixel_resolution
+                    (target_width, target_height, new_aspect_ratio) = (
+                        MultiaspectImage.calculate_new_size_by_pixel_area(
+                            original_width,
+                            original_height,
+                            original_megapixel_resolution,
+                        )
                     )
                 elif resolution_type == "pixel":
-                    (
-                        target_width,
-                        target_height,
-                    ) = MultiaspectImage.calculate_new_size_by_pixel_edge(
-                        original_width, original_height, original_resolution
+                    (target_width, target_height, new_aspect_ratio) = (
+                        MultiaspectImage.calculate_new_size_by_pixel_edge(
+                            original_width, original_height, original_resolution
+                        )
                     )
                 logger.debug(
                     f"Recalculated target_width and target_height {target_width}x{target_height} based on original_resolution: {original_resolution}"
@@ -229,7 +229,7 @@ class MultiaspectImage:
             image = MultiaspectImage._resize_image(image, target_width, target_height)
             crop_coordinates = (0, 0)
 
-        return image, crop_coordinates
+        return image, crop_coordinates, new_aspect_ratio
 
     @staticmethod
     def _crop_corner(image, target_width, target_height):
@@ -341,34 +341,56 @@ class MultiaspectImage:
 
     @staticmethod
     def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: float):
-        aspect_ratio = W / H
+        aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
         if W < H:
             W = resolution
             H = MultiaspectImage._round_to_nearest_multiple(
-                resolution / aspect_ratio, 64
+                resolution / aspect_ratio, 8
             )
         elif H < W:
             H = resolution
             W = MultiaspectImage._round_to_nearest_multiple(
-                resolution * aspect_ratio, 64
+                resolution * aspect_ratio, 8
             )
         else:
-            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
-        return int(W), int(H)
+            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 8)
+
+        new_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
+        return int(W), int(H), new_aspect_ratio
 
     @staticmethod
     def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float):
-        aspect_ratio = W / H
-        total_pixels = megapixels * 1e6  # Convert megapixels to pixels
+        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
+        total_pixels = max(megapixels * 1e6, 1e6)  # Ensure at least 1.0 megapixels
 
-        W_new = int(round(sqrt(total_pixels * aspect_ratio)))
-        H_new = int(round(sqrt(total_pixels / aspect_ratio)))
+        # Calculate new dimensions based on aspect ratio
+        W_new = int(round((total_pixels * original_aspect_ratio) ** 0.5))
+        H_new = int(round((total_pixels / original_aspect_ratio) ** 0.5))
 
-        # Ensure they are divisible by 8
-        W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 64)
-        H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 64)
+        # Adjust dimensions to ensure at least 1.0 megapixels if necessary
+        while W_new * H_new < 1e6:
+            W_new += 1
+            H_new = int(round(W_new / original_aspect_ratio))
 
-        return W_new, H_new
+        W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 8) + 8
+        H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 8) + 8
+
+        # Check again if resizing affected the 1.0 megapixel constraint and adjust if necessary
+        if W_new * H_new < (megapixels * 1e6):
+            W_new += 8  # Increase width by one step
+            H_new = int(
+                round(W_new / original_aspect_ratio)
+            )  # Recalculate height to maintain aspect ratio
+            H_new = MultiaspectImage._round_to_nearest_multiple(
+                H_new, 8
+            )  # Ensure divisibility by 8
+        if W_new * H_new < (megapixels * 1e6):
+            raise ValueError(
+                f"New image size of {W_new}x{H_new} is below {megapixels} MP ({W_new * H_new / 1e6} MP)"
+            )
+
+        new_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_new, H_new))
+        return W_new, H_new, new_aspect_ratio
 
     @staticmethod
     def calculate_image_aspect_ratio(image, rounding: int = 2):
@@ -382,11 +404,17 @@ class MultiaspectImage:
         Returns:
             float: The rounded aspect ratio of the image.
         """
-        aspect_ratio = round(image.width / image.height, rounding)
+        if isinstance(image, Image.Image):
+            width, height = image.size
+        elif isinstance(image, tuple):
+            width, height = image
+        else:
+            width, height = image.size
+        aspect_ratio = round(width / height, rounding)
         return aspect_ratio
 
     @staticmethod
-    def determine_bucket_for_aspect_ratio(aspect_ratio, rounding: int = 2):
+    def determine_bucket_for_aspect_ratio(aspect_ratio, rounding: int = 3):
         """
         Determine the correct bucket for a given aspect ratio.
 

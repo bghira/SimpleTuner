@@ -360,12 +360,16 @@ def main():
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
+        lora_weight_init_type = "loftq"
+        if args.use_dora:
+            lora_weight_init_type = "gaussian"
         unet_lora_config = LoraConfig(
             r=args.lora_rank,
             lora_alpha=args.lora_alpha,
             lora_dropout=args.lora_dropout,
-            init_lora_weights="loftq",
+            init_lora_weights=lora_weight_init_type,
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+            use_dora=args.use_dora,
         )
 
         logger.info("Adding LoRA adapter to the unet model..")
@@ -1481,9 +1485,11 @@ def main():
             StateTracker.set_vae(
                 AutoencoderKL.from_pretrained(
                     vae_path,
-                    subfolder="vae"
-                    if args.pretrained_vae_model_name_or_path is None
-                    else None,
+                    subfolder=(
+                        "vae"
+                        if args.pretrained_vae_model_name_or_path is None
+                        else None
+                    ),
                     revision=args.revision,
                     force_upcast=False,
                 )
@@ -1577,9 +1583,11 @@ def main():
         if args.push_to_hub:
             upload_folder(
                 repo_id=repo_id,
-                folder_path=os.path.join(args.output_dir, "pipeline")
-                if args.model_type == "full"
-                else args.output_dir,
+                folder_path=(
+                    os.path.join(args.output_dir, "pipeline")
+                    if args.model_type == "full"
+                    else args.output_dir
+                ),
                 commit_message="End of training",
                 ignore_patterns=["step_*", "epoch_*"],
             )

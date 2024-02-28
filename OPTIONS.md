@@ -183,7 +183,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] [--preserve_data_backend_cache]
-                     [--override_dataset_config]
+                     [--use_dora] [--override_dataset_config]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
@@ -409,6 +409,9 @@ options:
                         Currently, cache is not stored in the dataset itself
                         but rather, locally. This may change in a future
                         release.
+  --use_dora            If set, will use the DoRA-enhanced LoRA training. This
+                        is an experimental feature, may slow down training,
+                        and is not recommended for general use.
   --override_dataset_config
                         When provided, the dataset's config will not be
                         checked against the live backend config. This is

@@ -54,6 +54,9 @@ class VAECache:
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
+            # Remove trailing slash
+            self.cache_dir = self.cache_dir[:-1]
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
@@ -96,14 +99,22 @@ class VAECache:
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
         generated_names = self.generate_vae_cache_filename(filepath)
+        logger.debug(f"VAE cache generated names: {generated_names}")
         test_filepath_png = f"{os.path.splitext(generated_names[0])[0]}.png"
+        logger.debug(f"Translated into test_filepath_png: {test_filepath_png}")
         if str(self.cache_dir) in test_filepath_png:
             # replace cache_dir with instance_data_root:
             test_filepath_png = test_filepath_png.replace(
                 self.cache_dir, self.instance_data_root
             )
+            logger.debug(
+                f"Replacing cache_dir value {self.cache_dir} with {self.instance_data_root} in {test_filepath_png}"
+            )
         elif str(self.instance_data_root) not in test_filepath_png:
             test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
+            logger.debug(
+                f"Joining instance_data_root value {self.instance_data_root} with {test_filepath_png}"
+            )
 
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
         return test_filepath_png, test_filepath_jpg
@@ -432,8 +443,11 @@ class VAECache:
         try:
             filepaths = []
             qlen = self.process_queue.qsize()
+            is_final_sample = False
             for idx in range(0, qlen):
-                filepath, image = self.process_queue.get()
+                if idx == qlen - 1:
+                    is_final_sample = True
+                filepath, image, aspect_bucket = self.process_queue.get()
                 filepaths.append(filepath)
                 self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
@@ -444,16 +458,20 @@ class VAECache:
                             f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
                         )
                         continue
-                image, crop_coordinates = MultiaspectImage.prepare_image(
-                    image,
-                    self.resolution,
-                    self.resolution_type,
-                    self.id,
+                image, crop_coordinates, new_aspect_ratio = (
+                    MultiaspectImage.prepare_image(
+                        image,
+                        self.resolution,
+                        self.resolution_type,
+                        self.id,
+                    )
                 )
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
-                self.vae_input_queue.put((pixel_values, filepath))
+                self.vae_input_queue.put(
+                    (pixel_values, filepath, aspect_bucket, is_final_sample)
+                )
                 # Update the crop_coordinates in the metadata document
                 self.bucket_manager.set_metadata_attribute_by_filepath(
                     filepath=filepath,
@@ -479,13 +497,25 @@ class VAECache:
                 return
             while qlen > 0:
                 vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
+                batch_aspect_bucket = None
                 for idx in range(0, min(qlen, self.vae_batch_size)):
-                    pixel_values, filepath = self.vae_input_queue.get()
+                    pixel_values, filepath, aspect_bucket, is_final_sample = (
+                        self.vae_input_queue.get()
+                    )
+                    self.debug_log(
+                        f"Queue values: {pixel_values.shape}, {filepath}, {aspect_bucket}, {is_final_sample}"
+                    )
+                    if batch_aspect_bucket is None:
+                        batch_aspect_bucket = aspect_bucket
                     vae_input_images.append(pixel_values)
                     vae_input_filepaths.append(filepath)
                     vae_output_filepaths.append(
                         self.generate_vae_cache_filename(filepath)[0]
                     )
+                    if is_final_sample:
+                        # When we have fewer samples in a bucket than our VAE batch size might indicate,
+                        # we need to respect is_final_sample value and not retrieve the *next* element yet.
+                        break
 
                 latents = self.encode_images(
                     vae_input_images, vae_input_filepaths, load_from_cache=False
@@ -503,8 +533,13 @@ class VAECache:
                 qlen = self.vae_input_queue.qsize()
         except Exception as e:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
+            # Remove all of the errored images from the bucket. They will be captured on restart.
+            for filepath in vae_input_filepaths:
+                self.bucket_manager.remove_image(filepath)
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
-            raise e
+            raise Exception(
+                f"Error encoding images {vae_input_filepaths}: {e}, traceback: {traceback.format_exc()}"
+            )
 
     def read_images_in_batch(self) -> None:
         """Immediately read a batch of images.
@@ -520,7 +555,9 @@ class VAECache:
         filepaths = []
         qlen = self.read_queue.qsize()
         for idx in range(0, qlen):
-            path = self.read_queue.get()
+            read_queue_item = self.read_queue.get()
+            self.debug_log(f"Read path '{read_queue_item}' from read_queue.")
+            path, aspect_bucket = read_queue_item
             self.debug_log(f"Read path '{path}' from read_queue.")
             filepaths.append(path)
         self.debug_log(f"Beginning to read images in batch: {filepaths}")
@@ -540,7 +577,7 @@ class VAECache:
                 )
             # Add the element to the queue for later processing.
             # This allows us to have separate read and processing queue size limits.
-            self.process_queue.put((filepath, element))
+            self.process_queue.put((filepath, element, aspect_bucket))
 
     def _process_raw_filepath(self, raw_filepath: str):
         if type(raw_filepath) == str or len(raw_filepath) == 1:
@@ -555,11 +592,11 @@ class VAECache:
             )
         return filepath
 
-    def _accumulate_read_queue(self, filepath):
+    def _accumulate_read_queue(self, filepath, aspect_bucket):
         self.debug_log(
             f"Adding {filepath} to read queue because it is in local unprocessed files"
         )
-        self.read_queue.put(filepath)
+        self.read_queue.put((filepath, aspect_bucket))
 
     def _process_futures(self, futures: list, executor: ThreadPoolExecutor):
         completed_futures = []
@@ -569,7 +606,7 @@ class VAECache:
                 completed_futures.append(future)
             except Exception as e:
                 logging.error(
-                    f"An error occurred in a future: {e}, file {e.__traceback__.tb_frame}, {e.__traceback__.tb_lineno}"
+                    f"An error occurred in a future: {e}, file {e.__traceback__.tb_frame}, {e.__traceback__.tb_lineno}, future traceback {traceback.format_exc()}"
                 )
                 completed_futures.append(future)
         return [f for f in futures if f not in completed_futures]
@@ -634,7 +671,7 @@ class VAECache:
                             continue
                         # It does not exist. We can add it to the read queue.
                         self.debug_log(f"Adding {filepath} to the read queue.")
-                        self._accumulate_read_queue(filepath)
+                        self._accumulate_read_queue(filepath, aspect_bucket=bucket)
                         # We will check to see whether the queue is ready.
                         if self.read_queue.qsize() >= self.read_batch_size:
                             # We have an adequate number of samples to read. Let's now do that in a batch, to reduce I/O wait.

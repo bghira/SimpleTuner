@@ -1,14 +1,17 @@
-from transformers import PretrainedConfig
-from diffusers import UNet2DConditionModel, DiffusionPipeline
+from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
+from diffusers.loaders import LoraLoaderMixin
 from diffusers.utils import (
     convert_state_dict_to_diffusers,
     convert_unet_state_dict_to_peft,
 )
+
+from transformers import PretrainedConfig
+from diffusers import UNet2DConditionModel, StableDiffusionPipeline
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from helpers.training.state_tracker import StateTracker
 from helpers.training.wrappers import unwrap_model
-import os, logging, shutil
+import os, logging, shutil, torch
 
 logger = logging.getLogger("legacy.sd_files")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -39,7 +42,13 @@ def import_model_class_from_model_name_or_path(
 
 
 def register_file_hooks(
-    args, accelerator, unet, text_encoder, text_encoder_cls, use_deepspeed_optimizer
+    args,
+    accelerator,
+    unet,
+    text_encoder,
+    text_encoder_cls,
+    use_deepspeed_optimizer,
+    ema_unet=None,
 ):
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
@@ -68,7 +77,7 @@ def register_file_hooks(
                 if weights:
                     weights.pop()
 
-            DiffusionPipeline.save_lora_weights(
+            StableDiffusionPipeline.save_lora_weights(
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_lora_layers_to_save,
@@ -116,24 +125,98 @@ def register_file_hooks(
             logger.warning(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
-        while len(models) > 0:
-            # pop models so that they are not loaded again
-            model = models.pop()
-            if isinstance(model, type(accelerator.unwrap_model(text_encoder))):
-                # load transformers style into model
-                load_model = text_encoder_cls.from_pretrained(
-                    input_dir, subfolder="text_encoder"
-                )
-                model.config = load_model.config
-            else:
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(
-                    input_dir, subfolder="unet"
-                )
-                model.register_to_config(**load_model.config)
 
-            model.load_state_dict(load_model.state_dict())
+        while len(models) > 0:
+            model = models.pop()
+
+            if isinstance(model, type(unwrap_model(accelerator, unet))):
+                unet_ = model
+            elif isinstance(model, type(unwrap_model(accelerator, text_encoder))):
+                text_encoder = model
+            else:
+                raise ValueError(f"unexpected save model: {model.__class__}")
+
+        if args.model_type == "lora":
+            logger.info(f"Loading LoRA weights from Path: {input_dir}")
+            unet_ = None
+            text_encoder = None
+
+            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
+
+            unet_state_dict = {
+                f'{k.replace("unet.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
+            }
+            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
+            incompatible_keys = set_peft_model_state_dict(
+                unet_, unet_state_dict, adapter_name="default"
+            )
+            if incompatible_keys is not None:
+                # check only for unexpected keys
+                unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+                if unexpected_keys:
+                    logger.warning(
+                        f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+                        f" {unexpected_keys}. "
+                    )
+
+            if args.train_text_encoder:
+                # Do we need to call `scale_lora_layers()` here?
+                _set_state_dict_into_text_encoder(
+                    lora_state_dict,
+                    prefix="text_encoder.",
+                    text_encoder=text_encoder,
+                )
+
+            # Make sure the trainable params are in float32. This is again needed since the base models
+            # are in `weight_dtype`. More details:
+            # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
+            if args.mixed_precision == "fp16":
+                models = [unet_]
+                if args.train_text_encoder:
+                    models.extend(text_encoder)
+                for model in models:
+                    for param in model.parameters():
+                        # only upcast trainable parameters (LoRA) into fp32
+                        if param.requires_grad:
+                            param.data = param.to(torch.float32)
+            logger.info("Completed loading LoRA weights.")
+
+        if args.use_ema:
+            load_model = EMAModel.from_pretrained(
+                os.path.join(input_dir, "ema_unet"), UNet2DConditionModel
+            )
+            ema_unet.load_state_dict(load_model.state_dict())
+            ema_unet.to(accelerator.device)
             del load_model
+        if args.model_type == "full":
+            return_exception = False
+
+            while len(models) > 0:
+                try:
+                    # pop models so that they are not loaded again
+                    model = models.pop()
+                    if isinstance(model, type(accelerator.unwrap_model(text_encoder))):
+                        # load transformers style into model
+                        load_model = text_encoder_cls.from_pretrained(
+                            input_dir, subfolder="text_encoder"
+                        )
+                        model.config = load_model.config
+                    else:
+                        # load diffusers style into model
+                        load_model = UNet2DConditionModel.from_pretrained(
+                            input_dir, subfolder="unet"
+                        )
+                        model.register_to_config(**load_model.config)
+
+                    model.load_state_dict(load_model.state_dict())
+                    del load_model
+                except Exception as e:
+                    return_exception = e
+
+            if return_exception:
+                raise Exception("Could not load model: {}".format(return_exception))
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)

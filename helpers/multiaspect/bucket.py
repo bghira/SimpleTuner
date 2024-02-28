@@ -46,6 +46,7 @@ class BucketManager:
         self.image_metadata = {}  # Store image metadata
         self.instance_images_path = set()
         self.seen_images = {}
+        self.config = {}
         self.reload_cache()
         self.resolution = resolution
         self.resolution_type = resolution_type
@@ -414,7 +415,7 @@ class BucketManager:
         """Reset the seen images."""
         self.seen_images.clear()
 
-    def remove_image(self, image_path, bucket):
+    def remove_image(self, image_path, bucket: str = None):
         """
         Used by other classes to reliably remove images from a bucket.
 
@@ -425,25 +426,32 @@ class BucketManager:
         Returns:
             dict: The aspect ratio bucket indices.
         """
+        if not bucket:
+            for bucket, images in self.aspect_ratio_bucket_indices.items():
+                if image_path in images:
+                    self.aspect_ratio_bucket_indices[bucket].remove(image_path)
+                    break
         if image_path in self.aspect_ratio_bucket_indices[bucket]:
             self.aspect_ratio_bucket_indices[bucket].remove(image_path)
 
     def update_buckets_with_existing_files(self, existing_files: set):
         """
-        Update bucket indices to remove entries that no longer exist.
+        Update bucket indices to remove entries that no longer exist and remove duplicates.
 
         Args:
             existing_files (set): A set of existing files.
         """
         logger.debug(
-            f"Before updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices])}."
+            f"Before updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}."
         )
         for bucket, images in self.aspect_ratio_bucket_indices.items():
-            self.aspect_ratio_bucket_indices[bucket] = [
-                img for img in images if img in existing_files
-            ]
+            # Remove non-existing files and duplicates while preserving order
+            filtered_images = list(
+                dict.fromkeys(img for img in images if img in existing_files)
+            )
+            self.aspect_ratio_bucket_indices[bucket] = filtered_images
         logger.debug(
-            f"After updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices])}."
+            f"After updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}."
         )
         # Save the updated cache
         self.save_cache()
@@ -802,7 +810,10 @@ class BucketManager:
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
                 if self.is_cache_inconsistent(cache_file, cache_content):
-                    self.data_backend.delete(cache_file)
+                    # self.data_backend.delete(cache_file)
+                    logger.warning(
+                        f"Deleting cache entries is currently HARD DISABLED. This is a warning to allow you to fix the issue manually."
+                    )
 
         # Update any state or metadata post-processing
         self.save_cache()
