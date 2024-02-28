@@ -268,7 +268,9 @@ class BucketManager:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
             return
-        num_cpus = 8  # Using a fixed number for better control and predictability
+        num_cpus = (
+            StateTracker.get_args().aspect_bucket_worker_count
+        )  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
 
         metadata_updates_queue = Queue()

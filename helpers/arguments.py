@@ -299,6 +299,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--aspect_bucket_worker_count",
+        type=int,
+        default=12,
+        help=(
+            "The number of workers to use for aspect bucketing. This is a CPU-bound task, so the number of workers"
+            " should be set to the number of CPU threads available. If you use an I/O bound backend, an even higher"
+            " value may make sense. Default: 12."
+        ),
+    )
+    parser.add_argument(
         "--cache_dir",
         type=str,
         default=None,
