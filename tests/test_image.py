@@ -13,10 +13,10 @@ class TestMultiaspectImage(unittest.TestCase):
         self.resolution = 128
         self.test_image = Image.new("RGB", (512, 256), color="red")
         self.data_backend = MagicMock()
-        self.bucket_manager = MagicMock()
-        self.bucket_manager.resolution = 1.0  # Example resolution
-        self.bucket_manager.resolution_type = "dimension"  # Example resolution type
-        self.bucket_manager.meets_resolution_requirements.return_value = True
+        self.metadata_backend = MagicMock()
+        self.metadata_backend.resolution = 1.0  # Example resolution
+        self.metadata_backend.resolution_type = "dimension"  # Example resolution type
+        self.metadata_backend.meets_resolution_requirements.return_value = True
 
         # Mock image data to simulate reading from the backend
         self.image_path_str = "test_image.jpg"
@@ -41,7 +41,7 @@ class TestMultiaspectImage(unittest.TestCase):
             # Call the method under test
             result = MultiaspectImage.process_for_bucket(
                 self.data_backend,
-                self.bucket_manager,
+                self.metadata_backend,
                 self.image_path_str,
                 aspect_ratio_bucket_indices,
                 aspect_ratio_rounding=3,

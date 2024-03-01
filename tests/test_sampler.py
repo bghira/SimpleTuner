@@ -4,7 +4,7 @@ from PIL import Image
 from unittest import skip
 from unittest.mock import Mock, MagicMock, patch
 from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.multiaspect.bucket import BucketManager
+from helpers.metadata.backends.json import JsonMetadataBackend
 from helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
 from accelerate import PartialState
@@ -16,10 +16,12 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.process_state = PartialState()
         self.accelerator = MagicMock()
         self.accelerator.log = MagicMock()
-        self.bucket_manager = Mock(spec=BucketManager)
-        self.bucket_manager.id = "foo"
-        self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
-        self.bucket_manager.seen_images = {}
+        self.metadata_backend = Mock(spec=JsonMetadataBackend)
+        self.metadata_backend.id = "foo"
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2"]
+        }
+        self.metadata_backend.seen_images = {}
         self.data_backend = MockDataBackend()
         self.data_backend.id = "foo"
         self.batch_size = 2
@@ -28,7 +30,7 @@ class TestMultiAspectSampler(unittest.TestCase):
 
         self.sampler = MultiAspectSampler(
             id="foo",
-            bucket_manager=self.bucket_manager,
+            metadata_backend=self.metadata_backend,
             data_backend=self.data_backend,
             accelerator=self.accelerator,
             batch_size=self.batch_size,
@@ -66,11 +68,11 @@ class TestMultiAspectSampler(unittest.TestCase):
 
     @skip("Infinite Loop Boulevard")
     def test_iter_yields_correct_batches(self):
-        # Add about 100 images to the bucket_manager
+        # Add about 100 images to the metadata_backend
         all_images = ["image" + str(i) for i in range(100)]
 
-        self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": all_images}
-        self.bucket_manager.buckets = ["1.0"]
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": all_images}
+        self.metadata_backend.buckets = ["1.0"]
         self.sampler._get_image_files = MagicMock(return_value=all_images)
         self.sampler._get_unseen_images = MagicMock(return_value=all_images)
         self.data_backend.exists = MagicMock(return_value=True)
@@ -96,7 +98,7 @@ class TestMultiAspectSampler(unittest.TestCase):
             # Simulate that 'image2' is too small and thus not returned
             return [img for img in samples if img != "image2"]
 
-        self.bucket_manager.aspect_ratio_bucket_indices = {
+        self.metadata_backend.aspect_ratio_bucket_indices = {
             "1.0": ["image1", "image2", "image3", "image4"]
         }
         self.sampler._validate_and_yield_images_from_samples = (
@@ -131,7 +133,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         img4 = Image.new("RGB", (100, 100), color="yellow")
         img4.save(img_paths[3])
 
-        self.bucket_manager.aspect_ratio_bucket_indices = {"1.0": img_paths}
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": img_paths}
 
         # Collect batches by iterating over the generator
         batches = [next(self.sampler.__iter__()) for _ in range(len(img_paths))]
