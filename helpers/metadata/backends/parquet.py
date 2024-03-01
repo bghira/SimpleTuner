@@ -217,6 +217,10 @@ class ParquetMetadataBackend(MetadataBackend):
                 return aspect_ratio_bucket_indices
             width_column = self.parquet_config.get("width_column", None)
             height_column = self.parquet_config.get("height_column", None)
+            if width_column is None or height_column is None:
+                raise ValueError(
+                    "ParquetMetadataBackend requires width and height columns to be defined."
+                )
             image_metadata = {
                 "original_size": (
                     int(database_image_metadata[width_column].values[0]),
