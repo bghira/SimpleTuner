@@ -460,10 +460,10 @@ class VAECache:
                         continue
                 image, crop_coordinates, new_aspect_ratio = (
                     MultiaspectImage.prepare_image(
-                        image,
-                        self.resolution,
-                        self.resolution_type,
-                        self.id,
+                        image=image,
+                        resolution=self.resolution,
+                        resolution_type=self.resolution_type,
+                        id=self.id,
                     )
                 )
                 pixel_values = self.transform(image).to(

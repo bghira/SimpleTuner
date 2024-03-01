@@ -1,4 +1,5 @@
 import unittest, json
+from PIL import Image
 from unittest.mock import Mock, patch, MagicMock
 from helpers.metadata.backends.json import JsonMetadataBackend
 from helpers.training.state_tracker import StateTracker
@@ -9,12 +10,17 @@ class TestMetadataBackend(unittest.TestCase):
     def setUp(self):
         self.data_backend = MockDataBackend()
         self.data_backend.id = "foo"
+        self.test_image = Image.new("RGB", (512, 256), color="red")
         self.accelerator = Mock()
         self.data_backend.exists = Mock(return_value=True)
         self.data_backend.write = Mock(return_value=True)
         self.data_backend.list_files = Mock(
             return_value=[("subdir", "", "image_path.png")]
         )
+        self.data_backend.read = Mock(return_value=self.test_image.tobytes())
+        # Mock image data to simulate reading from the backend
+        self.image_path_str = "test_image.jpg"
+
         self.instance_data_root = "/some/fake/path"
         self.cache_file = "/some/fake/cache.json"
         self.metadata_file = "/some/fake/metadata.json"
@@ -84,13 +90,13 @@ class TestMetadataBackend(unittest.TestCase):
                 self.metadata_backend.reload_cache()
 
     def test_save_cache(self):
-        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image1", "image2"]}
+        self.metadata_backend.aspect_ratio_bucket_indices = {
+            "1.0": ["image1", "image2"]
+        }
         self.metadata_backend.instance_images_path = ["image1", "image2"]
         with patch.object(self.data_backend, "write") as mock_write:
             self.metadata_backend.save_cache()
         mock_write.assert_called_once()
-
-    # Add more tests for other methods as needed
 
 
 if __name__ == "__main__":

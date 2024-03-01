@@ -2,23 +2,21 @@ from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
-from pathlib import Path
-import json, logging, os, time, re
-from multiprocessing import Manager
-from PIL import Image
-from tqdm import tqdm
-from multiprocessing import Process, Queue
-import numpy as np
-from math import floor
+import json, logging, os
 from io import BytesIO
-from helpers.image_manipulation.brightness import calculate_luminance
+from PIL import Image
 
-logger = logging.getLogger("JsonMetadataBackend")
+logger = logging.getLogger("ParquetMetadataBackend")
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
 logger.setLevel(target_level)
 
+try:
+    import pandas as pd
+except ImportError:
+    raise ImportError("Pandas is required for the ParquetMetadataBackend.")
 
-class JsonMetadataBackend(MetadataBackend):
+
+class ParquetMetadataBackend(MetadataBackend):
     def __init__(
         self,
         id: str,
@@ -30,10 +28,13 @@ class JsonMetadataBackend(MetadataBackend):
         batch_size: int,
         resolution: float,
         resolution_type: str,
+        parquet_config: dict,
         delete_problematic_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
     ):
+        self.parquet_config = parquet_config
+        self.parquet_path = parquet_config.get("path", None)
         super().__init__(
             id=id,
             instance_data_root=instance_data_root,
@@ -48,6 +49,25 @@ class JsonMetadataBackend(MetadataBackend):
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
         )
+        self.load_parquet_database()
+
+    def load_parquet_database(self):
+        """
+        Load the parquet database from file.
+        """
+        if self.data_backend.exists(self.parquet_path):
+            try:
+                bytes_string = self.data_backend.read(self.parquet_path)
+                import io
+
+                pq = io.BytesIO(bytes_string)
+            except Exception as e:
+                raise e
+            self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+        else:
+            raise FileNotFoundError(
+                f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
+            )
 
     def __len__(self):
         """
@@ -99,7 +119,7 @@ class JsonMetadataBackend(MetadataBackend):
 
     def reload_cache(self):
         """
-        Load cache data from a JSON file.
+        Load cache data from a parquet file.
 
         Returns:
             dict: The cache data.
@@ -178,47 +198,73 @@ class JsonMetadataBackend(MetadataBackend):
         statistics: dict = {},
     ):
         try:
-            image_metadata = {}
-            image_data = self.data_backend.read(image_path_str)
-            if image_data is None:
+            image_path_filtered = os.path.splitext(os.path.split(image_path_str)[-1])[0]
+            if image_path_filtered.isdigit():
+                image_path_filtered = int(image_path_filtered)
+            logger.debug(
+                f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
+            )
+            database_image_metadata = self.parquet_database.loc[
+                self.parquet_database[self.parquet_config.get("filename_column")]
+                == image_path_filtered
+            ]
+            logger.debug(f"Found image metadata: {database_image_metadata}")
+            if database_image_metadata is None:
                 logger.debug(
                     f"Image {image_path_str} was not found on the backend. Skipping image."
                 )
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
-            with Image.open(BytesIO(image_data)) as image:
-                # Apply EXIF transforms
-                if not self.meets_resolution_requirements(
-                    image=image,
-                ):
-                    logger.debug(
-                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
-                    )
-                    statistics["skipped"]["too_small"] += 1
-                    return aspect_ratio_bucket_indices
-                image_metadata["original_size"] = image.size
-                original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                    image, aspect_ratio_rounding
+            width_column = self.parquet_config.get("width_column", None)
+            height_column = self.parquet_config.get("height_column", None)
+            image_metadata = {
+                "original_size": (
+                    int(database_image_metadata[width_column].values[0]),
+                    int(database_image_metadata[height_column].values[0]),
                 )
-                image, crop_coordinates, new_aspect_ratio = (
-                    MultiaspectImage.prepare_image(
-                        image=image,
-                        resolution=self.resolution,
-                        resolution_type=self.resolution_type,
-                        id=self.data_backend.id,
-                    )
-                )
-                image_metadata["crop_coordinates"] = crop_coordinates
-                image_metadata["target_size"] = image.size
-                # Round to avoid excessive unique buckets
-                aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                    image, aspect_ratio_rounding
-                )
-                image_metadata["aspect_ratio"] = aspect_ratio
-                image_metadata["luminance"] = calculate_luminance(image)
+            }
+
+            if not self.meets_resolution_requirements(image_metadata=image_metadata):
                 logger.debug(
-                    f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image.size}."
+                    f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
                 )
+                statistics["skipped"]["too_small"] += 1
+                return aspect_ratio_bucket_indices
+            aspect_ratio_column = self.parquet_config.get("aspect_ratio_column", None)
+            if aspect_ratio_column:
+                original_aspect_ratio = database_image_metadata[
+                    aspect_ratio_column
+                ].values[0]
+            else:
+                original_aspect_ratio = (
+                    image_metadata["original_size"][0]
+                    / image_metadata["original_size"][1]
+                )
+            final_image_size, crop_coordinates, new_aspect_ratio = (
+                MultiaspectImage.prepare_image(
+                    image_metadata=image_metadata,
+                    resolution=self.resolution,
+                    resolution_type=self.resolution_type,
+                    id=self.data_backend.id,
+                )
+            )
+            image_metadata["crop_coordinates"] = crop_coordinates
+            image_metadata["target_size"] = final_image_size
+            # Round to avoid excessive unique buckets
+            aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                final_image_size, aspect_ratio_rounding
+            )
+            image_metadata["aspect_ratio"] = aspect_ratio
+            luminance_column = self.parquet_config.get("luminance_column", None)
+            if luminance_column:
+                image_metadata["luminance"] = database_image_metadata[
+                    luminance_column
+                ].values[0]
+            else:
+                image_metadata["luminance"] = 0
+            logger.debug(
+                f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {final_image_size}."
+            )
 
             # Create a new bucket if it doesn't exist
             if str(aspect_ratio) not in aspect_ratio_bucket_indices:

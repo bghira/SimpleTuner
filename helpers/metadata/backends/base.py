@@ -73,7 +73,6 @@ class MetadataBackend:
         metadata_updates_queue,
         written_files_queue,
         existing_files_set,
-        data_backend,
     ):
         """
         A worker function to bucket a list of files.
@@ -106,9 +105,7 @@ class MetadataBackend:
         for file in files:
             if str(file) not in existing_files_set:
                 logger.debug(f"Processing file {file}.")
-                local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    data_backend,
-                    self,
+                local_aspect_ratio_bucket_indices = self._process_for_bucket(
                     file,
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
@@ -193,7 +190,6 @@ class MetadataBackend:
                     metadata_updates_queue,
                     written_files_queue,
                     existing_files_set,
-                    self.data_backend,
                 ),
             )
             for file_shard in files_split
@@ -431,11 +427,12 @@ class MetadataBackend:
         self,
         image_path: str = None,
         image: Image = None,
+        image_metadata: dict = None,
     ):
         """
         Check if an image meets the resolution requirements.
         """
-        if image is None and image_path is not None:
+        if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
                 logger.warning(f"Metadata not found for image {image_path}.")
@@ -443,6 +440,8 @@ class MetadataBackend:
             width, height = metadata["original_size"]
         elif image is not None:
             width, height = image.size
+        elif image_metadata is not None:
+            width, height = image_metadata["original_size"]
         else:
             # Unexpected condition
             raise ValueError(
@@ -647,7 +646,6 @@ class MetadataBackend:
                     metadata_updates_queue,
                     None,  # Passing None to indicate we don't want to update the written files list
                     existing_files_set,
-                    self.data_backend,
                 ),
             )
             for file_shard in files_split
@@ -657,7 +655,7 @@ class MetadataBackend:
             worker.start()
 
         with tqdm(
-            desc="Scanning metadata for images",
+            desc="Scanning image metadata",
             total=len(new_files),
             leave=False,
             ncols=100,
@@ -669,10 +667,14 @@ class MetadataBackend:
                 # Only update the metadata
                 while not metadata_updates_queue.empty():
                     metadata_update = metadata_updates_queue.get()
-                    for filepath, meta in metadata_update.items():
-                        self.set_metadata_by_filepath(
-                            filepath=filepath, metadata=meta, update_json=False
-                        )
+                    logger.debug(
+                        f"Received type of metadata update: {type(metadata_update)}, contents: {metadata_update}"
+                    )
+                    if type(metadata_update) == dict:
+                        for filepath, meta in metadata_update.items():
+                            self.set_metadata_by_filepath(
+                                filepath=filepath, metadata=meta, update_json=False
+                            )
 
         for worker in workers:
             worker.join()
