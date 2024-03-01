@@ -133,10 +133,15 @@ def print_bucket_info(metadata_backend):
 
 def configure_parquet_database(backend: dict, args):
     """When given a backend config dictionary, configure a parquet database."""
-    parquet_path = backend.get("parquet_path", None)
+    parquet_config = backend.get("parquet", None)
+    if not parquet_config:
+        raise ValueError(
+            f"Parquet backend must have a 'parquet' field in the backend config containing required fields for configuration."
+        )
+    parquet_path = parquet_config.get("path", None)
     if not parquet_path:
         raise ValueError(
-            "Parquet backend must have a 'parquet_path' field in the backend config."
+            "Parquet backend must have a 'path' field in the backend config under the 'parquet' key."
         )
     if not os.path.exists(parquet_path):
         raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
@@ -144,12 +149,12 @@ def configure_parquet_database(backend: dict, args):
     import pandas as pd
 
     df = pd.read_parquet(parquet_path)
-    caption_column = backend.get(
-        "parquet_caption_column", args.parquet_caption_column or "description"
+    caption_column = parquet_config.get(
+        "caption_column", args.parquet_caption_column or "description"
     )
-    fallback_caption_column = backend.get("parquet_fallback_caption_column", None)
-    filename_column = backend.get(
-        "parquet_filename_column", args.parquet_filename_column or "id"
+    fallback_caption_column = parquet_config.get("fallback_caption_column", None)
+    filename_column = parquet_config.get(
+        "filename_column", args.parquet_filename_column or "id"
     )
     # Check the columns exist
     if caption_column not in df.columns:
@@ -163,7 +168,7 @@ def configure_parquet_database(backend: dict, args):
     # Check for null values
     if df[caption_column].isnull().values.any() and not fallback_caption_column:
         raise ValueError(
-            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no parquet_fallback_caption_column was set."
+            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no fallback_caption_column was set."
         )
     if df[filename_column].isnull().values.any():
         raise ValueError(
@@ -374,14 +379,23 @@ def configure_multi_databackend(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
             )
         logger.info(f"(id={init_backend['id']}) Loading bucket manager.")
-        if backend.get("metadata_backend", "json") == "json":
+        metadata_backend_args = {}
+        metadata_backend = backend.get("metadata_backend", "json")
+        if metadata_backend == "json":
             from helpers.metadata.backends.json import JsonMetadataBackend
 
             BucketManager_cls = JsonMetadataBackend
+        elif metadata_backend == "parquet":
+            from helpers.metadata.backends.parquet import ParquetMetadataBackend
+
+            BucketManager_cls = ParquetMetadataBackend
+            metadata_backend_args["parquet_config"] = backend.get("parquet", None)
+            if not metadata_backend_args["parquet_config"]:
+                raise ValueError(
+                    f"Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
+                )
         else:
-            raise ValueError(
-                f"Unknown metadata backend type: {backend['metadata_backend']}"
-            )
+            raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
         init_backend["metadata_backend"] = BucketManager_cls(
             id=init_backend["id"],
             instance_data_root=init_backend["instance_data_root"],
@@ -403,6 +417,7 @@ def configure_multi_databackend(
                 init_backend["instance_data_root"], "aspect_ratio_bucket_metadata.json"
             ),
             delete_problematic_images=args.delete_problematic_images or False,
+            **metadata_backend_args,
         )
 
         if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
@@ -440,7 +455,7 @@ def configure_multi_databackend(
             "caption_strategy",
             "maximum_image_size",
             "target_downsample_size",
-            "parquet_path",
+            "parquet",
         ]
         if init_backend["metadata_backend"].config != {}:
             prev_config = init_backend["metadata_backend"].config

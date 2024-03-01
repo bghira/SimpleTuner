@@ -620,7 +620,7 @@ def main():
     )
     total_num_batches = sum(
         [
-            len(backend["bucket_manager"] if "bucket_manager" in backend else [])
+            len(backend["metadata_backend"] if "metadata_backend" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
