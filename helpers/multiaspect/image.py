@@ -24,7 +24,7 @@ class MultiaspectImage:
     @staticmethod
     def process_for_bucket(
         data_backend,
-        bucket_manager,
+        metadata_backend,
         image_path_str,
         aspect_ratio_bucket_indices,
         aspect_ratio_rounding: int = 3,
@@ -43,7 +43,7 @@ class MultiaspectImage:
                 return aspect_ratio_bucket_indices
             with Image.open(BytesIO(image_data)) as image:
                 # Apply EXIF transforms
-                if not bucket_manager.meets_resolution_requirements(
+                if not metadata_backend.meets_resolution_requirements(
                     image=image,
                 ):
                     logger.debug(
@@ -58,8 +58,8 @@ class MultiaspectImage:
                 image, crop_coordinates, new_aspect_ratio = (
                     MultiaspectImage.prepare_image(
                         image,
-                        bucket_manager.resolution,
-                        bucket_manager.resolution_type,
+                        metadata_backend.resolution,
+                        metadata_backend.resolution_type,
                         data_backend.id,
                     )
                 )

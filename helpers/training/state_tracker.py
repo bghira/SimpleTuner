@@ -375,7 +375,9 @@ class StateTracker:
     @classmethod
     def get_metadata_by_filepath(cls, filepath):
         for _, data_backend in cls.get_data_backends().items():
-            metadata = data_backend["bucket_manager"].get_metadata_by_filepath(filepath)
+            metadata = data_backend["metadata_backend"].get_metadata_by_filepath(
+                filepath
+            )
             if metadata is not None:
                 return metadata
         return None

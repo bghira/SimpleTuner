@@ -3,7 +3,7 @@ from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.training.multi_process import rank_info
-from helpers.multiaspect.bucket import BucketManager
+from helpers.metadata.backends.base import MetadataBackend
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
@@ -23,7 +23,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def __init__(
         self,
         id: str,
-        bucket_manager: BucketManager,
+        metadata_backend: MetadataBackend,
         data_backend: BaseDataBackend,
         accelerator,
         batch_size: int,
@@ -41,7 +41,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Initializes the sampler with provided settings.
         Parameters:
         - id: An identifier to link this with its VAECache and DataBackend objects.
-        - bucket_manager: An initialised instance of BucketManager.
+        - metadata_backend: An initialised instance of MetadataBackend.
         - batch_size: Number of samples to draw per batch.
         - state_path: Path to store the current state of the sampler.
         - debug_aspect_buckets: Flag to log state for debugging purposes.
@@ -49,9 +49,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         - minimum_image_size: The minimum pixel length of the smallest side of an image.
         """
         self.id = id
-        if self.id != data_backend.id or self.id != bucket_manager.id:
+        if self.id != data_backend.id or self.id != metadata_backend.id:
             raise ValueError(
-                f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and BucketManager ID ({bucket_manager.id})."
+                f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and MetadataBackend ID ({metadata_backend.id})."
             )
         # Update the logger name with the id:
         self.logger = get_logger(
@@ -60,7 +60,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         self.rank_info = rank_info()
         self.accelerator = accelerator
-        self.bucket_manager = bucket_manager
+        self.metadata_backend = metadata_backend
         self.data_backend = data_backend
         self.current_bucket = None
         self.current_epoch = 1
@@ -85,12 +85,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
          so that the state is correctly restored with a given checkpoint.
         """
         state = {
-            "aspect_ratio_bucket_indices": self.bucket_manager.aspect_ratio_bucket_indices,
+            "aspect_ratio_bucket_indices": self.metadata_backend.aspect_ratio_bucket_indices,
             "buckets": self.buckets,
             "exhausted_buckets": self.exhausted_buckets,
             "batch_size": self.batch_size,
             "current_bucket": self.current_bucket,
-            "seen_images": self.bucket_manager.seen_images,
+            "seen_images": self.metadata_backend.seen_images,
             "current_epoch": self.current_epoch,
         }
         self.state_manager.save_state(state, state_path)
@@ -118,17 +118,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.logger.info(
                 f"Previous checkpoint had {len(previous_state['seen_images'])} seen images."
             )
-            self.bucket_manager.seen_images.update(previous_state["seen_images"])
+            self.metadata_backend.seen_images.update(previous_state["seen_images"])
 
     def load_buckets(self):
         return list(
-            self.bucket_manager.aspect_ratio_bucket_indices.keys()
+            self.metadata_backend.aspect_ratio_bucket_indices.keys()
         )  # These keys are a float value, eg. 1.78.
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
         image_path = random.choice(
-            self.bucket_manager.aspect_ratio_bucket_indices[bucket]
+            self.metadata_backend.aspect_ratio_bucket_indices[bucket]
         )
         return image_path
 
@@ -148,13 +148,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _reset_buckets(self):
         if (
-            len(self.bucket_manager.seen_images) == 0
+            len(self.metadata_backend.seen_images) == 0
             and len(self._get_unseen_images()) == 0
         ):
             raise Exception(
-                f"No images found in the dataset: {self.bucket_manager.aspect_ratio_bucket_indices}"
+                f"No images found in the dataset: {self.metadata_backend.aspect_ratio_bucket_indices}"
                 f"\n-> Unseen images: {self._get_unseen_images()}"
-                f"\n-> Seen images: {self.bucket_manager.seen_images}"
+                f"\n-> Seen images: {self.metadata_backend.seen_images}"
             )
         if StateTracker.get_args().print_sampler_statistics:
             self.logger.info(
@@ -165,7 +165,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.current_epoch += 1
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
-        self.bucket_manager.reset_seen_images()
+        self.metadata_backend.reset_seen_images()
         self.change_bucket()
         raise MultiDatasetExhausted()
 
@@ -174,20 +174,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Get unseen images from the specified bucket.
         If bucket is None, get unseen images from all buckets.
         """
-        if bucket and bucket in self.bucket_manager.aspect_ratio_bucket_indices:
+        if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
                 image
-                for image in self.bucket_manager.aspect_ratio_bucket_indices[bucket]
-                if not self.bucket_manager.is_seen(image)
+                for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+                if not self.metadata_backend.is_seen(image)
             ]
         elif bucket is None:
             unseen_images = []
-            for b, images in self.bucket_manager.aspect_ratio_bucket_indices.items():
+            for b, images in self.metadata_backend.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
                     [
                         image
                         for image in images
-                        if not self.bucket_manager.is_seen(image)
+                        if not self.metadata_backend.is_seen(image)
                     ]
                 )
             return unseen_images
@@ -199,11 +199,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
         if (
-            len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])
+            len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])
             < self.batch_size
         ):
             self.debug_log(
-                f"Bucket {bucket} has insufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
+                f"Bucket {bucket} has insufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
             )
             if bucket not in self.exhausted_buckets:
                 self.debug_log(
@@ -214,7 +214,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.change_bucket()
             return True
         self.debug_log(
-            f"Bucket {bucket} has sufficient ({len(self.bucket_manager.aspect_ratio_bucket_indices[bucket])}) images."
+            f"Bucket {bucket} has sufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
         )
         return False
 
@@ -264,15 +264,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def log_state(self):
         self.debug_log(
-            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
+            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
         )
         self.debug_log(
-            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.bucket_manager.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
+            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
         )
         self.logger.info(
             f"{self.rank_info}Multi-aspect sampler statistics:\n"
             f"{self.rank_info}    -> Batch size: {self.batch_size}\n"
-            f"{self.rank_info}    -> Seen images: {len(self.bucket_manager.seen_images)}\n"
+            f"{self.rank_info}    -> Seen images: {len(self.metadata_backend.seen_images)}\n"
             f"{self.rank_info}    -> Unseen images: {len(self._get_unseen_images())}\n"
             f"{self.rank_info}    -> Current Bucket: {self.current_bucket}\n"
             f"{self.rank_info}    -> {len(self.buckets)} Buckets: {self.buckets}\n"
@@ -285,10 +285,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         to_yield = []
         for image_path in samples:
-            image_metadata = self.bucket_manager.get_metadata_by_filepath(image_path)
+            image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if "crop_coordinates" not in image_metadata:
                 raise Exception(
-                    f"An image was discovered ({image_path}) that did not have its metadata: {self.bucket_manager.get_metadata_by_filepath(image_path)}"
+                    f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
@@ -351,9 +351,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 if len(self.batch_accumulator) >= self.batch_size:
                     final_yield = self.batch_accumulator[: self.batch_size]
                     self.debug_log(
-                        f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.bucket_manager.seen_images.values())} seen images before adding."
+                        f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.metadata_backend.seen_images.values())} seen images before adding."
                     )
-                    self.bucket_manager.mark_batch_as_seen(
+                    self.metadata_backend.mark_batch_as_seen(
                         [instance["image_path"] for instance in final_yield]
                     )
                     self.accelerator.wait_for_everyone()
@@ -398,7 +398,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return (
             sum(
                 len(indices)
-                for indices in self.bucket_manager.aspect_ratio_bucket_indices.values()
+                for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()
             )
             * multiplier
         )

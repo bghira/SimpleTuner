@@ -7,7 +7,7 @@ from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
-from helpers.multiaspect.bucket import BucketManager
+from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
@@ -29,7 +29,7 @@ class VAECache:
         id: str,
         vae,
         accelerator,
-        bucket_manager: BucketManager,
+        metadata_backend: MetadataBackend,
         instance_data_root: str,
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
@@ -69,7 +69,7 @@ class VAECache:
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
-        self.bucket_manager = bucket_manager
+        self.metadata_backend = metadata_backend
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
             target_downsample_size and not maximum_image_size
@@ -431,7 +431,7 @@ class VAECache:
                 )
             filepaths.append(output_file)
             latents.append(latent_vector)
-        self.bucket_manager.save_image_metadata()
+        self.metadata_backend.save_image_metadata()
         self.data_backend.write_batch(filepaths, latents)
 
     def _process_images_in_batch(self) -> None:
@@ -451,7 +451,7 @@ class VAECache:
                 filepaths.append(filepath)
                 self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
-                    if not self.bucket_manager.meets_resolution_requirements(
+                    if not self.metadata_backend.meets_resolution_requirements(
                         image_path=filepath,
                     ):
                         self.debug_log(
@@ -473,7 +473,7 @@ class VAECache:
                     (pixel_values, filepath, aspect_bucket, is_final_sample)
                 )
                 # Update the crop_coordinates in the metadata document
-                self.bucket_manager.set_metadata_attribute_by_filepath(
+                self.metadata_backend.set_metadata_attribute_by_filepath(
                     filepath=filepath,
                     attribute="crop_coordinates",
                     value=crop_coordinates,
@@ -535,7 +535,7 @@ class VAECache:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
             # Remove all of the errored images from the bucket. They will be captured on restart.
             for filepath in vae_input_filepaths:
-                self.bucket_manager.remove_image(filepath)
+                self.metadata_backend.remove_image(filepath)
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise Exception(
                 f"Error encoding images {vae_input_filepaths}: {e}, traceback: {traceback.format_exc()}"
@@ -614,7 +614,7 @@ class VAECache:
     def process_buckets(self):
         futures = []
         processed_images = self._list_cached_images()
-        aspect_bucket_cache = self.bucket_manager.read_cache().copy()
+        aspect_bucket_cache = self.metadata_backend.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
         do_shuffle = (
