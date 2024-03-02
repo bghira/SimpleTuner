@@ -97,26 +97,34 @@ class VAECache:
             full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
 
-    def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
+    def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         generated_names = self.generate_vae_cache_filename(filepath)
         logger.debug(f"VAE cache generated names: {generated_names}")
-        test_filepath_png = f"{os.path.splitext(generated_names[0])[0]}.png"
-        logger.debug(f"Translated into test_filepath_png: {test_filepath_png}")
-        if str(self.cache_dir) in test_filepath_png:
-            # replace cache_dir with instance_data_root:
-            test_filepath_png = test_filepath_png.replace(
-                self.cache_dir, self.instance_data_root
-            )
-            logger.debug(
-                f"Replacing cache_dir value {self.cache_dir} with {self.instance_data_root} in {test_filepath_png}"
-            )
-        elif str(self.instance_data_root) not in test_filepath_png:
-            test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
-            logger.debug(
-                f"Joining instance_data_root value {self.instance_data_root} with {test_filepath_png}"
-            )
 
+        # Assuming the first item in generated_names is the one we want:
+        test_filepath = generated_names[0]
+
+        # Remove the .pt extension and replace it with .png for testing:
+        test_filepath_no_ext, _ = os.path.splitext(test_filepath)
+        test_filepath_png = f"{test_filepath_no_ext}.png"
+
+        logger.debug(f"Translated into test_filepath_png: {test_filepath_png}")
+
+        # More accurate handling of path prefix replacement:
+        if test_filepath_png.startswith(str(self.cache_dir)):
+            # Extract the relative path after the cache_dir
+            relative_path = os.path.relpath(test_filepath_png, self.cache_dir)
+            # Construct the new path by joining the relative path with the instance_data_root
+            test_filepath_png = os.path.join(self.instance_data_root, relative_path)
+            logger.debug(f"Converted to image data path: {test_filepath_png}")
+        else:
+            # Handle cases where the cache_dir is not in the filepath
+            # This might involve logic specific to your use case
+            logger.debug("Cache directory prefix not found in the filepath.")
+
+        # Prepare the JPG version as well
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
+
         return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
