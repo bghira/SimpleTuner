@@ -1,5 +1,6 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
+from helpers.data_backend.base import BaseDataBackend
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 
 from helpers.training.exceptions import MultiDatasetExhausted
@@ -11,7 +12,7 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, random
+import json, os, torch, logging, io
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -131,7 +132,7 @@ def print_bucket_info(metadata_backend):
         print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
-def configure_parquet_database(backend: dict, args):
+def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
     """When given a backend config dictionary, configure a parquet database."""
     parquet_config = backend.get("parquet", None)
     if not parquet_config:
@@ -143,12 +144,14 @@ def configure_parquet_database(backend: dict, args):
         raise ValueError(
             "Parquet backend must have a 'path' field in the backend config under the 'parquet' key."
         )
-    if not os.path.exists(parquet_path):
+    if not data_backend.exists(parquet_path):
         raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
     # Load the dataframe
     import pandas as pd
 
-    df = pd.read_parquet(parquet_path)
+    bytes_string = data_backend.read(parquet_path)
+    pq = io.BytesIO(bytes_string)
+    df = pd.read_parquet(pq)
     caption_column = parquet_config.get(
         "caption_column", args.parquet_caption_column or "description"
     )
@@ -520,7 +523,7 @@ def configure_multi_databackend(
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
-            configure_parquet_database(backend, args)
+            configure_parquet_database(backend, args, init_backend["data_backend"])
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,  # The sampler handles batching
