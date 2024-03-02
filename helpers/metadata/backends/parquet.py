@@ -177,12 +177,14 @@ class ParquetMetadataBackend(MetadataBackend):
 
     def load_image_metadata(self):
         """Load image metadata from a JSON file."""
+        logger.debug(f"Loading metadata: {self.metadata_file}")
         self.image_metadata = {}
         self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
             cache_data_raw = self.data_backend.read(self.metadata_file)
             self.image_metadata = json.loads(cache_data_raw)
             self.image_metadata_loaded = True
+        logger.debug("Metadata loaded.")
 
     def save_image_metadata(self):
         """Save image metadata to a JSON file."""
