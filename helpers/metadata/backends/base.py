@@ -713,11 +713,7 @@ class MetadataBackend:
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
                 if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
-                    # self.data_backend.delete(cache_file)
-                    logger.warning(
-                        f"Deleting cache entries is currently HARD DISABLED. This is a warning to allow you to fix the issue manually.\n"
-                        f" -> filename: {cache_file}"
-                    )
+                    self.data_backend.delete(cache_file)
 
         # Update any state or metadata post-processing
         self.save_cache()
