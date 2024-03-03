@@ -776,8 +776,7 @@ class VAECache:
         """
         try:
             all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-            for cache_file in all_cache_files:
-                full_path = os.path.join(self.cache_dir, cache_file)
+            for full_path in all_cache_files:
                 cache_content = self._read_from_storage(full_path)
                 yield (full_path, cache_content)
         except Exception as e:
