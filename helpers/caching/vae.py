@@ -86,6 +86,9 @@ class VAECache:
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
+        if self.instance_data_root not in filepath:
+            if self.cache_dir in filepath:
+                return filepath, os.path.basename(filepath)
         # Extract the base name from the filepath and replace the image extension with .pt
         base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
         # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
@@ -107,8 +110,6 @@ class VAECache:
         # Remove the .pt extension and replace it with .png for testing:
         test_filepath_no_ext, _ = os.path.splitext(test_filepath)
         test_filepath_png = f"{test_filepath_no_ext}.png"
-
-        logger.debug(f"Translated into test_filepath_png: {test_filepath_png}")
 
         # More accurate handling of path prefix replacement:
         if test_filepath_png.startswith(str(self.cache_dir)):

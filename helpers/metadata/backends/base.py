@@ -52,6 +52,7 @@ class MetadataBackend:
         self.metadata_update_interval = metadata_update_interval
         self.minimum_image_size = minimum_image_size
         self.image_metadata_loaded = False
+        self.vae_output_scaling_factor = 8
 
     def load_metadata(self):
         raise NotImplementedError
@@ -609,6 +610,14 @@ class MetadataBackend:
         """
         if not self.image_metadata_loaded:
             self.load_image_metadata()
+        logger.debug(f"Retrieving metadata for filepath: {filepath}")
+        if type(filepath) is tuple or type(filepath) is list:
+            for path in filepath:
+                if path in self.image_metadata:
+                    result = self.image_metadata.get(path, None)
+                    if result is not None:
+                        return result
+            return None
         return self.image_metadata.get(filepath, None)
 
     def scan_for_metadata(self):
@@ -693,7 +702,7 @@ class MetadataBackend:
         """
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
-
+        logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")
         for cache_file, cache_content in vae_cache.scan_cache_contents():
             if vae_cache_behavior == "sync":
                 # Sync aspect buckets with the cache
@@ -701,19 +710,19 @@ class MetadataBackend:
                     self._get_aspect_ratio_from_tensor(cache_content)
                 )
                 self._modify_cache_entry_bucket(cache_file, expected_bucket)
-
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
-                if self.is_cache_inconsistent(cache_file, cache_content):
+                if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
                     # self.data_backend.delete(cache_file)
                     logger.warning(
-                        f"Deleting cache entries is currently HARD DISABLED. This is a warning to allow you to fix the issue manually."
+                        f"Deleting cache entries is currently HARD DISABLED. This is a warning to allow you to fix the issue manually.\n"
+                        f" -> filename: {cache_file}"
                     )
 
         # Update any state or metadata post-processing
         self.save_cache()
 
-    def is_cache_inconsistent(self, cache_file, cache_content):
+    def is_cache_inconsistent(self, vae_cache, cache_file, cache_content):
         """
         Check if a cache file's content is inconsistent with the aspect ratio bucket indices.
 
@@ -724,6 +733,32 @@ class MetadataBackend:
         Returns:
             bool: True if the cache file is inconsistent, False otherwise.
         """
+        # Get tensor shape and multiply by self.scaling_factor or 8
+        image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
+        logger.debug(
+            f"Checking cache file {cache_file} for inconsistencies. Image filename: {image_filename}"
+        )
+        actual_resolution = self._get_image_size_from_tensor(cache_content)
+        original_resolution = self.get_metadata_attribute_by_filepath(
+            image_filename, "original_size"
+        )
+        target_resolution = tuple(
+            self.get_metadata_attribute_by_filepath(image_filename, "target_size")
+        )
+        if (
+            original_resolution is not None
+            and target_resolution is not None
+            and actual_resolution != target_resolution
+        ):
+            logger.debug(
+                f"Actual resolution {actual_resolution} does not match target resolution {target_resolution}."
+            )
+            return True
+        else:
+            logger.debug(
+                f"Actual resolution {actual_resolution} matches target resolution {target_resolution}."
+            )
+
         actual_aspect_ratio = self._get_aspect_ratio_from_tensor(cache_content)
         expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
             actual_aspect_ratio
@@ -773,6 +808,27 @@ class MetadataBackend:
         # Assuming tensor is in CHW format (channel, height, width)
         _, height, width = tensor.size()
         return width / height
+
+    def _get_image_size_from_tensor(self, tensor):
+        """
+        Calculate the image size from a PyTorch Tensor.
+
+        Args:
+            tensor (torch.Tensor): The tensor representing the image.
+
+        Returns:
+            tuple[width, height]: The resolution of the image just before it was encoded.
+        """
+        if tensor.dim() < 3:
+            raise ValueError(
+                f"Tensor does not have enough dimensions to determine an image resolution. Its shape is: {tensor.size}"
+            )
+        # Assuming tensor is in CHW format (channel, height, width)
+        _, height, width = tensor.size()
+        return (
+            width * self.vae_output_scaling_factor,
+            height * self.vae_output_scaling_factor,
+        )
 
     def _modify_cache_entry_bucket(self, cache_file, expected_bucket):
         """
