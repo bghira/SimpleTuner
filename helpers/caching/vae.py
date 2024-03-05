@@ -550,6 +550,34 @@ class VAECache:
                 f"Error encoding images {vae_input_filepaths}: {e}, traceback: {traceback.format_exc()}"
             )
 
+    def _read_from_storage_concurrently(self, paths):
+        """
+        A helper method to read files from storage concurrently, without Queues.
+
+        Args:
+            paths (List[str]): A list of file paths to read.
+
+        Returns:
+            Generator[Tuple[str, Any], None, None]: Yields file path and contents.
+        """
+
+        def read_file(path):
+            try:
+                return path, self._read_from_storage(path)
+            except Exception as e:
+                logger.error(f"Error reading {path}: {e}")
+                return path, None
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Map read_file operation over all paths
+            future_to_path = {executor.submit(read_file, path): path for path in paths}
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    yield future.result()
+                except Exception as exc:
+                    logger.error(f"{path} generated an exception: {exc}")
+
     def read_images_in_batch(self) -> None:
         """Immediately read a batch of images.
 
@@ -765,20 +793,15 @@ class VAECache:
 
     def scan_cache_contents(self):
         """
-        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents.
-
-        This is likely a very expensive operation for extra-large cloud datasets, but it could save time and
-        computational resources if finding a problem with surgical precision can prevent the need for removing
-        all cache entries in a dataset for a complete rebuild.
+        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents
+        using multi-threading for improved performance.
 
         Yields:
             Tuple[str, Any]: A tuple containing the file path and its contents.
         """
         try:
             all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-            for full_path in all_cache_files:
-                cache_content = self._read_from_storage(full_path)
-                yield (full_path, cache_content)
+            yield from self._read_from_storage_concurrently(all_cache_files)
         except Exception as e:
             logger.error(f"Error in scan_cache_contents: {e}")
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
