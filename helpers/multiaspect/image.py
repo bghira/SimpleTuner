@@ -372,37 +372,29 @@ class MultiaspectImage:
 
     @staticmethod
     def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float):
-        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
-        total_pixels = max(megapixels * 1e6, 1e6)  # Ensure at least 1.0 megapixels
+        # Calculate initial dimensions based on aspect ratio and target megapixels
+        aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
+        total_pixels = max(megapixels * 1e6, 1e6)
+        W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
+        H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
 
-        # Calculate new dimensions based on aspect ratio
-        W_new = int(round((total_pixels * original_aspect_ratio) ** 0.5))
-        H_new = int(round((total_pixels / original_aspect_ratio) ** 0.5))
+        # Ensure divisibility by 8 for both dimensions with minimal adjustment
+        def adjust_for_divisibility(n):
+            return (n + 7) // 8 * 8
 
-        # Adjust dimensions to ensure at least 1.0 megapixels if necessary
-        while W_new * H_new < 1e6:
-            W_new += 1
-            H_new = int(round(W_new / original_aspect_ratio))
+        W_adjusted = adjust_for_divisibility(W_initial)
+        H_adjusted = adjust_for_divisibility(H_initial)
 
-        W_new = MultiaspectImage._round_to_nearest_multiple(W_new, 8) + 8
-        H_new = MultiaspectImage._round_to_nearest_multiple(H_new, 8) + 8
+        # Ensure the adjusted dimensions meet the megapixel requirement
+        while W_adjusted * H_adjusted < total_pixels:
+            W_adjusted += 8
+            H_adjusted = adjust_for_divisibility(int(round(W_adjusted / aspect_ratio)))
 
-        # Check again if resizing affected the 1.0 megapixel constraint and adjust if necessary
-        if W_new * H_new < (megapixels * 1e6):
-            W_new += 8  # Increase width by one step
-            H_new = int(
-                round(W_new / original_aspect_ratio)
-            )  # Recalculate height to maintain aspect ratio
-            H_new = MultiaspectImage._round_to_nearest_multiple(
-                H_new, 8
-            )  # Ensure divisibility by 8
-        if W_new * H_new < (megapixels * 1e6):
-            raise ValueError(
-                f"New image size of {W_new}x{H_new} is below {megapixels} MP ({W_new * H_new / 1e6} MP)"
-            )
-
-        new_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_new, H_new))
-        return W_new, H_new, new_aspect_ratio
+        return (
+            W_adjusted,
+            H_adjusted,
+            MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
+        )
 
     @staticmethod
     def calculate_image_aspect_ratio(image, rounding: int = 2):
