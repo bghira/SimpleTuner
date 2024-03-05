@@ -378,16 +378,16 @@ class MultiaspectImage:
         W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
         H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
 
-        # Ensure divisibility by 8 for both dimensions with minimal adjustment
+        # Ensure divisibility by 64 for both dimensions with minimal adjustment
         def adjust_for_divisibility(n):
-            return (n + 7) // 8 * 8
+            return (n + 7) // 64 * 64
 
         W_adjusted = adjust_for_divisibility(W_initial)
         H_adjusted = adjust_for_divisibility(H_initial)
 
         # Ensure the adjusted dimensions meet the megapixel requirement
         while W_adjusted * H_adjusted < total_pixels:
-            W_adjusted += 8
+            W_adjusted += 64
             H_adjusted = adjust_for_divisibility(int(round(W_adjusted / aspect_ratio)))
 
         return (
