@@ -718,6 +718,21 @@ class MetadataBackend:
         # Update any state or metadata post-processing
         self.save_cache()
 
+    def _recalculate_target_resolution(self, original_resolution: tuple) -> tuple:
+        """Given the original resolution, use our backend config to properly recalculate the size."""
+        resolution_type = StateTracker.get_data_backend_config(self.id)[
+            "resolution_type"
+        ]
+        resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
+        if resolution_type == "pixel":
+            return MultiaspectImage.calculate_new_size_by_pixel_area(
+                original_resolution[0], original_resolution[1], resolution
+            )
+        elif resolution_type == "area":
+            return MultiaspectImage.calculate_new_size_by_pixel_area(
+                original_resolution[0], original_resolution[1], resolution
+            )
+
     def is_cache_inconsistent(self, vae_cache, cache_file, cache_content):
         """
         Check if a cache file's content is inconsistent with the aspect ratio bucket indices.
@@ -741,13 +756,22 @@ class MetadataBackend:
         target_resolution = tuple(
             self.get_metadata_attribute_by_filepath(image_filename, "target_size")
         )
+        recalculated_target_resolution = self._recalculate_target_resolution(
+            original_resolution
+        )
+        logger.debug(
+            f"Original resolution: {original_resolution}, Target resolution: {target_resolution}, Recalculated target resolution: {recalculated_target_resolution}"
+        )
         if (
             original_resolution is not None
             and target_resolution is not None
-            and actual_resolution != target_resolution
+            and (
+                actual_resolution != target_resolution
+                or actual_resolution != recalculated_target_resolution
+            )
         ):
             logger.debug(
-                f"Actual resolution {actual_resolution} does not match target resolution {target_resolution}."
+                f"Actual resolution {actual_resolution} does not match target resolution {target_resolution}, recalculated as {recalculated_target_resolution}."
             )
             return True
         else:
