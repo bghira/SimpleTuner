@@ -704,6 +704,8 @@ class MetadataBackend:
             raise ValueError("Invalid VAE cache behavior specified.")
         logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")
         for cache_file, cache_content in vae_cache.scan_cache_contents():
+            if cache_content is None:
+                continue
             if vae_cache_behavior == "sync":
                 # Sync aspect buckets with the cache
                 expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
