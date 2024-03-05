@@ -144,7 +144,7 @@ class VAECache:
         Returns:
             torch.Tensor: The cached Tensor object.
         """
-        return self.data_backend.torch_load(filename)
+        return self.data_backend.torch_load(filename).to("cpu")
 
     def retrieve_from_cache(self, filepath: str):
         """
