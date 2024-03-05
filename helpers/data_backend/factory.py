@@ -602,7 +602,7 @@ def configure_multi_databackend(
             vae_batch_size=args.vae_batch_size,
             write_batch_size=args.write_batch_size,
             cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
-            max_workers=backend.get("max_workers", args.max_workers),
+            max_workers=backend.get("max_workers", 32),
         )
 
         if accelerator.is_local_main_process:
