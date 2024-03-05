@@ -756,9 +756,10 @@ class MetadataBackend:
         target_resolution = tuple(
             self.get_metadata_attribute_by_filepath(image_filename, "target_size")
         )
-        recalculated_target_resolution = self._recalculate_target_resolution(
-            original_resolution
+        recalculated_width, recalculated_height, recalculated_aspect_ratio = (
+            self._recalculate_target_resolution(original_resolution)
         )
+        recalculated_target_resolution = (recalculated_width, recalculated_height)
         logger.debug(
             f"Original resolution: {original_resolution}, Target resolution: {target_resolution}, Recalculated target resolution: {recalculated_target_resolution}"
         )
