@@ -118,7 +118,7 @@ def register_file_hooks(
             weights.pop()
 
         if args.use_ema:
-            ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
+            ema_unet.save_pretrained(os.path.join(output_dir, "ema_unet"))
 
     def load_model_hook(models, input_dir):
         training_state_path = os.path.join(input_dir, "training_state.json")
