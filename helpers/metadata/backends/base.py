@@ -757,9 +757,15 @@ class MetadataBackend:
         original_resolution = self.get_metadata_attribute_by_filepath(
             image_filename, "original_size"
         )
-        target_resolution = tuple(
-            self.get_metadata_attribute_by_filepath(image_filename, "target_size")
+        metadata_target_size = self.get_metadata_attribute_by_filepath(
+            image_filename, "target_size"
         )
+        if metadata_target_size is None:
+            logger.error(
+                f"Received sample with no metadata: {self.get_metadata_by_filepath(image_filename)}"
+            )
+            return True
+        target_resolution = tuple(metadata_target_size)
         recalculated_width, recalculated_height, recalculated_aspect_ratio = (
             self._recalculate_target_resolution(original_resolution)
         )
