@@ -267,10 +267,11 @@ def main():
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="scheduler",
-        prediction_type="v_prediction",
         timestep_spacing="trailing",
         rescale_betas_zero_snr=True,
     )
+    args.prediction_type = noise_scheduler.config.prediction_type
+    logger.info(f"Using prediction type: {args.prediction_type}")
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -295,6 +296,11 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
+    if args.freeze_unet_strategy == "bitfit":
+        from helpers.training.model_freeze import apply_bitfit_freezing
+
+        logger.info(f"Applying BitFit freezing strategy to the U-net.")
+        unet = apply_bitfit_freezing(unet)
 
     vae.requires_grad_(False)
     if not args.train_text_encoder:

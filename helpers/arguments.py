@@ -985,6 +985,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--freeze_unet_strategy",
+        type=str,
+        choices=["none", "bitfit"],
+        default="none",
+        help=(
+            "When freezing the UNet, we can use the 'none' or 'bitfit' strategy."
+            " The 'bitfit' strategy will freeze all weights, and leave bias thawed."
+            " The default strategy is to leave the full u-net thawed."
+            " Freezing the weights can improve convergence for finetuning."
+        ),
+    )
+    parser.add_argument(
         "--print_filenames",
         action="store_true",
         help=(
