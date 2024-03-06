@@ -608,8 +608,6 @@ class MetadataBackend:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
-        if not self.image_metadata_loaded:
-            self.load_image_metadata()
         if type(filepath) is tuple or type(filepath) is list:
             for path in filepath:
                 if path in self.image_metadata:
