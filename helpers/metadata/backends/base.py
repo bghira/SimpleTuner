@@ -747,6 +747,8 @@ class MetadataBackend:
             bool: True if the cache file is inconsistent, False otherwise.
         """
         # Get tensor shape and multiply by self.scaling_factor or 8
+        if cache_content is None:
+            return True
         image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
         logger.debug(
             f"Checking cache file {cache_file} for inconsistencies. Image filename: {image_filename}"
