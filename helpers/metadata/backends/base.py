@@ -1,4 +1,4 @@
-import os, time, logging
+import os, time, logging, threading
 from helpers.data_backend.base import BaseDataBackend
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.training.state_tracker import StateTracker
@@ -715,7 +715,9 @@ class MetadataBackend:
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
                 if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
-                    self.data_backend.delete(cache_file)
+                    threading.Thread(
+                        target=self.data_backend.delete, args=(cache_file,), daemon=True
+                    ).start()
 
         # Update any state or metadata post-processing
         self.save_cache()
