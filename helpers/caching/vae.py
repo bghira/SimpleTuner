@@ -70,6 +70,9 @@ class VAECache:
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
+        if not self.metadata_backend.image_metadata_loaded:
+            self.metadata_backend.load_image_metadata()
+
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
             target_downsample_size and not maximum_image_size
