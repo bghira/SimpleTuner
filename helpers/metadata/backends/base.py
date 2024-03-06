@@ -610,11 +610,13 @@ class MetadataBackend:
         """
         if not self.image_metadata_loaded:
             self.load_image_metadata()
-        logger.debug(f"Retrieving metadata for filepath: {filepath}")
         if type(filepath) is tuple or type(filepath) is list:
             for path in filepath:
                 if path in self.image_metadata:
                     result = self.image_metadata.get(path, None)
+                    logger.debug(
+                        f"Retrieving metadata for path: {filepath}, result: {result}"
+                    )
                     if result is not None:
                         return result
             return None
