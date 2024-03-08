@@ -102,6 +102,33 @@ class TestMultiaspectImage(unittest.TestCase):
                     f"Resulting size {new_width}x{new_height} = {resulting_mp} MP is below the specified {mp} MP",
                 )
 
+    def test_calculate_new_size_by_pixel_area_uniformity(self):
+        # Example input resolutions and expected output
+        test_cases = [
+            (
+                3911,
+                5476,
+                1.0,
+            ),  # Original resolution and target megapixels, ar=0.7142857142857143
+            (
+                4539,
+                6527,
+                1.0,
+            ),  # Original resolution and target megapixels, ar=0.6956521739130435
+        ]
+        expected_size = (
+            896,
+            1216,
+        )  # Expected final size for all test cases based on a fixed aspect ratio
+
+        for W, H, megapixels in test_cases:
+            W_final, H_final, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
+                W, H, megapixels
+            )
+            self.assertEqual(
+                (W_final, H_final), expected_size, f"Failed for original size {W}x{H}"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -372,31 +372,28 @@ class MultiaspectImage:
 
     @staticmethod
     def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float):
-        # Calculate aspect ratio and round it for bucketing
+        # Calculate initial dimensions based on aspect ratio and target megapixels
         aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
+        total_pixels = max(megapixels * 1e6, 1e6)
+        W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
+        H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
 
-        # Define a simplified bucketing mechanism based on rounded aspect ratio
-        bucket_aspect_ratio = round(aspect_ratio * 1000) / 1000  # Simplified bucketing
+        # Ensure divisibility by 64 for both dimensions with minimal adjustment
+        def adjust_for_divisibility(n):
+            return (n + 63) // 64 * 64
 
-        # Following the same logic to calculate initial target dimensions
-        target_pixels = megapixels * 1e6
-        W_target = H_target = int((target_pixels**0.5))
+        W_adjusted = adjust_for_divisibility(W_initial)
+        H_adjusted = adjust_for_divisibility(H_initial)
 
-        if bucket_aspect_ratio >= 1:
-            W_target = int((target_pixels * bucket_aspect_ratio) ** 0.5)
-            H_target = int(target_pixels / W_target)
-        else:
-            H_target = int((target_pixels / bucket_aspect_ratio) ** 0.5)
-            W_target = int(target_pixels / H_target)
-
-        # Adjust for divisibility by 64, ensuring consistency in final sizes
-        W_final = (W_target + 63) // 64 * 64
-        H_final = (H_target + 63) // 64 * 64
+        # Ensure the adjusted dimensions meet the megapixel requirement
+        while W_adjusted * H_adjusted < total_pixels:
+            W_adjusted += 64
+            H_adjusted = adjust_for_divisibility(int(round(W_adjusted / aspect_ratio)))
 
         return (
-            W_final,
-            H_final,
-            MultiaspectImage.calculate_image_aspect_ratio((W_final, H_final)),
+            W_adjusted,
+            H_adjusted,
+            MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
         )
 
     @staticmethod
