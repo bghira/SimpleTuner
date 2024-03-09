@@ -460,6 +460,18 @@ class VAECache:
                 if idx == qlen - 1:
                     is_final_sample = True
                 filepath, image, aspect_bucket = self.process_queue.get()
+                # We need to validate that the image dimensions match the aspect bucket, because EXIF data is dumb.
+                actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
+                    image
+                )
+                if aspect_bucket != actual_aspect_bucket:
+                    logger.warning(
+                        f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
+                    )
+                    self.metadata_backend.handle_incorrect_bucket(
+                        filepath, aspect_bucket, actual_aspect_bucket
+                    )
+                    continue
                 filepaths.append(filepath)
                 self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
