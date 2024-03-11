@@ -484,7 +484,9 @@ class MetadataBackend:
                 f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {self.resolution_type}"
             )
 
-    def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
+    def handle_incorrect_bucket(
+        self, image_path: str, bucket: str, actual_bucket: str, save_cache: bool = True
+    ):
         """
         Used by other classes to move images between buckets, when mis-detected.
 
@@ -503,7 +505,8 @@ class MetadataBackend:
         else:
             logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
-        self.save_cache()
+        if save_cache:
+            self.save_cache()
 
     def handle_small_image(
         self, image_path: str, bucket: str, delete_unwanted_images: bool
