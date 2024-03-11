@@ -397,7 +397,7 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def calculate_image_aspect_ratio(image, rounding: int = 2):
+    def calculate_image_aspect_ratio(image, rounding: int = 3):
         """
         Calculate the aspect ratio of an image and round it to a specified precision.
 
