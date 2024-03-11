@@ -469,7 +469,7 @@ class VAECache:
                         f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
                     )
                     self.metadata_backend.handle_incorrect_bucket(
-                        filepath, aspect_bucket, actual_aspect_bucket
+                        filepath, aspect_bucket, actual_aspect_bucket, save_cache=False
                     )
                     continue
                 filepaths.append(filepath)
