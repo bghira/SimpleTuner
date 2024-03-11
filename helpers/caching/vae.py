@@ -460,6 +460,25 @@ class VAECache:
                 if idx == qlen - 1:
                     is_final_sample = True
                 filepath, image, aspect_bucket = self.process_queue.get()
+                if self.minimum_image_size is not None:
+                    if not self.metadata_backend.meets_resolution_requirements(
+                        image_path=filepath,
+                    ):
+                        self.debug_log(
+                            f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
+                        )
+                        continue
+                self.debug_log(
+                    f"Processing {filepath} so that we can calculate our aspect ratio and crop coordinates."
+                )
+                image, crop_coordinates, new_aspect_ratio = (
+                    MultiaspectImage.prepare_image(
+                        image=image,
+                        resolution=self.resolution,
+                        resolution_type=self.resolution_type,
+                        id=self.id,
+                    )
+                )
                 # We need to validate that the image dimensions match the aspect bucket, because EXIF data is dumb.
                 actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
                     image
@@ -473,23 +492,7 @@ class VAECache:
                     )
                     continue
                 filepaths.append(filepath)
-                self.debug_log(f"Processing {filepath}")
-                if self.minimum_image_size is not None:
-                    if not self.metadata_backend.meets_resolution_requirements(
-                        image_path=filepath,
-                    ):
-                        self.debug_log(
-                            f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
-                        )
-                        continue
-                image, crop_coordinates, new_aspect_ratio = (
-                    MultiaspectImage.prepare_image(
-                        image=image,
-                        resolution=self.resolution,
-                        resolution_type=self.resolution_type,
-                        id=self.id,
-                    )
-                )
+
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
