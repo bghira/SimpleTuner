@@ -483,7 +483,7 @@ class VAECache:
                 actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
                     image
                 )
-                if aspect_bucket != actual_aspect_bucket:
+                if str(aspect_bucket) != str(actual_aspect_bucket):
                     logger.warning(
                         f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
                     )
