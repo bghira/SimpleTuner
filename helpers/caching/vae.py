@@ -13,6 +13,7 @@ from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
 from queue import Queue
 from concurrent.futures import as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -453,32 +454,56 @@ class VAECache:
             None
         """
         try:
+            initial_data = []
             filepaths = []
             qlen = self.process_queue.qsize()
-            is_final_sample = False
-            for idx in range(0, qlen):
-                if idx == qlen - 1:
-                    is_final_sample = True
+
+            # First Loop: Preparation and Filtering
+            for _ in range(qlen):
                 filepath, image, aspect_bucket = self.process_queue.get()
                 if self.minimum_image_size is not None:
                     if not self.metadata_backend.meets_resolution_requirements(
-                        image_path=filepath,
+                        image_path=filepath
                     ):
                         self.debug_log(
                             f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
                         )
                         continue
-                self.debug_log(
-                    f"Processing {filepath} so that we can calculate our aspect ratio and crop coordinates."
-                )
-                image, crop_coordinates, new_aspect_ratio = (
-                    MultiaspectImage.prepare_image(
-                        image=image,
+
+                initial_data.append((filepath, image, aspect_bucket))
+
+            # Process Pool Execution
+            processed_images = []
+            with ProcessPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        MultiaspectImage.prepare_image,
+                        image=data[1],
                         resolution=self.resolution,
                         resolution_type=self.resolution_type,
                         id=self.id,
                     )
-                )
+                    for data in initial_data
+                ]
+                for future in futures:
+                    try:
+                        result = (
+                            future.result()
+                        )  # Returns (image, crop_coordinates, new_aspect_ratio)
+                        if result:  # Ensure result is not None or invalid
+                            processed_images.append(result)
+                    except Exception as e:
+                        self.debug_log(f"Error processing image in pool: {e}")
+
+            # Second Loop: Final Processing
+            is_final_sample = False
+            for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
+                processed_images
+            ):
+                if idx == len(processed_images) - 1:
+                    is_final_sample = True
+                filepath, _, aspect_bucket = initial_data[idx]
+
                 # We need to validate that the image dimensions match the aspect bucket, because EXIF data is dumb.
                 actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
                     image
