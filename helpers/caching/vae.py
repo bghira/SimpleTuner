@@ -405,7 +405,7 @@ class VAECache:
                 for image in uncached_images:
                     self.debug_log(f"Image size: {image.size()}")
                 processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=torch.bfloat16
+                    self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 latents_uncached = self.vae.encode(
                     processed_images
@@ -608,7 +608,8 @@ class VAECache:
             try:
                 return path, self._read_from_storage(path)
             except Exception as e:
-                logger.error(f"Error reading {path}: {e}")
+                import traceback
+                logger.error(f"Error reading {path}: {e}, traceback: {traceback.format_exc()}")
                 return path, None
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:

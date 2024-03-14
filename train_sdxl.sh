@@ -4,6 +4,13 @@ source sdxl-env.sh.example
 # Pull config from env.sh
 [ -f "sdxl-env.sh" ] && source sdxl-env.sh
 
+export OS_NAME
+OS_NAME=$(uname -o)
+if [[ "$OS_NAME" == "Darwin" ]] && [[ "$MIXED_PRECISION" == "bf16" ]]; then
+    echo "[WARNING] Mac platform does not support mixed precision bf16 training. Switching to fp16."
+    MIXED_PRECISION="fp16"
+fi
+
 if [ -z "${ACCELERATE_EXTRA_ARGS}" ]; then
     ACCELERATE_EXTRA_ARGS=""
 fi
@@ -20,7 +27,7 @@ fi
 
 if [ -z "${MIXED_PRECISION}" ]; then
     printf "MIXED_PRECISION not set, defaulting to bf16.\n"
-    MIXED_PRECISION=bf16
+    MIXED_PRECISION="bf16"
 fi
 
 if [ -z "${TRAINING_SEED}" ]; then
@@ -243,11 +250,11 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
 fi
 
 export BITFIT_ARGS=""
-if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_DORA" != "false" ]]; then
+if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
-elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
-    echo "Cannot use BitFit with a full u-net training task. Disabling DoRA."
+elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Cannot use BitFit with a LoRA training task. Disabling BitFit."
 fi
 
 # Run the training script.

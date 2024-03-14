@@ -546,9 +546,9 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
+    if accelerator.mixed_precision == "fp16" or torch.backends.mps.is_available():
         weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
+    elif accelerator.mixed_precision == "bf16" and not torch.backends.mps.is_available():
         weight_dtype = torch.bfloat16
     logging.info(f"Moving VAE to GPU, type: {weight_dtype}..")
     # Move vae and text_encoder to device and cast to weight_dtype
@@ -564,9 +564,9 @@ def main():
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16" or args.mixed_precision == "fp16":
+        if args.vae_dtype == "bf16" and not torch.backends.mps.is_available():
             vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
+        elif args.vae_dtype == "fp16" or torch.backends.mps.is_available():
             vae_dtype = torch.float16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32

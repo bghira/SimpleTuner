@@ -224,16 +224,17 @@ def main():
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
-        logger.info(
-            "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
-        )
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-    else:
-        logger.warning(
-            "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
-        )
+    if not torch.backends.mps.is_available():
+        if args.allow_tf32:
+            logger.info(
+                "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
+            )
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        else:
+            logger.warning(
+                "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
+            )
 
     if args.lr_scale:
         logger.info(f"Scaling learning rate ({args.learning_rate}), due to --lr_scale")
@@ -247,13 +248,14 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
+    # MPS needs float16
+    if accelerator.mixed_precision == "fp16" or torch.backends.mps.is_available():
         weight_dtype = torch.float16
         if args.pretrained_vae_model_name_or_path is None:
             logger.warning(
                 f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
             )
-    elif accelerator.mixed_precision == "bf16":
+    elif accelerator.mixed_precision == "bf16" and not torch.backends.mps.is_available():
         weight_dtype = torch.bfloat16
         if args.pretrained_vae_model_name_or_path is None:
             logger.warning(
@@ -393,20 +395,16 @@ def main():
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
+        if args.vae_dtype == "bf16" and not torch.backends.mps.is_available():
             vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
+        elif args.vae_dtype == "fp16" or torch.backends.mps.is_available():
             vae_dtype = torch.float16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
             vae_dtype = torch.float32
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
+    logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
+    vae.to(accelerator.device, dtype=vae_dtype)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
     logger.info(f"Loaded VAE into VRAM.")

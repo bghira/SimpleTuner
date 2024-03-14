@@ -8,6 +8,7 @@ import fnmatch, logging
 from torch import Tensor
 from pathlib import PosixPath
 import concurrent.futures
+from helpers.training.state_tracker import StateTracker
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
 from PIL import Image
@@ -290,8 +291,8 @@ class S3DataBackend(BaseDataBackend):
         for i in range(self.read_retry_limit):
             try:
                 return torch.load(
-                    BytesIO(self.read(s3_key)), map_location=self.accelerator.device
-                )
+                    BytesIO(self.read(s3_key)), map_location='cpu'
+                ).to(StateTracker.get_vae_dtype())
             except Exception as e:
                 if not self.exists(s3_key):
                     logger.debug(f"File {s3_key} does not exist in S3 bucket.")
