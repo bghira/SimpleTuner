@@ -91,7 +91,11 @@ class JsonMetadataBackend(MetadataBackend):
             #     f"Found {len(result)} new images for metadata scan (truncated): {list(result)[:5]}"
             # )
             return result
-        return [file for file in all_image_files]
+        return [
+            file
+            for file in all_image_files
+            if str(file) not in self.instance_images_path
+        ]
 
     def reload_cache(self):
         """
