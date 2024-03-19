@@ -9,6 +9,9 @@ from PIL import Image
 from math import floor
 import numpy as np
 
+# For semaphore
+from threading import Semaphore
+
 logger = logging.getLogger("BaseMetadataBackend")
 logger.setLevel(logging.DEBUG)
 
@@ -53,17 +56,12 @@ class MetadataBackend:
         self.minimum_image_size = minimum_image_size
         self.image_metadata_loaded = False
         self.vae_output_scaling_factor = 8
+        self.metadata_semaphor = Semaphore()
 
     def load_metadata(self):
         raise NotImplementedError
 
     def save_metadata(self):
-        raise NotImplementedError
-
-    def get_metadata_by_filepath(self, filepath: str):
-        raise NotImplementedError
-
-    def set_metadata_by_filepath(self, filepath: str, metadata: dict):
         raise NotImplementedError
 
     def _bucket_worker(
@@ -595,10 +593,11 @@ class MetadataBackend:
         Args:
             filepath (str): The complete path from the aspect bucket list.
         """
-        logger.debug(f"Setting metadata for {filepath} to {metadata}.")
-        self.image_metadata[filepath] = metadata
-        if update_json:
-            self.save_image_metadata()
+        with self.metadata_semaphor:
+            logger.debug(f"Setting metadata for {filepath} to {metadata}.")
+            self.image_metadata[filepath] = metadata
+            if update_json:
+                self.save_image_metadata()
 
     def get_metadata_by_filepath(self, filepath: str):
         """Retrieve metadata for a given image file path.
