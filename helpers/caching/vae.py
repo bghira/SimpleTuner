@@ -405,7 +405,7 @@ class VAECache:
                 for image in uncached_images:
                     self.debug_log(f"Image size: {image.size()}")
                 processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=torch.bfloat16
+                    self.accelerator.device, dtype=StateTracker.get_weight_dtype()
                 )
                 latents_uncached = self.vae.encode(
                     processed_images
@@ -493,7 +493,11 @@ class VAECache:
                         if result:  # Ensure result is not None or invalid
                             processed_images.append(result)
                     except Exception as e:
-                        self.debug_log(f"Error processing image in pool: {e}")
+                        import traceback
+
+                        self.debug_log(
+                            f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
+                        )
 
             # Second Loop: Final Processing
             is_final_sample = False
