@@ -299,6 +299,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--disable_multiprocessing",
+        default=False,
+        action="store_true",
+        help=(
+            "If set, will use threads instead of processes during metadata caching operations."
+            " This is set implicitly for Apple systems, as Darwin behaves oddly with multiprocessing."
+            " For some systems, multiprocessing may be slower than threading, so this option is provided."
+        ),
+    )
+    parser.add_argument(
         "--aspect_bucket_worker_count",
         type=int,
         default=12,
