@@ -397,7 +397,7 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def calculate_image_aspect_ratio(image, rounding: int = 3):
+    def calculate_image_aspect_ratio(image, rounding: int = 2):
         """
         Calculate the aspect ratio of an image and round it to a specified precision.
 
@@ -418,7 +418,7 @@ class MultiaspectImage:
         return aspect_ratio
 
     @staticmethod
-    def determine_bucket_for_aspect_ratio(aspect_ratio, rounding: int = 3):
+    def determine_bucket_for_aspect_ratio(aspect_ratio, rounding: int = 2):
         """
         Determine the correct bucket for a given aspect ratio.
 
