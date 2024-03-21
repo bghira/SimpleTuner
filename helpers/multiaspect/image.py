@@ -59,7 +59,7 @@ class MultiaspectImage:
         # Downsample before we handle, if necessary.
         downsample_before_crop = False
         crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop", StateTracker.get_args().crop
+            "crop", False
         )
         maximum_image_size = StateTracker.get_data_backend_config(
             data_backend_id=id
@@ -105,10 +105,10 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
         crop_style = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop_style", StateTracker.get_args().crop_style
+            "crop_style", "random"
         )
         crop_aspect = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop_aspect", StateTracker.get_args().crop_aspect
+            "crop_aspect", "square"
         )
 
         if crop:
