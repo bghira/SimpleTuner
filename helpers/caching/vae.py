@@ -512,14 +512,14 @@ class VAECache:
                 actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
                     image
                 )
-                if str(aspect_bucket) != str(actual_aspect_bucket):
-                    logger.warning(
-                        f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
-                    )
-                    self.metadata_backend.handle_incorrect_bucket(
-                        filepath, aspect_bucket, actual_aspect_bucket, save_cache=False
-                    )
-                    continue
+                # if str(aspect_bucket) != str(actual_aspect_bucket):
+                #     logger.warning(
+                #         f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
+                #     )
+                #     self.metadata_backend.handle_incorrect_bucket(
+                #         filepath, aspect_bucket, actual_aspect_bucket, save_cache=False
+                #     )
+                #     continue
                 filepaths.append(filepath)
 
                 pixel_values = self.transform(image).to(
