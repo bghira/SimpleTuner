@@ -77,8 +77,9 @@ def fetch_latent(fp, data_backend_id: str):
     latent = StateTracker.get_vaecache(id=data_backend_id).retrieve_from_cache(fp)
 
     # Move to CPU and pin memory if it's not on the GPU
-    debug_log(" -> push latents to GPU via pinned memory")
-    latent = latent.to("cpu").pin_memory()
+    if not torch.backends.mps.is_available():
+        debug_log(" -> push latents to GPU via pinned memory")
+        latent = latent.to("cpu").pin_memory()
     return latent
 
 

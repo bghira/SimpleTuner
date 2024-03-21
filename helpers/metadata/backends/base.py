@@ -1,8 +1,9 @@
-import os, time, logging, threading
+import os, time, logging, threading, torch
 from helpers.data_backend.base import BaseDataBackend
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.training.state_tracker import StateTracker
 from multiprocessing import Process, Queue
+from threading import Thread
 from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
@@ -178,9 +179,16 @@ class MetadataBackend:
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
-
+        worker_backend_cls = (
+            Thread
+            if (
+                torch.backends.mps.is_available()
+                or StateTracker.get_args().disable_multiprocessing
+            )
+            else Process
+        )
         workers = [
-            Process(
+            worker_backend_cls(
                 target=self._bucket_worker,
                 args=(
                     tqdm_queue,

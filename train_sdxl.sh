@@ -23,6 +23,13 @@ if [ -z "${MIXED_PRECISION}" ]; then
     MIXED_PRECISION=bf16
 fi
 
+export PLATFORM
+PLATFORM=$(uname -s)
+if [[ "$PLATFORM" == "Darwin" ]]; then
+    echo "Running on macOS, setting mixed precision to fp16."
+    export MIXED_PRECISION="fp16"
+fi
+
 if [ -z "${TRAINING_SEED}" ]; then
     printf "TRAINING_SEED not set, defaulting to 0.\n"
     TRAINING_SEED=0

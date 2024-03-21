@@ -52,11 +52,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if "crop_aspect" in backend:
         output["config"]["crop_aspect"] = backend["crop_aspect"]
     else:
-        output["config"]["crop_aspect"] = args.crop_aspect
+        output["config"]["crop_aspect"] = "square"
     if "crop_style" in backend:
         output["config"]["crop_style"] = backend["crop_style"]
     else:
-        output["config"]["crop_style"] = args.crop_style
+        output["config"]["crop_style"] = "random"
     if "resolution" in backend:
         output["config"]["resolution"] = backend["resolution"]
     else:
