@@ -4,12 +4,13 @@
 
 **SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions to its improvement are welcome.
 
-* Multi-GPU training is supported and encouraged
+* Multi-GPU training
 * Aspect bucketing "just works"; fill a folder of images and let it rip
 * Multiple datasets can be used in a single training session, each with a different base resolution.
 * VRAM-saving techniques, such as pre-computing VAE and text encoder outputs
-* Full featured fine-tuning support for SDXL and SD 2.x
-* LoRA training support for SDXL and SD 2.x
+* Full featured fine-tuning support
+  * Bias training (BitFit)
+* LoRA training support
 
 ## Table of Contents
 
@@ -59,6 +60,13 @@ Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn'
 ## Hardware Requirements
 
 EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Without it, training can still be done, but more care must be taken not to drastically change the model leading to "catastrophic forgetting".
+
+### GPU vendors
+
+* NVIDIA - pretty much anything 3090 and up is a safe bet. YMMV.
+* AMD - No one has reported anything, we don't know.
+* Apple - LoRA and full u-net tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
+  * You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
 
 ### SDXL, 1024px
 
