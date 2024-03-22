@@ -1,9 +1,9 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
+from helpers.data_backend.base import BaseDataBackend
 from helpers.caching.sdxl_embeds import TextEmbeddingCache
 
 from helpers.training.exceptions import MultiDatasetExhausted
-from helpers.multiaspect.bucket import BucketManager
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.prompts import PromptHandler
@@ -12,7 +12,7 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, random
+import json, os, torch, logging, io
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -52,11 +52,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if "crop_aspect" in backend:
         output["config"]["crop_aspect"] = backend["crop_aspect"]
     else:
-        output["config"]["crop_aspect"] = args.crop_aspect
+        output["config"]["crop_aspect"] = "square"
     if "crop_style" in backend:
         output["config"]["crop_style"] = backend["crop_style"]
     else:
-        output["config"]["crop_style"] = args.crop_style
+        output["config"]["crop_style"] = "random"
     if "resolution" in backend:
         output["config"]["resolution"] = backend["resolution"]
     else:
@@ -119,7 +119,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     return output
 
 
-def print_bucket_info(bucket_manager):
+def print_bucket_info(metadata_backend):
     # Print table header
     print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
 
@@ -127,30 +127,37 @@ def print_bucket_info(bucket_manager):
     print("-" * 30)
 
     # Print each bucket's information
-    for bucket in bucket_manager.aspect_ratio_bucket_indices:
-        image_count = len(bucket_manager.aspect_ratio_bucket_indices[bucket])
+    for bucket in metadata_backend.aspect_ratio_bucket_indices:
+        image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
         print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
-def configure_parquet_database(backend: dict, args):
+def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
     """When given a backend config dictionary, configure a parquet database."""
-    parquet_path = backend.get("parquet_path", None)
+    parquet_config = backend.get("parquet", None)
+    if not parquet_config:
+        raise ValueError(
+            f"Parquet backend must have a 'parquet' field in the backend config containing required fields for configuration."
+        )
+    parquet_path = parquet_config.get("path", None)
     if not parquet_path:
         raise ValueError(
-            "Parquet backend must have a 'parquet_path' field in the backend config."
+            "Parquet backend must have a 'path' field in the backend config under the 'parquet' key."
         )
-    if not os.path.exists(parquet_path):
+    if not data_backend.exists(parquet_path):
         raise FileNotFoundError(f"Parquet file {parquet_path} not found.")
     # Load the dataframe
     import pandas as pd
 
-    df = pd.read_parquet(parquet_path)
-    caption_column = backend.get(
-        "parquet_caption_column", args.parquet_caption_column or "description"
+    bytes_string = data_backend.read(parquet_path)
+    pq = io.BytesIO(bytes_string)
+    df = pd.read_parquet(pq)
+    caption_column = parquet_config.get(
+        "caption_column", args.parquet_caption_column or "description"
     )
-    fallback_caption_column = backend.get("parquet_fallback_caption_column", None)
-    filename_column = backend.get(
-        "parquet_filename_column", args.parquet_filename_column or "id"
+    fallback_caption_column = parquet_config.get("fallback_caption_column", None)
+    filename_column = parquet_config.get(
+        "filename_column", args.parquet_filename_column or "id"
     )
     # Check the columns exist
     if caption_column not in df.columns:
@@ -164,7 +171,7 @@ def configure_parquet_database(backend: dict, args):
     # Check for null values
     if df[caption_column].isnull().values.any() and not fallback_caption_column:
         raise ValueError(
-            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no parquet_fallback_caption_column was set."
+            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no fallback_caption_column was set."
         )
     if df[filename_column].isnull().values.any():
         raise ValueError(
@@ -375,7 +382,24 @@ def configure_multi_databackend(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
             )
         logger.info(f"(id={init_backend['id']}) Loading bucket manager.")
-        init_backend["bucket_manager"] = BucketManager(
+        metadata_backend_args = {}
+        metadata_backend = backend.get("metadata_backend", "json")
+        if metadata_backend == "json":
+            from helpers.metadata.backends.json import JsonMetadataBackend
+
+            BucketManager_cls = JsonMetadataBackend
+        elif metadata_backend == "parquet":
+            from helpers.metadata.backends.parquet import ParquetMetadataBackend
+
+            BucketManager_cls = ParquetMetadataBackend
+            metadata_backend_args["parquet_config"] = backend.get("parquet", None)
+            if not metadata_backend_args["parquet_config"]:
+                raise ValueError(
+                    f"Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
+                )
+        else:
+            raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
+        init_backend["metadata_backend"] = BucketManager_cls(
             id=init_backend["id"],
             instance_data_root=init_backend["instance_data_root"],
             data_backend=init_backend["data_backend"],
@@ -396,6 +420,7 @@ def configure_multi_databackend(
                 init_backend["instance_data_root"], "aspect_ratio_bucket_metadata.json"
             ),
             delete_problematic_images=args.delete_problematic_images or False,
+            **metadata_backend_args,
         )
 
         if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
@@ -405,25 +430,25 @@ def configure_multi_databackend(
                 logger.info(
                     f"(id={init_backend['id']}) Refreshing aspect buckets on main process."
                 )
-                init_backend["bucket_manager"].refresh_buckets(rank_info())
+                init_backend["metadata_backend"].refresh_buckets(rank_info())
         accelerator.wait_for_everyone()
         if not accelerator.is_main_process:
             logger.info(
                 f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
             )
-            init_backend["bucket_manager"].reload_cache()
+            init_backend["metadata_backend"].reload_cache()
         accelerator.wait_for_everyone()
-        if init_backend["bucket_manager"].has_single_underfilled_bucket():
+        if init_backend["metadata_backend"].has_single_underfilled_bucket():
             raise Exception(
                 f"Cannot train using a dataset that has a single bucket with fewer than {args.train_batch_size} images."
                 f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
             )
         # Now split the contents of these buckets between all processes
-        init_backend["bucket_manager"].split_buckets_between_processes(
+        init_backend["metadata_backend"].split_buckets_between_processes(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
         )
 
-        # Check if there is an existing 'config' in the bucket_manager.config
+        # Check if there is an existing 'config' in the metadata_backend.config
         excluded_keys = [
             "probability",
             "repeats",
@@ -433,10 +458,10 @@ def configure_multi_databackend(
             "caption_strategy",
             "maximum_image_size",
             "target_downsample_size",
-            "parquet_path",
+            "parquet",
         ]
-        if init_backend["bucket_manager"].config != {}:
-            prev_config = init_backend["bucket_manager"].config
+        if init_backend["metadata_backend"].config != {}:
+            prev_config = init_backend["metadata_backend"].config
             logger.debug(f"Found existing config: {prev_config}")
             logger.debug(f"Comparing against new config: {init_backend['config']}")
             # Check if any values differ between the 'backend' values and the 'config' values:
@@ -462,8 +487,8 @@ def configure_multi_databackend(
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.info(f"Configured backend: {init_backend}")
 
-        print_bucket_info(init_backend["bucket_manager"])
-        if len(init_backend["bucket_manager"]) == 0:
+        print_bucket_info(init_backend["metadata_backend"])
+        if len(init_backend["metadata_backend"]) == 0:
             raise Exception(
                 f"No images were discovered by the bucket manager in the dataset: {init_backend['id']}."
             )
@@ -475,12 +500,12 @@ def configure_multi_databackend(
             use_captions = False
         init_backend["train_dataset"] = MultiAspectDataset(
             id=init_backend["id"],
-            datasets=[init_backend["bucket_manager"]],
+            datasets=[init_backend["metadata_backend"]],
         )
 
         init_backend["sampler"] = MultiAspectSampler(
             id=init_backend["id"],
-            bucket_manager=init_backend["bucket_manager"],
+            metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
             accelerator=accelerator,
             batch_size=args.train_batch_size,
@@ -498,7 +523,7 @@ def configure_multi_databackend(
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
         )
         if init_backend["sampler"].caption_strategy == "parquet":
-            configure_parquet_database(backend, args)
+            configure_parquet_database(backend, args, init_backend["data_backend"])
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],
             batch_size=1,  # The sampler handles batching
@@ -557,7 +582,7 @@ def configure_multi_databackend(
             id=init_backend["id"],
             vae=StateTracker.get_vae(),
             accelerator=accelerator,
-            bucket_manager=init_backend["bucket_manager"],
+            metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
             instance_data_root=init_backend["instance_data_root"],
             delete_problematic_images=backend.get(
@@ -577,6 +602,7 @@ def configure_multi_databackend(
             vae_batch_size=args.vae_batch_size,
             write_batch_size=args.write_batch_size,
             cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
+            max_workers=backend.get("max_workers", 32),
         )
 
         if accelerator.is_local_main_process:
@@ -594,23 +620,23 @@ def configure_multi_databackend(
             logger.info(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
             )
-            init_backend["bucket_manager"].handle_vae_cache_inconsistencies(
+            init_backend["metadata_backend"].handle_vae_cache_inconsistencies(
                 vae_cache=init_backend["vaecache"],
                 vae_cache_behavior=backend.get(
                     "vae_cache_behaviour", args.vae_cache_behaviour
                 ),
             )
-            init_backend["bucket_manager"].scan_for_metadata()
+            init_backend["metadata_backend"].scan_for_metadata()
         elif not backend.get("scan_for_errors", False):
             logger.info(
                 f"Skipping error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to True in the dataset config to enable this if your training runs into mismatched latent dimensions."
             )
         accelerator.wait_for_everyone()
         if not accelerator.is_main_process:
-            init_backend["bucket_manager"].load_image_metadata()
+            init_backend["metadata_backend"].load_image_metadata()
         accelerator.wait_for_everyone()
 
-        if "vae" not in args.skip_file_discovery or "vae" not in backend.get(
+        if "vae" not in args.skip_file_discovery and "vae" not in backend.get(
             "skip_file_discovery", ""
         ):
             init_backend["vaecache"].split_cache_between_processes()
@@ -618,7 +644,7 @@ def configure_multi_databackend(
             accelerator.wait_for_everyone()
 
         StateTracker.register_data_backend(init_backend)
-        init_backend["bucket_manager"].save_cache()
+        init_backend["metadata_backend"].save_cache()
 
     # After configuring all backends, register their captions.
     StateTracker.set_caption_files(all_captions)

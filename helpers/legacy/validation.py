@@ -316,15 +316,27 @@ def log_validations(
                         #     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
                         #     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
                         # )
-                        logger.debug(
-                            f"Generating validation image: {validation_prompt}"
-                            f"\n -> Number of images: {args.num_validation_images}"
-                            f"\n -> Number of inference steps: {args.validation_num_inference_steps}"
-                            f"\n -> Guidance scale: {args.validation_guidance}"
-                            f"\n -> Guidance rescale: {args.validation_guidance_rescale}"
-                            f"\n -> Resolution: {args.validation_resolution}"
-                            f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
-                        )
+
+                        # logger.debug(
+                        #     f"Generating validation image: {validation_prompt}"
+                        #     f"\n Weight dtypes:"
+                        #     f"\n -> unet: {pipeline.unet.dtype}"
+                        #     f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
+                        #     f"\n -> vae: {pipeline.vae.dtype}"
+                        #     f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
+                        #     f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
+                        #     f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
+                        #     f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
+                        # )
+                        # logger.debug(
+                        #     f"Generating validation image: {validation_prompt}"
+                        #     f"\n -> Number of images: {args.num_validation_images}"
+                        #     f"\n -> Number of inference steps: {args.validation_num_inference_steps}"
+                        #     f"\n -> Guidance scale: {args.validation_guidance}"
+                        #     f"\n -> Guidance rescale: {args.validation_guidance_rescale}"
+                        #     f"\n -> Resolution: {args.validation_resolution}"
+                        #     f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
+                        # )
                         validation_images.extend(
                             pipeline(
                                 prompt_embeds=current_validation_prompt_embeds,

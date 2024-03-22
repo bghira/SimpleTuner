@@ -23,6 +23,13 @@ if [ -z "${MIXED_PRECISION}" ]; then
     MIXED_PRECISION=bf16
 fi
 
+export PLATFORM
+PLATFORM=$(uname -s)
+if [[ "$PLATFORM" == "Darwin" ]]; then
+    echo "Running on macOS, setting mixed precision to fp16."
+    export MIXED_PRECISION="fp16"
+fi
+
 if [ -z "${TRAINING_SEED}" ]; then
     printf "TRAINING_SEED not set, defaulting to 0.\n"
     TRAINING_SEED=0
@@ -242,13 +249,21 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
     DORA_ARGS="--use_dora"
 fi
 
+export BITFIT_ARGS=""
+if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_DORA" != "false" ]]; then
+    echo "Enabling BitFit."
+    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
+    echo "Cannot use BitFit with a full u-net training task. Disabling DoRA."
+fi
+
 # Run the training script.
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train_sdxl.py \
     --model_type="${MODEL_TYPE}" ${DORA_ARGS} --pretrained_model_name_or_path="${MODEL_NAME}" ${XFORMERS_ARG} ${GRADIENT_ARG} --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
     --resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} --data_backend_config="${DATALOADER_CONFIG}" \
     --num_train_epochs=${NUM_EPOCHS} --max_train_steps=${MAX_NUM_STEPS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \
     ${OPTIMIZER_ARG} --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
-    --output_dir="${OUTPUT_DIR}" \
+    --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
     ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
     --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \

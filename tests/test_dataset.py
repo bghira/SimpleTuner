@@ -3,7 +3,7 @@ from unittest.mock import patch, Mock, MagicMock
 from PIL import Image
 from pathlib import Path
 from helpers.multiaspect.dataset import MultiAspectDataset
-from helpers.multiaspect.bucket import BucketManager
+from helpers.metadata.backends.json import JsonMetadataBackend
 from helpers.data_backend.base import BaseDataBackend
 
 
@@ -11,8 +11,8 @@ class TestMultiAspectDataset(unittest.TestCase):
     def setUp(self):
         self.instance_data_root = "/some/fake/path"
         self.accelerator = Mock()
-        self.bucket_manager = Mock(spec=BucketManager)
-        self.bucket_manager.__len__ = Mock(return_value=10)
+        self.metadata_backend = Mock(spec=JsonMetadataBackend)
+        self.metadata_backend.__len__ = Mock(return_value=10)
         self.image_metadata = {
             "image_path": "fake_image_path",
             "original_size": (16, 8),
@@ -21,7 +21,7 @@ class TestMultiAspectDataset(unittest.TestCase):
             "aspect_ratio": 1.0,
             "luminance": 0.5,
         }
-        self.bucket_manager.get_metadata_by_filepath = Mock(
+        self.metadata_backend.get_metadata_by_filepath = Mock(
             return_value=self.image_metadata
         )
         self.data_backend = Mock(spec=BaseDataBackend)
@@ -40,7 +40,7 @@ class TestMultiAspectDataset(unittest.TestCase):
         )
 
     def test_len(self):
-        self.bucket_manager.__len__.return_value = 10
+        self.metadata_backend.__len__.return_value = 10
         self.assertEqual(len(self.dataset), 10)
 
     def test_getitem_valid_image(self):

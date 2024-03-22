@@ -8,19 +8,18 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
-torch = "^2.2.0+cu118"
-torchvision = "^0.17.0+cu118"
+torch = "^2.2.1"
+torchvision = "^0.17.0"
 diffusers = "^0.26.3"
 transformers = "^4.38.2"
 datasets = "^2.14.3"
-xformers = "^0.0.24+cu118"
 bitsandbytes = "^0.42.0"
 dadaptation = "^3.1"
 wandb = "^0.16.1"
 requests = "^2.31.0"
 pillow = "^10.2.0"
 opencv-python = "^4.8.0.74"
-deepspeed = "^0.10.0"
+deepspeed = "^0.14.0"
 accelerate = "^0.26.1"
 safetensors = "^0.4.2"
 compel = "^2.0.1"
@@ -32,26 +31,19 @@ boto3 = "^1.28.38"
 pandas = "^2.0.3"
 botocore = "^1.31.38"
 urllib3 = "<1.27"
-torchaudio = "^2.1.0+cu118"
-triton-library = "^1.0.0rc2"
+torchaudio = "^2.1.0"
 torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
 colorama = "^0.4.6"
 numpy = "1.26"
 peft = "^0.9.0"
 tensorboard = "^2.15.1"
-triton = "^2.2.0"
 prodigyopt = "^1.0"
 
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[[tool.poetry.source]]
-priority = "secondary"
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cu118"
 
 #[[tool.poetry.source]]
 #name = "pytorch-nightly"

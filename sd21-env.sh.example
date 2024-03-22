@@ -8,6 +8,15 @@ export MODEL_TYPE="lora"
 # See: https://github.com/huggingface/peft/pull/1474
 export USE_DORA=false
 
+# BitFit freeze strategy for the u-net causes everything but the biases to be frozen.
+# This may help retain the full model's underlying capabilities. LoRA is currently not tested/known to work.
+if [[ "$MODEL_TYPE" == "full" ]]; then
+    # When training a full model, we will rely on BitFit to keep the u-net intact.
+    export USE_BITFIT=true
+elif [[ "$MODEL_TYPE" == "lora" ]]; then
+    export USE_BITFIT=false
+fi
+
 # Valid choices: DEBUG, INFO, WARNING, ERROR
 export SIMPLETUNER_LOG_LEVEL=INFO
 

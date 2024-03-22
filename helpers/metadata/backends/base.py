@@ -1,21 +1,23 @@
-from helpers.training.state_tracker import StateTracker
-from helpers.multiaspect.image import MultiaspectImage
+import os, time, logging, threading, torch
 from helpers.data_backend.base import BaseDataBackend
-from pathlib import Path
-import json, logging, os, time, re
-from multiprocessing import Manager
-from PIL import Image
-from tqdm import tqdm
+from helpers.multiaspect.image import MultiaspectImage
+from helpers.training.state_tracker import StateTracker
 from multiprocessing import Process, Queue
-import numpy as np
+from threading import Thread
+from pathlib import Path
+from tqdm import tqdm
+from PIL import Image
 from math import floor
+import numpy as np
 
-logger = logging.getLogger("BucketManager")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
-logger.setLevel(target_level)
+# For semaphore
+from threading import Semaphore
+
+logger = logging.getLogger("BaseMetadataBackend")
+logger.setLevel(logging.DEBUG)
 
 
-class BucketManager:
+class MetadataBackend:
     def __init__(
         self,
         id: str,
@@ -54,112 +56,14 @@ class BucketManager:
         self.metadata_update_interval = metadata_update_interval
         self.minimum_image_size = minimum_image_size
         self.image_metadata_loaded = False
+        self.vae_output_scaling_factor = 8
+        self.metadata_semaphor = Semaphore()
 
-    def __len__(self):
-        """
-        Returns:
-            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
-        """
-        return sum(
-            len(bucket) // self.batch_size
-            for bucket in self.aspect_ratio_bucket_indices.values()
-            if len(bucket) >= self.batch_size
-        )
+    def load_metadata(self):
+        raise NotImplementedError
 
-    def _discover_new_files(self, for_metadata: bool = False):
-        """
-        Discover new files that have not been processed yet.
-
-        Returns:
-            list: A list of new files.
-        """
-        all_image_files = StateTracker.get_image_files(
-            data_backend_id=self.data_backend.id
-        ) or StateTracker.set_image_files(
-            self.data_backend.list_files(
-                instance_data_root=self.instance_data_root,
-                str_pattern="*.[jJpP][pPnN][gG]",
-            ),
-            data_backend_id=self.data_backend.id,
-        )
-        # Log an excerpt of the all_image_files:
-        # logger.debug(
-        #     f"Found {len(all_image_files)} images in the instance data root (truncated): {list(all_image_files)[:5]}"
-        # )
-        # Extract only the files from the data
-        if for_metadata:
-            result = [
-                file
-                for file in all_image_files
-                if self.get_metadata_by_filepath(file) is None
-            ]
-            # logger.debug(
-            #     f"Found {len(result)} new images for metadata scan (truncated): {list(result)[:5]}"
-            # )
-            return result
-        return [
-            file
-            for file in all_image_files
-            if str(file) not in self.instance_images_path
-        ]
-
-    def reload_cache(self):
-        """
-        Load cache data from file.
-
-        Returns:
-            dict: The cache data.
-        """
-        # Query our DataBackend to see whether the cache file exists.
-        if self.data_backend.exists(self.cache_file):
-            try:
-                # Use our DataBackend to actually read the cache file.
-                logger.debug("Pulling cache file from storage.")
-                cache_data_raw = self.data_backend.read(self.cache_file)
-                cache_data = json.loads(cache_data_raw)
-                logger.debug("Completed loading cache data.")
-            except Exception as e:
-                logger.warning(
-                    f"Error loading aspect bucket cache, creating new one: {e}"
-                )
-                cache_data = {}
-            self.aspect_ratio_bucket_indices = cache_data.get(
-                "aspect_ratio_bucket_indices", {}
-            )
-            self.config = cache_data.get("config", {})
-            if self.config != {}:
-                logger.debug(f"Setting config to {self.config}")
-                logger.debug(f"Loaded previous data backend config: {self.config}")
-                StateTracker.set_data_backend_config(
-                    data_backend_id=self.id,
-                    config=self.config,
-                )
-            self.instance_images_path = set(cache_data.get("instance_images_path", []))
-
-    def save_cache(self, enforce_constraints: bool = False):
-        """
-        Save cache data to file.
-        """
-        # Prune any buckets that have fewer samples than batch_size
-        if enforce_constraints:
-            self._enforce_min_bucket_size()
-        # Convert any non-strings into strings as we save the index.
-        aspect_ratio_bucket_indices_str = {
-            key: [str(path) for path in value]
-            for key, value in self.aspect_ratio_bucket_indices.items()
-        }
-        # Encode the cache as JSON.
-        cache_data = {
-            "config": StateTracker.get_data_backend_config(
-                data_backend_id=self.data_backend.id
-            ),
-            "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
-            "instance_images_path": [str(path) for path in self.instance_images_path],
-        }
-        logger.debug(f"save_cache has config to write: {cache_data['config']}")
-        cache_data_str = json.dumps(cache_data)
-        # Use our DataBackend to write the cache file.
-        self.data_backend.write(self.cache_file, cache_data_str)
+    def save_metadata(self):
+        raise NotImplementedError
 
     def _bucket_worker(
         self,
@@ -169,7 +73,6 @@ class BucketManager:
         metadata_updates_queue,
         written_files_queue,
         existing_files_set,
-        data_backend,
     ):
         """
         A worker function to bucket a list of files.
@@ -202,9 +105,7 @@ class BucketManager:
         for file in files:
             if str(file) not in existing_files_set:
                 logger.debug(f"Processing file {file}.")
-                local_aspect_ratio_bucket_indices = MultiaspectImage.process_for_bucket(
-                    data_backend,
-                    self,
+                local_aspect_ratio_bucket_indices = self._process_for_bucket(
                     file,
                     local_aspect_ratio_bucket_indices,
                     metadata_updates=local_metadata_updates,
@@ -268,7 +169,9 @@ class BucketManager:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
             return
-        num_cpus = 8  # Using a fixed number for better control and predictability
+        num_cpus = (
+            StateTracker.get_args().aspect_bucket_worker_count
+        )  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
 
         metadata_updates_queue = Queue()
@@ -276,9 +179,16 @@ class BucketManager:
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
-
+        worker_backend_cls = (
+            Thread
+            if (
+                torch.backends.mps.is_available()
+                or StateTracker.get_args().disable_multiprocessing
+            )
+            else Process
+        )
         workers = [
-            Process(
+            worker_backend_cls(
                 target=self._bucket_worker,
                 args=(
                     tqdm_queue,
@@ -287,7 +197,6 @@ class BucketManager:
                     metadata_updates_queue,
                     written_files_queue,
                     existing_files_set,
-                    self.data_backend,
                 ),
             )
             for file_shard in files_split
@@ -525,11 +434,12 @@ class BucketManager:
         self,
         image_path: str = None,
         image: Image = None,
+        image_metadata: dict = None,
     ):
         """
         Check if an image meets the resolution requirements.
         """
-        if image is None and image_path is not None:
+        if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
                 logger.warning(f"Metadata not found for image {image_path}.")
@@ -537,6 +447,8 @@ class BucketManager:
             width, height = metadata["original_size"]
         elif image is not None:
             width, height = image.size
+        elif image_metadata is not None:
+            width, height = image_metadata["original_size"]
         else:
             # Unexpected condition
             raise ValueError(
@@ -578,7 +490,9 @@ class BucketManager:
                 f"BucketManager.meets_resolution_requirements received unexpected value for resolution_type: {self.resolution_type}"
             )
 
-    def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str):
+    def handle_incorrect_bucket(
+        self, image_path: str, bucket: str, actual_bucket: str, save_cache: bool = True
+    ):
         """
         Used by other classes to move images between buckets, when mis-detected.
 
@@ -597,7 +511,8 @@ class BucketManager:
         else:
             logger.warning(f"Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
-        self.save_cache()
+        if save_cache:
+            self.save_cache()
 
     def handle_small_image(
         self, image_path: str, bucket: str, delete_unwanted_images: bool
@@ -686,10 +601,11 @@ class BucketManager:
         Args:
             filepath (str): The complete path from the aspect bucket list.
         """
-        logger.debug(f"Setting metadata for {filepath} to {metadata}.")
-        self.image_metadata[filepath] = metadata
-        if update_json:
-            self.save_image_metadata()
+        with self.metadata_semaphor:
+            logger.debug(f"Setting metadata for {filepath} to {metadata}.")
+            self.image_metadata[filepath] = metadata
+            if update_json:
+                self.save_image_metadata()
 
     def get_metadata_by_filepath(self, filepath: str):
         """Retrieve metadata for a given image file path.
@@ -702,22 +618,17 @@ class BucketManager:
         Returns:
             dict: Metadata for the image. Returns None if not found.
         """
-        if not self.image_metadata_loaded:
-            self.load_image_metadata()
+        if type(filepath) is tuple or type(filepath) is list:
+            for path in filepath:
+                if path in self.image_metadata:
+                    result = self.image_metadata.get(path, None)
+                    logger.debug(
+                        f"Retrieving metadata for path: {filepath}, result: {result}"
+                    )
+                    if result is not None:
+                        return result
+            return None
         return self.image_metadata.get(filepath, None)
-
-    def load_image_metadata(self):
-        """Load image metadata from a JSON file."""
-        self.image_metadata = {}
-        self.image_metadata_loaded = False
-        if self.data_backend.exists(self.metadata_file):
-            cache_data_raw = self.data_backend.read(self.metadata_file)
-            self.image_metadata = json.loads(cache_data_raw)
-            self.image_metadata_loaded = True
-
-    def save_image_metadata(self):
-        """Save image metadata to a JSON file."""
-        self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
     def scan_for_metadata(self):
         """
@@ -754,7 +665,6 @@ class BucketManager:
                     metadata_updates_queue,
                     None,  # Passing None to indicate we don't want to update the written files list
                     existing_files_set,
-                    self.data_backend,
                 ),
             )
             for file_shard in files_split
@@ -764,7 +674,7 @@ class BucketManager:
             worker.start()
 
         with tqdm(
-            desc="Scanning metadata for images",
+            desc="Scanning image metadata",
             total=len(new_files),
             leave=False,
             ncols=100,
@@ -776,10 +686,14 @@ class BucketManager:
                 # Only update the metadata
                 while not metadata_updates_queue.empty():
                     metadata_update = metadata_updates_queue.get()
-                    for filepath, meta in metadata_update.items():
-                        self.set_metadata_by_filepath(
-                            filepath=filepath, metadata=meta, update_json=False
-                        )
+                    logger.debug(
+                        f"Received type of metadata update: {type(metadata_update)}, contents: {metadata_update}"
+                    )
+                    if type(metadata_update) == dict:
+                        for filepath, meta in metadata_update.items():
+                            self.set_metadata_by_filepath(
+                                filepath=filepath, metadata=meta, update_json=False
+                            )
 
         for worker in workers:
             worker.join()
@@ -798,27 +712,42 @@ class BucketManager:
         """
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
-
+        logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")
         for cache_file, cache_content in vae_cache.scan_cache_contents():
+            if cache_content is None:
+                continue
             if vae_cache_behavior == "sync":
                 # Sync aspect buckets with the cache
                 expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
                     self._get_aspect_ratio_from_tensor(cache_content)
                 )
                 self._modify_cache_entry_bucket(cache_file, expected_bucket)
-
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
-                if self.is_cache_inconsistent(cache_file, cache_content):
-                    # self.data_backend.delete(cache_file)
-                    logger.warning(
-                        f"Deleting cache entries is currently HARD DISABLED. This is a warning to allow you to fix the issue manually."
-                    )
+                if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
+                    threading.Thread(
+                        target=self.data_backend.delete, args=(cache_file,), daemon=True
+                    ).start()
 
         # Update any state or metadata post-processing
         self.save_cache()
 
-    def is_cache_inconsistent(self, cache_file, cache_content):
+    def _recalculate_target_resolution(self, original_resolution: tuple) -> tuple:
+        """Given the original resolution, use our backend config to properly recalculate the size."""
+        resolution_type = StateTracker.get_data_backend_config(self.id)[
+            "resolution_type"
+        ]
+        resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
+        if resolution_type == "pixel":
+            return MultiaspectImage.calculate_new_size_by_pixel_area(
+                original_resolution[0], original_resolution[1], resolution
+            )
+        elif resolution_type == "area":
+            return MultiaspectImage.calculate_new_size_by_pixel_area(
+                original_resolution[0], original_resolution[1], resolution
+            )
+
+    def is_cache_inconsistent(self, vae_cache, cache_file, cache_content):
         """
         Check if a cache file's content is inconsistent with the aspect ratio bucket indices.
 
@@ -829,6 +758,50 @@ class BucketManager:
         Returns:
             bool: True if the cache file is inconsistent, False otherwise.
         """
+        # Get tensor shape and multiply by self.scaling_factor or 8
+        if cache_content is None:
+            return True
+        image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
+        logger.debug(
+            f"Checking cache file {cache_file} for inconsistencies. Image filename: {image_filename}"
+        )
+        actual_resolution = self._get_image_size_from_tensor(cache_content)
+        original_resolution = self.get_metadata_attribute_by_filepath(
+            image_filename, "original_size"
+        )
+        metadata_target_size = self.get_metadata_attribute_by_filepath(
+            image_filename, "target_size"
+        )
+        if metadata_target_size is None:
+            logger.error(
+                f"Received sample with no metadata: {self.get_metadata_by_filepath(image_filename)}"
+            )
+            return True
+        target_resolution = tuple(metadata_target_size)
+        recalculated_width, recalculated_height, recalculated_aspect_ratio = (
+            self._recalculate_target_resolution(original_resolution)
+        )
+        recalculated_target_resolution = (recalculated_width, recalculated_height)
+        logger.debug(
+            f"Original resolution: {original_resolution}, Target resolution: {target_resolution}, Recalculated target resolution: {recalculated_target_resolution}"
+        )
+        if (
+            original_resolution is not None
+            and target_resolution is not None
+            and (
+                actual_resolution != target_resolution
+                or actual_resolution != recalculated_target_resolution
+            )
+        ):
+            logger.debug(
+                f"Actual resolution {actual_resolution} does not match target resolution {target_resolution}, recalculated as {recalculated_target_resolution}."
+            )
+            return True
+        else:
+            logger.debug(
+                f"Actual resolution {actual_resolution} matches target resolution {target_resolution}."
+            )
+
         actual_aspect_ratio = self._get_aspect_ratio_from_tensor(cache_content)
         expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
             actual_aspect_ratio
@@ -878,6 +851,27 @@ class BucketManager:
         # Assuming tensor is in CHW format (channel, height, width)
         _, height, width = tensor.size()
         return width / height
+
+    def _get_image_size_from_tensor(self, tensor):
+        """
+        Calculate the image size from a PyTorch Tensor.
+
+        Args:
+            tensor (torch.Tensor): The tensor representing the image.
+
+        Returns:
+            tuple[width, height]: The resolution of the image just before it was encoded.
+        """
+        if tensor.dim() < 3:
+            raise ValueError(
+                f"Tensor does not have enough dimensions to determine an image resolution. Its shape is: {tensor.size}"
+            )
+        # Assuming tensor is in CHW format (channel, height, width)
+        _, height, width = tensor.size()
+        return (
+            width * self.vae_output_scaling_factor,
+            height * self.vae_output_scaling_factor,
+        )
 
     def _modify_cache_entry_bucket(self, cache_file, expected_bucket):
         """

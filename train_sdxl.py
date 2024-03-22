@@ -360,7 +360,9 @@ def main():
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
-        lora_weight_init_type = "loftq"
+        lora_weight_init_type = (
+            "gaussian" if torch.backends.mps.is_available() else "loftq"
+        )
         if args.use_dora:
             lora_weight_init_type = "gaussian"
         unet_lora_config = LoraConfig(
@@ -494,7 +496,7 @@ def main():
     )
     total_num_batches = sum(
         [
-            len(backend["bucket_manager"] if "bucket_manager" in backend else [])
+            len(backend["metadata_backend"] if "metadata_backend" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
@@ -851,7 +853,7 @@ def main():
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     total_num_batches = sum(
         [
-            len(backend["bucket_manager"] if "bucket_manager" in backend else [])
+            len(backend["metadata_backend"] if "metadata_backend" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )

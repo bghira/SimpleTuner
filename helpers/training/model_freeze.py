@@ -4,6 +4,18 @@ logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
+def apply_bitfit_freezing(model):
+    logger.debug("Applying BitFit freezing strategy for u-net tuning.")
+    for name, param in model.named_parameters():
+        # Freeze everything that's not a bias
+        if "bias" not in name:
+            param.requires_grad = False
+        else:
+            # Unfreeze biases
+            param.requires_grad = True
+    return model
+
+
 def freeze_entire_component(component):
     for name, param in component.named_parameters():
         if hasattr(param, "requires_grad"):
@@ -25,6 +37,8 @@ def freeze_text_encoder(args, component):
         if pieces[1] != "encoder" and pieces[2] != "layers":
             logger.info(f"Ignoring non-encoder layer: {name}")
             continue
+        else:
+            logger.debug(f"Freezing layer: {name}, which has keys: {pieces}")
         current_layer = int(pieces[3])
 
         freeze_param = False

@@ -7,12 +7,13 @@ from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
-from helpers.multiaspect.bucket import BucketManager
+from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
 from queue import Queue
 from concurrent.futures import as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -29,7 +30,7 @@ class VAECache:
         id: str,
         vae,
         accelerator,
-        bucket_manager: BucketManager,
+        metadata_backend: MetadataBackend,
         instance_data_root: str,
         data_backend: BaseDataBackend,
         cache_dir="vae_cache",
@@ -69,7 +70,10 @@ class VAECache:
         self.instance_data_root = instance_data_root
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
-        self.bucket_manager = bucket_manager
+        self.metadata_backend = metadata_backend
+        if not self.metadata_backend.image_metadata_loaded:
+            self.metadata_backend.load_image_metadata()
+
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
             target_downsample_size and not maximum_image_size
@@ -86,6 +90,9 @@ class VAECache:
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
+        if self.instance_data_root not in filepath:
+            if self.cache_dir in filepath:
+                return filepath, os.path.basename(filepath)
         # Extract the base name from the filepath and replace the image extension with .pt
         base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
         # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
@@ -97,26 +104,32 @@ class VAECache:
             full_filename = os.path.join(self.cache_dir, base_filename)
         return full_filename, base_filename
 
-    def _image_filename_from_vaecache_filename(self, filepath: str) -> str:
+    def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         generated_names = self.generate_vae_cache_filename(filepath)
         logger.debug(f"VAE cache generated names: {generated_names}")
-        test_filepath_png = f"{os.path.splitext(generated_names[0])[0]}.png"
-        logger.debug(f"Translated into test_filepath_png: {test_filepath_png}")
-        if str(self.cache_dir) in test_filepath_png:
-            # replace cache_dir with instance_data_root:
-            test_filepath_png = test_filepath_png.replace(
-                self.cache_dir, self.instance_data_root
-            )
-            logger.debug(
-                f"Replacing cache_dir value {self.cache_dir} with {self.instance_data_root} in {test_filepath_png}"
-            )
-        elif str(self.instance_data_root) not in test_filepath_png:
-            test_filepath_png = os.path.join(self.instance_data_root, test_filepath_png)
-            logger.debug(
-                f"Joining instance_data_root value {self.instance_data_root} with {test_filepath_png}"
-            )
 
+        # Assuming the first item in generated_names is the one we want:
+        test_filepath = generated_names[0]
+
+        # Remove the .pt extension and replace it with .png for testing:
+        test_filepath_no_ext, _ = os.path.splitext(test_filepath)
+        test_filepath_png = f"{test_filepath_no_ext}.png"
+
+        # More accurate handling of path prefix replacement:
+        if test_filepath_png.startswith(str(self.cache_dir)):
+            # Extract the relative path after the cache_dir
+            relative_path = os.path.relpath(test_filepath_png, self.cache_dir)
+            # Construct the new path by joining the relative path with the instance_data_root
+            test_filepath_png = os.path.join(self.instance_data_root, relative_path)
+            logger.debug(f"Converted to image data path: {test_filepath_png}")
+        else:
+            # Handle cases where the cache_dir is not in the filepath
+            # This might involve logic specific to your use case
+            logger.debug("Cache directory prefix not found in the filepath.")
+
+        # Prepare the JPG version as well
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
+
         return test_filepath_png, test_filepath_jpg
 
     def already_cached(self, filepath: str) -> bool:
@@ -135,7 +148,7 @@ class VAECache:
         Returns:
             torch.Tensor: The cached Tensor object.
         """
-        return self.data_backend.torch_load(filename)
+        return self.data_backend.torch_load(filename).to("cpu")
 
     def retrieve_from_cache(self, filepath: str):
         """
@@ -392,7 +405,7 @@ class VAECache:
                 for image in uncached_images:
                     self.debug_log(f"Image size: {image.size()}")
                 processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=torch.bfloat16
+                    self.accelerator.device, dtype=StateTracker.get_weight_dtype()
                 )
                 latents_uncached = self.vae.encode(
                     processed_images
@@ -431,7 +444,7 @@ class VAECache:
                 )
             filepaths.append(output_file)
             latents.append(latent_vector)
-        self.bucket_manager.save_image_metadata()
+        self.metadata_backend.save_image_metadata()
         self.data_backend.write_batch(filepaths, latents)
 
     def _process_images_in_batch(self) -> None:
@@ -441,31 +454,74 @@ class VAECache:
             None
         """
         try:
+            initial_data = []
             filepaths = []
             qlen = self.process_queue.qsize()
-            is_final_sample = False
-            for idx in range(0, qlen):
-                if idx == qlen - 1:
-                    is_final_sample = True
+
+            # First Loop: Preparation and Filtering
+            for _ in range(qlen):
                 filepath, image, aspect_bucket = self.process_queue.get()
-                filepaths.append(filepath)
-                self.debug_log(f"Processing {filepath}")
                 if self.minimum_image_size is not None:
-                    if not self.bucket_manager.meets_resolution_requirements(
-                        image_path=filepath,
+                    if not self.metadata_backend.meets_resolution_requirements(
+                        image_path=filepath
                     ):
                         self.debug_log(
                             f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
                         )
                         continue
-                image, crop_coordinates, new_aspect_ratio = (
-                    MultiaspectImage.prepare_image(
-                        image,
-                        self.resolution,
-                        self.resolution_type,
-                        self.id,
+
+                initial_data.append((filepath, image, aspect_bucket))
+
+            # Process Pool Execution
+            processed_images = []
+            with ProcessPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        MultiaspectImage.prepare_image,
+                        image=data[1],
+                        resolution=self.resolution,
+                        resolution_type=self.resolution_type,
+                        id=self.id,
                     )
+                    for data in initial_data
+                ]
+                for future in futures:
+                    try:
+                        result = (
+                            future.result()
+                        )  # Returns (image, crop_coordinates, new_aspect_ratio)
+                        if result:  # Ensure result is not None or invalid
+                            processed_images.append(result)
+                    except Exception as e:
+                        import traceback
+
+                        self.debug_log(
+                            f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
+                        )
+
+            # Second Loop: Final Processing
+            is_final_sample = False
+            for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
+                processed_images
+            ):
+                if idx == len(processed_images) - 1:
+                    is_final_sample = True
+                filepath, _, aspect_bucket = initial_data[idx]
+
+                # We need to validate that the image dimensions match the aspect bucket, because EXIF data is dumb.
+                actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
+                    image
                 )
+                # if str(aspect_bucket) != str(actual_aspect_bucket):
+                #     logger.warning(
+                #         f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
+                #     )
+                #     self.metadata_backend.handle_incorrect_bucket(
+                #         filepath, aspect_bucket, actual_aspect_bucket, save_cache=False
+                #     )
+                #     continue
+                filepaths.append(filepath)
+
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
@@ -473,7 +529,7 @@ class VAECache:
                     (pixel_values, filepath, aspect_bucket, is_final_sample)
                 )
                 # Update the crop_coordinates in the metadata document
-                self.bucket_manager.set_metadata_attribute_by_filepath(
+                self.metadata_backend.set_metadata_attribute_by_filepath(
                     filepath=filepath,
                     attribute="crop_coordinates",
                     value=crop_coordinates,
@@ -535,11 +591,39 @@ class VAECache:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
             # Remove all of the errored images from the bucket. They will be captured on restart.
             for filepath in vae_input_filepaths:
-                self.bucket_manager.remove_image(filepath)
+                self.metadata_backend.remove_image(filepath)
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise Exception(
                 f"Error encoding images {vae_input_filepaths}: {e}, traceback: {traceback.format_exc()}"
             )
+
+    def _read_from_storage_concurrently(self, paths):
+        """
+        A helper method to read files from storage concurrently, without Queues.
+
+        Args:
+            paths (List[str]): A list of file paths to read.
+
+        Returns:
+            Generator[Tuple[str, Any], None, None]: Yields file path and contents.
+        """
+
+        def read_file(path):
+            try:
+                return path, self._read_from_storage(path)
+            except Exception as e:
+                logger.error(f"Error reading {path}: {e}")
+                return path, None
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Map read_file operation over all paths
+            future_to_path = {executor.submit(read_file, path): path for path in paths}
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    yield future.result()
+                except Exception as exc:
+                    logger.error(f"{path} generated an exception: {exc}")
 
     def read_images_in_batch(self) -> None:
         """Immediately read a batch of images.
@@ -614,7 +698,7 @@ class VAECache:
     def process_buckets(self):
         futures = []
         processed_images = self._list_cached_images()
-        aspect_bucket_cache = self.bucket_manager.read_cache().copy()
+        aspect_bucket_cache = self.metadata_backend.read_cache().copy()
 
         # Extract and shuffle the keys of the dictionary
         do_shuffle = (
@@ -756,21 +840,15 @@ class VAECache:
 
     def scan_cache_contents(self):
         """
-        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents.
-
-        This is likely a very expensive operation for extra-large cloud datasets, but it could save time and
-        computational resources if finding a problem with surgical precision can prevent the need for removing
-        all cache entries in a dataset for a complete rebuild.
+        A generator method that iterates over the VAE cache, yielding each cache file's path and its contents
+        using multi-threading for improved performance.
 
         Yields:
             Tuple[str, Any]: A tuple containing the file path and its contents.
         """
         try:
             all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-            for cache_file in all_cache_files:
-                full_path = os.path.join(self.cache_dir, cache_file)
-                cache_content = self._read_from_storage(full_path)
-                yield (full_path, cache_content)
+            yield from self._read_from_storage_concurrently(all_cache_files)
         except Exception as e:
             logger.error(f"Error in scan_cache_contents: {e}")
             self.debug_log(f"Error traceback: {traceback.format_exc()}")

@@ -117,6 +117,9 @@ def register_file_hooks(
             # make sure to pop weight so that corresponding model is not saved again
             weights.pop()
 
+        if args.use_ema:
+            ema_unet.save_pretrained(os.path.join(output_dir, "ema_unet"))
+
     def load_model_hook(models, input_dir):
         training_state_path = os.path.join(input_dir, "training_state.json")
         if os.path.exists(training_state_path):
@@ -126,6 +129,8 @@ def register_file_hooks(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
 
+        unet_ = None
+        text_encoder = None
         while len(models) > 0:
             model = models.pop()
 
@@ -138,8 +143,6 @@ def register_file_hooks(
 
         if args.model_type == "lora":
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
-            unet_ = None
-            text_encoder = None
 
             lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
 

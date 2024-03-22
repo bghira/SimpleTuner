@@ -299,6 +299,26 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--disable_multiprocessing",
+        default=False,
+        action="store_true",
+        help=(
+            "If set, will use threads instead of processes during metadata caching operations."
+            " This is set implicitly for Apple systems, as Darwin behaves oddly with multiprocessing."
+            " For some systems, multiprocessing may be slower than threading, so this option is provided."
+        ),
+    )
+    parser.add_argument(
+        "--aspect_bucket_worker_count",
+        type=int,
+        default=12,
+        help=(
+            "The number of workers to use for aspect bucketing. This is a CPU-bound task, so the number of workers"
+            " should be set to the number of CPU threads available. If you use an I/O bound backend, an even higher"
+            " value may make sense. Default: 12."
+        ),
+    )
+    parser.add_argument(
         "--cache_dir",
         type=str,
         default=None,
@@ -419,37 +439,6 @@ def parse_args(input_args=None):
             "When using --maximum_image_size, very-large images exceeding that value will be downsampled to this target"
             " size before cropping. If --resolution_type=area and --maximum_image_size=4.0, --target_downsample_size=2.0"
             " would result in a 4 megapixel image being resized to 2 megapixel before cropping to 1 megapixel."
-        ),
-    )
-    parser.add_argument(
-        "--crop",
-        default=False,
-        type=bool,
-        help=(
-            "Whether to crop the input images to the resolution. If not set, the images will be downsampled"
-            " instead. When cropping is enabled, the images will not be resized before cropping. If training SDXL,"
-            " the VAE cache and aspect bucket cache will need to be (re)built so they include crop coordinates."
-        ),
-    )
-    parser.add_argument(
-        "--crop_style",
-        default="random",
-        choices=["center", "centre", "corner", "random"],
-        help=(
-            "When --crop is provided, a crop style may be defined that designates which part of an image to crop to."
-            " The old behaviour was to crop to the lower right corner, but this isn't always ideal for training."
-            " The default is 'random', which will locate a random segment of the image matching the given resolution."
-        ),
-    )
-    parser.add_argument(
-        "--crop_aspect",
-        default="square",
-        choices=["square", "preserve"],
-        help=(
-            "When --crop is supplied, the default behaviour is to crop to square images, which greatly simplifies aspect bucketing."
-            " However, --crop_aspect may be set to 'preserve', which will crop based on the --resolution_type value."
-            " If --resolution_type=area, the crop will be equal to the target pixel area. If --resolution_type=pixel,"
-            " the crop will have the smaller edge equal to the value of --resolution."
         ),
     )
     parser.add_argument(
@@ -972,6 +961,18 @@ def parse_args(input_args=None):
             " The 'between' strategy will freeze layers between those two values, leaving the outer layers unfrozen."
             " The default strategy is to freeze all layers from 17 up."
             " This can be helpful when fine-tuning Stable Diffusion 2.1 on a new style."
+        ),
+    )
+    parser.add_argument(
+        "--freeze_unet_strategy",
+        type=str,
+        choices=["none", "bitfit"],
+        default="none",
+        help=(
+            "When freezing the UNet, we can use the 'none' or 'bitfit' strategy."
+            " The 'bitfit' strategy will freeze all weights, and leave bias thawed."
+            " The default strategy is to leave the full u-net thawed."
+            " Freezing the weights can improve convergence for finetuning."
         ),
     )
     parser.add_argument(

@@ -6,10 +6,31 @@
 git clone https://github.com/bghira/SimpleTuner --branch release
 python -m venv .venv
 pip3 install -U poetry pip
+```
+
+### MacOS (Apple Silicon)
+
+The experience of training a model may be disappointing on Apple hardware due to the lack of memory-efficient attention - things require more VRAM here.
+
+You will require a minimum of 24G of total memory for an SDXL LoRA at a batch size of 1.
+
+To install the Apple-specific requirements:
+
+```bash
+poetry install --no-root -C install/apple
+```
+
+### Linux
+
+The first command you'll run will install most of the dependencies:
+
+```bash
 poetry install --no-root
 ```
 
-You will need to install some Linux-specific dependencies (Ubuntu is used here):
+#### Optional, possibly not required steps
+
+You will possibly need to install some Linux-specific dependencies (Ubuntu is used here):
 
 > ⚠️ This command can break certain container deployments. If it does, you'll have to redeploy the container.
 
@@ -35,6 +56,8 @@ If the egg install for Xformers does not work, try including `xformers` on the f
 ```bash
 pip3 install --pre xformers torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
 ```
+
+### All platforms
 
 2. For SD2.1, copy `sd21-env.sh.example` to `env.sh` - be sure to fill out the details. Try to change as little as possible.
 

@@ -13,10 +13,10 @@ class TestMultiaspectImage(unittest.TestCase):
         self.resolution = 128
         self.test_image = Image.new("RGB", (512, 256), color="red")
         self.data_backend = MagicMock()
-        self.bucket_manager = MagicMock()
-        self.bucket_manager.resolution = 1.0  # Example resolution
-        self.bucket_manager.resolution_type = "dimension"  # Example resolution type
-        self.bucket_manager.meets_resolution_requirements.return_value = True
+        self.metadata_backend = MagicMock()
+        self.metadata_backend.resolution = 1.0  # Example resolution
+        self.metadata_backend.resolution_type = "dimension"  # Example resolution type
+        self.metadata_backend.meets_resolution_requirements.return_value = True
 
         # Mock image data to simulate reading from the backend
         self.image_path_str = "test_image.jpg"
@@ -28,35 +28,6 @@ class TestMultiaspectImage(unittest.TestCase):
 
         self.mock_image_data = image_bytes.getvalue()
         self.data_backend.read.return_value = self.mock_image_data
-
-    def test_correct_aspect_ratio_and_size_adjustment(self):
-        # Mock MultiaspectImage.prepare_image to simulate resizing and cropping
-        with patch(
-            "helpers.multiaspect.image.MultiaspectImage.prepare_image",
-            return_value=(self.test_image, (0, 0), 1.0),
-        ) as mock_prepare_image:
-            aspect_ratio_bucket_indices = {}
-            metadata_updates = {}
-
-            # Call the method under test
-            result = MultiaspectImage.process_for_bucket(
-                self.data_backend,
-                self.bucket_manager,
-                self.image_path_str,
-                aspect_ratio_bucket_indices,
-                aspect_ratio_rounding=3,
-                metadata_updates=metadata_updates,
-            )
-
-            # Verify the image was processed as expected
-            mock_prepare_image.assert_called_once()
-            self.assertIn("aspect_ratio", metadata_updates[self.image_path_str])
-            self.assertIn(
-                self.image_path_str,
-                result[
-                    str(round(self.test_image.size[0] / self.test_image.size[1], 3))
-                ],
-            )
 
     def test_crop_corner(self):
         cropped_image, _ = MultiaspectImage._crop_corner(
@@ -82,7 +53,9 @@ class TestMultiaspectImage(unittest.TestCase):
                 resolution_type="pixel", resolution=self.resolution, crop_style="random"
             )
             prepared_img, crop_coordinates, aspect_ratio = (
-                MultiaspectImage.prepare_image(self.test_image, self.resolution)
+                MultiaspectImage.prepare_image(
+                    image=self.test_image, resolution=self.resolution
+                )
             )
         self.assertIsInstance(prepared_img, Image.Image)
 
@@ -128,6 +101,60 @@ class TestMultiaspectImage(unittest.TestCase):
                     resulting_mp >= mp,
                     f"Resulting size {new_width}x{new_height} = {resulting_mp} MP is below the specified {mp} MP",
                 )
+
+    def test_calculate_new_size_by_pixel_area_uniformity(self):
+        # Example input resolutions and expected output
+        test_cases = [
+            (
+                3911,
+                5476,
+                1.0,
+            ),  # Original resolution and target megapixels, ar=0.714
+            (
+                4539,
+                6527,
+                1.0,
+            ),  # Original resolution and target megapixels, ar=0.695
+        ]
+        expected_size = (
+            896,
+            1216,
+        )  # Expected final size for all test cases based on a fixed aspect ratio
+
+        for W, H, megapixels in test_cases:
+            W_final, H_final, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
+                W, H, megapixels
+            )
+            self.assertEqual(
+                (W_final, H_final), expected_size, f"Failed for original size {W}x{H}"
+            )
+
+    def test_calculate_new_size_by_pixel_area_squares(self):
+        # Example input resolutions and expected output
+        test_cases = [
+            (
+                4000,
+                4000,
+                1.0,
+            ),  # Original resolution and target megapixels, ar=0.714
+            (
+                2000,
+                2000,
+                1.0,
+            ),  # Original resolution and target megapixels, ar=0.695
+        ]
+        expected_size = (
+            1024,
+            1024,
+        )  # Expected final size for all test cases based on a fixed aspect ratio
+
+        for W, H, megapixels in test_cases:
+            W_final, H_final, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
+                W, H, megapixels
+            )
+            self.assertEqual(
+                (W_final, H_final), expected_size, f"Failed for original size {W}x{H}"
+            )
 
 
 if __name__ == "__main__":
