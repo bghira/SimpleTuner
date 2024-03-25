@@ -209,13 +209,13 @@ def main():
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
+    if args.allow_tf32 and not torch.backends.mps.is_available():
         logger.info(
             "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
         )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    else:
+    elif torch.backends.cuda.is_available():
         logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
@@ -870,8 +870,9 @@ def main():
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     if first_epoch > 1:
-        steps_to_remove = first_epoch * num_update_steps_per_epoch
-        total_steps_remaining_at_start -= steps_to_remove
+        total_steps_remaining_at_start = (
+            total_steps_remaining_at_start - resume_global_step
+        )
         logger.debug(
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
         )
