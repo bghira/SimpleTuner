@@ -794,7 +794,7 @@ class VAECache:
                     # Now, see if we have any futures to complete, and execute them.
                     # Cleanly removes futures from the list, once they are completed.
                     # However, processing these on each file read can be problematic, let's do it in batches.
-                    if len(futures) >= self.max_workers:
+                    if len(futures) >= 4:
                         futures = self._process_futures(futures, executor)
 
                 try:
