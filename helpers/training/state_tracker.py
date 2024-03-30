@@ -6,6 +6,12 @@ import json, logging
 logger = logging.getLogger("StateTracker")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
+filename_mapping = {
+    "all_image_files": "image",
+    "all_vae_cache_files": "vae",
+    "all_text_cache_files": "text",
+}
+
 
 class StateTracker:
     # Class variables
@@ -37,12 +43,16 @@ class StateTracker:
     args = None
 
     @classmethod
-    def delete_cache_files(cls, data_backend_id: str = None):
+    def delete_cache_files(
+        cls, data_backend_id: str = None, preserve_data_backend_cache=False
+    ):
         for cache_name in [
             "all_image_files",
             "all_vae_cache_files",
             "all_text_cache_files",
         ]:
+            if filename_mapping[cache_name] in str(preserve_data_backend_cache):
+                continue
             data_backend_id_suffix = ""
             if data_backend_id:
                 data_backend_id_suffix = f"_{data_backend_id}"

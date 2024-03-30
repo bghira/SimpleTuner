@@ -190,7 +190,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--vae_cache_behaviour",
+        "--vae_cache_scan_behaviour",
         type=str,
         choices=["recreate", "sync"],
         default="recreate",
@@ -199,6 +199,15 @@ def parse_args(input_args=None):
             " The default setting 'recreate' will delete any inconsistent cache entries and rebuild it."
             " Alternatively, 'sync' will update the bucket configuration so that the image is in a bucket that matches its latent size."
             " The recommended behaviour is to use the default value and allow the cache to be recreated."
+        ),
+    )
+    parser.add_argument(
+        "--encode_during_training",
+        type=bool,
+        default=True,
+        help=(
+            "By default, will encode images during training. For some situations, pre-processing may be desired."
+            " To revert to the old behaviour, supply --encode_during_training=false."
         ),
     )
     parser.add_argument(

@@ -14,7 +14,7 @@ import numpy as np
 from threading import Semaphore
 
 logger = logging.getLogger("BaseMetadataBackend")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class MetadataBackend:
@@ -260,7 +260,7 @@ class MetadataBackend:
                     self.save_image_metadata()
                     last_write_time = current_time
 
-                time.sleep(0.1)
+                time.sleep(0.001)
 
         for worker in workers:
             worker.join()
@@ -389,11 +389,11 @@ class MetadataBackend:
         for bucket in list(
             self.aspect_ratio_bucket_indices.keys()
         ):  # Safe iteration over keys
-            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
-            self._prune_small_buckets(bucket)
+            # # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            # self._prune_small_buckets(bucket)
             self._enforce_resolution_constraints(bucket)
-            # We do this twice in case there were any new contenders for being too small.
-            self._prune_small_buckets(bucket)
+            # # We do this twice in case there were any new contenders for being too small.
+            # self._prune_small_buckets(bucket)
 
     def _prune_small_buckets(self, bucket):
         """

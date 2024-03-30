@@ -14,7 +14,7 @@ from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
 
 logger = logging.getLogger("JsonMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
+target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
 

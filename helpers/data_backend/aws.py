@@ -37,7 +37,7 @@ boto_logger = logging.getLogger("botocore.endpoint")
 boto_logger.setLevel(os.environ.get("SIMPLETUNER_AWS_LOG_LEVEL", "ERROR"))
 
 logger = logging.getLogger("S3DataBackend")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class S3DataBackend(BaseDataBackend):
@@ -289,9 +289,13 @@ class S3DataBackend(BaseDataBackend):
         # Retry the torch load within the retry limit
         for i in range(self.read_retry_limit):
             try:
-                return torch.load(
-                    BytesIO(self.read(s3_key)), map_location=self.accelerator.device
-                )
+                obj = torch.load(BytesIO(self.read(s3_key)), map_location="cpu")
+                logger.debug(f"torch.load found: {obj}")
+                if type(obj) is tuple:
+                    obj = tuple(o.to(torch.float32) for o in obj)
+                elif type(obj) is Tensor:
+                    obj = obj.to(torch.float32)
+                return obj
             except Exception as e:
                 if not self.exists(s3_key):
                     logger.debug(f"File {s3_key} does not exist in S3 bucket.")

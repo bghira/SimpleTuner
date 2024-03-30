@@ -8,7 +8,7 @@ from math import sqrt
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("MultiaspectImage")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class MultiaspectImage:
