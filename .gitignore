@@ -1,3 +1,4 @@
+*.code-workspace
 multidatabackend*json
 # Python and virtual environment files
 temp/
