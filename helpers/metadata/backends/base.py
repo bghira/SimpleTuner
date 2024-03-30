@@ -389,11 +389,11 @@ class MetadataBackend:
         for bucket in list(
             self.aspect_ratio_bucket_indices.keys()
         ):  # Safe iteration over keys
-            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
-            self._prune_small_buckets(bucket)
+            # # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            # self._prune_small_buckets(bucket)
             self._enforce_resolution_constraints(bucket)
-            # We do this twice in case there were any new contenders for being too small.
-            self._prune_small_buckets(bucket)
+            # # We do this twice in case there were any new contenders for being too small.
+            # self._prune_small_buckets(bucket)
 
     def _prune_small_buckets(self, bucket):
         """
