@@ -14,7 +14,7 @@ import numpy as np
 from threading import Semaphore
 
 logger = logging.getLogger("BaseMetadataBackend")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class MetadataBackend:
@@ -260,7 +260,7 @@ class MetadataBackend:
                     self.save_image_metadata()
                     last_write_time = current_time
 
-                time.sleep(0.1)
+                time.sleep(0.001)
 
         for worker in workers:
             worker.join()
