@@ -827,6 +827,8 @@ def main():
 
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
+        if torch.backends.mps.is_available():
+            accelerator.native_amp = False
         results = accelerator.prepare(
             unet, lr_scheduler, optimizer, train_dataloaders[0]
         )
