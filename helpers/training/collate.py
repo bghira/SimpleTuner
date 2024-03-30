@@ -85,10 +85,17 @@ def fetch_latent(fp, data_backend_id: str):
 
 def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        latents = list(
-            executor.map(fetch_latent, filepaths, [data_backend_id] * len(filepaths))
+    if StateTracker.get_args().encode_during_training:
+        latents = StateTracker.get_vaecache(id=data_backend_id).encode_images(
+            [None] * len(filepaths), filepaths
         )
+    else:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            latents = list(
+                executor.map(
+                    fetch_latent, filepaths, [data_backend_id] * len(filepaths)
+                )
+            )
 
     # Validate shapes
     test_shape = latents[0].shape
