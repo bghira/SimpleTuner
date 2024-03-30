@@ -134,7 +134,9 @@ def main():
     args = parse_args()
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
-        StateTracker.delete_cache_files()
+        StateTracker.delete_cache_files(
+            preserve_data_backend_cache=args.preserve_data_backend_cache
+        )
 
     logging_dir = Path(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
@@ -802,7 +804,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded:
+    if not args.keep_vae_loaded and not args.encode_during_training:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 
