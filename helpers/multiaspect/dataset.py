@@ -3,7 +3,7 @@ from pathlib import Path
 import logging, os
 
 logger = logging.getLogger("MultiAspectDataset")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class MultiAspectDataset(Dataset):

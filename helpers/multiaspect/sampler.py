@@ -56,7 +56,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Update the logger name with the id:
         self.logger = get_logger(
             f"MultiAspectSampler-{self.id}",
-            os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"),
+            os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"),
         )
         self.rank_info = rank_info()
         self.accelerator = accelerator
