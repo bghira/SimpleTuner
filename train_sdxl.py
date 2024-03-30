@@ -1176,7 +1176,9 @@ def main():
                 )
 
                 # SDXL additional inputs - probabilistic dropout
-                encoder_hidden_states = batch["prompt_embeds"].to(weight_dtype)
+                encoder_hidden_states = batch["prompt_embeds"].to(
+                    dtype=weight_dtype, device=accelerator.device
+                )
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
