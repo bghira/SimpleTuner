@@ -444,14 +444,19 @@ class VAECache:
             )
             logger.debug(f"Missing image VAE outputs: {missing_image_vae_outputs}")
             written_latents = self._write_latents_in_batch(missing_image_vae_outputs)
-            logger.debug(f"Returning written latents: {written_latents}")
-
-            return written_latents
+            if len(written_latents) == len(images):
+                logger.debug(
+                    f"Returning {len(written_latents)}, as we had only {len(images)} images to encode"
+                )
+                return written_latents
+            logger.debug(
+                f"Gathered {len(written_latents)} written latents, continuing to retrieve cached entries"
+            )
 
         if len(uncached_image_indices) > 0:
             uncached_images = [images[i] for i in uncached_image_indices]
             logger.debug(
-                f"Running vanilla encode_images, all images are available: {uncached_images}"
+                f"Running vanilla encode_images, all {len(uncached_images)} images are available: {uncached_image_indices}"
             )
         elif len(missing_images) > 0 and len(missing_image_pixel_values) > 0:
             uncached_images = []
@@ -513,7 +518,7 @@ class VAECache:
             logger.debug(
                 f"No uncached images to retrieve, {uncached_images} or missing images: {missing_images}"
             )
-        logger.debug(f"completed encode_images, returning latents: {latents}")
+        logger.debug(f"completed encode_images, returning {len(latents)} latents")
         return latents
 
     def _write_latents_in_batch(self, input_latents: list = None):
@@ -668,8 +673,17 @@ class VAECache:
         try:
             if image_pixel_values is not None:
                 qlen = len(image_pixel_values)
+                logger.debug(f"Using override list for image encode: {qlen} items")
+                if self.vae_batch_size != len(image_pixel_values):
+                    logger.debug(
+                        f"Updated VAE batch size to equal the training batch size."
+                    )
+                    self.vae_batch_size = len(image_pixel_values)
             else:
                 qlen = self.vae_input_queue.qsize()
+                logger.debug(
+                    f"Using VAE cache vanilla queue for job retrieval: {qlen} items"
+                )
 
             if qlen == 0:
                 return
@@ -677,7 +691,9 @@ class VAECache:
             while qlen > 0:
                 vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
                 batch_aspect_bucket = None
-                for idx in range(0, min(qlen, self.vae_batch_size)):
+                count_to_process = min(qlen, self.vae_batch_size)
+                logger.debug(f"Processing {count_to_process} images.")
+                for idx in range(0, count_to_process):
                     if image_pixel_values:
                         pixel_values, filepath, aspect_bucket, is_final_sample = (
                             image_pixel_values.pop()
@@ -718,7 +734,7 @@ class VAECache:
                     if not disable_queue:
                         self.write_queue.put(output_value)
                 if image_pixel_values is not None:
-                    qlen = len(image_pixel_values) - 1
+                    qlen = len(image_pixel_values)
                 else:
                     qlen = self.vae_input_queue.qsize()
         except Exception as e:
