@@ -761,6 +761,8 @@ def main():
     logger.info("Preparing accelerator..")
 
     # Base components to prepare
+    if torch.backends.mps.is_available():
+        accelerator.native_amp = False
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
     lr_scheduler = results[1]
