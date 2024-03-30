@@ -202,6 +202,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--encode_during_training",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will encode images during training. This is not recommended, as it will slow down training."
+            " The recommended behaviour is to cache the latents before training. However, extremely-large datasets may take"
+            " an excessive amount of time for the first cache run. It is recommended to combine this with crop=false and"
+            " vae_cache_clear_each_epoch=false, because they are counter-productive with an on-demand cache generation."
+        ),
+    )
+    parser.add_argument(
         "--keep_vae_loaded",
         action="store_true",
         default=False,
