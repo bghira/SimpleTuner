@@ -174,6 +174,9 @@ def compute_prompt_embeddings(captions, text_embed_cache):
 
 def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = []
+    logger.debug(
+        f"Gathering conditional size features for {len(examples)} examples and {len(latents)} latents"
+    )
 
     for idx, example in enumerate(examples):
         # Compute time IDs for all examples

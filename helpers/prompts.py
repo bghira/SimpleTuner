@@ -1,4 +1,4 @@
-import json, re
+import json, regex as re
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 
