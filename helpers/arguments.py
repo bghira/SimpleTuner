@@ -190,7 +190,7 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--vae_cache_behaviour",
+        "--vae_cache_scan_behaviour",
         type=str,
         choices=["recreate", "sync"],
         default="recreate",

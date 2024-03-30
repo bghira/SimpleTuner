@@ -632,7 +632,7 @@ def configure_multi_databackend(
             init_backend["metadata_backend"].handle_vae_cache_inconsistencies(
                 vae_cache=init_backend["vaecache"],
                 vae_cache_behavior=backend.get(
-                    "vae_cache_behaviour", args.vae_cache_behaviour
+                    "vae_cache_scan_behaviour", args.vae_cache_scan_behaviour
                 ),
             )
             init_backend["metadata_backend"].scan_for_metadata()

@@ -41,10 +41,10 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: When provided, will allow SimpleTuner to ignore differences between the cached config inside the dataset and the current values.
 - **Why**: When SimplerTuner is run for the first time on a dataset, it will create a cache document containing information about everything in that dataset. This includes the dataset config, including its "crop" and "resolution" related configuration values. Changing these arbitrarily or by accident could result in your training jobs crashing randomly, so it's highly recommended to not use this parameter, and instead resolve the differences you'd like to apply in your dataset some other way.
 
-### `--vae_cache_behaviour`
+### `--vae_cache_scan_behaviour`
 
 - **What**: Configure the behaviour of the integrity scan check.
-- **Why**: A dataset could have incorrect settings applied at multiple points of training, eg. if you accidentally delete the `.json` cache files from your dataset and switch the data backend config to use square images rather than aspect-crops. This will result in an inconsistent data cache, which can be corrected by setting `scan_for_errors` to `true` in your `multidatabackend.json` configuration file. When this scan runs, it relies on the setting of `--vae_cache_behaviour` to determine how to resolve the inconsistency: `recreate` (the default) will remove the offending cache entry so that it can be recreated, and `sync` will update the bucket metadata to reflect the reality of the real training sample. Recommended value: `recreate`.
+- **Why**: A dataset could have incorrect settings applied at multiple points of training, eg. if you accidentally delete the `.json` cache files from your dataset and switch the data backend config to use square images rather than aspect-crops. This will result in an inconsistent data cache, which can be corrected by setting `scan_for_errors` to `true` in your `multidatabackend.json` configuration file. When this scan runs, it relies on the setting of `--vae_cache_scan_behaviour` to determine how to resolve the inconsistency: `recreate` (the default) will remove the offending cache entry so that it can be recreated, and `sync` will update the bucket metadata to reflect the reality of the real training sample. Recommended value: `recreate`.
 
 ---
 
@@ -179,7 +179,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
                      [--rescale_betas_zero_snr] [--vae_dtype VAE_DTYPE]
                      [--vae_batch_size VAE_BATCH_SIZE]
-                     [--vae_cache_behaviour {recreate,sync}]
+                     [--vae_cache_scan_behaviour {recreate,sync}]
                      [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] [--preserve_data_backend_cache]
@@ -374,7 +374,7 @@ options:
                         issues, but if you are at that point of contention,
                         it's possible that your GPU has too little RAM.
                         Default: 4.
-  --vae_cache_behaviour {recreate,sync}
+  --vae_cache_scan_behaviour {recreate,sync}
                         When a mismatched latent vector is detected, a scan
                         will be initiated to locate inconsistencies and
                         resolve them. The default setting 'recreate' will
