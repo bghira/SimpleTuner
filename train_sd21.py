@@ -1083,7 +1083,12 @@ def main():
                 )
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = batch["prompt_embeds"]
+                encoder_hidden_states = batch["prompt_embeds"].to(
+                    device=accelerator.device,
+                    dtype=(
+                        text_encoder.dtype if text_encoder is not None else weight_dtype
+                    ),
+                )
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
