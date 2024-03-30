@@ -236,8 +236,11 @@ def log_validations(
             with torch.autocast(
                 str(accelerator.device).replace(":0", ""),
                 enabled=(
-                    accelerator.mixed_precision == "fp16"
-                    or accelerator.mixed_precision == "bf16"
+                    not torch.backends.mps.is_available()
+                    and (
+                        accelerator.mixed_precision == "fp16"
+                        or accelerator.mixed_precision == "bf16"
+                    )
                 ),
             ):
                 validation_images = []
@@ -339,10 +342,22 @@ def log_validations(
                         # )
                         validation_images.extend(
                             pipeline(
-                                prompt_embeds=current_validation_prompt_embeds,
-                                pooled_prompt_embeds=current_validation_pooled_embeds,
-                                negative_prompt_embeds=validation_negative_prompt_embeds,
-                                negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                                prompt_embeds=current_validation_prompt_embeds.to(
+                                    device=accelerator.device,
+                                    dtype=prompt_handler.text_encoders[0].dtype,
+                                ),
+                                pooled_prompt_embeds=current_validation_pooled_embeds.to(
+                                    device=accelerator.device,
+                                    dtype=prompt_handler.text_encoders[0].dtype,
+                                ),
+                                negative_prompt_embeds=validation_negative_prompt_embeds.to(
+                                    device=accelerator.device,
+                                    dtype=prompt_handler.text_encoders[0].dtype,
+                                ),
+                                negative_pooled_prompt_embeds=validation_negative_pooled_embeds.to(
+                                    device=accelerator.device,
+                                    dtype=prompt_handler.text_encoders[0].dtype,
+                                ),
                                 num_images_per_prompt=args.num_validation_images,
                                 num_inference_steps=args.validation_num_inference_steps,
                                 guidance_scale=args.validation_guidance,
