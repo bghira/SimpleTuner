@@ -204,20 +204,6 @@ tests-mypy = ["mypy (>=1.6)", "pytest-mypy-plugins"]
 tests-no-zope = ["attrs[tests-mypy]", "cloudpickle", "hypothesis", "pympler", "pytest (>=4.3.0)", "pytest-xdist[psutil]"]
 
 [[package]]
-name = "bitsandbytes"
-version = "0.42.0"
-description = "k-bit optimizers and matrix multiplication routines."
-optional = false
-python-versions = "*"
-files = [
-    {file = "bitsandbytes-0.42.0-py3-none-any.whl", hash = "sha256:63798680912cc63bb77b535a2d0860af024e290a52e157f777ad2a52e2585967"},
-    {file = "bitsandbytes-0.42.0.tar.gz", hash = "sha256:fc1505f184f0d275766f2a6c663f1a43b734c1409b5c5a406f3a6073d9f329fd"},
-]
-
-[package.dependencies]
-scipy = "*"
-
-[[package]]
 name = "boto3"
 version = "1.34.74"
 description = "The AWS SDK for Python"
@@ -3423,4 +3409,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "85d3bd986ac821e32ba7840d7ee5febc426105988fb3dd067475488b953e74aa"
+content-hash = "76d31817253c3a9da1a23e4d4e628c6dad246d6d292ce332fbb1be41504372d0"
