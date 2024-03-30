@@ -280,6 +280,12 @@ def log_validations(
                                 )
                                 for text_encoder in prompt_handler.text_encoders:
                                     text_encoder.to("cpu")
+                            current_validation_pooled_embeds.to(
+                                device=accelerator.device, dtype=weight_dtype
+                            )
+                            validation_negative_pooled_embeds.to(
+                                device=accelerator.device, dtype=weight_dtype
+                            )
                         elif StateTracker.get_model_type() == "legacy":
                             validation_negative_pooled_embeds = None
                             current_validation_pooled_embeds = None
@@ -307,6 +313,12 @@ def log_validations(
                                 for text_encoder in prompt_handler.text_encoders:
                                     if text_encoder:
                                         text_encoder.to(accelerator.device)
+                        current_validation_prompt_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
+                        )
+                        validation_negative_prompt_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
+                        )
 
                         # logger.debug(
                         #     f"Generating validation image: {validation_prompt}"
@@ -342,22 +354,10 @@ def log_validations(
                         # )
                         validation_images.extend(
                             pipeline(
-                                prompt_embeds=current_validation_prompt_embeds.to(
-                                    device=accelerator.device,
-                                    dtype=prompt_handler.text_encoders[0].dtype,
-                                ),
-                                pooled_prompt_embeds=current_validation_pooled_embeds.to(
-                                    device=accelerator.device,
-                                    dtype=prompt_handler.text_encoders[0].dtype,
-                                ),
-                                negative_prompt_embeds=validation_negative_prompt_embeds.to(
-                                    device=accelerator.device,
-                                    dtype=prompt_handler.text_encoders[0].dtype,
-                                ),
-                                negative_pooled_prompt_embeds=validation_negative_pooled_embeds.to(
-                                    device=accelerator.device,
-                                    dtype=prompt_handler.text_encoders[0].dtype,
-                                ),
+                                prompt_embeds=current_validation_prompt_embeds,
+                                pooled_prompt_embeds=current_validation_pooled_embeds,
+                                negative_prompt_embeds=validation_negative_prompt_embeds,
+                                negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
                                 num_images_per_prompt=args.num_validation_images,
                                 num_inference_steps=args.validation_num_inference_steps,
                                 guidance_scale=args.validation_guidance,
