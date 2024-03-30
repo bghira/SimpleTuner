@@ -6,7 +6,7 @@ from typing import Any
 from PIL import Image
 
 logger = logging.getLogger("LocalDataBackend")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class LocalDataBackend(BaseDataBackend):
