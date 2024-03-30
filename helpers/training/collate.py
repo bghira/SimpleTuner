@@ -102,7 +102,7 @@ def compute_latents(filepaths, data_backend_id: str):
     for idx, latent in enumerate(latents):
         if latent.shape != test_shape:
             raise ValueError(
-                f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+                f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
 
     debug_log(" -> stacking latents")
