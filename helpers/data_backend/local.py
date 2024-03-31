@@ -73,6 +73,19 @@ class LocalDataBackend(BaseDataBackend):
             raise ValueError("instance_data_root must be specified.")
 
         def _rglob_follow_symlinks(path: Path, pattern: str):
+            # Skip Spotlight directories
+            forbidden_directories = [
+                ".Spotlight-V100",
+                ".Trashes",
+                ".fseventsd",
+                ".TemporaryItems",
+                ".zfs",
+            ]
+            # Add Jupyter directories
+            forbidden_directories += [".ipynb_checkpoints"]
+            if path.name in forbidden_directories:
+                return
+
             for p in path.glob(pattern):
                 yield p
             for p in path.iterdir():
