@@ -718,7 +718,10 @@ class VAECache:
                         break
 
                 latents = self.encode_images(
-                    vae_input_images.to(dtype=StateTracker.get_vae_dtype()),
+                    [
+                        sample.to(dtype=StateTracker.get_vae_dtype())
+                        for sample in vae_input_images
+                    ],
                     vae_input_filepaths,
                     load_from_cache=False,
                 )
