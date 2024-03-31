@@ -267,7 +267,7 @@ def log_validations(
                         )
                         if prompt_handler is not None:
                             for text_encoder in prompt_handler.text_encoders:
-                                text_encoder.to(accelerator.device)
+                                text_encoder = text_encoder.to(accelerator.device)
                             [
                                 current_validation_prompt_embeds,
                                 validation_negative_prompt_embeds,
@@ -278,12 +278,16 @@ def log_validations(
                                 ]
                             )
                             for text_encoder in prompt_handler.text_encoders:
-                                text_encoder.to("cpu")
-                        current_validation_pooled_embeds.to(
-                            device=accelerator.device, dtype=weight_dtype
+                                text_encoder = text_encoder.to("cpu")
+                        current_validation_pooled_embeds = (
+                            current_validation_pooled_embeds.to(
+                                device=accelerator.device, dtype=weight_dtype
+                            )
                         )
-                        validation_negative_pooled_embeds.to(
-                            device=accelerator.device, dtype=weight_dtype
+                        validation_negative_pooled_embeds = (
+                            validation_negative_pooled_embeds.to(
+                                device=accelerator.device, dtype=weight_dtype
+                            )
                         )
                     elif StateTracker.get_model_type() == "legacy":
                         validation_negative_pooled_embeds = None
@@ -299,7 +303,7 @@ def log_validations(
                         if prompt_handler is not None:
                             for text_encoder in prompt_handler.text_encoders:
                                 if text_encoder:
-                                    text_encoder.to(accelerator.device)
+                                    text_encoder = text_encoder.to(accelerator.device)
                             [
                                 current_validation_prompt_embeds,
                                 validation_negative_prompt_embeds,
@@ -311,25 +315,29 @@ def log_validations(
                             )
                             for text_encoder in prompt_handler.text_encoders:
                                 if text_encoder:
-                                    text_encoder.to(accelerator.device)
-                    current_validation_prompt_embeds.to(
-                        device=accelerator.device, dtype=weight_dtype
+                                    text_encoder = text_encoder.to(accelerator.device)
+                    current_validation_prompt_embeds = (
+                        current_validation_prompt_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
+                        )
                     )
-                    validation_negative_prompt_embeds.to(
-                        device=accelerator.device, dtype=weight_dtype
+                    validation_negative_prompt_embeds = (
+                        validation_negative_prompt_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
+                        )
                     )
 
-                    # logger.debug(
-                    #     f"Generating validation image: {validation_prompt}"
-                    #     "\n Device allocations:"
-                    #     f"\n -> unet on {pipeline.unet.device}"
-                    #     f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
-                    #     f"\n -> vae on {pipeline.vae.device}"
-                    #     f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
-                    #     f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
-                    #     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
-                    #     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
-                    # )
+                    logger.debug(
+                        f"Generating validation image: {validation_prompt}"
+                        "\n Device allocations:"
+                        f"\n -> unet on {pipeline.unet.device}"
+                        f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
+                        f"\n -> vae on {pipeline.vae.device}"
+                        f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
+                        f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
+                        f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
+                        f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
+                    )
 
                     # logger.debug(
                     #     f"Generating validation image: {validation_prompt}"
