@@ -179,16 +179,11 @@ class MetadataBackend:
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
-        worker_backend_cls = (
-            Thread
-            if (
-                torch.backends.mps.is_available()
-                or StateTracker.get_args().disable_multiprocessing
-            )
-            else Process
+        worker_cls = (
+            Process if not StateTracker.get_args().disable_multiprocessing else Thread
         )
         workers = [
-            worker_backend_cls(
+            worker_cls(
                 target=self._bucket_worker,
                 args=(
                     tqdm_queue,
@@ -472,8 +467,10 @@ class MetadataBackend:
             # We need to find the square image length if crop_style = square.
             minimum_image_size = self.minimum_image_size * 1_000_000
             if (
-                StateTracker.get_data_backend_config(self.id)["crop"]
-                and StateTracker.get_data_backend_config(self.id)["crop_style"]
+                StateTracker.get_data_backend_config(self.id).get("crop", False)
+                and StateTracker.get_data_backend_config(self.id).get(
+                    "crop_aspect", "square"
+                )
                 == "square"
             ):
                 # When comparing the 'area' of an image but cropping to square area, one side might be too small.
@@ -654,12 +651,9 @@ class MetadataBackend:
 
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
-        worker_cls = Process
-        if (
-            torch.backends.mps.is_available()
-            or StateTracker.get_args().disable_multiprocessing
-        ):
-            worker_cls = Thread
+        worker_cls = (
+            Process if not StateTracker.get_args().disable_multiprocessing else Thread
+        )
         workers = [
             worker_cls(
                 target=self._bucket_worker,
