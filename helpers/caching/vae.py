@@ -498,7 +498,7 @@ class VAECache:
                 for image in uncached_images:
                     self.debug_log(f"Image size: {image.size()}")
                 processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=StateTracker.get_weight_dtype()
+                    self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 latents_uncached = self.vae.encode(
                     processed_images
