@@ -493,6 +493,7 @@ class VAECache:
 
         if len(uncached_images) > 0:
             # Process images not found in cache
+            logger.debug(f"Processing {len(uncached_images)} uncached images")
             with torch.no_grad():
                 # Debug log the size of each image:
                 for image in uncached_images:
