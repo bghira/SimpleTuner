@@ -169,9 +169,7 @@ class LocalDataBackend(BaseDataBackend):
         # Check if file exists:
         if not self.exists(filename):
             raise FileNotFoundError(f"{filename} not found.")
-        return torch.load(
-            self.read(filename, as_byteIO=True), map_location=self.accelerator.device
-        )
+        return torch.load(self.read(filename, as_byteIO=True), map_location="cpu")
 
     def torch_save(self, data, original_location):
         if type(original_location) == str:
