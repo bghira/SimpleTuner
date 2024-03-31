@@ -21,20 +21,38 @@ class ColorizedFormatter(logging.Formatter):
 # Initialize colorama
 init(autoreset=True)
 
-# Set up logging with the custom formatter
+# Create a logger
 logger = logging.getLogger()
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-accel_logger = logging.getLogger("DeepSpeed")
-accel_logger.setLevel(logging.WARNING)
-new_handler = logging.StreamHandler()
-new_handler.setFormatter(
+logger.setLevel(logging.DEBUG)  # Set lowest level to capture everything
+
+# Create handlers
+console_handler = logging.StreamHandler()
+console_handler.setLevel(
+    logging.INFO
+)  # Change to ERROR if you want to suppress INFO messages too
+console_handler.setFormatter(
     ColorizedFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
 )
+
+# blank out the existing debug.log, if exists
+if os.path.exists("debug.log"):
+    with open("debug.log", "w"):
+        pass
+
+# Create a file handler
+file_handler = logging.FileHandler("debug.log")
+file_handler.setLevel(logging.DEBUG)  # Capture debug and above
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
+)
+
 # Remove existing handlers
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)
-if not logger.handlers:
-    logger.addHandler(new_handler)
+
+# Add handlers to the logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
 
 forward_logger = logging.getLogger("diffusers.models.unet_2d_condition")
 forward_logger.setLevel(logging.WARNING)
