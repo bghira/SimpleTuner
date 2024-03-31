@@ -654,9 +654,14 @@ class MetadataBackend:
 
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
-
+        worker_cls = Process
+        if (
+            torch.backends.mps.is_available()
+            or StateTracker.get_args().disable_multiprocessing
+        ):
+            worker_cls = Thread
         workers = [
-            Process(
+            worker_cls(
                 target=self._bucket_worker,
                 args=(
                     tqdm_queue,
