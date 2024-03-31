@@ -236,6 +236,9 @@ case $OPTIMIZER in
     "dadaptation")
         export OPTIMIZER_ARG="--use_dadaptation_optimizer"
         ;;
+    "adamw_stochastic")
+        export OPTIMIZER_ARG="--adam_bfloat16"
+        ;;
     *)
         echo "Unknown optimizer requested: $OPTIMIZER"
         exit 1

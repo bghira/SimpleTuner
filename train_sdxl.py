@@ -226,13 +226,13 @@ def main():
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
+    if args.allow_tf32 and torch.cuda.is_available():
         logger.info(
             "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
         )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    else:
+    elif torch.cuda.is_available():
         logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
@@ -1026,11 +1026,6 @@ def main():
     show_progress_bar = True
     if not accelerator.is_local_main_process:
         show_progress_bar = False
-    if (
-        training_logger_level == "DEBUG"
-        or os.environ.get("SIMPLETUNER_LOG_LEVEL") == "DEBUG"
-    ):
-        show_progress_bar = False
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         disable=not show_progress_bar,
@@ -1607,4 +1602,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.set_start_method("fork")
     main()

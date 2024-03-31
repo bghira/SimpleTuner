@@ -211,13 +211,13 @@ def main():
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32 and not torch.backends.mps.is_available():
+    if args.allow_tf32 and torch.cuda.is_available():
         logger.info(
             "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
         )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    elif torch.backends.cuda.is_available():
+    elif torch.cuda.is_available():
         logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
@@ -451,6 +451,12 @@ def main():
         extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
+    elif args.adam_bfloat16:
+        from helpers.training import adam_bfloat16
+
+        optimizer_class = adam_bfloat16.AdamWBF16
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -568,7 +574,7 @@ def main():
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16" or args.mixed_precision == "fp16":
+        if args.vae_dtype == "bf16" or args.mixed_precision == "bf16":
             vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
             vae_dtype = torch.float16
@@ -935,11 +941,6 @@ def main():
     # Only show the progress bar once on each machine.
     show_progress_bar = True
     if not accelerator.is_local_main_process:
-        show_progress_bar = False
-    if (
-        training_logger_level == "DEBUG"
-        or os.environ.get("SIMPLETUNER_LOG_LEVEL") == "DEBUG"
-    ):
         show_progress_bar = False
     progress_bar = tqdm(
         range(0, args.max_train_steps),
@@ -1469,7 +1470,15 @@ def main():
                 timestep_spacing="trailing",
                 rescale_betas_zero_snr=True,
             )
-            with torch.autocast(str(accelerator.device).replace(":0", "")):
+
+            if torch.backends.mps.is_available():
+                from contextlib import nullcontext
+
+                autocast_ctx = nullcontext()
+            else:
+                autocast_ctx = torch.autocast(accelerator.device.type)
+
+            with autocast_ctx:
                 validation_generator = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.seed or 0)
@@ -1491,8 +1500,8 @@ def main():
                             guidance_scale=args.validation_guidance,
                             guidance_rescale=args.validation_guidance_rescale,
                             generator=validation_generator,
-                            height=args.validation_resolution,
-                            width=args.validation_resolution,
+                            height=int(args.validation_resolution),
+                            width=int(args.validation_resolution),
                         ).images
                     )
 
@@ -1525,4 +1534,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.set_start_method("fork")
     main()

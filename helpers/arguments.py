@@ -1,4 +1,4 @@
-import argparse, os, random, time, json, logging
+import argparse, os, random, time, json, logging, sys
 from pathlib import Path
 
 logger = logging.getLogger("ArgsParser")
@@ -697,6 +697,11 @@ def parse_args(input_args=None):
         help="Epsilon value for the Adam optimizer",
     )
     parser.add_argument(
+        "--adam_bfloat16",
+        action="store_true",
+        help="Whether or not to use stochastic bf16 in Adam.",
+    )
+    parser.add_argument(
         "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     )
     parser.add_argument(
@@ -1117,6 +1122,10 @@ def parse_args(input_args=None):
             "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
             " Please use `huggingface-cli login` to authenticate with the Hub."
         )
+
+    if args.adam_bfloat16 and args.mixed_precision != "bf16":
+        logging.error("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
+        sys.exit(1)
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
