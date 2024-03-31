@@ -169,6 +169,9 @@ case $OPTIMIZER in
     "adamw8bit")
         export OPTIMIZER_ARG="--use_8bit_adam"
         ;;
+    "adamw_stochastic")
+        export OPTIMIZER_ARG="--adam_bfloat16"
+        ;;
     "adafactor")
         export OPTIMIZER_ARG="--use_adafactor_optimizer"
         ;;
