@@ -160,7 +160,7 @@ if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
     fi
     export EMA_ARGS="--use_ema --ema_decay=${EMA_DECAY}"
 fi
-# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadaptation_optimizer or nothing for plain adam.
+# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
 export OPTIMIZER_ARG=""
 case $OPTIMIZER in
     "adamw")
@@ -176,7 +176,7 @@ case $OPTIMIZER in
         export OPTIMIZER_ARG="--use_adafactor_optimizer"
         ;;
     "dadaptation")
-        export OPTIMIZER_ARG="--use_dadaptation_optimizer"
+        export OPTIMIZER_ARG="--use_dadapt_optimizer"
         ;;
     "prodigy")
         export OPTIMIZER_ARG="--use_prodigy_optimizer"

@@ -144,7 +144,7 @@ ARG_MAPPING = {
         "mapping": {
             "AdamW": "",
             "AdamW8bit": "use_8bit_adam",
-            "Dadapt": "use_dadaptation_optimizer",
+            "Dadapt": "use_dadapt_optimizer",
             # SGD is not supported.
             "SGDNesterov": None,
             "Adafactor": "use_adafactor_optimizer",
