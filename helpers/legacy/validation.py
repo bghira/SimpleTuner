@@ -204,7 +204,15 @@ def log_validations(
                         tokenizer=None,
                         vae=vae,
                         revision=args.revision,
-                        torch_dtype=weight_dtype,
+                        torch_dtype=(
+                            torch.float32
+                            if torch.backends.mps.is_available()
+                            else (
+                                torch.bfloat16
+                                if torch.cuda.is_available()
+                                else torch.float32
+                            )
+                        ),
                     )
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
                     args.validation_noise_scheduler

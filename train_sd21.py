@@ -560,16 +560,14 @@ def main():
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-    logging.info(f"Moving VAE to GPU, type: {weight_dtype}..")
-    # Move vae and text_encoder to device and cast to weight_dtype
-    vae.to(accelerator.device, dtype=weight_dtype)
+    # Move text_encoder to device and cast to weight_dtype)
     logging.info("Moving text encoder to GPU..")
     text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.float32
-    if hasattr(args, "vae_dtype"):
+    vae_dtype = torch.float16
+    if hasattr(args, "vae_dtype") and not torch.backends.mps.is_available():
         logger.info(
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
@@ -577,12 +575,13 @@ def main():
         if args.vae_dtype == "bf16" or args.mixed_precision == "bf16":
             vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
-            vae_dtype = torch.float16
+            logger.warning("SD 2.1 VAE does not support fp16. Using bf16 instead.")
+            vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
             vae_dtype = torch.float32
-    logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+    logger.debug(f"Moving VAE to GPU with {vae_dtype} precision level.")
     vae.to(accelerator.device, dtype=vae_dtype)
     logger.info(f"Loaded VAE into VRAM.")
     StateTracker.set_vae_dtype(vae_dtype)
@@ -1460,7 +1459,15 @@ def main():
 
         if validation_prompts:
             validation_images = []
-            pipeline = pipeline.to(accelerator.device, dtype=weight_dtype)
+            pipeline = pipeline.to(
+                accelerator.device,
+                dtype=(
+                    torch.float32
+                    if torch.backends.mps.is_available()
+                    else torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                ),
+            )
+            pipeline.components["vae"].to(vae_dtype)
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler
             ].from_pretrained(

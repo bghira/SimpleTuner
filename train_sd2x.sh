@@ -221,7 +221,7 @@ if [ -n "$ALLOW_TF32" ] && [[ "$ALLOW_TF32" == "true" ]]; then
     export TF32_ARG="--allow_tf32"
 fi
 
-# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadaptation_optimizer or nothing for plain adam.
+# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
 export OPTIMIZER_ARG=""
 case $OPTIMIZER in
     "adamw")
@@ -234,7 +234,7 @@ case $OPTIMIZER in
         export OPTIMIZER_ARG="--use_adafactor_optimizer"
         ;;
     "dadaptation")
-        export OPTIMIZER_ARG="--use_dadaptation_optimizer"
+        export OPTIMIZER_ARG="--use_dadapt_optimizer"
         ;;
     "adamw_stochastic")
         export OPTIMIZER_ARG="--adam_bfloat16"
