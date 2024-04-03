@@ -749,7 +749,7 @@ def main():
         accelerator.native_amp = False
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
-    if torch.backends.mps.is_available():
+    if torch.backends.mps.is_available() or args.unet_attention_slice:
         unet.set_attention_slice()
 
     lr_scheduler = results[1]
