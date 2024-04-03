@@ -205,13 +205,10 @@ def log_validations(
                         vae=vae,
                         revision=args.revision,
                         torch_dtype=(
-                            torch.float32
+                            torch.bfloat16
                             if torch.backends.mps.is_available()
-                            else (
-                                torch.bfloat16
-                                if torch.cuda.is_available()
-                                else torch.float32
-                            )
+                            or torch.cuda.is_available()
+                            else torch.float32
                         ),
                     )
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
@@ -241,148 +238,139 @@ def log_validations(
             if not os.path.exists(val_save_dir):
                 os.makedirs(val_save_dir)
 
-            from contextlib import nullcontext
-
-            if torch.cuda.is_available():
-                validation_ctx = torch.cuda.amp.autocast(
-                    str(accelerator.device).replace(":0", "")
-                )
-            elif torch.backends.mps.is_available():
-                validation_ctx = nullcontext()
-
-            with validation_ctx:
-                validation_images = []
-                pipeline = pipeline.to(accelerator.device)
-                extra_validation_kwargs = {}
-                if not args.validation_randomize:
-                    extra_validation_kwargs["generator"] = torch.Generator(
-                        device=accelerator.device
-                    ).manual_seed(args.validation_seed or args.seed or 0)
-                for validation_prompt in tqdm(
-                    validation_prompts,
-                    leave=False,
-                    ncols=125,
-                    desc="Generating validation images",
-                ):
-                    logger.debug(f"Validation image: {validation_prompt}")
-                    # Each validation prompt needs its own embed.
-                    if StateTracker.get_model_type() == "sdxl":
-                        (
+            validation_images = []
+            pipeline = pipeline.to(accelerator.device)
+            extra_validation_kwargs = {}
+            if not args.validation_randomize:
+                extra_validation_kwargs["generator"] = torch.Generator(
+                    device=accelerator.device
+                ).manual_seed(args.validation_seed or args.seed or 0)
+            for validation_prompt in tqdm(
+                validation_prompts,
+                leave=False,
+                ncols=125,
+                desc="Generating validation images",
+            ):
+                logger.debug(f"Validation image: {validation_prompt}")
+                # Each validation prompt needs its own embed.
+                if StateTracker.get_model_type() == "sdxl":
+                    (
+                        current_validation_prompt_embeds,
+                        current_validation_pooled_embeds,
+                    ) = embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                    if prompt_handler is not None:
+                        for text_encoder in prompt_handler.text_encoders:
+                            text_encoder = text_encoder.to(accelerator.device)
+                        [
                             current_validation_prompt_embeds,
-                            current_validation_pooled_embeds,
-                        ) = embed_cache.compute_embeddings_for_prompts(
-                            [validation_prompt]
-                        )
-                        if prompt_handler is not None:
-                            for text_encoder in prompt_handler.text_encoders:
-                                text_encoder = text_encoder.to(accelerator.device)
+                            validation_negative_prompt_embeds,
+                        ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
                             [
                                 current_validation_prompt_embeds,
                                 validation_negative_prompt_embeds,
-                            ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
-                                [
-                                    current_validation_prompt_embeds,
-                                    validation_negative_prompt_embeds,
-                                ]
-                            )
-                            for text_encoder in prompt_handler.text_encoders:
-                                text_encoder = text_encoder.to("cpu")
-                        current_validation_pooled_embeds = (
-                            current_validation_pooled_embeds.to(
-                                device=accelerator.device, dtype=weight_dtype
-                            )
+                            ]
                         )
-                        validation_negative_pooled_embeds = (
-                            validation_negative_pooled_embeds.to(
-                                device=accelerator.device, dtype=weight_dtype
-                            )
+                        for text_encoder in prompt_handler.text_encoders:
+                            text_encoder = text_encoder.to("cpu")
+                    current_validation_pooled_embeds = (
+                        current_validation_pooled_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
                         )
-                    elif StateTracker.get_model_type() == "legacy":
-                        validation_negative_pooled_embeds = None
-                        current_validation_pooled_embeds = None
-                        current_validation_prompt_embeds = (
-                            embed_cache.compute_embeddings_for_prompts(
-                                [validation_prompt]
-                            )
-                        )[0]
-                        logger.debug(
-                            f"Validations received the prompt embed: positive={current_validation_prompt_embeds.shape}, negative={validation_negative_prompt_embeds.shape}"
+                    )
+                    validation_negative_pooled_embeds = (
+                        validation_negative_pooled_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
                         )
-                        if prompt_handler is not None:
-                            for text_encoder in prompt_handler.text_encoders:
-                                if text_encoder:
-                                    text_encoder = text_encoder.to(accelerator.device)
-                            [
-                                current_validation_prompt_embeds,
-                                validation_negative_prompt_embeds,
-                            ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
-                                [
-                                    current_validation_prompt_embeds,
-                                    validation_negative_prompt_embeds,
-                                ]
-                            )
-                            for text_encoder in prompt_handler.text_encoders:
-                                if text_encoder:
-                                    text_encoder = text_encoder.to(accelerator.device)
+                    )
+                elif StateTracker.get_model_type() == "legacy":
+                    validation_negative_pooled_embeds = None
+                    current_validation_pooled_embeds = None
                     current_validation_prompt_embeds = (
-                        current_validation_prompt_embeds.to(
-                            device=accelerator.device, dtype=weight_dtype
-                        )
-                    )
-                    validation_negative_prompt_embeds = (
-                        validation_negative_prompt_embeds.to(
-                            device=accelerator.device, dtype=weight_dtype
-                        )
-                    )
-
+                        embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                    )[0]
                     logger.debug(
-                        f"Generating validation image: {validation_prompt}"
-                        "\n Device allocations:"
-                        f"\n -> unet on {pipeline.unet.device}"
-                        f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
-                        f"\n -> vae on {pipeline.vae.device}"
-                        f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
-                        f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
-                        f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
-                        f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
+                        f"Validations received the prompt embed: positive={current_validation_prompt_embeds.shape}, negative={validation_negative_prompt_embeds.shape}"
                     )
+                    if prompt_handler is not None:
+                        for text_encoder in prompt_handler.text_encoders:
+                            if text_encoder:
+                                text_encoder = text_encoder.to(accelerator.device)
+                        [
+                            current_validation_prompt_embeds,
+                            validation_negative_prompt_embeds,
+                        ] = prompt_handler.compel.pad_conditioning_tensors_to_same_length(
+                            [
+                                current_validation_prompt_embeds,
+                                validation_negative_prompt_embeds,
+                            ]
+                        )
+                        for text_encoder in prompt_handler.text_encoders:
+                            if text_encoder:
+                                text_encoder = text_encoder.to(accelerator.device)
+                current_validation_prompt_embeds = current_validation_prompt_embeds.to(
+                    device=accelerator.device, dtype=weight_dtype
+                )
+                validation_negative_prompt_embeds = (
+                    validation_negative_prompt_embeds.to(
+                        device=accelerator.device, dtype=weight_dtype
+                    )
+                )
 
-                    # logger.debug(
-                    #     f"Generating validation image: {validation_prompt}"
-                    #     f"\n Weight dtypes:"
-                    #     f"\n -> unet: {pipeline.unet.dtype}"
-                    #     f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
-                    #     f"\n -> vae: {pipeline.vae.dtype}"
-                    #     f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
-                    #     f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
-                    #     f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
-                    #     f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
-                    # )
-                    # logger.debug(
-                    #     f"Generating validation image: {validation_prompt}"
-                    #     f"\n -> Number of images: {args.num_validation_images}"
-                    #     f"\n -> Number of inference steps: {args.validation_num_inference_steps}"
-                    #     f"\n -> Guidance scale: {args.validation_guidance}"
-                    #     f"\n -> Guidance rescale: {args.validation_guidance_rescale}"
-                    #     f"\n -> Resolution: {args.validation_resolution}"
-                    #     f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
-                    # )
-                    validation_images.extend(
-                        pipeline(
-                            prompt_embeds=current_validation_prompt_embeds,
-                            pooled_prompt_embeds=current_validation_pooled_embeds,
-                            negative_prompt_embeds=validation_negative_prompt_embeds,
-                            negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                            num_images_per_prompt=args.num_validation_images,
-                            num_inference_steps=args.validation_num_inference_steps,
-                            guidance_scale=args.validation_guidance,
-                            guidance_rescale=args.validation_guidance_rescale,
-                            height=int(args.validation_resolution),
-                            width=int(args.validation_resolution),
-                            **extra_validation_kwargs,
-                        ).images
+                logger.debug(
+                    f"Generating validation image: {validation_prompt}"
+                    "\n Device allocations:"
+                    f"\n -> unet on {pipeline.unet.device}"
+                    f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
+                    f"\n -> vae on {pipeline.vae.device}"
+                    f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
+                    f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
+                    f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
+                    f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
+                )
+
+                # logger.debug(
+                #     f"Generating validation image: {validation_prompt}"
+                #     f"\n Weight dtypes:"
+                #     f"\n -> unet: {pipeline.unet.dtype}"
+                #     f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
+                #     f"\n -> vae: {pipeline.vae.dtype}"
+                #     f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
+                #     f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
+                #     f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
+                #     f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
+                # )
+                # logger.debug(
+                #     f"Generating validation image: {validation_prompt}"
+                #     f"\n -> Number of images: {args.num_validation_images}"
+                #     f"\n -> Number of inference steps: {args.validation_num_inference_steps}"
+                #     f"\n -> Guidance scale: {args.validation_guidance}"
+                #     f"\n -> Guidance rescale: {args.validation_guidance_rescale}"
+                #     f"\n -> Resolution: {args.validation_resolution}"
+                #     f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
+                # )
+                validation_images.extend(
+                    pipeline(
+                        prompt_embeds=current_validation_prompt_embeds,
+                        pooled_prompt_embeds=current_validation_pooled_embeds,
+                        negative_prompt_embeds=validation_negative_prompt_embeds,
+                        negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
+                        num_images_per_prompt=args.num_validation_images,
+                        num_inference_steps=args.validation_num_inference_steps,
+                        guidance_scale=args.validation_guidance,
+                        guidance_rescale=args.validation_guidance_rescale,
+                        height=int(args.validation_resolution),
+                        width=int(args.validation_resolution),
+                        **extra_validation_kwargs,
+                    ).images
+                )
+                validation_images[-1].save(
+                    os.path.join(
+                        val_save_dir,
+                        f"step_{global_step}_val_img_{len(validation_images)}.png",
                     )
-                    logger.debug(f"Completed generating image: {validation_prompt}")
+                )
+
+                logger.debug(f"Completed generating image: {validation_prompt}")
 
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
@@ -404,20 +392,12 @@ def log_validations(
                     )
                     del validation_luminance
                     tracker.log(validation_document, step=global_step)
-            val_img_idx = 0
-            for a_val_img in validation_images:
-                a_val_img.save(
-                    os.path.join(
-                        val_save_dir,
-                        f"step_{global_step}_val_img_{val_img_idx}.png",
-                    )
-                )
-                val_img_idx += 1
 
             if validation_type == "validation" and args.use_ema:
                 # Switch back to the original UNet parameters.
                 ema_unet.restore(unet.parameters())
-            if not args.keep_vae_loaded:
+            if not args.keep_vae_loaded and not args.encode_during_training:
+                # only delete the vae if we're not encoding embeds during training
                 del vae
                 vae = None
             del pipeline
