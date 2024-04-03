@@ -50,7 +50,7 @@ if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
 logger.setLevel(target_level)
 if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
     training_logger_level = os.environ.get(
-        "SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "WARNING"
+        "SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO"
     )
 training_logger.setLevel(training_logger_level)
 
@@ -233,18 +233,16 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
+    weight_dtype = torch.bfloat16
     if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-        logger.warning(
-            f'Using "--fp16" with the SD 2.x VAE model could result in NaN (Not a Number) issues. Using "--bf16" is the recommended precision level.'
+        raise ValueError(
+            "Stable Diffusion 2.x does not support fp16 training. Pure bf16 training is available and is recommended instead."
         )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        logger.info("Using bfloat16 precision level.")
     else:
-        logger.warning(
-            "Neither '--bf16' or '--fp16' were provided, so we will run in float32 mode. This is very slow and memory-hungry. Use bf16 if possible."
+        logger.info(
+            "Since --mixed_precision was not set, we will use pure bf16 training mode."
         )
     StateTracker.set_weight_dtype(weight_dtype)
 
@@ -297,7 +295,7 @@ def main():
         )
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
+    ).to(weight_dtype)
     if args.freeze_unet_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
 
@@ -345,26 +343,6 @@ def main():
         unet.enable_gradient_checkpointing()
         if args.train_text_encoder:
             text_encoder.gradient_checkpointing_enable()
-
-    # Check that all trainable models are in full precision
-    low_precision_error_string = (
-        "Please make sure to always have all model weights in full float32 precision when starting training - even if"
-        " doing mixed precision training. copy of the weights should still be float32."
-    )
-
-    if accelerator.unwrap_model(unet).dtype != torch.float32:
-        raise ValueError(
-            f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}"
-        )
-
-    if (
-        args.train_text_encoder
-        and accelerator.unwrap_model(text_encoder).dtype != torch.float32
-    ):
-        raise ValueError(
-            f"Text encoder loaded as datatype {accelerator.unwrap_model(text_encoder).dtype}."
-            f" {low_precision_error_string}"
-        )
 
     # Initialize the optimizer
     extra_optimizer_args = {
@@ -555,9 +533,11 @@ def main():
         )
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
+    weight_dtype = torch.bfloat16
     if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
+        raise ValueError(
+            "Stable Diffusion 2.1 cannot be trained in mixed-precision due to a numeric overflow in the final two up blocks of the u-net. Use bf16 instead."
+        )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
     # Move text_encoder to device and cast to weight_dtype)
@@ -566,8 +546,8 @@ def main():
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.float16
-    if hasattr(args, "vae_dtype") and not torch.backends.mps.is_available():
+    vae_dtype = torch.bfloat16
+    if hasattr(args, "vae_dtype"):
         logger.info(
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
@@ -575,12 +555,11 @@ def main():
         if args.vae_dtype == "bf16" or args.mixed_precision == "bf16":
             vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
-            logger.warning("SD 2.1 VAE does not support fp16. Using bf16 instead.")
-            vae_dtype = torch.bfloat16
+            vae_dtype = torch.float16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.float32
+            vae_dtype = torch.bfloat16
     logger.debug(f"Moving VAE to GPU with {vae_dtype} precision level.")
     vae.to(accelerator.device, dtype=vae_dtype)
     logger.info(f"Loaded VAE into VRAM.")
@@ -770,6 +749,9 @@ def main():
         accelerator.native_amp = False
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
+    if torch.backends.mps.is_available():
+        unet.set_attention_slice()
+
     lr_scheduler = results[1]
     optimizer = results[2]
     # The rest of the entries are dataloaders:
@@ -922,7 +904,7 @@ def main():
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    logger.info(f"  Num batches = {total_num_batches}")
+    logger.info(f"  Num batches = {total_num_batches}, unet dtype: {unet.dtype}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Current Epoch = {first_epoch}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -1462,7 +1444,7 @@ def main():
             pipeline = pipeline.to(
                 accelerator.device,
                 dtype=(
-                    torch.float32
+                    torch.bfloat16
                     if torch.backends.mps.is_available()
                     else torch.bfloat16 if torch.cuda.is_available() else torch.float32
                 ),
@@ -1478,12 +1460,7 @@ def main():
                 rescale_betas_zero_snr=True,
             )
 
-            if torch.backends.mps.is_available():
-                from contextlib import nullcontext
-
-                autocast_ctx = nullcontext()
-            else:
-                autocast_ctx = torch.autocast(accelerator.device.type)
+            autocast_ctx = accelerator.autocast()
 
             with autocast_ctx:
                 validation_generator = torch.Generator(
