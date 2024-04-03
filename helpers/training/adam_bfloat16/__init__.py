@@ -57,12 +57,10 @@ class AdamWBF16(Optimizer):
     def step(self, zero_grad: bool = False):
         """Performs a single optimization step."""
         for group in self.param_groups:
-            print(f"betas: {group['betas']}")
             beta1, beta2 = group["betas"]
 
             for p in group["params"]:
                 if p.grad is not None:
-                    print(f"p dtype: {p.dtype}")
                     state = self.state[p]
                     # Lazy state initialization
                     if len(state) == 0:
@@ -72,7 +70,6 @@ class AdamWBF16(Optimizer):
                         state["exp_avg"] = torch.zeros_like(
                             p, memory_format=torch.preserve_format
                         )
-                        print(f"exp avg dtype: {state['exp_avg'].dtype}")
                         # Exponential moving average of squared gradient values
                         state["exp_avg_sq"] = torch.zeros_like(
                             p, memory_format=torch.preserve_format
@@ -99,19 +96,6 @@ class AdamWBF16(Optimizer):
                         accum_decay > self.decay_threshold
                     ) * accum_decay
                     state["accumulated_decay"] -= decay_this_iteration
-                    # Print all args and their dtypes (if it has one)
-                    print(f"grad dtype: {grad.dtype}")
-                    print(f"p dtype: {p.dtype}")
-                    print(f"shift dtype: {state['shift'].dtype}")
-                    print(f"exp_avg dtype: {state['exp_avg'].dtype}")
-                    print(f"exp_avg_sq dtype: {state['exp_avg_sq'].dtype}")
-                    print(f"beta1: {beta1}")
-                    print(f"beta2: {beta2}")
-                    print(f"step: {state['step']}")
-                    print(f"lr: {lr}")
-                    print(f"eps: {group['eps']}")
-                    print(f"decay_this_iteration: {decay_this_iteration}")
-                    print(f"zero_grad: {zero_grad}")
 
                     _make_step(
                         grad,
@@ -144,11 +128,9 @@ def _make_step(
     zero_grad: bool,
 ):
     # Originally:
-    print(f"choobies 0")
     # exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
     exp_avg.mul_(beta1)
     add_stochastic_(exp_avg, grad, alpha=1 - beta1)
-    print(f"choobies 1")
     exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
 
     denom_correction = (1 - beta2**step) ** 0.5
@@ -159,7 +141,7 @@ def _make_step(
     #     exp_avg_sq.sqrt().add_(eps, alpha=1),
     #     value=-lr * denom_correction,
     # )
-    print(f"choobies 2")
+
     addcdiv_stochastic_(
         shift,
         exp_avg,
@@ -176,7 +158,6 @@ def _make_step(
     # shift.add_(buffer.sub_(p))
     add_stochastic_(shift, buffer.sub_(p))
 
-    print(f"choobies 6")
     if decay_this_iteration > 0:
         shift.add_(p, alpha=-decay_this_iteration)
         # Do NOT do this, it will cause the model to become unstable.
