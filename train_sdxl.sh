@@ -4,6 +4,9 @@ source sdxl-env.sh.example
 # Pull config from env.sh
 [ -f "sdxl-env.sh" ] && source sdxl-env.sh
 
+export PLATFORM
+PLATFORM=$(uname -s)
+
 if [ -z "${ACCELERATE_EXTRA_ARGS}" ]; then
     ACCELERATE_EXTRA_ARGS=""
 fi
@@ -23,11 +26,10 @@ if [ -z "${MIXED_PRECISION}" ]; then
     MIXED_PRECISION=bf16
 fi
 
-export PLATFORM
-PLATFORM=$(uname -s)
-if [[ "$PLATFORM" == "Darwin" ]]; then
-    echo "Running on macOS, setting mixed precision to fp16."
-    export MIXED_PRECISION="fp16"
+export PURE_BF16_ARGS=""
+if ! [ -z "$USE_PURE_BF16" ] && [[ "$USE_PURE_BF16" == "true" ]]; then
+    PURE_BF16_ARGS="--adamw_bf16"
+    MIXED_PRECISION="bf16"
 fi
 
 if [ -z "${TRAINING_SEED}" ]; then
@@ -169,7 +171,7 @@ case $OPTIMIZER in
     "adamw8bit")
         export OPTIMIZER_ARG="--use_8bit_adam"
         ;;
-    "adamw_stochastic")
+    "adamw_bf16")
         export OPTIMIZER_ARG="--adam_bfloat16"
         ;;
     "adafactor")
@@ -213,6 +215,9 @@ export XFORMERS_ARG="--enable_xformers_memory_efficient_attention"
 if ! [ -z "$USE_XFORMERS" ] && [[ "$USE_XFORMERS" == "false" ]]; then
     export XFORMERS_ARG=""
 fi
+if [[ "$PLATFORM" == "Darwin" ]]; then
+    export XFORMERS_ARG=""
+fi
 
 if [ -z "$DATALOADER_CONFIG" ]; then
     printf "DATALOADER_CONFIG not set, cannot continue. See multidatabackend.json.example.\n"
@@ -241,6 +246,9 @@ fi
 export TF32_ARG=""
 if [ -n "$ALLOW_TF32" ] && [[ "$ALLOW_TF32" == "true" ]]; then
     export TF32_ARG="--allow_tf32"
+fi
+if [[ "$PLATFORM" == "Darwin" ]]; then
+    export TF32_ARG=""
 fi
 
 export DORA_ARGS=""
