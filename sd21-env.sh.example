@@ -109,6 +109,7 @@ export TEXT_ENCODER_FREEZE_STRATEGY='before' # before, after, between.
 export TEXT_ENCODER_FREEZE_BEFORE=22         # Ignored when using 'after' strategy.
 export TEXT_ENCODER_FREEZE_AFTER=24          # Ignored when using 'before' strategy.
 export MIXED_PRECISION="bf16"                # Might not be supported on all GPUs. fp32 will be needed for others.
+export PURE_BF16=true                        # Will not use mixed precision, but rather pure bf16 (bf16 requires pytorch 2.3 on MPS.)
 export TRAINING_DYNAMO_BACKEND='no'          # or 'inductor' if you want to brave PyTorch 2 compile issues
 export ALLOW_TF32="true"                     # Some older GPUs don't support tfloat32, set to "false" in this case.
 # Choices: adamw, adamw8bit, adafactor, dadaptation
