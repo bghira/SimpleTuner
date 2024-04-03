@@ -1,5 +1,46 @@
 import torch
-from torch import Tensor
+from torch import Tensor, FloatTensor
+
+
+def swap_first_and_last_dims(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Swap the first dimension with the last dimension of a tensor.
+
+    Args:
+        tensor (torch.Tensor): The input tensor of any shape.
+
+    Returns:
+        torch.Tensor: A tensor with the first dimension swapped with the last.
+    """
+    # Get the total number of dimensions
+    num_dims = len(tensor.shape)
+
+    # Create a new order of dimensions
+    new_order = list(range(1, num_dims)) + [0]
+
+    # Permute the tensor according to the new order
+    return tensor.permute(*new_order)
+
+
+def swap_back_first_and_last_dims(tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Swap back the first dimension with the last dimension of a tensor
+    to its original shape after a swap.
+
+    Args:
+        tensor (torch.Tensor): The tensor that had its first and last dimensions swapped.
+
+    Returns:
+        torch.Tensor: A tensor with its original shape restored.
+    """
+    # Get the total number of dimensions
+    num_dims = len(tensor.shape)
+
+    # Create a new order to reverse the previous swapping
+    new_order = [num_dims - 1] + list(range(0, num_dims - 1))
+
+    # Permute the tensor according to the new order
+    return tensor.permute(*new_order)
 
 
 def copy_stochastic_(target: Tensor, source: Tensor):
@@ -30,40 +71,47 @@ def copy_stochastic_(target: Tensor, source: Tensor):
     del result
 
 
-def add_stochastic_(input: Tensor, other: Tensor, alpha: float = 1.0):
+def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
     """
     adds other to input using stochastic rounding
 
     Args:
-        input: the input tensor with dtype=bfloat16
+        _input: the input tensor with dtype=bfloat16
         other: the other tensor
         alpha: a multiplier for other
     """
+    _input = _input.to(torch.float32)
     if other.dtype == torch.float32:
         result = other.clone()
     else:
         result = other.to(dtype=torch.float32)
 
-    result.add_(input, alpha=alpha)
-    copy_stochastic_(input, result)
+    if _input.size(-1) % 2 != 0 and _input.device.type == "mps":
+        _input = swap_first_and_last_dims(_input)
+        result = swap_first_and_last_dims(result)
+    result.add_(_input, alpha=alpha)
+    if _input.size(-1) % 2 != 0 and _input.device.type == "mps":
+        _input = swap_back_first_and_last_dims(_input)
+        result = swap_back_first_and_last_dims(result)
+    copy_stochastic_(_input, result)
 
 
 def addcdiv_stochastic_(
-    input: Tensor, tensor1: Tensor, tensor2: Tensor, value: float = 1.0
+    _input: Tensor, tensor1: Tensor, tensor2: Tensor, value: float = 1.0
 ):
     """
     adds (tensor1 / tensor2 * value) to input using stochastic rounding
 
     Args:
-        input: the input tensor with dtype=bfloat16
+        _input: the input tensor with dtype=bfloat16
         tensor1: the numerator tensor
         tensor2: the denominator tensor
         value: a multiplier for tensor1/tensor2
     """
-    if input.dtype == torch.float32:
-        result = input.clone()
+    if _input.dtype == torch.float32:
+        result = _input.clone()
     else:
-        result = input.to(dtype=torch.float32)
+        result = _input.to(dtype=torch.float32)
 
     result.addcdiv_(tensor1, tensor2, value=value)
-    copy_stochastic_(input, result)
+    copy_stochastic_(_input, result)
