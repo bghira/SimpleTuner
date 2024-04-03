@@ -85,20 +85,31 @@ def fetch_latent(fp, data_backend_id: str):
 
 def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        latents = list(
-            executor.map(fetch_latent, filepaths, [data_backend_id] * len(filepaths))
-        )
+    try:
+        if StateTracker.get_args().encode_during_training:
+            latents = StateTracker.get_vaecache(id=data_backend_id).encode_images(
+                [None] * len(filepaths), filepaths
+            )
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                latents = list(
+                    executor.map(
+                        fetch_latent, filepaths, [data_backend_id] * len(filepaths)
+                    )
+                )
+    except Exception as e:
+        logger.error(f"(id={data_backend_id}) Error while computing latents: {e}")
+        raise
 
     # Validate shapes
     test_shape = latents[0].shape
     for idx, latent in enumerate(latents):
         if latent.shape != test_shape:
             raise ValueError(
-                f"File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+                f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
             )
 
-    debug_log(" -> stacking latents")
+    debug_log(f" -> stacking {len(latents)} latents")
     return torch.stack(latents)
 
 
@@ -107,7 +118,7 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl):
     if caption == "" or not caption:
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
-        logger.debug(
+        debug_log(
             f"Hashing caption '{caption}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )
     if is_sdxl:
@@ -153,7 +164,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             )
         )
 
-    logger.debug(f"Got embeddings: {embeddings}")
+    debug_log(f"Got embeddings: {embeddings}")
     if is_sdxl:
         # Separate the tuples
         prompt_embeds = [t[0] for t in embeddings]
@@ -167,6 +178,10 @@ def compute_prompt_embeddings(captions, text_embed_cache):
 
 def gather_conditional_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = []
+    if len(examples) != len(latents):
+        raise ValueError(
+            f"Number of examples ({len(examples)}) and latents ({len(latents)}) must match."
+        )
 
     for idx, example in enumerate(examples):
         # Compute time IDs for all examples

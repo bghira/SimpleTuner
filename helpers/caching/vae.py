@@ -45,6 +45,7 @@ class VAECache:
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
         max_workers: int = 32,
+        encode_during_training: bool = False,
     ):
         self.id = id
         if data_backend.id != id:
@@ -73,6 +74,8 @@ class VAECache:
         self.metadata_backend = metadata_backend
         if not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
+
+        self.encode_during_training = encode_during_training
 
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
@@ -139,7 +142,9 @@ class VAECache:
             return True
         return False
 
-    def _read_from_storage(self, filename: str) -> torch.Tensor:
+    def _read_from_storage(
+        self, filename: str, hide_errors: bool = False
+    ) -> torch.Tensor:
         """Read a cache object from the storage backend.
 
         Args:
@@ -148,13 +153,29 @@ class VAECache:
         Returns:
             torch.Tensor: The cached Tensor object.
         """
-        return self.data_backend.torch_load(filename).to("cpu")
+        if os.path.splitext(filename)[1] != ".pt":
+            return self.data_backend.read_image(filename)
+        try:
+            return self.data_backend.torch_load(filename).to("cpu")
+        except Exception as e:
+            if hide_errors:
+                logger.debug(
+                    f"Filename: {filename}, returning None even though read_from_storage found no object, since hide_errors is True: {e}"
+                )
+                return None
+            raise e
 
     def retrieve_from_cache(self, filepath: str):
         """
         Use the encode_images method to emulate a single image encoding.
         """
         return self.encode_images([None], [filepath])[0]
+
+    def retreve_batch_from_cache(self, filepaths: list):
+        """
+        Use the encode_images method to emulate a batch of image encodings.
+        """
+        return self.encode_images([None] * len(filepaths), filepaths)
 
     def discover_all_files(self):
         """Identify all files in the data backend."""
@@ -360,6 +381,9 @@ class VAECache:
         If load_from_cache=True, we read from the VAE cache rather than encode.
         If load_from_cache=True, we will throw an exception if the entry is not found.
         """
+        logger.debug(
+            f"Begin call to encode_images, images: {type(images)}, filepaths: {type(filepaths)}, load_from_cache: {load_from_cache}"
+        )
         batch_size = len(images)
         if batch_size != len(filepaths):
             raise ValueError("Mismatch between number of images and filepaths.")
@@ -380,32 +404,102 @@ class VAECache:
             for i, filename in enumerate(full_filenames)
             if i in uncached_image_indices
         ]
-        # if len(uncached_image_indices) > 0:
-        #     self.debug_log(
-        #         f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
-        #     )
-        #     self.debug_log(
-        #         f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
-        #     )
-        uncached_images = [images[i] for i in uncached_image_indices]
+        if len(uncached_image_indices) > 0:
+            self.debug_log(
+                f"Found {len(uncached_image_indices)} uncached images (truncated): {uncached_image_indices[:5]}"
+            )
+            self.debug_log(
+                f"Received full filenames {len(full_filenames)} (truncated): {full_filenames[:5]}"
+            )
 
-        if len(uncached_image_indices) > 0 and load_from_cache:
+        # We need to populate any uncached images with the actual image data if they are None.
+        missing_images = [
+            i
+            for i, image in enumerate(images)
+            if i in uncached_image_indices and image is None
+        ]
+        logger.debug(
+            f"Encoding during training: {self.encode_during_training}, load_from_cache: {load_from_cache}, uncached_image_indices: {uncached_image_indices}, missing_images: {missing_images}"
+        )
+        missing_image_pixel_values = []
+        written_latents = []
+        if len(missing_images) > 0 and self.encode_during_training:
+            missing_image_paths = [filepaths[i] for i in missing_images]
+            logger.debug(f"Missing image paths: {missing_image_paths}")
+            missing_image_data = [
+                self._read_from_storage_concurrently(
+                    missing_image_paths, hide_errors=True
+                ).__next__()[1]
+                for i in missing_images
+            ]
+            logger.debug(f"Missing image data: {missing_image_data}")
+            missing_image_pixel_values = self._process_images_in_batch(
+                missing_image_paths, missing_image_data, disable_queue=True
+            )
+            logger.debug(
+                f"Missing image pixel values: {type(missing_image_pixel_values)}"
+            )
+            missing_image_vae_outputs = self._encode_images_in_batch(
+                image_pixel_values=missing_image_pixel_values, disable_queue=True
+            )
+            logger.debug(f"Missing image VAE outputs: {missing_image_vae_outputs}")
+            written_latents = self._write_latents_in_batch(missing_image_vae_outputs)
+            if len(written_latents) == len(images):
+                logger.debug(
+                    f"Returning {len(written_latents)}, as we had only {len(images)} images to encode"
+                )
+                return written_latents
+            logger.debug(
+                f"Gathered {len(written_latents)} written latents, continuing to retrieve cached entries"
+            )
+
+        if len(uncached_image_indices) > 0:
+            uncached_images = [images[i] for i in uncached_image_indices]
+            logger.debug(
+                f"Running vanilla encode_images, all {len(uncached_images)} images are available: {uncached_image_indices}"
+            )
+        elif len(missing_images) > 0 and len(missing_image_pixel_values) > 0:
+            uncached_images = []
+            for i in uncached_image_indices:
+                if images[i] is not None:
+                    uncached_images.append(images[i])
+                elif i in missing_image_pixel_values:
+                    uncached_images.append(missing_image_pixel_values[i])
+            logger.debug(
+                f"Running encode_images with missing images: {uncached_images}"
+            )
+
+        if (
+            len(uncached_image_indices) > 0
+            and load_from_cache
+            and not self.encode_during_training
+        ):
             # We wanted only uncached images. Something went wrong.
             raise Exception(
                 f"(id={self.id}) Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_image_paths}"
             )
 
+        latents = []
         if load_from_cache:
             # If all images are cached, simply load them
-            latents = [self._read_from_storage(filename) for filename in full_filenames]
-        elif len(uncached_images) > 0:
-            # Only process images not found in cache
+            logger.debug(f"Attempting to read latents from storage: {full_filenames}")
+            latents = [
+                self._read_from_storage(
+                    filename, hide_errors=self.encode_during_training
+                )
+                for filename in full_filenames
+                if filename not in uncached_images
+            ]
+
+        if len(uncached_images) > 0:
+            # Process images not found in cache
+            logger.debug(f"Processing {len(uncached_images)} uncached images")
             with torch.no_grad():
                 # Debug log the size of each image:
                 for image in uncached_images:
                     self.debug_log(f"Image size: {image.size()}")
                 processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=StateTracker.get_weight_dtype()
+                    self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 latents_uncached = self.vae.encode(
                     processed_images
@@ -413,7 +507,6 @@ class VAECache:
                 latents_uncached = latents_uncached * self.vae.config.scaling_factor
 
             # Prepare final latents list by combining cached and newly computed latents
-            latents = []
             cached_idx, uncached_idx = 0, 0
             for i in range(batch_size):
                 if i in uncached_image_indices:
@@ -423,16 +516,27 @@ class VAECache:
                     latents.append(self._read_from_storage(full_filenames[i]))
                     cached_idx += 1
         else:
-            return None
+            logger.debug(
+                f"No uncached images to retrieve, {uncached_images} or missing images: {missing_images}"
+            )
+        logger.debug(f"completed encode_images, returning {len(latents)} latents")
         return latents
 
-    def _write_latents_in_batch(self):
+    def _write_latents_in_batch(self, input_latents: list = None):
         # Pull the 'filepaths' and 'latents' from self.write_queue
         filepaths, latents = [], []
-        qlen = self.write_queue.qsize()
-        self.debug_log(f"We have {qlen} latents to write to disk.")
+        if input_latents is not None:
+            qlen = len(input_latents)
+            self.debug_log(f"We have {len(input_latents)} latents to write to disk.")
+        else:
+            qlen = self.write_queue.qsize()
+            self.debug_log(f"We have {qlen} latents to write to disk.")
+
         for idx in range(0, qlen):
-            output_file, filepath, latent_vector = self.write_queue.get()
+            if input_latents:
+                output_file, filepath, latent_vector = input_latents.pop()
+            else:
+                output_file, filepath, latent_vector = self.write_queue.get()
             file_extension = os.path.splitext(output_file)[1]
             if (
                 file_extension == ".png"
@@ -447,20 +551,44 @@ class VAECache:
         self.metadata_backend.save_image_metadata()
         self.data_backend.write_batch(filepaths, latents)
 
-    def _process_images_in_batch(self) -> None:
+        return latents
+
+    def _process_images_in_batch(
+        self,
+        image_paths: list = None,
+        image_data: list = None,
+        disable_queue: bool = False,
+    ) -> None:
         """Process a queue of images. This method assumes our batch size has been reached.
+
+        Args:
+            image_paths: list If given, image_data must also be supplied. This will avoid the use of the Queues.
+            image_data: list Provided Image objects for corresponding image_paths.
 
         Returns:
             None
         """
         try:
+            logger.debug(
+                f"Processing batch of images into VAE embeds. image_paths: {type(image_paths)}, image_data: {type(image_data)}"
+            )
             initial_data = []
             filepaths = []
-            qlen = self.process_queue.qsize()
+            if image_paths is not None and image_data is not None:
+                qlen = len(image_paths)
+            else:
+                qlen = self.process_queue.qsize()
+            logger.debug(f"we have {qlen} images to process.")
 
             # First Loop: Preparation and Filtering
             for _ in range(qlen):
-                filepath, image, aspect_bucket = self.process_queue.get()
+                if image_paths:
+                    # retrieve image data from Generator, image_data:
+                    filepath = image_paths.pop()
+                    image = image_data.pop()
+                    aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(image)
+                else:
+                    filepath, image, aspect_bucket = self.process_queue.get()
                 if self.minimum_image_size is not None:
                     if not self.metadata_backend.meets_resolution_requirements(
                         image_path=filepath
@@ -493,41 +621,30 @@ class VAECache:
                         if result:  # Ensure result is not None or invalid
                             processed_images.append(result)
                     except Exception as e:
-                        import traceback
-
                         self.debug_log(
                             f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
                         )
 
             # Second Loop: Final Processing
             is_final_sample = False
+            output_values = []
             for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
                 processed_images
             ):
                 if idx == len(processed_images) - 1:
                     is_final_sample = True
                 filepath, _, aspect_bucket = initial_data[idx]
-
-                # We need to validate that the image dimensions match the aspect bucket, because EXIF data is dumb.
-                actual_aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(
-                    image
-                )
-                # if str(aspect_bucket) != str(actual_aspect_bucket):
-                #     logger.warning(
-                #         f"Image {filepath} has an incorrect aspect ratio recorded, seen in {aspect_bucket} but actually is {actual_aspect_bucket}."
-                #     )
-                #     self.metadata_backend.handle_incorrect_bucket(
-                #         filepath, aspect_bucket, actual_aspect_bucket, save_cache=False
-                #     )
-                #     continue
                 filepaths.append(filepath)
 
                 pixel_values = self.transform(image).to(
                     self.accelerator.device, dtype=self.vae.dtype
                 )
-                self.vae_input_queue.put(
-                    (pixel_values, filepath, aspect_bucket, is_final_sample)
-                )
+                output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)
+                output_values.append(output_value)
+                if not disable_queue:
+                    self.vae_input_queue.put(
+                        (pixel_values, filepath, aspect_bucket, is_final_sample)
+                    )
                 # Update the crop_coordinates in the metadata document
                 self.metadata_backend.set_metadata_attribute_by_filepath(
                     filepath=filepath,
@@ -535,29 +652,57 @@ class VAECache:
                     value=crop_coordinates,
                     update_json=False,
                 )
-                self.debug_log(f"Completed processing {filepath}")
+                self.debug_log(
+                    f"Completed processing {filepath}, gathered {len(output_values)} output values."
+                )
         except Exception as e:
-            logger.error(f"Error processing images {filepaths}: {e}")
+            logger.error(
+                f"Error processing images {filepaths if len(filepaths) > 0 else image_paths}: {e}"
+            )
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise e
+        return output_values
 
-    def _encode_images_in_batch(self) -> None:
+    def _encode_images_in_batch(
+        self, image_pixel_values: list = None, disable_queue: bool = False
+    ) -> None:
         """Encode the batched Image objects using the VAE model.
 
         Raises:
             ValueError: If we receive any invalid results.
         """
         try:
-            qlen = self.vae_input_queue.qsize()
+            if image_pixel_values is not None:
+                qlen = len(image_pixel_values)
+                logger.debug(f"Using override list for image encode: {qlen} items")
+                if self.vae_batch_size != len(image_pixel_values):
+                    logger.debug(
+                        f"Updated VAE batch size to equal the training batch size."
+                    )
+                    self.vae_batch_size = len(image_pixel_values)
+            else:
+                qlen = self.vae_input_queue.qsize()
+                logger.debug(
+                    f"Using VAE cache vanilla queue for job retrieval: {qlen} items"
+                )
+
             if qlen == 0:
                 return
+            output_values = []
             while qlen > 0:
                 vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
                 batch_aspect_bucket = None
-                for idx in range(0, min(qlen, self.vae_batch_size)):
-                    pixel_values, filepath, aspect_bucket, is_final_sample = (
-                        self.vae_input_queue.get()
-                    )
+                count_to_process = min(qlen, self.vae_batch_size)
+                logger.debug(f"Processing {count_to_process} images.")
+                for idx in range(0, count_to_process):
+                    if image_pixel_values:
+                        pixel_values, filepath, aspect_bucket, is_final_sample = (
+                            image_pixel_values.pop()
+                        )
+                    else:
+                        pixel_values, filepath, aspect_bucket, is_final_sample = (
+                            self.vae_input_queue.get()
+                        )
                     self.debug_log(
                         f"Queue values: {pixel_values.shape}, {filepath}, {aspect_bucket}, {is_final_sample}"
                     )
@@ -574,7 +719,12 @@ class VAECache:
                         break
 
                 latents = self.encode_images(
-                    vae_input_images, vae_input_filepaths, load_from_cache=False
+                    [
+                        sample.to(dtype=StateTracker.get_vae_dtype())
+                        for sample in vae_input_images
+                    ],
+                    vae_input_filepaths,
+                    load_from_cache=False,
                 )
                 if latents is None:
                     raise ValueError("Received None from encode_images")
@@ -585,8 +735,14 @@ class VAECache:
                         raise ValueError(
                             f"Latent vector is None for filepath {filepath}"
                         )
-                    self.write_queue.put((output_file, filepath, latent_vector))
-                qlen = self.vae_input_queue.qsize()
+                    output_value = (output_file, filepath, latent_vector)
+                    output_values.append(output_value)
+                    if not disable_queue:
+                        self.write_queue.put(output_value)
+                if image_pixel_values is not None:
+                    qlen = len(image_pixel_values)
+                else:
+                    qlen = self.vae_input_queue.qsize()
         except Exception as e:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
             # Remove all of the errored images from the bucket. They will be captured on restart.
@@ -596,8 +752,9 @@ class VAECache:
             raise Exception(
                 f"Error encoding images {vae_input_filepaths}: {e}, traceback: {traceback.format_exc()}"
             )
+        return output_values
 
-    def _read_from_storage_concurrently(self, paths):
+    def _read_from_storage_concurrently(self, paths, hide_errors: bool = False):
         """
         A helper method to read files from storage concurrently, without Queues.
 
@@ -610,9 +767,13 @@ class VAECache:
 
         def read_file(path):
             try:
-                return path, self._read_from_storage(path)
+                return path, self._read_from_storage(path, hide_errors=hide_errors)
             except Exception as e:
-                logger.error(f"Error reading {path}: {e}")
+                import traceback
+
+                logger.error(
+                    f"Error reading {path}: {e}, traceback: {traceback.format_exc()}"
+                )
                 return path, None
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:

@@ -7,7 +7,7 @@ from io import BytesIO
 from PIL import Image
 
 logger = logging.getLogger("ParquetMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING")
+target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
 try:

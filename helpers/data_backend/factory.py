@@ -264,8 +264,12 @@ def configure_multi_databackend(
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
-        if not backend.get("preserve_data_backend_cache", False):
-            StateTracker.delete_cache_files(data_backend_id=init_backend["id"])
+        preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+        if not preserve_data_backend_cache:
+            StateTracker.delete_cache_files(
+                data_backend_id=init_backend["id"],
+                preserve_data_backend_cache=preserve_data_backend_cache,
+            )
 
         # Generate a TextEmbeddingCache object
         init_backend["text_embed_cache"] = TextEmbeddingCache(
@@ -346,8 +350,12 @@ def configure_multi_databackend(
             config=init_backend["config"],
         )
 
-        if not backend.get("preserve_data_backend_cache", False):
-            StateTracker.delete_cache_files(data_backend_id=init_backend["id"])
+        preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+        if not preserve_data_backend_cache:
+            StateTracker.delete_cache_files(
+                data_backend_id=init_backend["id"],
+                preserve_data_backend_cache=preserve_data_backend_cache,
+            )
 
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
@@ -603,6 +611,7 @@ def configure_multi_databackend(
             write_batch_size=args.write_batch_size,
             cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
             max_workers=backend.get("max_workers", 32),
+            encode_during_training=args.encode_during_training,
         )
 
         if accelerator.is_local_main_process:
@@ -623,7 +632,7 @@ def configure_multi_databackend(
             init_backend["metadata_backend"].handle_vae_cache_inconsistencies(
                 vae_cache=init_backend["vaecache"],
                 vae_cache_behavior=backend.get(
-                    "vae_cache_behaviour", args.vae_cache_behaviour
+                    "vae_cache_scan_behaviour", args.vae_cache_scan_behaviour
                 ),
             )
             init_backend["metadata_backend"].scan_for_metadata()
@@ -640,7 +649,8 @@ def configure_multi_databackend(
             "skip_file_discovery", ""
         ):
             init_backend["vaecache"].split_cache_between_processes()
-            init_backend["vaecache"].process_buckets()
+            if not args.encode_during_training:
+                init_backend["vaecache"].process_buckets()
             accelerator.wait_for_everyone()
 
         StateTracker.register_data_backend(init_backend)

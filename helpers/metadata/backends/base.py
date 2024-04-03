@@ -14,7 +14,7 @@ import numpy as np
 from threading import Semaphore
 
 logger = logging.getLogger("BaseMetadataBackend")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class MetadataBackend:
@@ -179,16 +179,11 @@ class MetadataBackend:
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
-        worker_backend_cls = (
-            Thread
-            if (
-                torch.backends.mps.is_available()
-                or StateTracker.get_args().disable_multiprocessing
-            )
-            else Process
+        worker_cls = (
+            Process if not StateTracker.get_args().disable_multiprocessing else Thread
         )
         workers = [
-            worker_backend_cls(
+            worker_cls(
                 target=self._bucket_worker,
                 args=(
                     tqdm_queue,
@@ -260,7 +255,7 @@ class MetadataBackend:
                     self.save_image_metadata()
                     last_write_time = current_time
 
-                time.sleep(0.1)
+                time.sleep(0.001)
 
         for worker in workers:
             worker.join()
@@ -389,11 +384,11 @@ class MetadataBackend:
         for bucket in list(
             self.aspect_ratio_bucket_indices.keys()
         ):  # Safe iteration over keys
-            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
-            self._prune_small_buckets(bucket)
+            # # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            # self._prune_small_buckets(bucket)
             self._enforce_resolution_constraints(bucket)
-            # We do this twice in case there were any new contenders for being too small.
-            self._prune_small_buckets(bucket)
+            # # We do this twice in case there were any new contenders for being too small.
+            # self._prune_small_buckets(bucket)
 
     def _prune_small_buckets(self, bucket):
         """
@@ -472,8 +467,10 @@ class MetadataBackend:
             # We need to find the square image length if crop_style = square.
             minimum_image_size = self.minimum_image_size * 1_000_000
             if (
-                StateTracker.get_data_backend_config(self.id)["crop"]
-                and StateTracker.get_data_backend_config(self.id)["crop_style"]
+                StateTracker.get_data_backend_config(self.id).get("crop", False)
+                and StateTracker.get_data_backend_config(self.id).get(
+                    "crop_aspect", "square"
+                )
                 == "square"
             ):
                 # When comparing the 'area' of an image but cropping to square area, one side might be too small.
@@ -654,9 +651,11 @@ class MetadataBackend:
 
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
-
+        worker_cls = (
+            Process if not StateTracker.get_args().disable_multiprocessing else Thread
+        )
         workers = [
-            Process(
+            worker_cls(
                 target=self._bucket_worker,
                 args=(
                     tqdm_queue,

@@ -6,7 +6,7 @@ from typing import Any
 from PIL import Image
 
 logger = logging.getLogger("LocalDataBackend")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class LocalDataBackend(BaseDataBackend):
@@ -73,6 +73,19 @@ class LocalDataBackend(BaseDataBackend):
             raise ValueError("instance_data_root must be specified.")
 
         def _rglob_follow_symlinks(path: Path, pattern: str):
+            # Skip Spotlight directories
+            forbidden_directories = [
+                ".Spotlight-V100",
+                ".Trashes",
+                ".fseventsd",
+                ".TemporaryItems",
+                ".zfs",
+            ]
+            # Add Jupyter directories
+            forbidden_directories += [".ipynb_checkpoints"]
+            if path.name in forbidden_directories:
+                return
+
             for p in path.glob(pattern):
                 yield p
             for p in path.iterdir():
@@ -156,9 +169,7 @@ class LocalDataBackend(BaseDataBackend):
         # Check if file exists:
         if not self.exists(filename):
             raise FileNotFoundError(f"{filename} not found.")
-        return torch.load(
-            self.read(filename, as_byteIO=True), map_location=self.accelerator.device
-        )
+        return torch.load(self.read(filename, as_byteIO=True), map_location="cpu")
 
     def torch_save(self, data, original_location):
         if type(original_location) == str:

@@ -43,14 +43,9 @@ connection_logger = get_logger("urllib3.connectionpool")
 training_logger = get_logger("training-loop")
 
 # More important logs.
-target_level = "INFO"
-# Is env var set?
-if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
-    target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL")
+target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
-training_logger_level = "WARNING"
-if os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL"):
-    training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
+training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO")
 training_logger.setLevel(training_logger_level)
 
 # Less important logs.
@@ -143,7 +138,9 @@ def main():
     args = parse_args()
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
-        StateTracker.delete_cache_files()
+        StateTracker.delete_cache_files(
+            preserve_data_backend_cache=args.preserve_data_backend_cache
+        )
 
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
@@ -224,13 +221,13 @@ def main():
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32:
+    if args.allow_tf32 and torch.cuda.is_available():
         logger.info(
             "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
         )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    else:
+    elif torch.cuda.is_available():
         logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
@@ -337,7 +334,7 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
-    logger.info("Moving the U-net to GPU.")
+    logger.info(f"Moving the U-net to GPU in {weight_dtype} precision.")
     unet.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention:
         logger.info("Enabling xformers memory-efficient attention.")
@@ -377,19 +374,19 @@ def main():
         logger.info("Adding LoRA adapter to the unet model..")
         unet.add_adapter(unet_lora_config)
 
-    if args.mixed_precision == "bf16":
-        models = [unet]
-        if args.train_text_encoder:
-            models.extend([text_encoder_1, text_encoder_2])
-        for model in models:
-            for param in model.parameters():
-                # only upcast trainable parameters (LoRA) into fp32
-                if param.requires_grad:
-                    param.data = param.to(torch.float32)
+        if args.mixed_precision == "bf16":
+            models = [unet]
+            if args.train_text_encoder:
+                models.extend([text_encoder_1, text_encoder_2])
+            # for model in models:
+            #     for param in model.parameters():
+            #         # only upcast trainable parameters (LoRA) into fp32
+            #         if param.requires_grad:
+            #             param.data = param.to(torch.float32)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
-    # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.float32
+    # The VAE is in bfloat16 to avoid NaN losses.
+    vae_dtype = torch.bfloat16
     if hasattr(args, "vae_dtype"):
         logger.info(
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
@@ -609,6 +606,13 @@ def main():
         extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
+    elif args.adam_bfloat16:
+        logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
+        from helpers.training import adam_bfloat16
+
+        optimizer_class = adam_bfloat16.AdamWBF16
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -825,6 +829,8 @@ def main():
 
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
+        if torch.backends.mps.is_available():
+            accelerator.native_amp = False
         results = accelerator.prepare(
             unet, lr_scheduler, optimizer, train_dataloaders[0]
         )
@@ -873,7 +879,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded:
+    if not args.keep_vae_loaded and not args.encode_during_training:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 
@@ -1022,11 +1028,6 @@ def main():
     show_progress_bar = True
     if not accelerator.is_local_main_process:
         show_progress_bar = False
-    if (
-        training_logger_level == "DEBUG"
-        or os.environ.get("SIMPLETUNER_LOG_LEVEL") == "DEBUG"
-    ):
-        show_progress_bar = False
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         disable=not show_progress_bar,
@@ -1174,7 +1175,9 @@ def main():
                 )
 
                 # SDXL additional inputs - probabilistic dropout
-                encoder_hidden_states = batch["prompt_embeds"].to(weight_dtype)
+                encoder_hidden_states = batch["prompt_embeds"].to(
+                    dtype=weight_dtype, device=accelerator.device
+                )
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
@@ -1198,8 +1201,12 @@ def main():
 
                 # Predict the noise residual and compute loss
                 added_cond_kwargs = {
-                    "text_embeds": add_text_embeds.to(accelerator.device),
-                    "time_ids": batch["batch_time_ids"].to(accelerator.device),
+                    "text_embeds": add_text_embeds.to(
+                        device=accelerator.device, dtype=weight_dtype
+                    ),
+                    "time_ids": batch["batch_time_ids"].to(
+                        device=accelerator.device, dtype=weight_dtype
+                    ),
                 }
                 training_logger.debug("Predicting noise residual.")
                 training_logger.debug(
@@ -1215,6 +1222,8 @@ def main():
                     f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
                     f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
                     f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
+                    f"\n -> unet dtype: {unet.dtype}"
+                    f"\n -> vae dtype: {vae.dtype}"
                 )
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     model_pred = unet(
@@ -1601,4 +1610,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.set_start_method("fork")
     main()

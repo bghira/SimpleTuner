@@ -50,7 +50,7 @@ if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
 logger.setLevel(target_level)
 if os.environ.get("SIMPLETUNER_LOG_LEVEL"):
     training_logger_level = os.environ.get(
-        "SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "WARNING"
+        "SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO"
     )
 training_logger.setLevel(training_logger_level)
 
@@ -134,7 +134,9 @@ def main():
     args = parse_args()
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
-        StateTracker.delete_cache_files()
+        StateTracker.delete_cache_files(
+            preserve_data_backend_cache=args.preserve_data_backend_cache
+        )
 
     logging_dir = Path(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
@@ -209,13 +211,13 @@ def main():
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32 and not torch.backends.mps.is_available():
+    if args.allow_tf32 and torch.cuda.is_available():
         logger.info(
             "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
         )
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    elif torch.backends.cuda.is_available():
+    elif torch.cuda.is_available():
         logger.warning(
             "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
         )
@@ -231,18 +233,16 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
+    weight_dtype = torch.bfloat16
     if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-        logger.warning(
-            f'Using "--fp16" with the SD 2.x VAE model could result in NaN (Not a Number) issues. Using "--bf16" is the recommended precision level.'
+        raise ValueError(
+            "Stable Diffusion 2.x does not support fp16 training. Pure bf16 training is available and is recommended instead."
         )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        logger.info("Using bfloat16 precision level.")
     else:
-        logger.warning(
-            "Neither '--bf16' or '--fp16' were provided, so we will run in float32 mode. This is very slow and memory-hungry. Use bf16 if possible."
+        logger.info(
+            "Since --mixed_precision was not set, we will use pure bf16 training mode."
         )
     StateTracker.set_weight_dtype(weight_dtype)
 
@@ -295,7 +295,7 @@ def main():
         )
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-    )
+    ).to(weight_dtype)
     if args.freeze_unet_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
 
@@ -343,26 +343,6 @@ def main():
         unet.enable_gradient_checkpointing()
         if args.train_text_encoder:
             text_encoder.gradient_checkpointing_enable()
-
-    # Check that all trainable models are in full precision
-    low_precision_error_string = (
-        "Please make sure to always have all model weights in full float32 precision when starting training - even if"
-        " doing mixed precision training. copy of the weights should still be float32."
-    )
-
-    if accelerator.unwrap_model(unet).dtype != torch.float32:
-        raise ValueError(
-            f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}"
-        )
-
-    if (
-        args.train_text_encoder
-        and accelerator.unwrap_model(text_encoder).dtype != torch.float32
-    ):
-        raise ValueError(
-            f"Text encoder loaded as datatype {accelerator.unwrap_model(text_encoder).dtype}."
-            f" {low_precision_error_string}"
-        )
 
     # Initialize the optimizer
     extra_optimizer_args = {
@@ -449,6 +429,12 @@ def main():
         extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
+    elif args.adam_bfloat16:
+        from helpers.training import adam_bfloat16
+
+        optimizer_class = adam_bfloat16.AdamWBF16
+        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
+        extra_optimizer_args["lr"] = args.learning_rate
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -547,34 +533,34 @@ def main():
         )
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
+    weight_dtype = torch.bfloat16
     if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
+        raise ValueError(
+            "Stable Diffusion 2.1 cannot be trained in mixed-precision due to a numeric overflow in the final two up blocks of the u-net. Use bf16 instead."
+        )
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-    logging.info(f"Moving VAE to GPU, type: {weight_dtype}..")
-    # Move vae and text_encoder to device and cast to weight_dtype
-    vae.to(accelerator.device, dtype=weight_dtype)
+    # Move text_encoder to device and cast to weight_dtype)
     logging.info("Moving text encoder to GPU..")
     text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.float32
+    vae_dtype = torch.bfloat16
     if hasattr(args, "vae_dtype"):
         logger.info(
             f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16" or args.mixed_precision == "fp16":
+        if args.vae_dtype == "bf16" or args.mixed_precision == "bf16":
             vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
             vae_dtype = torch.float16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.float32
-    logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+            vae_dtype = torch.bfloat16
+    logger.debug(f"Moving VAE to GPU with {vae_dtype} precision level.")
     vae.to(accelerator.device, dtype=vae_dtype)
     logger.info(f"Loaded VAE into VRAM.")
     StateTracker.set_vae_dtype(vae_dtype)
@@ -759,8 +745,13 @@ def main():
     logger.info("Preparing accelerator..")
 
     # Base components to prepare
+    if torch.backends.mps.is_available():
+        accelerator.native_amp = False
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
+    if torch.backends.mps.is_available():
+        unet.set_attention_slice()
+
     lr_scheduler = results[1]
     optimizer = results[2]
     # The rest of the entries are dataloaders:
@@ -802,7 +793,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded:
+    if not args.keep_vae_loaded and not args.encode_during_training:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 
@@ -913,7 +904,7 @@ def main():
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    logger.info(f"  Num batches = {total_num_batches}")
+    logger.info(f"  Num batches = {total_num_batches}, unet dtype: {unet.dtype}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Current Epoch = {first_epoch}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -931,11 +922,6 @@ def main():
     # Only show the progress bar once on each machine.
     show_progress_bar = True
     if not accelerator.is_local_main_process:
-        show_progress_bar = False
-    if (
-        training_logger_level == "DEBUG"
-        or os.environ.get("SIMPLETUNER_LOG_LEVEL") == "DEBUG"
-    ):
         show_progress_bar = False
     progress_bar = tqdm(
         range(0, args.max_train_steps),
@@ -1081,7 +1067,12 @@ def main():
                 )
 
                 # Get the text embedding for conditioning
-                encoder_hidden_states = batch["prompt_embeds"]
+                encoder_hidden_states = batch["prompt_embeds"].to(
+                    device=accelerator.device,
+                    dtype=(
+                        text_encoder.dtype if text_encoder is not None else weight_dtype
+                    ),
+                )
                 training_logger.debug(
                     f"Encoder hidden states: {encoder_hidden_states.shape}"
                 )
@@ -1450,7 +1441,15 @@ def main():
 
         if validation_prompts:
             validation_images = []
-            pipeline = pipeline.to(accelerator.device, dtype=weight_dtype)
+            pipeline = pipeline.to(
+                accelerator.device,
+                dtype=(
+                    torch.bfloat16
+                    if torch.backends.mps.is_available()
+                    else torch.bfloat16 if torch.cuda.is_available() else torch.float32
+                ),
+            )
+            pipeline.components["vae"].to(vae_dtype)
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler
             ].from_pretrained(
@@ -1460,7 +1459,10 @@ def main():
                 timestep_spacing="trailing",
                 rescale_betas_zero_snr=True,
             )
-            with torch.autocast(str(accelerator.device).replace(":0", "")):
+
+            autocast_ctx = accelerator.autocast()
+
+            with autocast_ctx:
                 validation_generator = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.seed or 0)
@@ -1482,8 +1484,8 @@ def main():
                             guidance_scale=args.validation_guidance,
                             guidance_rescale=args.validation_guidance_rescale,
                             generator=validation_generator,
-                            height=args.validation_resolution,
-                            width=args.validation_resolution,
+                            height=int(args.validation_resolution),
+                            width=int(args.validation_resolution),
                         ).images
                     )
 
@@ -1516,4 +1518,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.set_start_method("fork")
     main()

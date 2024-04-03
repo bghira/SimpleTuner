@@ -13,7 +13,6 @@ torchvision = "^0.17.0"
 diffusers = "^0.26.3"
 transformers = "^4.38.2"
 datasets = "^2.14.3"
-bitsandbytes = "^0.42.0"
 dadaptation = "^3.1"
 wandb = "^0.16.1"
 requests = "^2.31.0"
@@ -39,6 +38,7 @@ numpy = "1.26"
 peft = "^0.9.0"
 tensorboard = "^2.15.1"
 prodigyopt = "^1.0"
+regex = "^2023.12.25"
 
 
 [build-system]

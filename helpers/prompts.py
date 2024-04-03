@@ -1,4 +1,4 @@
-import json, re
+import json, regex as re
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 
@@ -154,7 +154,7 @@ from tqdm import tqdm
 import os
 
 logger = logging.getLogger("PromptHandler")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class PromptHandler:
