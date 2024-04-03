@@ -491,9 +491,18 @@ class VAECache:
                 if filename not in uncached_images
             ]
 
-        if len(uncached_images) > 0:
+        if len(uncached_images) > 0 and (
+            len(images) != len(latents) or len(filepaths) != len(latents)
+        ):
             # Process images not found in cache
-            logger.debug(f"Processing {len(uncached_images)} uncached images")
+            logger.debug(
+                f"Processing:"
+                f"\n-> {len(images)} images as input"
+                f"\n-> {len(filepaths)} filepaths as input"
+                f"\n-> {len(uncached_images)} uncached images"
+                f"\n-> {len(missing_images)} missing_images"
+                f"\n-> {len(latents)} latents are already gathered: {[type(thing) for thing in latents]}"
+            )
             with torch.no_grad():
                 # Debug log the size of each image:
                 for image in uncached_images:
