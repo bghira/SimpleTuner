@@ -86,7 +86,7 @@ def fetch_latent(fp, data_backend_id: str):
 def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
     try:
-        if StateTracker.get_args().encode_during_training:
+        if not StateTracker.get_args().vae_cache_preprocess:
             latents = StateTracker.get_vaecache(id=data_backend_id).encode_images(
                 [None] * len(filepaths), filepaths
             )

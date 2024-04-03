@@ -45,7 +45,7 @@ class VAECache:
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
         max_workers: int = 32,
-        encode_during_training: bool = False,
+        vae_cache_preprocess: bool = False,
     ):
         self.id = id
         if data_backend.id != id:
@@ -75,7 +75,7 @@ class VAECache:
         if not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
-        self.encode_during_training = encode_during_training
+        self.vae_cache_preprocess = vae_cache_preprocess
 
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
@@ -419,11 +419,11 @@ class VAECache:
             if i in uncached_image_indices and image is None
         ]
         logger.debug(
-            f"Encoding during training: {self.encode_during_training}, load_from_cache: {load_from_cache}, uncached_image_indices: {uncached_image_indices}, missing_images: {missing_images}"
+            f"Encoding during training: {not self.vae_cache_preprocess}, load_from_cache: {load_from_cache}, uncached_image_indices: {uncached_image_indices}, missing_images: {missing_images}"
         )
         missing_image_pixel_values = []
         written_latents = []
-        if len(missing_images) > 0 and self.encode_during_training:
+        if len(missing_images) > 0 and not self.vae_cache_preprocess:
             missing_image_paths = [filepaths[i] for i in missing_images]
             logger.debug(f"Missing image paths: {missing_image_paths}")
             missing_image_data = [
@@ -472,7 +472,7 @@ class VAECache:
         if (
             len(uncached_image_indices) > 0
             and load_from_cache
-            and not self.encode_during_training
+            and self.vae_cache_preprocess
         ):
             # We wanted only uncached images. Something went wrong.
             raise Exception(
@@ -485,7 +485,7 @@ class VAECache:
             logger.debug(f"Attempting to read latents from storage: {full_filenames}")
             latents = [
                 self._read_from_storage(
-                    filename, hide_errors=self.encode_during_training
+                    filename, hide_errors=not self.vae_cache_preprocess
                 )
                 for filename in full_filenames
                 if filename not in uncached_images

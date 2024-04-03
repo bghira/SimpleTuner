@@ -202,12 +202,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--encode_during_training",
-        type=bool,
-        default=True,
+        "--vae_cache_preprocess",
+        action="store_true",
+        default=False,
         help=(
             "By default, will encode images during training. For some situations, pre-processing may be desired."
-            " To revert to the old behaviour, supply --encode_during_training=false."
+            " To revert to the old behaviour, supply --vae_cache_preprocess=false."
         ),
     )
     parser.add_argument(

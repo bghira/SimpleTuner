@@ -396,7 +396,7 @@ def log_validations(
             if validation_type == "validation" and args.use_ema:
                 # Switch back to the original UNet parameters.
                 ema_unet.restore(unet.parameters())
-            if not args.keep_vae_loaded and not args.encode_during_training:
+            if not args.keep_vae_loaded and args.vae_cache_preprocess:
                 # only delete the vae if we're not encoding embeds during training
                 del vae
                 vae = None

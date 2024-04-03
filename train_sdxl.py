@@ -879,7 +879,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded and not args.encode_during_training:
+    if not args.keep_vae_loaded and args.vae_cache_preprocess:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 
