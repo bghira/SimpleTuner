@@ -73,27 +73,34 @@ def copy_stochastic_(target: Tensor, source: Tensor):
 
 def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
     """
-    adds other to input using stochastic rounding
+    Adds other to input using stochastic rounding.
+
+    There is a hack to fix a bug on MPS where uneven final dimensions cause
+    a crash.
 
     Args:
         _input: the input tensor with dtype=bfloat16
         other: the other tensor
         alpha: a multiplier for other
     """
-    _input = _input.to(torch.float32)
+    _input_original = _input
+    if _input.device.type == "mps":
+        _input = _input.to(dtype=torch.float32)
+
     if other.dtype == torch.float32:
         result = other.clone()
     else:
         result = other.to(dtype=torch.float32)
 
-    if _input.size(-1) % 2 != 0 and _input.device.type == "mps":
-        _input = swap_first_and_last_dims(_input)
-        result = swap_first_and_last_dims(result)
-    result.add_(_input, alpha=alpha)
-    if _input.size(-1) % 2 != 0 and _input.device.type == "mps":
-        _input = swap_back_first_and_last_dims(_input)
-        result = swap_back_first_and_last_dims(result)
+    if _input.device.type == "mps":
+        result.add_(_input, alpha=torch.tensor(alpha, dtype=torch.float32))
+    else:
+        result.add_(_input, alpha=alpha)
+
     copy_stochastic_(_input, result)
+
+    if _input.device.type == "mps":
+        _input_original.copy_(_input.view(dtype=torch.float32))
 
 
 def addcdiv_stochastic_(
