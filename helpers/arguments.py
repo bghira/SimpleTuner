@@ -1,5 +1,6 @@
 import argparse, os, random, time, json, logging, sys, torch
 from pathlib import Path
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ArgsParser")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -1218,7 +1219,6 @@ def parse_args(input_args=None):
         Path(args.cache_dir_text),
     ]:
         os.makedirs(target_dir, exist_ok=True)
-    from helpers.training.state_tracker import StateTracker
 
     if (
         args.pretrained_vae_model_name_or_path is not None
