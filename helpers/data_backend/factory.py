@@ -611,7 +611,7 @@ def configure_multi_databackend(
             write_batch_size=args.write_batch_size,
             cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
             max_workers=backend.get("max_workers", 32),
-            encode_during_training=args.encode_during_training,
+            vae_cache_preprocess=args.vae_cache_preprocess,
         )
 
         if accelerator.is_local_main_process:
@@ -649,8 +649,11 @@ def configure_multi_databackend(
             "skip_file_discovery", ""
         ):
             init_backend["vaecache"].split_cache_between_processes()
-            if not args.encode_during_training:
+            if args.vae_cache_preprocess:
                 init_backend["vaecache"].process_buckets()
+            logger.info(
+                f"Encoding images during training: {not args.vae_cache_preprocess}"
+            )
             accelerator.wait_for_everyone()
 
         StateTracker.register_data_backend(init_backend)

@@ -749,7 +749,7 @@ def main():
         accelerator.native_amp = False
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
-    if torch.backends.mps.is_available():
+    if torch.backends.mps.is_available() or args.unet_attention_slice:
         unet.set_attention_slice()
 
     lr_scheduler = results[1]
@@ -793,7 +793,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded and not args.encode_during_training:
+    if not args.keep_vae_loaded and args.vae_cache_preprocess:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 

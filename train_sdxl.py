@@ -835,6 +835,12 @@ def main():
             unet, lr_scheduler, optimizer, train_dataloaders[0]
         )
         unet = results[0]
+        if args.unet_attention_slice:
+            if torch.backends.mps.is_available():
+                logger.warning(
+                    "Using attention slicing when training SDXL on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
+                )
+            unet.set_attention_slice()
         lr_scheduler = results[1]
         optimizer = results[2]
         # The rest of the entries are dataloaders:
@@ -879,7 +885,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded and not args.encode_during_training:
+    if not args.keep_vae_loaded and args.vae_cache_preprocess:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 

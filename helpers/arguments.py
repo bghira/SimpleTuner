@@ -1,5 +1,6 @@
-import argparse, os, random, time, json, logging, sys
+import argparse, os, random, time, json, logging, sys, torch
 from pathlib import Path
+from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ArgsParser")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -202,12 +203,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--encode_during_training",
-        type=bool,
-        default=True,
+        "--vae_cache_preprocess",
+        action="store_true",
+        default=False,
         help=(
             "By default, will encode images during training. For some situations, pre-processing may be desired."
-            " To revert to the old behaviour, supply --encode_during_training=false."
+            " To revert to the old behaviour, supply --vae_cache_preprocess=false."
         ),
     )
     parser.add_argument(
@@ -990,6 +991,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--unet_attention_slice",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will use attention slicing for the SDXL UNet. This is an experimental feature and is not recommended for general use."
+            " SD 2.x makes use of attention slicing on Apple MPS platform to avoid a NDArray size crash, but SDXL will NaN in the first"
+            " backwards pass with attention slicing enabled on MPS. Other platforms may benefit - use with caution."
+        ),
+    )
+    parser.add_argument(
         "--print_filenames",
         action="store_true",
         help=(
@@ -1185,6 +1196,19 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
+    if torch.backends.mps.is_available():
+        if not args.unet_attention_slice and StateTracker.get_model_type() != "legacy":
+            logger.warning(
+                "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
+            )
+        if args.train_batch_size > 12:
+            logger.error(
+                "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
+                " Any higher values will result in NDArray size errors or other unstable training results and crashes."
+                "\nPlease reduce the batch size to 12 or lower."
+            )
+            sys.exit(1)
+
     if args.cache_dir_vae is None or args.cache_dir_vae == "":
         args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
     if args.cache_dir_text is None or args.cache_dir_text == "":
@@ -1195,7 +1219,6 @@ def parse_args(input_args=None):
         Path(args.cache_dir_text),
     ]:
         os.makedirs(target_dir, exist_ok=True)
-    from helpers.training.state_tracker import StateTracker
 
     if (
         args.pretrained_vae_model_name_or_path is not None
