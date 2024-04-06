@@ -760,6 +760,10 @@ class MetadataBackend:
         # Get tensor shape and multiply by self.scaling_factor or 8
         if cache_content is None:
             return True
+        # is it a tensor with nan or inf values?
+        if torch.isnan(cache_content).any() or torch.isinf(cache_content).any():
+            logger.warning(f"Cache file {cache_file} contains NaN or Inf values.")
+            return True
         image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
         logger.debug(
             f"Checking cache file {cache_file} for inconsistencies. Image filename: {image_filename}"

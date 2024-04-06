@@ -1228,8 +1228,6 @@ def main():
                     f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
                     f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
                     f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
-                    f"\n -> unet dtype: {unet.dtype}"
-                    f"\n -> vae dtype: {vae.dtype}"
                 )
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     model_pred = unet(
@@ -1296,6 +1294,16 @@ def main():
                 # Backpropagate
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
                     training_logger.debug(f"Backwards pass.")
+                    # Check for NaNs
+                    if (
+                        torch.isnan(loss).any()
+                        or torch.isnan(model_pred).any()
+                        or torch.isnan(target).any()
+                        or torch.isnan(avg_loss).any()
+                    ):
+                        raise ValueError(
+                            f"NaNs detected. Loss: {loss}, Model prediction: {model_pred}, Target: {target}"
+                        )
                     accelerator.backward(loss)
                     if (
                         accelerator.sync_gradients

@@ -1018,7 +1018,12 @@ class VAECache:
         """
         try:
             all_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
-            yield from self._read_from_storage_concurrently(all_cache_files)
+            try:
+                yield from self._read_from_storage_concurrently(
+                    all_cache_files, hide_errors=True
+                )
+            except FileNotFoundError:
+                yield (None, None)
         except Exception as e:
             logger.error(f"Error in scan_cache_contents: {e}")
             self.debug_log(f"Error traceback: {traceback.format_exc()}")

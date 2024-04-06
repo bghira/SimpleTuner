@@ -104,6 +104,15 @@ def compute_latents(filepaths, data_backend_id: str):
     # Validate shapes
     test_shape = latents[0].shape
     for idx, latent in enumerate(latents):
+        # Are there any inf or nan positions?
+        if torch.isnan(latent).any() or torch.isinf(latent).any():
+            # get the data_backend
+            data_backend = StateTracker.get_data_backend(data_backend_id)
+            # remove the object
+            data_backend["vaecache"].data_backend.delete(filepaths[idx])
+            raise ValueError(
+                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
+            )
         if latent.shape != test_shape:
             raise ValueError(
                 f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
