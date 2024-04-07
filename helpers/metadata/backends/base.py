@@ -180,7 +180,7 @@ class MetadataBackend:
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
         worker_cls = (
-            Process if not StateTracker.get_args().disable_multiprocessing else Thread
+            Process if StateTracker.get_args().enable_multiprocessing else Thread
         )
         workers = [
             worker_cls(
@@ -652,7 +652,7 @@ class MetadataBackend:
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
         worker_cls = (
-            Process if not StateTracker.get_args().disable_multiprocessing else Thread
+            Process if StateTracker.get_args().enable_multiprocessing else Thread
         )
         workers = [
             worker_cls(
