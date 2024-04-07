@@ -573,7 +573,7 @@ def configure_multi_databackend(
                 use_captions=use_captions,
                 caption_strategy=backend.get("caption_strategy", args.caption_strategy),
             )
-            all_captions.extend(captions)
+
             if "text" not in args.skip_file_discovery and "text" not in backend.get(
                 "skip_file_discovery", ""
             ):
