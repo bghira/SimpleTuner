@@ -384,8 +384,12 @@ class PromptHandler:
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
             )
+        elif caption_strategy == "instanceprompt":
+            return instance_prompt
         else:
-            raise ValueError(f"Unsupported caption strategy: {caption_strategy}")
+            raise ValueError(
+                f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
+            )
         return instance_prompt
 
     @staticmethod
@@ -441,7 +445,11 @@ class PromptHandler:
                     sampler_backend_id=data_backend.id,
                 )
             elif caption_strategy == "instanceprompt":
-                return instance_prompt
+                return [instance_prompt]
+            else:
+                raise ValueError(
+                    f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
+                )
             captions.append(caption)
 
         return captions

@@ -175,10 +175,12 @@ def parse_args(input_args=None):
         "--vae_dtype",
         type=str,
         default="bf16",
+        choices=["default", "fp16", "fp32", "bf16"],
         required=False,
         help=(
             "The dtype of the VAE model. Choose between ['default', 'fp16', 'fp32', 'bf16']."
-            "The default VAE dtype is float32, due to NaN issues in SDXL 1.0."
+            " The default VAE dtype is bfloat16, due to NaN issues in SDXL 1.0."
+            " Using fp16 is not recommended."
         ),
     )
     parser.add_argument(
@@ -309,13 +311,13 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--disable_multiprocessing",
+        "--enable_multiprocessing",
         default=False,
         action="store_true",
         help=(
-            "If set, will use threads instead of processes during metadata caching operations."
-            " This is set implicitly for Apple systems, as Darwin behaves oddly with multiprocessing."
-            " For some systems, multiprocessing may be slower than threading, so this option is provided."
+            "If set, will use processes instead of threads during metadata caching operations."
+            " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
+            " Use this option with caution, and monitor your system's memory usage."
         ),
     )
     parser.add_argument(
@@ -411,7 +413,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--resolution_type",
         type=str,
-        default="pixel",
+        default="area",
         choices=["pixel", "area"],
         help=(
             "Resizing images maintains aspect ratio. This defines the resizing strategy."
@@ -700,7 +702,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--adam_bfloat16",
         action="store_true",
-        help="Whether or not to use stochastic bf16 in Adam.",
+        help="Whether or not to use stochastic bf16 in Adam. Currently the only supported optimizer.",
     )
     parser.add_argument(
         "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
@@ -877,10 +879,11 @@ def parse_args(input_args=None):
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["no", "fp16", "bf16"],
+        choices=["bf16"],
         help=(
-            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
-            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
+            "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
+            " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
+            " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
         ),
     )
@@ -996,8 +999,8 @@ def parse_args(input_args=None):
         default=False,
         help=(
             "If set, will use attention slicing for the SDXL UNet. This is an experimental feature and is not recommended for general use."
-            " SD 2.x makes use of attention slicing on Apple MPS platform to avoid a NDArray size crash, but SDXL will NaN in the first"
-            " backwards pass with attention slicing enabled on MPS. Other platforms may benefit - use with caution."
+            " SD 2.x makes use of attention slicing on Apple MPS platform to avoid a NDArray size crash, but SDXL does not"
+            " seem to require attention slicing on MPS. If memory constrained, try enabling it anyway."
         ),
     )
     parser.add_argument(
@@ -1122,6 +1125,14 @@ def parse_args(input_args=None):
             " A sine or cosine wave will use this value as its lower bound for the learning rate."
         ),
     )
+    parser.add_argument(
+        "--i_know_what_i_am_doing",
+        action="store_true",
+        help=(
+            "If you are using an optimizer other than AdamW, you must set this flag to continue."
+            " This is a safety feature to prevent accidental use of an unsupported optimizer, as weights are stored in bfloat16."
+        ),
+    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -1194,6 +1205,21 @@ def parse_args(input_args=None):
     ):
         raise ValueError(
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
+        )
+
+    if not args.adamw_bfloat16 and not args.i_know_what_i_am_doing:
+        raise ValueError(
+            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adamw_bfloat16 to true."
+        )
+
+    if not args.i_know_what_i_am_doing and (
+        args.use_prodigy_optimizer
+        or args.use_dadapt_optimizer
+        or args.use_adafactor_optimizer
+        or args.use_8bit_adam
+    ):
+        raise ValueError(
+            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adamw_bfloat16 to true, or set --i_know_what_i_am_doing."
         )
 
     if torch.backends.mps.is_available():

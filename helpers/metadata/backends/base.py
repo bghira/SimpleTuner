@@ -180,7 +180,7 @@ class MetadataBackend:
         aspect_ratio_bucket_indices_queue = Queue()
         self.load_image_metadata()
         worker_cls = (
-            Process if not StateTracker.get_args().disable_multiprocessing else Thread
+            Process if StateTracker.get_args().enable_multiprocessing else Thread
         )
         workers = [
             worker_cls(
@@ -652,7 +652,7 @@ class MetadataBackend:
         metadata_updates_queue = Queue()
         tqdm_queue = Queue()
         worker_cls = (
-            Process if not StateTracker.get_args().disable_multiprocessing else Thread
+            Process if StateTracker.get_args().enable_multiprocessing else Thread
         )
         workers = [
             worker_cls(
@@ -759,6 +759,10 @@ class MetadataBackend:
         """
         # Get tensor shape and multiply by self.scaling_factor or 8
         if cache_content is None:
+            return True
+        # is it a tensor with nan or inf values?
+        if torch.isnan(cache_content).any() or torch.isinf(cache_content).any():
+            logger.warning(f"Cache file {cache_file} contains NaN or Inf values.")
             return True
         image_filename = vae_cache._image_filename_from_vaecache_filename(cache_file)
         logger.debug(
