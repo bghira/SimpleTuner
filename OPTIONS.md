@@ -67,8 +67,12 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--caption_strategy`
 
-- **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`, `parquet`
-- **Why**: Determines how captions are generated for training images. `textfile` will use the contents of a `.txt` file with the same filename as the image, and `filename` will apply some cleanup to the filename before using it as the caption. `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
+- **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`, `parquet`, `instanceprompt`
+- **Why**: Determines how captions are generated for training images.
+  - `textfile` will use the contents of a `.txt` file with the same filename as the image
+  - `filename` will apply some cleanup to the filename before using it as the caption.
+  - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
+  - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
 
 ### `--crop`
 
