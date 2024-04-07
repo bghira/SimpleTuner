@@ -119,7 +119,9 @@ def compute_latents(filepaths, data_backend_id: str):
             )
 
     debug_log(f" -> stacking {len(latents)} latents")
-    return torch.stack(latents)
+    return torch.stack(
+        [latent.to(StateTracker.get_accelerator().device) for latent in latents]
+    )
 
 
 def compute_single_embedding(caption, text_embed_cache, is_sdxl):
