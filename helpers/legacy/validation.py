@@ -208,7 +208,7 @@ def log_validations(
                             torch.bfloat16
                             if torch.backends.mps.is_available()
                             or torch.cuda.is_available()
-                            else torch.float32
+                            else torch.bfloat16
                         ),
                     )
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
