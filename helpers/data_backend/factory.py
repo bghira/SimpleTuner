@@ -302,7 +302,7 @@ def configure_multi_databackend(
                 and args.caption_dropout_probability > 0
             ):
                 logger.info("Pre-computing null embedding for caption dropout")
-                with accelerator.main_process_first():
+                if accelerator.is_local_main_process:
                     init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                         [""], return_concat=False, load_from_cache=False
                     )
@@ -563,7 +563,7 @@ def configure_multi_databackend(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
 
-        with accelerator.main_process_first():
+        if accelerator.is_local_main_process:
             # We get captions from the IMAGE dataset. Not the text embeds dataset.
             captions = PromptHandler.get_all_captions(
                 data_backend=init_backend["data_backend"],
@@ -573,6 +573,7 @@ def configure_multi_databackend(
                 use_captions=use_captions,
                 caption_strategy=backend.get("caption_strategy", args.caption_strategy),
             )
+            all_captions.extend(captions)
             if "text" not in args.skip_file_discovery and "text" not in backend.get(
                 "skip_file_discovery", ""
             ):
