@@ -585,7 +585,7 @@ def configure_multi_databackend(
             f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
         )
 
-        logger.info(f"(id={init_backend['id']}) Pre-computing VAE latent space.")
+        logger.info(f"(id={init_backend['id']}) Creating VAE latent cache.")
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             vae=StateTracker.get_vae(),
@@ -614,6 +614,7 @@ def configure_multi_databackend(
             vae_cache_preprocess=args.vae_cache_preprocess,
         )
 
+        logger.info(f"(id={init_backend['id']}) Discovering cache objects..")
         if accelerator.is_local_main_process:
             init_backend["vaecache"].discover_all_files()
         accelerator.wait_for_everyone()
