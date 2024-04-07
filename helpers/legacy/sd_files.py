@@ -172,18 +172,6 @@ def register_file_hooks(
                     text_encoder=text_encoder,
                 )
 
-            # Make sure the trainable params are in float32. This is again needed since the base models
-            # are in `weight_dtype`. More details:
-            # https://github.com/huggingface/diffusers/pull/6514#discussion_r1449796804
-            if args.mixed_precision == "fp16":
-                models = [unet_]
-                if args.train_text_encoder:
-                    models.extend(text_encoder)
-                for model in models:
-                    for param in model.parameters():
-                        # only upcast trainable parameters (LoRA) into fp32
-                        if param.requires_grad:
-                            param.data = param.to(torch.float32)
             logger.info("Completed loading LoRA weights.")
 
         if args.use_ema:

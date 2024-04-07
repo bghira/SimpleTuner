@@ -234,16 +234,6 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.bfloat16
-    if accelerator.mixed_precision == "fp16":
-        raise ValueError(
-            "Stable Diffusion 2.x does not support fp16 training. Pure bf16 training is available and is recommended instead."
-        )
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-    else:
-        logger.info(
-            "Since --mixed_precision was not set, we will use pure bf16 training mode."
-        )
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load the scheduler, tokenizer and models.
@@ -534,12 +524,6 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.bfloat16
-    if accelerator.mixed_precision == "fp16":
-        raise ValueError(
-            "Stable Diffusion 2.1 cannot be trained in mixed-precision due to a numeric overflow in the final two up blocks of the u-net. Use bf16 instead."
-        )
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
     # Move text_encoder to device and cast to weight_dtype)
     logging.info("Moving text encoder to GPU..")
     text_encoder.to(accelerator.device, dtype=weight_dtype)

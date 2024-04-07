@@ -243,19 +243,7 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-        if args.pretrained_vae_model_name_or_path is None:
-            logger.warning(
-                f'Using "--fp16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
-            )
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-        if args.pretrained_vae_model_name_or_path is None:
-            logger.warning(
-                f'Using "--bf16" with mixed precision training should be done with a custom VAE. Make sure you understand how this works.'
-            )
+    weight_dtype = torch.bfloat16
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load scheduler, tokenizer and models.
@@ -389,17 +377,19 @@ def main():
     vae_dtype = torch.bfloat16
     if hasattr(args, "vae_dtype"):
         logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
+            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
         )
         # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
         if args.vae_dtype == "bf16":
             vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp16":
-            vae_dtype = torch.float16
+            raise ValueError(
+                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
+            )
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.float32
+            vae_dtype = torch.bfloat16
     if args.pretrained_vae_model_name_or_path is not None:
         logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
