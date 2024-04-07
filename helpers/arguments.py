@@ -3,7 +3,11 @@ from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ArgsParser")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+# Are we the main process?
+if __name__ == "__main__":
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def parse_args(input_args=None):
