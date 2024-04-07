@@ -111,7 +111,6 @@ class JsonMetadataBackend(MetadataBackend):
                 logger.debug("Pulling cache file from storage.")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
-                logger.debug(f"Completed loading cache data: {cache_data}")
             except Exception as e:
                 logger.warning(
                     f"Error loading aspect bucket cache, creating new one: {e}"
@@ -130,7 +129,7 @@ class JsonMetadataBackend(MetadataBackend):
                 )
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
             logger.debug(
-                f"Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets and {len(self.instance_images_path)} images."
+                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets and {len(self.instance_images_path)} images."
             )
         else:
             logger.warning("No cache file found, creating new one.")
