@@ -6,9 +6,9 @@ from helpers.image_manipulation.brightness import calculate_luminance
 from helpers.training.state_tracker import StateTracker
 from helpers.training.wrappers import unwrap_model
 from helpers.prompts import PromptHandler
+from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
     AutoencoderKL,
-    StableDiffusionXLPipeline,
     DDIMScheduler,
     DiffusionPipeline,
 )
