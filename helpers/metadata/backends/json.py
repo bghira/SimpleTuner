@@ -129,6 +129,9 @@ class JsonMetadataBackend(MetadataBackend):
                     config=self.config,
                 )
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
+            logger.debug(
+                f"Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets and {len(self.instance_images_path)} images."
+            )
         else:
             logger.warning("No cache file found, creating new one.")
 
