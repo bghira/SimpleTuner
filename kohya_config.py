@@ -70,10 +70,9 @@ ARG_MAPPING = {
         {"parameter": "mixed_precision", "value": "bf16", "ignore_if_value": False},
         {"parameter": "vae_dtype", "value": "bf16", "ignore_if_value": False},
     ],
-    "full_fp16": [
-        {"parameter": "mixed_precision", "value": "fp16", "ignore_if_value": False},
-        {"parameter": "vae_dtype", "value": "fp16", "ignore_if_value": False},
-    ],
+    "full_fp16": {
+        "warning": "full_fp16 is not supported in SimpleTuner, use `--pure_bf16` instead."
+    },
     "gradient_accumulation_steps": "gradient_accumulation_steps",
     "gradient_checkpointing": "gradient_checkpointing",
     "keep_tokens": {"warning": "--keep_tokens is not currently supported."},
