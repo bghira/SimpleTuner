@@ -177,16 +177,19 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--timestep_bias_begin TIMESTEP_BIAS_BEGIN]
                      [--timestep_bias_end TIMESTEP_BIAS_END]
                      [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
-                     [--rescale_betas_zero_snr] [--vae_dtype VAE_DTYPE]
+                     [--rescale_betas_zero_snr]
+                     [--vae_dtype {default,fp16,fp32,bf16}]
                      [--vae_batch_size VAE_BATCH_SIZE]
                      [--vae_cache_scan_behaviour {recreate,sync}]
-                     [--keep_vae_loaded]
+                     [--vae_cache_preprocess] [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] [--preserve_data_backend_cache]
                      [--use_dora] [--override_dataset_config]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
+                     [--enable_multiprocessing]
+                     [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                      [--cache_dir CACHE_DIR]
                      [--cache_clear_validation_prompts]
                      [--caption_strategy {filename,textfile,instance_prompt,parquet}]
@@ -200,9 +203,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--minimum_image_size MINIMUM_IMAGE_SIZE]
                      [--maximum_image_size MAXIMUM_IMAGE_SIZE]
                      [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
-                     [--crop CROP]
-                     [--crop_style {center,centre,corner,random}]
-                     [--crop_aspect {square,preserve}] [--train_text_encoder]
+                     [--train_text_encoder]
                      [--train_batch_size TRAIN_BATCH_SIZE]
                      [--num_train_epochs NUM_TRAIN_EPOCHS]
                      [--max_train_steps MAX_TRAIN_STEPS]
@@ -232,7 +233,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE]
                      [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2]
                      [--adam_weight_decay ADAM_WEIGHT_DECAY]
-                     [--adam_epsilon ADAM_EPSILON]
+                     [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
                      [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
                      [--hub_token HUB_TOKEN] [--hub_model_id HUB_MODEL_ID]
                      [--logging_dir LOGGING_DIR]
@@ -251,8 +252,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--validation_resolution VALIDATION_RESOLUTION]
                      [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
                      [--disable_compel] [--enable_watermark]
-                     [--mixed_precision {no,fp16,bf16}]
-                     [--local_rank LOCAL_RANK]
+                     [--mixed_precision {bf16}] [--local_rank LOCAL_RANK]
                      [--enable_xformers_memory_efficient_attention]
                      [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                      [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
@@ -264,7 +264,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                      [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                      [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
-                     [--print_filenames] [--print_sampler_statistics]
+                     [--freeze_unet_strategy {none,bitfit}]
+                     [--unet_attention_slice] [--print_filenames]
+                     [--print_sampler_statistics]
                      [--metadata_update_interval METADATA_UPDATE_INTERVAL]
                      [--debug_aspect_buckets] [--debug_dataset_loader]
                      [--freeze_encoder FREEZE_ENCODER]
@@ -275,6 +277,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--input_perturbation_probability INPUT_PERTURBATION_PROBABILITY]
                      [--delete_unwanted_images] [--delete_problematic_images]
                      [--offset_noise] [--lr_end LR_END]
+                     [--i_know_what_i_am_doing]
 
 The following SimpleTuner command-line options are available:
 
@@ -364,10 +367,11 @@ options:
                         This is recommended for training with v_prediction.
                         For epsilon, this might help with fine details, but
                         will not result in contrast improvements.
-  --vae_dtype VAE_DTYPE
+  --vae_dtype {default,fp16,fp32,bf16}
                         The dtype of the VAE model. Choose between ['default',
-                        'fp16', 'fp32', 'bf16'].The default VAE dtype is
-                        float32, due to NaN issues in SDXL 1.0.
+                        'fp16', 'fp32', 'bf16']. The default VAE dtype is
+                        bfloat16, due to NaN issues in SDXL 1.0. Using fp16 is
+                        not recommended.
   --vae_batch_size VAE_BATCH_SIZE
                         When pre-caching latent vectors, this is the batch
                         size to use. Decreasing this may help with VRAM
@@ -384,6 +388,11 @@ options:
                         matches its latent size. The recommended behaviour is
                         to use the default value and allow the cache to be
                         recreated.
+  --vae_cache_preprocess
+                        By default, will encode images during training. For
+                        some situations, pre-processing may be desired. To
+                        revert to the old behaviour, supply
+                        --vae_cache_preprocess=false.
   --keep_vae_loaded     If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the
                         forward pass.
@@ -443,6 +452,18 @@ options:
                         objects are written. This mostly applies to S3, but
                         some shared server filesystems may benefit as well,
                         eg. Ceph. Default: 64.
+  --enable_multiprocessing
+                        If set, will use processes instead of threads during
+                        metadata caching operations. For some systems,
+                        multiprocessing may be faster than threading, but will
+                        consume a lot more memory. Use this option with
+                        caution, and monitor your system's memory usage.
+  --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
+                        The number of workers to use for aspect bucketing.
+                        This is a CPU-bound task, so the number of workers
+                        should be set to the number of CPU threads available.
+                        If you use an I/O bound backend, an even higher value
+                        may make sense. Default: 12.
   --cache_dir CACHE_DIR
                         The directory where the downloaded models and datasets
                         will be stored.
@@ -518,28 +539,6 @@ options:
                         --target_downsample_size=2.0 would result in a 4
                         megapixel image being resized to 2 megapixel before
                         cropping to 1 megapixel.
-  --crop CROP           Whether to crop the input images to the resolution. If
-                        not set, the images will be downsampled instead. When
-                        cropping is enabled, the images will not be resized
-                        before cropping. If training SDXL, the VAE cache and
-                        aspect bucket cache will need to be (re)built so they
-                        include crop coordinates.
-  --crop_style {center,centre,corner,random}
-                        When --crop is provided, a crop style may be defined
-                        that designates which part of an image to crop to. The
-                        old behaviour was to crop to the lower right corner,
-                        but this isn't always ideal for training. The default
-                        is 'random', which will locate a random segment of the
-                        image matching the given resolution.
-  --crop_aspect {square,preserve}
-                        When --crop is supplied, the default behaviour is to
-                        crop to square images, which greatly simplifies aspect
-                        bucketing. However, --crop_aspect may be set to
-                        'preserve', which will crop based on the
-                        --resolution_type value. If --resolution_type=area,
-                        the crop will be equal to the target pixel area. If
-                        --resolution_type=pixel, the crop will have the
-                        smaller edge equal to the value of --resolution.
   --train_text_encoder  (SD 2.x only) Whether to train the text encoder. If
                         set, the text encoder should be float32 precision.
   --train_batch_size TRAIN_BATCH_SIZE
@@ -652,6 +651,8 @@ options:
                         Weight decay to use.
   --adam_epsilon ADAM_EPSILON
                         Epsilon value for the Adam optimizer
+  --adam_bfloat16       Whether or not to use stochastic bf16 in Adam.
+                        Currently the only supported optimizer.
   --max_grad_norm MAX_GRAD_NORM
                         Max gradient norm.
   --push_to_hub         Whether or not to push the model to the Hub.
@@ -742,13 +743,13 @@ options:
                         sharing the validation images, it is up to you to
                         ensure that you are complying with the license,
                         whether that is through this watermarker, or another.
-  --mixed_precision {no,fp16,bf16}
-                        Whether to use mixed precision. Choose between fp16
-                        and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10.and
-                        an Nvidia Ampere GPU. Default to the value of
-                        accelerate config of the current system or the flag
-                        passed with the `accelerate.launch` command. Use this
-                        argument to override the accelerate config.
+  --mixed_precision {bf16}
+                        SimpleTuner only supports bf16 training. Bf16 requires
+                        PyTorch >= 1.10. on an Nvidia Ampere or later GPU, and
+                        PyTorch 2.3 or newer for Apple Silicon. Default to the
+                        value of accelerate config of the current system or
+                        the flag passed with the `accelerate.launch` command.
+                        Use this argument to override the accelerate config.
   --local_rank LOCAL_RANK
                         For distributed training: local_rank
   --enable_xformers_memory_efficient_attention
@@ -796,6 +797,19 @@ options:
                         default strategy is to freeze all layers from 17 up.
                         This can be helpful when fine-tuning Stable Diffusion
                         2.1 on a new style.
+  --freeze_unet_strategy {none,bitfit}
+                        When freezing the UNet, we can use the 'none' or
+                        'bitfit' strategy. The 'bitfit' strategy will freeze
+                        all weights, and leave bias thawed. The default
+                        strategy is to leave the full u-net thawed. Freezing
+                        the weights can improve convergence for finetuning.
+  --unet_attention_slice
+                        If set, will use attention slicing for the SDXL UNet.
+                        This is an experimental feature and is not recommended
+                        for general use. SD 2.x makes use of attention slicing
+                        on Apple MPS platform to avoid a NDArray size crash,
+                        but SDXL does not seem to require attention slicing on
+                        MPS. If memory constrained, try enabling it anyway.
   --print_filenames     If any image files are stopping the process eg. due to
                         corruption or truncation, this will help identify
                         which is at fault.
@@ -862,4 +876,9 @@ options:
                         after the specified number of warmup steps. A sine or
                         cosine wave will use this value as its lower bound for
                         the learning rate.
+  --i_know_what_i_am_doing
+                        If you are using an optimizer other than AdamW, you
+                        must set this flag to continue. This is a safety
+                        feature to prevent accidental use of an unsupported
+                        optimizer, as weights are stored in bfloat16.
 ```
