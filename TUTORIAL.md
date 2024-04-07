@@ -8,7 +8,7 @@ This document aims to get you set up and running with a basic training environme
 
 ## Installation
 
-**SimpleTuner requires Linux.**
+**SimpleTuner requires Linux or MacOS (Apple Silicon).**
 
 These steps can be followed to the best of your abilities here. If you face any difficulties, please [start a discussion](https://github.com/bghira/SimpleTuner/discussions/new/choose) on the forum here on GitHub.
 
@@ -242,3 +242,7 @@ Here's a breakdown of what each environment variable does:
 ## Additional Notes
 
 For more details, consult the [INSTALL](/INSTALL.md) and [OPTIONS](/OPTIONS.md) documents or the [DATALOADER](/documentation/DATALOADER.md) information page for specific details on the dataset config file.
+
+### Single-subject fine-tuning (Dreambooth)
+
+See [DREAMBOOTH](/documentation/DREAMBOOTH.md) for a breakdown on how Dreambooth training can be configured in SimpleTuner.
