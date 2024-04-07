@@ -311,13 +311,13 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--disable_multiprocessing",
+        "--enable_multiprocessing",
         default=False,
         action="store_true",
         help=(
-            "If set, will use threads instead of processes during metadata caching operations."
-            " This is set implicitly for Apple systems, as Darwin behaves oddly with multiprocessing."
-            " For some systems, multiprocessing may be slower than threading, so this option is provided."
+            "If set, will use processes instead of threads during metadata caching operations."
+            " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
+            " Use this option with caution, and monitor your system's memory usage."
         ),
     )
     parser.add_argument(
@@ -999,8 +999,8 @@ def parse_args(input_args=None):
         default=False,
         help=(
             "If set, will use attention slicing for the SDXL UNet. This is an experimental feature and is not recommended for general use."
-            " SD 2.x makes use of attention slicing on Apple MPS platform to avoid a NDArray size crash, but SDXL will NaN in the first"
-            " backwards pass with attention slicing enabled on MPS. Other platforms may benefit - use with caution."
+            " SD 2.x makes use of attention slicing on Apple MPS platform to avoid a NDArray size crash, but SDXL does not"
+            " seem to require attention slicing on MPS. If memory constrained, try enabling it anyway."
         ),
     )
     parser.add_argument(
