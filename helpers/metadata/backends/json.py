@@ -129,6 +129,8 @@ class JsonMetadataBackend(MetadataBackend):
                     config=self.config,
                 )
             self.instance_images_path = set(cache_data.get("instance_images_path", []))
+        else:
+            logger.warning("No cache file found, creating new one.")
 
     def save_cache(self, enforce_constraints: bool = False):
         """
