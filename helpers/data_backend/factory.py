@@ -15,7 +15,6 @@ from helpers.training.state_tracker import StateTracker
 import json, os, torch, logging, io
 
 logger = logging.getLogger("DataBackendFactory")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
@@ -206,6 +205,11 @@ def configure_multi_databackend(
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
+    logger.setLevel(
+        os.environ.get(
+            "SIMPLETUNER_LOG_LEVEL", "INFO" if accelerator.is_main_process else "ERROR"
+        )
+    )
     if args.data_backend_config is None:
         raise ValueError(
             "Must provide a data backend config file via --data_backend_config"
