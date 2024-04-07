@@ -1207,9 +1207,9 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if not args.adamw_bfloat16 and not args.i_know_what_i_am_doing:
+    if not args.adam_bfloat16 and not args.i_know_what_i_am_doing:
         raise ValueError(
-            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adamw_bfloat16 to true."
+            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true."
         )
 
     if not args.i_know_what_i_am_doing and (
@@ -1219,7 +1219,7 @@ def parse_args(input_args=None):
         or args.use_8bit_adam
     ):
         raise ValueError(
-            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adamw_bfloat16 to true, or set --i_know_what_i_am_doing."
+            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
         )
 
     if torch.backends.mps.is_available():

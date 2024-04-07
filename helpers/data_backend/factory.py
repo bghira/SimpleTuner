@@ -54,6 +54,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     else:
         output["config"]["crop_aspect"] = "square"
     if "crop_style" in backend:
+        crop_styles = ["random", "corner", "center", "centre", "face"]
+        if backend["crop_style"] not in crop_styles:
+            raise ValueError(
+                f"(id={backend['id']}) crop_style must be one of {crop_styles}."
+            )
         output["config"]["crop_style"] = backend["crop_style"]
     else:
         output["config"]["crop_style"] = "random"

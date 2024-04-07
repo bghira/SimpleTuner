@@ -1,6 +1,5 @@
 # Dreambooth (single-subject training)
 
-🟡🟢🔴
 ## Background
 
 The term Dreambooth refers to a technique developed by Google to inject subjects by finetuning them into a model using a small set of high quality images ([paper](https://dreambooth.github.io))
@@ -42,8 +41,10 @@ TRAIN_BATCH_SIZE=1
 
 LEARNING_RATE=4e-6
 LEARNING_RATE_END=4e-7
+LR_SCHEDULE=cosine
+LR_WARMUP_STEPS=100
 
-OPTIMIZER=adamw-bf16
+OPTIMIZER=adamw_bf16
 
 MAX_NUM_STEPS=1000
 NUM_EPOCHS=25

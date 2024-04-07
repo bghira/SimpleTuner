@@ -160,6 +160,10 @@ class MultiaspectImage:
                     image, crop_coordinates = MultiaspectImage._crop_center(
                         image, crop_width, crop_height
                     )
+                elif crop_style == "face":
+                    image, crop_coordinates = MultiaspectImage._crop_face(
+                        image, crop_width, crop_height
+                    )
                 elif crop_style == "random":
                     image, crop_coordinates = MultiaspectImage._crop_random(
                         image, crop_width, crop_height
@@ -179,7 +183,7 @@ class MultiaspectImage:
                         crop_width=crop_width,
                         crop_height=crop_height,
                     )
-                elif crop_style == "random":
+                elif crop_style == "random" or crop_style == "face":
                     _, crop_coordinates = MultiaspectImage._crop_random(
                         image_metadata=image_metadata,
                         crop_width=crop_width,
@@ -258,6 +262,39 @@ class MultiaspectImage:
             return image.crop((left, top, right, bottom)), (left, top)
         elif image_metadata:
             return image_metadata, (left, top)
+
+    @staticmethod
+    def _crop_face(
+        image: Image,
+        target_width: int,
+        target_height: int,
+    ):
+        """Crop the image to include a face, or the most 'interesting' part of the image, without a face."""
+        # Import modules
+        import cv2
+        import numpy as np
+
+        # Detect a face in the image
+        face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+        image = image.convert("RGB")
+        image = np.array(image)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        if len(faces) > 0:
+            # Get the largest face
+            face = max(faces, key=lambda f: f[2] * f[3])
+            x, y, w, h = face
+            left = max(0, x - 0.5 * w)
+            top = max(0, y - 0.5 * h)
+            right = min(image.shape[1], x + 1.5 * w)
+            bottom = min(image.shape[0], y + 1.5 * h)
+            image = Image.fromarray(image)
+            return image.crop((left, top, right, bottom)), (left, top)
+        else:
+            # Crop the image from a random position
+            return MultiaspectImage._crop_random(image, target_width, target_height)
 
     @staticmethod
     def _round_to_nearest_multiple(value, multiple):

@@ -208,7 +208,7 @@ def log_validations(
                             torch.bfloat16
                             if torch.backends.mps.is_available()
                             or torch.cuda.is_available()
-                            else torch.float32
+                            else torch.bfloat16
                         ),
                     )
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
@@ -328,17 +328,17 @@ def log_validations(
                     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
                 )
 
-                # logger.debug(
-                #     f"Generating validation image: {validation_prompt}"
-                #     f"\n Weight dtypes:"
-                #     f"\n -> unet: {pipeline.unet.dtype}"
-                #     f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
-                #     f"\n -> vae: {pipeline.vae.dtype}"
-                #     f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
-                #     f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
-                #     f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
-                #     f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
-                # )
+                logger.debug(
+                    f"Generating validation image: {validation_prompt}"
+                    f"\n Weight dtypes:"
+                    f"\n -> unet: {pipeline.unet.dtype}"
+                    f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
+                    f"\n -> vae: {pipeline.vae.dtype}"
+                    f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
+                    f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
+                    f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
+                    f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
+                )
                 # logger.debug(
                 #     f"Generating validation image: {validation_prompt}"
                 #     f"\n -> Number of images: {args.num_validation_images}"
