@@ -67,20 +67,29 @@ class JsonMetadataBackend(MetadataBackend):
         Returns:
             list: A list of new files.
         """
-        all_image_files = StateTracker.get_image_files(
+        listed_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
         )
-        if all_image_files is None:
+        if listed_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
-            all_image_files = self.data_backend.list_files(
+            listed_image_files = self.data_backend.list_files(
                 instance_data_root=self.instance_data_root,
                 str_pattern="*.[jJpP][pPnN][gG]",
             )
+            # flatten the os.path.walk results into a dictionary
+
+            for root, dirs, files in listed_image_files:
+                for file in files:
+                    if re.match(r".*\.(jpg|jpeg|png)$", file, re.IGNORECASE):
+                        listed_image_files.append(os.path.join(root, file))
+
             StateTracker.set_image_files(
-                all_image_files, data_backend_id=self.data_backend.id
+                listed_image_files, data_backend_id=self.data_backend.id
             )
         else:
             logger.debug("Using cached image file list")
+            all_image_files = listed_image_files
+        del listed_image_files
 
         logger.debug(
             f"Before flattening, all image files: {json.dumps(all_image_files, indent=4)}"
