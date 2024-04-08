@@ -77,14 +77,15 @@ class JsonMetadataBackend(MetadataBackend):
                 str_pattern="*.[jJpP][pPnN][gG]",
             )
             # flatten the os.path.walk results into a dictionary
-
-            for root, dirs, files in listed_image_files:
-                for file in files:
-                    if re.match(r".*\.(jpg|jpeg|png)$", file, re.IGNORECASE):
-                        listed_image_files.append(os.path.join(root, file))
+            all_image_files = []
+            for sublist in all_image_files:
+                for root, dirs, files in sublist:
+                    for file in files:
+                        if re.match(r".*\.(jpg|jpeg|png)$", file, re.IGNORECASE):
+                            all_image_files.append(os.path.join(root, file))
 
             StateTracker.set_image_files(
-                listed_image_files, data_backend_id=self.data_backend.id
+                all_image_files, data_backend_id=self.data_backend.id
             )
         else:
             logger.debug("Using cached image file list")
