@@ -46,7 +46,6 @@ class MetadataBackend:
         self.metadata_file = Path(metadata_file)
         self.aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
-        self.instance_images_path = set()
         self.seen_images = {}
         self.config = {}
         self.reload_cache()
@@ -154,6 +153,9 @@ class MetadataBackend:
         new_files = self._discover_new_files()
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+        logger.info(
+            f"Compressed {len(existing_files_set)} existing files from {len(self.aspect_ratio_bucket_indices.values())}."
+        )
         # Initialize aggregated statistics
         aggregated_statistics = {
             "total_processed": 0,
@@ -250,7 +252,6 @@ class MetadataBackend:
                     logger.debug(
                         f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
                     )
-                    self.instance_images_path.update(written_files)
                     self.save_cache(enforce_constraints=False)
                     self.save_image_metadata()
                     last_write_time = current_time
@@ -260,7 +261,6 @@ class MetadataBackend:
         for worker in workers:
             worker.join()
         logger.info(f"Image processing statistics: {aggregated_statistics}")
-        self.instance_images_path.update(new_files)
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")

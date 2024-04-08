@@ -114,7 +114,12 @@ class ParquetMetadataBackend(MetadataBackend):
         return [
             file
             for file in all_image_files
-            if str(file) not in self.instance_images_path
+            if str(file)
+            not in set(
+                path
+                for paths in self.aspect_ratio_bucket_indices.values()
+                for path in paths
+            )
         ]
 
     def reload_cache(self):
@@ -148,7 +153,6 @@ class ParquetMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     config=self.config,
                 )
-            self.instance_images_path = set(cache_data.get("instance_images_path", []))
 
     def save_cache(self, enforce_constraints: bool = False):
         """
@@ -168,7 +172,6 @@ class ParquetMetadataBackend(MetadataBackend):
                 data_backend_id=self.data_backend.id
             ),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
-            "instance_images_path": [str(path) for path in self.instance_images_path],
         }
         logger.debug(f"save_cache has config to write: {cache_data['config']}")
         cache_data_str = json.dumps(cache_data)

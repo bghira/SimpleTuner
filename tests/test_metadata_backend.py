@@ -72,7 +72,6 @@ class TestMetadataBackend(unittest.TestCase):
     def test_load_cache_valid(self):
         valid_cache_data = {
             "aspect_ratio_bucket_indices": {"1.0": ["image1", "image2"]},
-            "instance_images_path": ["image1", "image2"],
         }
         with patch.object(
             self.data_backend, "read", return_value=json.dumps(valid_cache_data)
@@ -93,7 +92,6 @@ class TestMetadataBackend(unittest.TestCase):
         self.metadata_backend.aspect_ratio_bucket_indices = {
             "1.0": ["image1", "image2"]
         }
-        self.metadata_backend.instance_images_path = ["image1", "image2"]
         with patch.object(self.data_backend, "write") as mock_write:
             self.metadata_backend.save_cache()
         mock_write.assert_called_once()

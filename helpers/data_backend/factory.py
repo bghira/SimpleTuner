@@ -416,29 +416,32 @@ def configure_multi_databackend(
                 )
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
-        init_backend["metadata_backend"] = BucketManager_cls(
-            id=init_backend["id"],
-            instance_data_root=init_backend["instance_data_root"],
-            data_backend=init_backend["data_backend"],
-            accelerator=accelerator,
-            resolution=backend.get("resolution", args.resolution),
-            minimum_image_size=backend.get(
-                "minimum_image_size", args.minimum_image_size
-            ),
-            resolution_type=backend.get("resolution_type", args.resolution_type),
-            batch_size=args.train_batch_size,
-            metadata_update_interval=backend.get(
-                "metadata_update_interval", args.metadata_update_interval
-            ),
-            cache_file=os.path.join(
-                init_backend["instance_data_root"], "aspect_ratio_bucket_indices.json"
-            ),
-            metadata_file=os.path.join(
-                init_backend["instance_data_root"], "aspect_ratio_bucket_metadata.json"
-            ),
-            delete_problematic_images=args.delete_problematic_images or False,
-            **metadata_backend_args,
-        )
+        with accelerator.main_process_first():
+            init_backend["metadata_backend"] = BucketManager_cls(
+                id=init_backend["id"],
+                instance_data_root=init_backend["instance_data_root"],
+                data_backend=init_backend["data_backend"],
+                accelerator=accelerator,
+                resolution=backend.get("resolution", args.resolution),
+                minimum_image_size=backend.get(
+                    "minimum_image_size", args.minimum_image_size
+                ),
+                resolution_type=backend.get("resolution_type", args.resolution_type),
+                batch_size=args.train_batch_size,
+                metadata_update_interval=backend.get(
+                    "metadata_update_interval", args.metadata_update_interval
+                ),
+                cache_file=os.path.join(
+                    init_backend["instance_data_root"],
+                    "aspect_ratio_bucket_indices.json",
+                ),
+                metadata_file=os.path.join(
+                    init_backend["instance_data_root"],
+                    "aspect_ratio_bucket_metadata.json",
+                ),
+                delete_problematic_images=args.delete_problematic_images or False,
+                **metadata_backend_args,
+            )
 
         if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
             "skip_file_discovery", ""
@@ -464,6 +467,7 @@ def configure_multi_databackend(
         init_backend["metadata_backend"].split_buckets_between_processes(
             gradient_accumulation_steps=args.gradient_accumulation_steps,
         )
+        accelerator.wait_for_everyone()
 
         # Check if there is an existing 'config' in the metadata_backend.config
         excluded_keys = [

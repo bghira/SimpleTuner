@@ -94,7 +94,12 @@ class JsonMetadataBackend(MetadataBackend):
         return [
             file
             for file in all_image_files
-            if str(file) not in self.instance_images_path
+            if str(file)
+            not in set(
+                path
+                for paths in self.aspect_ratio_bucket_indices.values()
+                for path in paths
+            )
         ]
 
     def reload_cache(self):
@@ -105,10 +110,11 @@ class JsonMetadataBackend(MetadataBackend):
             dict: The cache data.
         """
         # Query our DataBackend to see whether the cache file exists.
+        logger.info(f"Checking for cache file: {self.cache_file}")
         if self.data_backend.exists(self.cache_file):
             try:
                 # Use our DataBackend to actually read the cache file.
-                logger.debug("Pulling cache file from storage.")
+                logger.info(f"Pulling cache file from storage")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
@@ -127,9 +133,8 @@ class JsonMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     config=self.config,
                 )
-            self.instance_images_path = set(cache_data.get("instance_images_path", []))
             logger.debug(
-                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets and {len(self.instance_images_path)} images."
+                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets and {len(*self.aspect_ratio_bucket_indices.values()) if len(self.aspect_ratio_bucket_indices) > 0 else 0} images."
             )
         else:
             logger.warning("No cache file found, creating new one.")
@@ -152,7 +157,6 @@ class JsonMetadataBackend(MetadataBackend):
                 data_backend_id=self.data_backend.id
             ),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
-            "instance_images_path": [str(path) for path in self.instance_images_path],
         }
         logger.debug(f"save_cache has config to write: {cache_data['config']}")
         cache_data_str = json.dumps(cache_data)
