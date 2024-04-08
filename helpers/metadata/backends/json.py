@@ -78,35 +78,29 @@ class JsonMetadataBackend(MetadataBackend):
             StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
             )
-        print(f"Found files: {all_image_files}")
 
         # Flatten the list if it contains nested lists
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
-        print(f"Flattened: {all_image_files}")
 
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
-            print("is for metadata")
             result = [
                 file
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
         else:
-            print(f"Checking for new files in {len(all_image_files)} files")
             processed_files = set(
                 path
                 for paths in self.aspect_ratio_bucket_indices.values()
                 for path in paths
             )
-            print(f"Processed files: {processed_files}")
             result = [
                 file for file in all_image_files_set if file not in processed_files
             ]
 
-        print(f"Discovered {len(result)} new files: {result}")
         return result
 
     def reload_cache(self):
