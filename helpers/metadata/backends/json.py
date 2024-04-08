@@ -79,6 +79,10 @@ class JsonMetadataBackend(MetadataBackend):
                 all_image_files, data_backend_id=self.data_backend.id
             )
 
+        logger.debug(
+            f"Before flattening, all image files: {json.dumps(all_image_files, indent=4)}"
+        )
+
         # Flatten the list if it contains nested lists
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
