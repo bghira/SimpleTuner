@@ -67,12 +67,9 @@ class JsonMetadataBackend(MetadataBackend):
         Returns:
             list: A list of new files.
         """
-        # Attempt to retrieve existing image files from StateTracker
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
         )
-
-        # If not found, list from the backend and update the StateTracker
         if all_image_files is None:
             all_image_files = self.data_backend.list_files(
                 instance_data_root=self.instance_data_root,
@@ -81,33 +78,36 @@ class JsonMetadataBackend(MetadataBackend):
             StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
             )
+        print(f"Found files: {all_image_files}")
 
-        # Convert list of all image files to a set for faster lookup
+        # Flatten the list if it contains nested lists
+        if any(isinstance(i, list) for i in all_image_files):
+            all_image_files = [item for sublist in all_image_files for item in sublist]
+        print(f"Flattened: {all_image_files}")
+
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
-            # For metadata, filter out files already having metadata
-            new_files = {
+            print("is for metadata")
+            result = [
                 file
-                for file in all_image_files_set
+                for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
-            }
+            ]
         else:
-            # For other processing, filter out files already in any aspect_ratio_bucket_indices
+            print(f"Checking for new files in {len(all_image_files)} files")
             processed_files = set(
                 path
                 for paths in self.aspect_ratio_bucket_indices.values()
                 for path in paths
             )
-            new_files = all_image_files_set - processed_files
+            print(f"Processed files: {processed_files}")
+            result = [
+                file for file in all_image_files_set if file not in processed_files
+            ]
 
-        # Optionally log the first few new files found
-        logger.debug(
-            f"Found {len(new_files)} new images{' for metadata scan' if for_metadata else ''} (truncated): {list(new_files)[:5]}"
-        )
-
-        # Return the list of new files
-        return list(new_files)
+        print(f"Discovered {len(result)} new files: {result}")
+        return result
 
     def reload_cache(self):
         """

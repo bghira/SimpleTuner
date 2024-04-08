@@ -51,23 +51,27 @@ class TestMetadataBackend(unittest.TestCase):
         self.assertEqual(len(self.metadata_backend), 3)
 
     def test_discover_new_files(self):
-        with (
-            patch(
-                "helpers.training.state_tracker.StateTracker.get_image_files",
-                return_value=["image1.jpg", "image2.png"],
-            ),
-            patch(
-                "helpers.training.state_tracker.StateTracker._save_to_disk",
-                return_value=True,
-            ),
-            patch.object(
-                self.data_backend,
-                "list_files",
-                return_value=[("root", ["dir"], ["image1.jpg", "image2.png"])],
-            ),
+        # Assuming that StateTracker.get_image_files returns known files
+        # and list_files should return both known and potentially new files
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_image_files",
+            return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
+        ), patch(
+            "helpers.training.state_tracker.StateTracker.set_image_files",
+            return_value=None,
+        ), patch.object(
+            self.data_backend,
+            "list_files",
+            return_value=["image1.jpg", "image2.png", "image3.jpg", "image4.png"],
         ):
-            new_files = self.metadata_backend._discover_new_files()
-            self.assertEqual(new_files, ["image1.jpg", "image2.png"])
+
+            self.metadata_backend.aspect_ratio_bucket_indices = {
+                "1.0": ["image1.jpg", "image2.png"]
+            }
+            new_files = self.metadata_backend._discover_new_files(for_metadata=False)
+            # Assuming the method's logic excludes files known (["image1.jpg", "image2.png"])
+            # The expectation is that only ["image3.jpg", "image4.png"] are returned as new
+            self.assertEqual(sorted(new_files), sorted(["image3.jpg", "image4.png"]))
 
     def test_load_cache_valid(self):
         valid_cache_data = {
