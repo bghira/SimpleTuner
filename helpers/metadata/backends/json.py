@@ -83,6 +83,8 @@ class JsonMetadataBackend(MetadataBackend):
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
 
+        logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
+
         all_image_files_set = set(all_image_files)
 
         if for_metadata:
