@@ -87,40 +87,47 @@ class ParquetMetadataBackend(MetadataBackend):
         Returns:
             list: A list of new files.
         """
+        # Attempt to retrieve existing image files from StateTracker
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
-        ) or StateTracker.set_image_files(
-            self.data_backend.list_files(
+        )
+
+        # If not found, list from the backend and update the StateTracker
+        if all_image_files is None:
+            all_image_files = self.data_backend.list_files(
                 instance_data_root=self.instance_data_root,
                 str_pattern="*.[jJpP][pPnN][gG]",
-            ),
-            data_backend_id=self.data_backend.id,
-        )
-        # Log an excerpt of the all_image_files:
-        # logger.debug(
-        #     f"Found {len(all_image_files)} images in the instance data root (truncated): {list(all_image_files)[:5]}"
-        # )
-        # Extract only the files from the data
+            )
+            StateTracker.set_image_files(
+                all_image_files, data_backend_id=self.data_backend.id
+            )
+
+        # Convert list of all image files to a set for faster lookup
+        all_image_files_set = set(all_image_files)
+
         if for_metadata:
-            result = [
+            # For metadata, filter out files already having metadata
+            new_files = {
                 file
-                for file in all_image_files
+                for file in all_image_files_set
                 if self.get_metadata_by_filepath(file) is None
-            ]
-            # logger.debug(
-            #     f"Found {len(result)} new images for metadata scan (truncated): {list(result)[:5]}"
-            # )
-            return result
-        return [
-            file
-            for file in all_image_files
-            if str(file)
-            not in set(
+            }
+        else:
+            # For other processing, filter out files already in any aspect_ratio_bucket_indices
+            processed_files = set(
                 path
                 for paths in self.aspect_ratio_bucket_indices.values()
                 for path in paths
             )
-        ]
+            new_files = all_image_files_set - processed_files
+
+        # Optionally log the first few new files found
+        logger.debug(
+            f"Found {len(new_files)} new images{' for metadata scan' if for_metadata else ''} (truncated): {list(new_files)[:5]}"
+        )
+
+        # Return the list of new files
+        return list(new_files)
 
     def reload_cache(self):
         """
