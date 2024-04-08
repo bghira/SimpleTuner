@@ -134,7 +134,7 @@ class JsonMetadataBackend(MetadataBackend):
                     config=self.config,
                 )
             logger.debug(
-                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets and {len(*self.aspect_ratio_bucket_indices.values()) if len(self.aspect_ratio_bucket_indices) > 0 else 0} images."
+                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets"
             )
         else:
             logger.warning("No cache file found, creating new one.")
