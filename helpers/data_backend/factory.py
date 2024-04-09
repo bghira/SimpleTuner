@@ -661,8 +661,10 @@ def configure_multi_databackend(
             init_backend["metadata_backend"].load_image_metadata()
         accelerator.wait_for_everyone()
 
-        if "vae" not in args.skip_file_discovery and "vae" not in backend.get(
-            "skip_file_discovery", ""
+        if (
+            args.vae_cache_preprocess
+            and "vae" not in args.skip_file_discovery
+            and "vae" not in backend.get("skip_file_discovery", "")
         ):
             init_backend["vaecache"].split_cache_between_processes()
             if args.vae_cache_preprocess:
