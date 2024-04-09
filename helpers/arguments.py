@@ -3,11 +3,14 @@ from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ArgsParser")
-# Are we the main process?
-if __name__ == "__main__":
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+# Are we the primary process?
+is_primary_process = True
+if os.environ.get("RANK") is not None:
+    if int(os.environ.get("RANK")) != 0:
+        is_primary_process = False
+logger.setLevel(
+    os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO" if is_primary_process else "ERROR")
+)
 
 if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
