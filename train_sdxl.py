@@ -353,7 +353,7 @@ def main():
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
-        lora_initialisation_style = "gaussian"
+        lora_initialisation_style = True
         if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
             lora_initialisation_style = args.lora_init_method
         lora_weight_init_type = (
