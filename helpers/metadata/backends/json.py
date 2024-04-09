@@ -80,9 +80,9 @@ class JsonMetadataBackend(MetadataBackend):
             all_image_files = []
             for sublist in listed_image_files:
                 logger.debug(f"Listed image files sublist: {sublist}")
-                for root, dirs, files in sublist:
-                    for file in files:
-                        all_image_files.append(os.path.join(root, file))
+                root, dirs, files = sublist
+                for file in files:
+                    all_image_files.append(os.path.join(root, file))
 
             StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
