@@ -628,10 +628,11 @@ def configure_multi_databackend(
             vae_cache_preprocess=args.vae_cache_preprocess,
         )
 
-        logger.info(f"(id={init_backend['id']}) Discovering cache objects..")
-        if accelerator.is_local_main_process:
-            init_backend["vaecache"].discover_all_files()
-        accelerator.wait_for_everyone()
+        if args.vae_cache_preprocess:
+            logger.info(f"(id={init_backend['id']}) Discovering cache objects..")
+            if accelerator.is_local_main_process:
+                init_backend["vaecache"].discover_all_files()
+            accelerator.wait_for_everyone()
 
         if (
             (
