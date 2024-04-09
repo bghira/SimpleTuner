@@ -79,6 +79,7 @@ class JsonMetadataBackend(MetadataBackend):
             # flatten the os.path.walk results into a dictionary
             all_image_files = []
             for sublist in listed_image_files:
+                logger.debug(f"Listed image files sublist: {sublist}")
                 for root, dirs, files in sublist:
                     for file in files:
                         all_image_files.append(os.path.join(root, file))
