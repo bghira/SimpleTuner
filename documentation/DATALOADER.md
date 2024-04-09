@@ -9,7 +9,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "type": "local",
         "instance_data_dir": "/path/to/data/tree",
         "crop": false,
-        "crop_style": "random|center|corner",
+        "crop_style": "random|center|corner|face",
         "crop_aspect": "square|preserve",
         "resolution": 1.0,
         "resolution_type": "area|pixel",
@@ -87,7 +87,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 ### Cropping Options
 - `crop`: Enables or disables image cropping.
-- `crop_style`: Selects the cropping style (`random`, `center`, `corner`).
+- `crop_style`: Selects the cropping style (`random`, `center`, `corner`, `face`).
 - `crop_aspect`: Chooses the cropping aspect (`square` or `preserve`).
 
 ### `resolution`

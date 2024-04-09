@@ -82,7 +82,7 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--crop_style`
 
 - **What**: When `--crop=true`, the trainer may be instructed to crop in different ways.
-- **Why**: The `crop_style` option can be set to `center` (or `centre`) for a classic centre-crop, `corner` to elect for the lowest-right corner, and `random` for a random image slice. Default: random.
+- **Why**: The `crop_style` option can be set to `center` (or `centre`) for a classic centre-crop, `corner` to elect for the lowest-right corner, `face` to detect and centre upon the largest subject face, and `random` for a random image slice. Default: random.
 
 ### `--crop_aspect`
 

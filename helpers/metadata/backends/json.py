@@ -69,33 +69,44 @@ class JsonMetadataBackend(MetadataBackend):
         """
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
-        ) or StateTracker.set_image_files(
-            self.data_backend.list_files(
+        )
+        if all_image_files is None:
+            logger.debug("No image file cache available, retrieving fresh")
+            all_image_files = self.data_backend.list_files(
                 instance_data_root=self.instance_data_root,
                 str_pattern="*.[jJpP][pPnN][gG]",
-            ),
-            data_backend_id=self.data_backend.id,
-        )
-        # Log an excerpt of the all_image_files:
-        # logger.debug(
-        #     f"Found {len(all_image_files)} images in the instance data root (truncated): {list(all_image_files)[:5]}"
-        # )
-        # Extract only the files from the data
+            )
+            all_image_files = StateTracker.set_image_files(
+                all_image_files, data_backend_id=self.data_backend.id
+            )
+        else:
+            logger.debug("Using cached image file list")
+
+        # Flatten the list if it contains nested lists
+        if any(isinstance(i, list) for i in all_image_files):
+            all_image_files = [item for sublist in all_image_files for item in sublist]
+
+        logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
+
+        all_image_files_set = set(all_image_files)
+
         if for_metadata:
             result = [
                 file
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
-            # logger.debug(
-            #     f"Found {len(result)} new images for metadata scan (truncated): {list(result)[:5]}"
-            # )
-            return result
-        return [
-            file
-            for file in all_image_files
-            if str(file) not in self.instance_images_path
-        ]
+        else:
+            processed_files = set(
+                path
+                for paths in self.aspect_ratio_bucket_indices.values()
+                for path in paths
+            )
+            result = [
+                file for file in all_image_files_set if file not in processed_files
+            ]
+
+        return result
 
     def reload_cache(self):
         """
@@ -105,13 +116,13 @@ class JsonMetadataBackend(MetadataBackend):
             dict: The cache data.
         """
         # Query our DataBackend to see whether the cache file exists.
+        logger.info(f"Checking for cache file: {self.cache_file}")
         if self.data_backend.exists(self.cache_file):
             try:
                 # Use our DataBackend to actually read the cache file.
-                logger.debug("Pulling cache file from storage.")
+                logger.info(f"Pulling cache file from storage")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
-                logger.debug("Completed loading cache data.")
             except Exception as e:
                 logger.warning(
                     f"Error loading aspect bucket cache, creating new one: {e}"
@@ -128,7 +139,11 @@ class JsonMetadataBackend(MetadataBackend):
                     data_backend_id=self.id,
                     config=self.config,
                 )
-            self.instance_images_path = set(cache_data.get("instance_images_path", []))
+            logger.debug(
+                f"(id={self.id}) Loaded {len(self.aspect_ratio_bucket_indices)} aspect ratio buckets"
+            )
+        else:
+            logger.warning("No cache file found, creating new one.")
 
     def save_cache(self, enforce_constraints: bool = False):
         """
@@ -148,7 +163,6 @@ class JsonMetadataBackend(MetadataBackend):
                 data_backend_id=self.data_backend.id
             ),
             "aspect_ratio_bucket_indices": aspect_ratio_bucket_indices_str,
-            "instance_images_path": [str(path) for path in self.instance_images_path],
         }
         logger.debug(f"save_cache has config to write: {cache_data['config']}")
         cache_data_str = json.dumps(cache_data)
@@ -184,6 +198,7 @@ class JsonMetadataBackend(MetadataBackend):
                 logger.debug(
                     f"Image {image_path_str} was not found on the backend. Skipping image."
                 )
+                del image_data
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
             with Image.open(BytesIO(image_data)) as image:

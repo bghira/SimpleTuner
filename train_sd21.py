@@ -142,11 +142,19 @@ def main():
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=logging_dir
     )
+    # Create the custom configuration
+    from accelerate import InitProcessGroupKwargs
+    from datetime import timedelta
+
+    process_group_kwargs = InitProcessGroupKwargs(
+        timeout=timedelta(seconds=5400)
+    )  # 1.5 hours
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
+        kwargs_handlers=[process_group_kwargs],
     )
     StateTracker.set_accelerator(accelerator)
 
@@ -734,7 +742,7 @@ def main():
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
     if torch.backends.mps.is_available() or args.unet_attention_slice:
-        unet.set_attention_slice()
+        unet.set_attention_slice(1)
 
     lr_scheduler = results[1]
     optimizer = results[2]
