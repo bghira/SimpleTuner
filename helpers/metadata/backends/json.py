@@ -67,34 +67,20 @@ class JsonMetadataBackend(MetadataBackend):
         Returns:
             list: A list of new files.
         """
-        listed_image_files = StateTracker.get_image_files(
+        all_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
         )
-        if listed_image_files is None:
+        if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
-            listed_image_files = self.data_backend.list_files(
+            all_image_files = self.data_backend.list_files(
                 instance_data_root=self.instance_data_root,
                 str_pattern="*.[jJpP][pPnN][gG]",
             )
-            # flatten the os.path.walk results into a dictionary
-            all_image_files = []
-            for sublist in listed_image_files:
-                logger.debug(f"Listed image files sublist: {sublist}")
-                root, dirs, files = sublist
-                for file in files:
-                    all_image_files.append(os.path.join(root, file))
-
-            StateTracker.set_image_files(
+            all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
             )
         else:
             logger.debug("Using cached image file list")
-            all_image_files = listed_image_files
-        del listed_image_files
-
-        logger.debug(
-            f"Before flattening, all image files: {json.dumps(all_image_files, indent=4)}"
-        )
 
         # Flatten the list if it contains nested lists
         if any(isinstance(i, list) for i in all_image_files):
