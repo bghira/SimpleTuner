@@ -9,6 +9,9 @@ if __name__ == "__main__":
 else:
     logger.setLevel("ERROR")
 
+if torch.cuda.is_available():
+    os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
+
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(

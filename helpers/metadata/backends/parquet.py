@@ -91,17 +91,17 @@ class ParquetMetadataBackend(MetadataBackend):
             data_backend_id=self.data_backend.id
         )
         if all_image_files is None:
+            logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(
                 instance_data_root=self.instance_data_root,
                 str_pattern="*.[jJpP][pPnN][gG]",
             )
-            StateTracker.set_image_files(
+            all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
             )
+        else:
+            logger.debug("Using cached image file list")
 
-        logger.debug(
-            f"Before flattening, all image files: {json.dumps(all_image_files, indent=4)}"
-        )
         # Flatten the list if it contains nested lists
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
