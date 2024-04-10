@@ -241,8 +241,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 logger.debug(f"Key: {key}, Type: {type(database_image_metadata[key])}")
             image_metadata = {
                 "original_size": (
-                    int(database_image_metadata[width_column]),
-                    int(database_image_metadata[height_column]),
+                    int(database_image_metadata[width_column].item()),
+                    int(database_image_metadata[height_column].item()),
                 )
             }
             if (
