@@ -238,8 +238,8 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.debug(f"Row: {database_image_metadata}")
             image_metadata = {
                 "original_size": (
-                    int(database_image_metadata[width_column].values[0]),
-                    int(database_image_metadata[height_column].values[0]),
+                    int(database_image_metadata[width_column]),
+                    int(database_image_metadata[height_column]),
                 )
             }
             if (
@@ -259,7 +259,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 return aspect_ratio_bucket_indices
             aspect_ratio_column = self.parquet_config.get("aspect_ratio_column", None)
             if aspect_ratio_column:
-                aspect_ratio = database_image_metadata[aspect_ratio_column].values[0]
+                aspect_ratio = database_image_metadata[aspect_ratio_column]
             else:
                 aspect_ratio = (
                     image_metadata["original_size"][0]
