@@ -57,6 +57,8 @@ class MetadataBackend:
         self.image_metadata_loaded = False
         self.vae_output_scaling_factor = 8
         self.metadata_semaphor = Semaphore()
+        # When a multi-gpu system splits the buckets, we no longer update.
+        self.read_only = False
 
     def load_metadata(self):
         raise NotImplementedError
@@ -295,9 +297,12 @@ class MetadataBackend:
 
         # Replace the original aspect_ratio_bucket_indices with the new one containing only this process's share
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
-        logger.debug(
-            f"Count of items after split: {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}"
+        post_total = sum(
+            [len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()]
         )
+        if total_images != post_total:
+            self.read_only = True
+        logger.debug(f"Count of items after split: {post_total}")
 
     def mark_as_seen(self, image_path):
         """Mark an image as seen."""
