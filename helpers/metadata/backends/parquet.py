@@ -64,6 +64,9 @@ class ParquetMetadataBackend(MetadataBackend):
             except Exception as e:
                 raise e
             self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+            self.parquet_database.set_index(
+                self.parquet_config.get("filename_column"), inplace=True
+            )
         else:
             raise FileNotFoundError(
                 f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
@@ -218,10 +221,7 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.debug(
                 f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
             )
-            database_image_metadata = self.parquet_database.loc[
-                self.parquet_database[self.parquet_config.get("filename_column")]
-                == image_path_filtered
-            ]
+            database_image_metadata = self.parquet_database.loc[image_path_filtered]
             logger.debug(f"Found image metadata: {database_image_metadata}")
             if database_image_metadata is None:
                 logger.debug(
