@@ -288,7 +288,7 @@ class ParquetMetadataBackend(MetadataBackend):
         except Exception as e:
             import traceback
 
-            logger.error(f"Error processing image: {e}")
+            logger.error(f"Error processing image: {e}, {database_image_metadata}")
             logger.error(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
             if delete_problematic_images:
