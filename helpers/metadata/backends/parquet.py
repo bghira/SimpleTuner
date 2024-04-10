@@ -241,6 +241,14 @@ class ParquetMetadataBackend(MetadataBackend):
                     int(database_image_metadata[height_column].values[0]),
                 )
             }
+            if (
+                image_metadata["original_size"][0] == 0
+                or image_metadata["original_size"][1] == 0
+            ):
+                logger.debug(
+                    f"Image {image_path_str} has a zero dimension. Skipping image."
+                )
+                return aspect_ratio_bucket_indices
 
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
                 logger.debug(
@@ -250,28 +258,14 @@ class ParquetMetadataBackend(MetadataBackend):
                 return aspect_ratio_bucket_indices
             aspect_ratio_column = self.parquet_config.get("aspect_ratio_column", None)
             if aspect_ratio_column:
-                original_aspect_ratio = database_image_metadata[
-                    aspect_ratio_column
-                ].values[0]
+                aspect_ratio = database_image_metadata[aspect_ratio_column].values[0]
             else:
-                original_aspect_ratio = (
+                aspect_ratio = (
                     image_metadata["original_size"][0]
                     / image_metadata["original_size"][1]
                 )
-            final_image_size, crop_coordinates, new_aspect_ratio = (
-                MultiaspectImage.prepare_image(
-                    image_metadata=image_metadata,
-                    resolution=self.resolution,
-                    resolution_type=self.resolution_type,
-                    id=self.data_backend.id,
-                )
-            )
-            image_metadata["crop_coordinates"] = crop_coordinates
-            image_metadata["target_size"] = final_image_size
-            # Round to avoid excessive unique buckets
-            aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                final_image_size, aspect_ratio_rounding
-            )
+            image_metadata["crop_coordinates"] = (0, 0)
+            image_metadata["target_size"] = image_metadata["original_size"]
             image_metadata["aspect_ratio"] = aspect_ratio
             luminance_column = self.parquet_config.get("luminance_column", None)
             if luminance_column:
@@ -281,7 +275,7 @@ class ParquetMetadataBackend(MetadataBackend):
             else:
                 image_metadata["luminance"] = 0
             logger.debug(
-                f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {final_image_size}."
+                f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image_metadata['target_size']}."
             )
 
             # Create a new bucket if it doesn't exist
