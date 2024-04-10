@@ -236,13 +236,10 @@ class ParquetMetadataBackend(MetadataBackend):
                     "ParquetMetadataBackend requires width and height columns to be defined."
                 )
             logger.debug(f"Row: {database_image_metadata}")
-            # Print the type of each key:
-            for key in database_image_metadata.keys():
-                logger.debug(f"Key: {key}, Type: {type(database_image_metadata[key])}")
             image_metadata = {
                 "original_size": (
-                    int(database_image_metadata[width_column].item()),
-                    int(database_image_metadata[height_column].item()),
+                    int(str(database_image_metadata[width_column])),
+                    int(str(database_image_metadata[height_column])),
                 )
             }
             if (
