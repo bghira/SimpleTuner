@@ -235,6 +235,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 raise ValueError(
                     "ParquetMetadataBackend requires width and height columns to be defined."
                 )
+            logger.debug(f"Row: {database_image_metadata}")
             image_metadata = {
                 "original_size": (
                     int(database_image_metadata[width_column].values[0]),
