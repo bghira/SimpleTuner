@@ -237,8 +237,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 )
             image_metadata = {
                 "original_size": (
-                    int(database_image_metadata[width_column].iloc[0]),
-                    int(database_image_metadata[height_column].iloc[0]),
+                    int(database_image_metadata[width_column]),
+                    int(database_image_metadata[height_column]),
                 )
             }
             if (
