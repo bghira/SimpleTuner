@@ -2,7 +2,8 @@ from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
-import json, logging, os
+from tqdm import tqdm
+import json, logging, os, time
 from io import BytesIO
 from PIL import Image
 
@@ -205,6 +206,95 @@ class ParquetMetadataBackend(MetadataBackend):
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
+    def compute_aspect_ratio_bucket_indices(self):
+        """
+        Compute the aspect ratio bucket indices without any threads or queues.
+
+        Parquet backend behaves very differently to JSON backend.
+
+        Returns:
+            dict: The aspect ratio bucket indices.
+        """
+        logger.info("Discovering new files...")
+        new_files = self._discover_new_files()
+
+        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+        logger.info(
+            f"Compressed {len(existing_files_set)} existing files from {len(self.aspect_ratio_bucket_indices.values())}."
+        )
+        # Initialize aggregated statistics
+        statistics = {
+            "total_processed": 0,
+            "skipped": {
+                "already_exists": len(existing_files_set),
+                "metadata_missing": 0,
+                "not_found": 0,
+                "too_small": 0,
+                "other": 0,
+            },
+        }
+        if not new_files:
+            logger.info("No new files discovered. Doing nothing.")
+            return
+
+        self.load_image_metadata()
+        last_write_time = time.time()
+        aspect_ratio_bucket_updates = {}
+        for file in tqdm(
+            new_files,
+            desc="Generating aspect bucket cache",
+            total=len(new_files),
+            leave=False,
+            ncols=100,
+            miniters=int(len(new_files) / 100),
+        ):
+            current_time = time.time()
+            if str(file) not in existing_files_set:
+                logger.debug(f"Processing file {file}.")
+                metadata_updates = {}
+                aspect_ratio_bucket_updates = self._process_for_bucket(
+                    file,
+                    aspect_ratio_bucket_updates,
+                    metadata_updates=metadata_updates,
+                    delete_problematic_images=self.delete_problematic_images,
+                    statistics=statistics,
+                )
+                statistics["total_processed"] += 1
+                logger.debug(f"Statistics: {statistics}")
+                logger.debug(f"Metadata updates: {metadata_updates}")
+            else:
+                statistics["skipped"]["already_exists"] += 1
+                continue
+
+            # Now, pull metadata updates from the queue
+            if len(metadata_updates) > 0 and file in metadata_updates:
+                metadata_update = metadata_updates[file]
+                logger.info(f"Received statistics update: {metadata_update}")
+                self.set_metadata_by_filepath(
+                    filepath=file, metadata=metadata_updates[file], update_json=False
+                )
+
+                continue
+            processing_duration = current_time - last_write_time
+            if processing_duration >= self.metadata_update_interval:
+                logger.debug(
+                    f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
+                )
+                self.save_cache(enforce_constraints=False)
+                self.save_image_metadata()
+                last_write_time = current_time
+
+            time.sleep(0.001)
+
+        for key, value in aspect_ratio_bucket_updates.items():
+            self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
+
+        logger.debug(f"Bucket worker completed processing. Returning to main thread.")
+        logger.info(f"Image processing statistics: {statistics}")
+        self.save_image_metadata()
+        self.save_cache(enforce_constraints=True)
+        logger.info("Completed aspect bucket update.")
+
     def _process_for_bucket(
         self,
         image_path_str,
@@ -268,8 +358,16 @@ class ParquetMetadataBackend(MetadataBackend):
                     / image_metadata["original_size"][1]
                 )
             aspect_ratio = round(aspect_ratio, aspect_ratio_rounding)
-            image_metadata["crop_coordinates"] = (0, 0)
-            image_metadata["target_size"] = image_metadata["original_size"]
+            target_size, crop_coordinates, new_aspect_ratio = (
+                MultiaspectImage.prepare_image(
+                    image_metadata=image_metadata,
+                    resolution=self.resolution,
+                    resolution_type=self.resolution_type,
+                    id=self.data_backend.id,
+                )
+            )
+            image_metadata["crop_coordinates"] = crop_coordinates
+            image_metadata["target_size"] = target_size
             image_metadata["aspect_ratio"] = aspect_ratio
             luminance_column = self.parquet_config.get("luminance_column", None)
             if luminance_column:
