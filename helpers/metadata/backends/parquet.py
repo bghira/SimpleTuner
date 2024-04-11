@@ -269,9 +269,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 )
             image_metadata["crop_coordinates"] = (0, 0)
             image_metadata["target_size"] = image_metadata["original_size"]
-            image_metadata["aspect_ratio"] = round(
-                image_metadata["target_size"], aspect_ratio_rounding
-            )
+            image_metadata["aspect_ratio"] = round(aspect_ratio, aspect_ratio_rounding)
             luminance_column = self.parquet_config.get("luminance_column", None)
             if luminance_column:
                 image_metadata["luminance"] = database_image_metadata[
