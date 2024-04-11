@@ -2,7 +2,8 @@ from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
-import json, logging, os
+from tqdm import tqdm
+import json, logging, os, time
 from io import BytesIO
 from PIL import Image
 
@@ -64,6 +65,9 @@ class ParquetMetadataBackend(MetadataBackend):
             except Exception as e:
                 raise e
             self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+            self.parquet_database.set_index(
+                self.parquet_config.get("filename_column"), inplace=True
+            )
         else:
             raise FileNotFoundError(
                 f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
@@ -167,6 +171,9 @@ class ParquetMetadataBackend(MetadataBackend):
         # Prune any buckets that have fewer samples than batch_size
         if enforce_constraints:
             self._enforce_min_bucket_size()
+        if self.read_only:
+            logger.debug("Metadata backend is read-only, skipping cache save.")
+            return
         # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
@@ -199,6 +206,91 @@ class ParquetMetadataBackend(MetadataBackend):
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
+    def compute_aspect_ratio_bucket_indices(self):
+        """
+        Compute the aspect ratio bucket indices without any threads or queues.
+
+        Parquet backend behaves very differently to JSON backend.
+
+        Returns:
+            dict: The aspect ratio bucket indices.
+        """
+        logger.info("Discovering new files...")
+        new_files = self._discover_new_files()
+
+        existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+        # Initialize aggregated statistics
+        statistics = {
+            "total_processed": 0,
+            "skipped": {
+                "already_exists": len(existing_files_set),
+                "metadata_missing": 0,
+                "not_found": 0,
+                "too_small": 0,
+                "other": 0,
+            },
+        }
+        if not new_files:
+            logger.debug("No new files discovered. Doing nothing.")
+            return
+
+        self.load_image_metadata()
+        last_write_time = time.time()
+        aspect_ratio_bucket_updates = {}
+        for file in tqdm(
+            new_files,
+            desc="Generating aspect bucket cache",
+            total=len(new_files),
+            leave=False,
+            ncols=100,
+            miniters=int(len(new_files) / 100),
+        ):
+            current_time = time.time()
+            if str(file) not in existing_files_set:
+                logger.debug(f"Processing file {file}.")
+                metadata_updates = {}
+                aspect_ratio_bucket_updates = self._process_for_bucket(
+                    file,
+                    aspect_ratio_bucket_updates,
+                    metadata_updates=metadata_updates,
+                    delete_problematic_images=self.delete_problematic_images,
+                    statistics=statistics,
+                )
+                statistics["total_processed"] += 1
+                logger.debug(f"Statistics: {statistics}")
+                logger.debug(f"Metadata updates: {metadata_updates}")
+            else:
+                statistics["skipped"]["already_exists"] += 1
+                continue
+
+            # Now, pull metadata updates from the queue
+            if len(metadata_updates) > 0 and file in metadata_updates:
+                metadata_update = metadata_updates[file]
+                self.set_metadata_by_filepath(
+                    filepath=file, metadata=metadata_updates[file], update_json=False
+                )
+
+                continue
+            processing_duration = current_time - last_write_time
+            if processing_duration >= self.metadata_update_interval:
+                logger.debug(
+                    f"In-flight metadata update after {processing_duration} seconds. Saving {len(self.image_metadata)} metadata entries and {len(self.aspect_ratio_bucket_indices)} aspect bucket lists."
+                )
+                self.save_cache(enforce_constraints=False)
+                self.save_image_metadata()
+                last_write_time = current_time
+
+            time.sleep(0.001)
+
+        for key, value in aspect_ratio_bucket_updates.items():
+            self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
+
+        logger.debug(f"Bucket worker completed processing. Returning to main thread.")
+        logger.info(f"Image processing statistics: {statistics}")
+        self.save_image_metadata()
+        self.save_cache(enforce_constraints=True)
+        logger.info("Completed aspect bucket update.")
+
     def _process_for_bucket(
         self,
         image_path_str,
@@ -215,10 +307,10 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.debug(
                 f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
             )
-            database_image_metadata = self.parquet_database.loc[
-                self.parquet_database[self.parquet_config.get("filename_column")]
-                == image_path_filtered
-            ]
+            try:
+                database_image_metadata = self.parquet_database.loc[image_path_filtered]
+            except KeyError:
+                database_image_metadata = None
             logger.debug(f"Found image metadata: {database_image_metadata}")
             if database_image_metadata is None:
                 logger.debug(
@@ -234,10 +326,18 @@ class ParquetMetadataBackend(MetadataBackend):
                 )
             image_metadata = {
                 "original_size": (
-                    int(database_image_metadata[width_column].values[0]),
-                    int(database_image_metadata[height_column].values[0]),
+                    int(database_image_metadata[width_column]),
+                    int(database_image_metadata[height_column]),
                 )
             }
+            if (
+                image_metadata["original_size"][0] == 0
+                or image_metadata["original_size"][1] == 0
+            ):
+                logger.debug(
+                    f"Image {image_path_str} has a zero dimension. Skipping image."
+                )
+                return aspect_ratio_bucket_indices
 
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
                 logger.debug(
@@ -247,15 +347,14 @@ class ParquetMetadataBackend(MetadataBackend):
                 return aspect_ratio_bucket_indices
             aspect_ratio_column = self.parquet_config.get("aspect_ratio_column", None)
             if aspect_ratio_column:
-                original_aspect_ratio = database_image_metadata[
-                    aspect_ratio_column
-                ].values[0]
+                aspect_ratio = database_image_metadata[aspect_ratio_column]
             else:
-                original_aspect_ratio = (
+                aspect_ratio = (
                     image_metadata["original_size"][0]
                     / image_metadata["original_size"][1]
                 )
-            final_image_size, crop_coordinates, new_aspect_ratio = (
+            aspect_ratio = round(aspect_ratio, aspect_ratio_rounding)
+            target_size, crop_coordinates, new_aspect_ratio = (
                 MultiaspectImage.prepare_image(
                     image_metadata=image_metadata,
                     resolution=self.resolution,
@@ -264,11 +363,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 )
             )
             image_metadata["crop_coordinates"] = crop_coordinates
-            image_metadata["target_size"] = final_image_size
-            # Round to avoid excessive unique buckets
-            aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                final_image_size, aspect_ratio_rounding
-            )
+            image_metadata["target_size"] = target_size
             image_metadata["aspect_ratio"] = aspect_ratio
             luminance_column = self.parquet_config.get("luminance_column", None)
             if luminance_column:
@@ -278,7 +373,7 @@ class ParquetMetadataBackend(MetadataBackend):
             else:
                 image_metadata["luminance"] = 0
             logger.debug(
-                f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {final_image_size}."
+                f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image_metadata['target_size']}."
             )
 
             # Create a new bucket if it doesn't exist

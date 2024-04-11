@@ -320,8 +320,13 @@ def main():
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
+        lora_initialisation_style = "gaussian"
+        if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
+            lora_initialisation_style = args.lora_init_method
         lora_weight_init_type = (
-            "gaussian" if torch.backends.mps.is_available() else "loftq"
+            "gaussian"
+            if torch.backends.mps.is_available()
+            else lora_initialisation_style
         )
         if args.use_dora:
             lora_weight_init_type = "gaussian"

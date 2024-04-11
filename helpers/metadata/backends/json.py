@@ -152,6 +152,9 @@ class JsonMetadataBackend(MetadataBackend):
         # Prune any buckets that have fewer samples than batch_size
         if enforce_constraints:
             self._enforce_min_bucket_size()
+        if self.read_only:
+            logger.debug("Skipping cache update on storage backend, read-only mode.")
+            return
         # Convert any non-strings into strings as we save the index.
         aspect_ratio_bucket_indices_str = {
             key: [str(path) for path in value]
