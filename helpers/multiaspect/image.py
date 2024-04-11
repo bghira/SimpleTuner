@@ -354,7 +354,7 @@ class MultiaspectImage:
         # Final resize to target dimensions
         if input_image:
             input_image = input_image.resize(
-                (target_width, target_height), resample=Image.LANCZOS
+                (target_width, target_height), resample=Image.Resampling.LANCZOS
             )
             logger.debug(f"Final image size: {input_image.size}.")
             return input_image
