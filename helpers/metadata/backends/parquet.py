@@ -221,7 +221,10 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.debug(
                 f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
             )
-            database_image_metadata = self.parquet_database.loc[image_path_filtered]
+            try:
+                database_image_metadata = self.parquet_database.loc[image_path_filtered]
+            except KeyError:
+                database_image_metadata = None
             logger.debug(f"Found image metadata: {database_image_metadata}")
             if database_image_metadata is None:
                 logger.debug(
@@ -288,7 +291,7 @@ class ParquetMetadataBackend(MetadataBackend):
         except Exception as e:
             import traceback
 
-            logger.error(f"Error processing image: {e}, {database_image_metadata}")
+            logger.error(f"Error processing image: {e}")
             logger.error(f"Error traceback: {traceback.format_exc()}")
             logger.error(e)
             if delete_problematic_images:
