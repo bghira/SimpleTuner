@@ -345,7 +345,9 @@ class MultiaspectImage:
 
             new_image_size = (intermediate_width, intermediate_height)
             if input_image:
-                input_image = input_image.resize(new_image_size, resample=Image.LANCZOS)
+                input_image = input_image.resize(
+                    new_image_size, resample=Image.Resampling.LANCZOS
+                )
             current_width, current_height = new_image_size
             logger.debug(
                 f"Resized image to intermediate size: {current_width}x{current_height}."
