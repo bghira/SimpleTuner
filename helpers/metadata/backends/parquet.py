@@ -219,9 +219,6 @@ class ParquetMetadataBackend(MetadataBackend):
         new_files = self._discover_new_files()
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
-        logger.info(
-            f"Compressed {len(existing_files_set)} existing files from {len(self.aspect_ratio_bucket_indices.values())}."
-        )
         # Initialize aggregated statistics
         statistics = {
             "total_processed": 0,
@@ -234,7 +231,7 @@ class ParquetMetadataBackend(MetadataBackend):
             },
         }
         if not new_files:
-            logger.info("No new files discovered. Doing nothing.")
+            logger.debug("No new files discovered. Doing nothing.")
             return
 
         self.load_image_metadata()
@@ -269,7 +266,6 @@ class ParquetMetadataBackend(MetadataBackend):
             # Now, pull metadata updates from the queue
             if len(metadata_updates) > 0 and file in metadata_updates:
                 metadata_update = metadata_updates[file]
-                logger.info(f"Received statistics update: {metadata_update}")
                 self.set_metadata_by_filepath(
                     filepath=file, metadata=metadata_updates[file], update_json=False
                 )
