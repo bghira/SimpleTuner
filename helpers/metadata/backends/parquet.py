@@ -271,7 +271,7 @@ class ParquetMetadataBackend(MetadataBackend):
             image_metadata["target_size"] = image_metadata["original_size"]
             image_metadata["aspect_ratio"] = (
                 MultiaspectImage.calculate_image_aspect_ratio(
-                    aspect_ratio, aspect_ratio_rounding
+                    image_metadata["target_size"], aspect_ratio_rounding
                 )
             )
             luminance_column = self.parquet_config.get("luminance_column", None)
