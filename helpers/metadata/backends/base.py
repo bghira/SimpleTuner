@@ -387,9 +387,20 @@ class MetadataBackend:
         """
         Remove buckets that have fewer samples than batch_size and enforce minimum image size constraints.
         """
-        for bucket in list(
-            self.aspect_ratio_bucket_indices.keys()
+        logger.info(
+            f"Enforcing minimum image size of {self.minimum_image_size}."
+            " This could take a while for very-large datasets."
+        )
+        for bucket in tqdm(
+            list(self.aspect_ratio_bucket_indices.keys()),
+            leave=False,
+            desc="Enforcing minimum bucket size",
         ):  # Safe iteration over keys
+            # If the bucket is empty, remove it
+            if not self.aspect_ratio_bucket_indices[bucket]:
+                logger.debug(f"Bucket {bucket} is empty. Removing.")
+                del self.aspect_ratio_bucket_indices[bucket]
+                continue
             # # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
             # self._prune_small_buckets(bucket)
             self._enforce_resolution_constraints(bucket)
@@ -412,10 +423,6 @@ class MetadataBackend:
         Enforce resolution constraints on images in a bucket.
         """
         if self.minimum_image_size is not None:
-            logger.info(
-                f"Enforcing minimum image size of {self.minimum_image_size}."
-                " This could take a while for very-large datasets."
-            )
             if bucket not in self.aspect_ratio_bucket_indices:
                 logger.debug(
                     f"Bucket {bucket} was already removed due to insufficient samples."
