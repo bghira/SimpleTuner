@@ -362,6 +362,10 @@ class ParquetMetadataBackend(MetadataBackend):
                     id=self.data_backend.id,
                 )
             )
+            if aspect_ratio != new_aspect_ratio:
+                raise ValueError(
+                    f"Aspect ratio mismatch: {aspect_ratio} vs {new_aspect_ratio} for sample: {image_path_str}."
+                )
             image_metadata["crop_coordinates"] = crop_coordinates
             image_metadata["target_size"] = target_size
             image_metadata["aspect_ratio"] = aspect_ratio

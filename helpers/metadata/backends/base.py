@@ -302,6 +302,7 @@ class MetadataBackend:
         )
         if total_images != post_total:
             self.read_only = True
+
         logger.debug(f"Count of items after split: {post_total}")
 
     def mark_as_seen(self, image_path):
@@ -736,19 +737,25 @@ class MetadataBackend:
         # Update any state or metadata post-processing
         self.save_cache()
 
-    def _recalculate_target_resolution(self, original_resolution: tuple) -> tuple:
+    def _recalculate_target_resolution(
+        self, original_resolution: tuple, original_aspect_ratio: float = None
+    ) -> tuple:
         """Given the original resolution, use our backend config to properly recalculate the size."""
         resolution_type = StateTracker.get_data_backend_config(self.id)[
             "resolution_type"
         ]
         resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
         if resolution_type == "pixel":
-            return MultiaspectImage.calculate_new_size_by_pixel_area(
+            return MultiaspectImage.calculate_new_size_by_pixel_edge(
                 original_resolution[0], original_resolution[1], resolution
             )
         elif resolution_type == "area":
+            if original_aspect_ratio is None:
+                raise ValueError(
+                    "Original aspect ratio must be provided for area-based resolution."
+                )
             return MultiaspectImage.calculate_new_size_by_pixel_area(
-                original_resolution[0], original_resolution[1], resolution
+                original_aspect_ratio, resolution
             )
 
     def is_cache_inconsistent(self, vae_cache, cache_file, cache_content):
@@ -786,6 +793,9 @@ class MetadataBackend:
             )
             return True
         target_resolution = tuple(metadata_target_size)
+        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            original_resolution
+        )
         recalculated_width, recalculated_height, recalculated_aspect_ratio = (
             self._recalculate_target_resolution(original_resolution)
         )
