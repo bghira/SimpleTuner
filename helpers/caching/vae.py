@@ -590,12 +590,19 @@ class VAECache:
             logger.debug(f"we have {qlen} images to process.")
 
             # First Loop: Preparation and Filtering
+            first_aspect_ratio = None
             for _ in range(qlen):
                 if image_paths:
                     # retrieve image data from Generator, image_data:
                     filepath = image_paths.pop()
                     image = image_data.pop()
                     aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(image)
+                    if first_aspect_ratio is None:
+                        first_aspect_ratio = aspect_bucket
+                    elif aspect_bucket != first_aspect_ratio:
+                        raise ValueError(
+                            f"Image {filepath} has a different aspect ratio ({aspect_bucket}) than the first image in the batch ({first_aspect_ratio})."
+                        )
                 else:
                     filepath, image, aspect_bucket = self.process_queue.get()
                 if self.minimum_image_size is not None:
