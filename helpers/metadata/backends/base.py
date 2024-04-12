@@ -396,16 +396,11 @@ class MetadataBackend:
             leave=False,
             desc="Enforcing minimum bucket size",
         ):  # Safe iteration over keys
-            # If the bucket is empty, remove it
-            if not self.aspect_ratio_bucket_indices[bucket]:
-                logger.debug(f"Bucket {bucket} is empty. Removing.")
-                del self.aspect_ratio_bucket_indices[bucket]
-                continue
-            # # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
-            # self._prune_small_buckets(bucket)
+            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            self._prune_small_buckets(bucket)
             self._enforce_resolution_constraints(bucket)
-            # # We do this twice in case there were any new contenders for being too small.
-            # self._prune_small_buckets(bucket)
+            # We do this twice in case there were any new contenders for being too small.
+            self._prune_small_buckets(bucket)
 
     def _prune_small_buckets(self, bucket):
         """
