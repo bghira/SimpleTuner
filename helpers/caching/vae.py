@@ -644,11 +644,17 @@ class VAECache:
             # Second Loop: Final Processing
             is_final_sample = False
             output_values = []
+            first_aspect_ratio = None
             for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
                 processed_images
             ):
                 if idx == len(processed_images) - 1:
                     is_final_sample = True
+                if first_aspect_ratio is None:
+                    first_aspect_ratio = new_aspect_ratio
+                elif new_aspect_ratio != first_aspect_ratio:
+                    is_final_sample = True
+                    first_aspect_ratio = new_aspect_ratio
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
