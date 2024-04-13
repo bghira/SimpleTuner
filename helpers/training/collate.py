@@ -212,11 +212,13 @@ def gather_conditional_size_features(examples, latents, weight_dtype):
     return torch.stack(batch_time_ids_list, dim=0)
 
 
-def check_latent_shapes(latents, filepaths):
+def check_latent_shapes(latents, filepaths, batch):
     reference_shape = latents[0].shape
     for idx, latent in enumerate(latents):
         if latent.shape != reference_shape:
-            print(f"Latent shape mismatch for file: {filepaths[idx]}")
+            print(
+                f"Latent shape mismatch for file: {filepaths[idx]}, aspect ratios: {[example['aspect_ratio'] for example in batch]}"
+            )
 
 
 def collate_fn(batch):
@@ -252,7 +254,7 @@ def collate_fn(batch):
     debug_log("Compute latents")
     latent_batch = compute_latents(filepaths, data_backend_id)
     debug_log("Check latents")
-    check_latent_shapes(latent_batch, filepaths)
+    check_latent_shapes(latent_batch, filepaths, batch)
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
