@@ -21,6 +21,7 @@ class TestCollateFn(unittest.TestCase):
                 "image_data": MagicMock(),
                 "crop_coordinates": [0, 0, 100, 100],
                 "data_backend_id": "foo",
+                "aspect_ratio": 1.0,
             },
             # Add more examples as needed
         ]

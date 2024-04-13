@@ -192,9 +192,15 @@ def gather_conditional_size_features(examples, latents, weight_dtype):
     return torch.stack(batch_time_ids_list, dim=0)
 
 
-def check_latent_shapes(latents, filepaths, data_backend_id):
+def check_latent_shapes(latents, filepaths, data_backend_id, batch):
     # Validate shapes
     test_shape = latents[0].shape
+    # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
+    for example in batch[0]:
+        if example["aspect_ratio"] != batch[0][0]["aspect_ratio"]:
+            raise ValueError(
+                f"Aspect ratio mismatch: {example['aspect_ratio']} != {batch[0][0]['aspect_ratio']}"
+            )
     for idx, latent in enumerate(latents):
         # Are there any inf or nan positions?
         if torch.isnan(latent).any() or torch.isinf(latent).any():
@@ -249,7 +255,7 @@ def collate_fn(batch):
     debug_log("Compute latents")
     latent_batch = compute_latents(filepaths, data_backend_id)
     debug_log("Check latents")
-    latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id)
+    latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, batch)
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
