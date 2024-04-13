@@ -377,9 +377,9 @@ class ParquetMetadataBackend(MetadataBackend):
             )
 
             # Create a new bucket if it doesn't exist
-            if str(aspect_ratio) not in aspect_ratio_bucket_indices:
-                aspect_ratio_bucket_indices[str(aspect_ratio)] = []
-            aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
+            if str(new_aspect_ratio) not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[str(new_aspect_ratio)] = []
+            aspect_ratio_bucket_indices[str(new_aspect_ratio)].append(image_path_str)
             # Instead of directly updating, just fill the provided dictionary
             if metadata_updates is not None:
                 metadata_updates[image_path_str] = image_metadata
