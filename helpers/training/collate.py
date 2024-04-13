@@ -101,27 +101,7 @@ def compute_latents(filepaths, data_backend_id: str):
         logger.error(f"(id={data_backend_id}) Error while computing latents: {e}")
         raise
 
-    # Validate shapes
-    test_shape = latents[0].shape
-    for idx, latent in enumerate(latents):
-        # Are there any inf or nan positions?
-        if torch.isnan(latent).any() or torch.isinf(latent).any():
-            # get the data_backend
-            data_backend = StateTracker.get_data_backend(data_backend_id)
-            # remove the object
-            data_backend["vaecache"].data_backend.delete(filepaths[idx])
-            raise ValueError(
-                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
-            )
-        if latent.shape != test_shape:
-            raise ValueError(
-                f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
-            )
-
-    debug_log(f" -> stacking {len(latents)} latents")
-    return torch.stack(
-        [latent.to(StateTracker.get_accelerator().device) for latent in latents]
-    )
+    return latents
 
 
 def compute_single_embedding(caption, text_embed_cache, is_sdxl):
@@ -212,13 +192,28 @@ def gather_conditional_size_features(examples, latents, weight_dtype):
     return torch.stack(batch_time_ids_list, dim=0)
 
 
-def check_latent_shapes(latents, filepaths, batch):
-    reference_shape = latents[0].shape
+def check_latent_shapes(latents, filepaths, data_backend_id):
+    # Validate shapes
+    test_shape = latents[0].shape
     for idx, latent in enumerate(latents):
-        if latent.shape != reference_shape:
-            print(
-                f"Latent shape mismatch for file: {filepaths[idx]}, aspect ratios: {[example['aspect_ratio'] for example in batch]}"
+        # Are there any inf or nan positions?
+        if torch.isnan(latent).any() or torch.isinf(latent).any():
+            # get the data_backend
+            data_backend = StateTracker.get_data_backend(data_backend_id)
+            # remove the object
+            data_backend["vaecache"].data_backend.delete(filepaths[idx])
+            raise ValueError(
+                f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
             )
+        if latent.shape != test_shape:
+            raise ValueError(
+                f"(id={data_backend_id}) File {filepaths[idx]} latent shape mismatch: {latent.shape} != {test_shape}"
+            )
+
+    debug_log(f" -> stacking {len(latents)} latents")
+    return torch.stack(
+        [latent.to(StateTracker.get_accelerator().device) for latent in latents]
+    )
 
 
 def collate_fn(batch):
@@ -254,7 +249,7 @@ def collate_fn(batch):
     debug_log("Compute latents")
     latent_batch = compute_latents(filepaths, data_backend_id)
     debug_log("Check latents")
-    check_latent_shapes(latent_batch, filepaths, batch)
+    latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id)
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
