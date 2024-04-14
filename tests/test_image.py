@@ -83,7 +83,7 @@ class TestMultiaspectImage(unittest.TestCase):
         # Sort into bucket dictionary using MultiaspectImage.calculate_image_aspect_ratio
         input_sizes_dict = {}
         for size in input_sizes:
-            aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
+            aspect_ratio = size[0] / size[1]
             if aspect_ratio not in input_sizes_dict:
                 input_sizes_dict[aspect_ratio] = []
             input_sizes_dict[aspect_ratio].append(size)
@@ -95,6 +95,7 @@ class TestMultiaspectImage(unittest.TestCase):
             for resolution in resolutions:
                 resolution = resolution / 10  # Convert to megapixels
                 output_sizes = []
+                new_aspect_ratios = []
                 for size in input_sizes_dict[aspect_ratio]:
                     should_use_real_image = random.choice([True, False])
                     image = (
@@ -103,21 +104,28 @@ class TestMultiaspectImage(unittest.TestCase):
                     image_metadata = (
                         None if should_use_real_image else {"original_size": size}
                     )
-                    function_result, _, _ = MultiaspectImage.prepare_image(
-                        image=image,
-                        image_metadata=image_metadata,
-                        resolution=resolution,
-                        resolution_type="area",
+                    function_result, _, new_aspect_ratio = (
+                        MultiaspectImage.prepare_image(
+                            image=image,
+                            image_metadata=image_metadata,
+                            resolution=resolution,
+                            resolution_type="area",
+                        )
                     )
                     if hasattr(function_result, "size"):
                         output_size = function_result.size
                     else:
                         output_size = function_result
                     output_sizes.append(output_size)
+                    new_aspect_ratios.append(new_aspect_ratio)
 
                 # Check if all output sizes are the same, indicating consistent resizing/cropping
                 self.assertTrue(
                     all(size == output_sizes[0] for size in output_sizes),
+                    f"Output sizes are not consistent for {resolution} MP",
+                )
+                self.assertTrue(
+                    all(size == new_aspect_ratios[0] for size in new_aspect_ratios),
                     f"Output sizes are not consistent for {resolution} MP",
                 )
 
@@ -214,11 +222,16 @@ class TestMultiaspectImage(unittest.TestCase):
         )  # Expected final size for all test cases based on a fixed aspect ratio
 
         for W, H, megapixels in test_cases:
-            W_final, H_final, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
-                MultiaspectImage.calculate_image_aspect_ratio((W, H)), megapixels
+            W_final, H_final, new_aspect_ratio = (
+                MultiaspectImage.calculate_new_size_by_pixel_area((W / H), megapixels)
             )
             self.assertEqual(
                 (W_final, H_final), expected_size, f"Failed for original size {W}x{H}"
+            )
+            self.assertNotEqual(
+                new_aspect_ratio,
+                (W / H),
+                f"Failed for original size {W}x{H}",
             )
 
     def test_calculate_new_size_by_pixel_area_squares(self):
