@@ -133,6 +133,8 @@ def print_bucket_info(metadata_backend):
     # Print each bucket's information
     for bucket in metadata_backend.aspect_ratio_bucket_indices:
         image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
+        if image_count == 0:
+            continue
         print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 

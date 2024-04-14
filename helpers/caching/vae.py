@@ -622,6 +622,7 @@ class VAECache:
                     )
                     for data in initial_data
                 ]
+                first_aspect_ratio = None
                 for future in futures:
                     try:
                         result = (
@@ -629,6 +630,12 @@ class VAECache:
                         )  # Returns (image, crop_coordinates, new_aspect_ratio)
                         if result:  # Ensure result is not None or invalid
                             processed_images.append(result)
+                            if first_aspect_ratio is None:
+                                first_aspect_ratio = result[2]
+                            elif aspect_bucket != first_aspect_ratio:
+                                raise ValueError(
+                                    f"Image {filepath} has a different aspect ratio ({aspect_bucket}) than the first image in the batch ({first_aspect_ratio})."
+                                )
                     except Exception as e:
                         self.debug_log(
                             f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
@@ -637,11 +644,17 @@ class VAECache:
             # Second Loop: Final Processing
             is_final_sample = False
             output_values = []
+            first_aspect_ratio = None
             for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
                 processed_images
             ):
                 if idx == len(processed_images) - 1:
                     is_final_sample = True
+                if first_aspect_ratio is None:
+                    first_aspect_ratio = new_aspect_ratio
+                elif new_aspect_ratio != first_aspect_ratio:
+                    is_final_sample = True
+                    first_aspect_ratio = new_aspect_ratio
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 

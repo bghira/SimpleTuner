@@ -364,7 +364,7 @@ class ParquetMetadataBackend(MetadataBackend):
             )
             image_metadata["crop_coordinates"] = crop_coordinates
             image_metadata["target_size"] = target_size
-            image_metadata["aspect_ratio"] = aspect_ratio
+            image_metadata["aspect_ratio"] = new_aspect_ratio
             luminance_column = self.parquet_config.get("luminance_column", None)
             if luminance_column:
                 image_metadata["luminance"] = database_image_metadata[
@@ -377,9 +377,9 @@ class ParquetMetadataBackend(MetadataBackend):
             )
 
             # Create a new bucket if it doesn't exist
-            if str(aspect_ratio) not in aspect_ratio_bucket_indices:
-                aspect_ratio_bucket_indices[str(aspect_ratio)] = []
-            aspect_ratio_bucket_indices[str(aspect_ratio)].append(image_path_str)
+            if str(new_aspect_ratio) not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[str(new_aspect_ratio)] = []
+            aspect_ratio_bucket_indices[str(new_aspect_ratio)].append(image_path_str)
             # Instead of directly updating, just fill the provided dictionary
             if metadata_updates is not None:
                 metadata_updates[image_path_str] = image_metadata

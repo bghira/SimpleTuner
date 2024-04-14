@@ -21,11 +21,14 @@ class TestCollateFn(unittest.TestCase):
                 "image_data": MagicMock(),
                 "crop_coordinates": [0, 0, 100, 100],
                 "data_backend_id": "foo",
+                "aspect_ratio": 1.0,
             },
             # Add more examples as needed
         ]
         # Mock StateTracker.get_args() to return a mock object with required attributes
         StateTracker.set_args(MagicMock(caption_dropout_probability=0.5))
+        fake_accelerator = MagicMock(device="cpu")
+        StateTracker.set_accelerator(fake_accelerator)
 
     @patch("helpers.training.collate.compute_latents")
     @patch("helpers.training.collate.compute_prompt_embeddings")
@@ -42,6 +45,7 @@ class TestCollateFn(unittest.TestCase):
         mock_gather.return_value = torch.tensor(
             [[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]
         )
+        mock_compute_latents.to = MagicMock(return_value=mock_compute_latents)
 
         # Call collate_fn with a mock batch
         with patch("helpers.training.state_tracker.StateTracker.get_data_backend"):

@@ -302,6 +302,7 @@ class MetadataBackend:
         )
         if total_images != post_total:
             self.read_only = True
+
         logger.debug(f"Count of items after split: {post_total}")
 
     def mark_as_seen(self, image_path):
@@ -386,14 +387,20 @@ class MetadataBackend:
         """
         Remove buckets that have fewer samples than batch_size and enforce minimum image size constraints.
         """
-        for bucket in list(
-            self.aspect_ratio_bucket_indices.keys()
+        logger.info(
+            f"Enforcing minimum image size of {self.minimum_image_size}."
+            " This could take a while for very-large datasets."
+        )
+        for bucket in tqdm(
+            list(self.aspect_ratio_bucket_indices.keys()),
+            leave=False,
+            desc="Enforcing minimum bucket size",
         ):  # Safe iteration over keys
-            # # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
-            # self._prune_small_buckets(bucket)
+            # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
+            self._prune_small_buckets(bucket)
             self._enforce_resolution_constraints(bucket)
-            # # We do this twice in case there were any new contenders for being too small.
-            # self._prune_small_buckets(bucket)
+            # We do this twice in case there were any new contenders for being too small.
+            self._prune_small_buckets(bucket)
 
     def _prune_small_buckets(self, bucket):
         """
@@ -411,10 +418,6 @@ class MetadataBackend:
         Enforce resolution constraints on images in a bucket.
         """
         if self.minimum_image_size is not None:
-            logger.info(
-                f"Enforcing minimum image size of {self.minimum_image_size}."
-                " This could take a while for very-large datasets."
-            )
             if bucket not in self.aspect_ratio_bucket_indices:
                 logger.debug(
                     f"Bucket {bucket} was already removed due to insufficient samples."
@@ -736,19 +739,25 @@ class MetadataBackend:
         # Update any state or metadata post-processing
         self.save_cache()
 
-    def _recalculate_target_resolution(self, original_resolution: tuple) -> tuple:
+    def _recalculate_target_resolution(
+        self, original_resolution: tuple, original_aspect_ratio: float = None
+    ) -> tuple:
         """Given the original resolution, use our backend config to properly recalculate the size."""
         resolution_type = StateTracker.get_data_backend_config(self.id)[
             "resolution_type"
         ]
         resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
         if resolution_type == "pixel":
-            return MultiaspectImage.calculate_new_size_by_pixel_area(
+            return MultiaspectImage.calculate_new_size_by_pixel_edge(
                 original_resolution[0], original_resolution[1], resolution
             )
         elif resolution_type == "area":
+            if original_aspect_ratio is None:
+                raise ValueError(
+                    "Original aspect ratio must be provided for area-based resolution."
+                )
             return MultiaspectImage.calculate_new_size_by_pixel_area(
-                original_resolution[0], original_resolution[1], resolution
+                original_aspect_ratio, resolution
             )
 
     def is_cache_inconsistent(self, vae_cache, cache_file, cache_content):
@@ -786,6 +795,9 @@ class MetadataBackend:
             )
             return True
         target_resolution = tuple(metadata_target_size)
+        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            original_resolution
+        )
         recalculated_width, recalculated_height, recalculated_aspect_ratio = (
             self._recalculate_target_resolution(original_resolution)
         )

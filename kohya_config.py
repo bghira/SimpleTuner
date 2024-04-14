@@ -197,7 +197,7 @@ ARG_MAPPING = {
     "scale_weight_norms": {
         "parameter": "max_grad_norm",
         "warn_if_value": 0,
-        "warning": "In SimpleTuner, max_grad_norm is set to 1 by default. Please change this if you see issues.",
+        "warning": "In SimpleTuner, max_grad_norm is set to 2 by default. Please change this if you see issues.",
     },
     "sdxl": {"script_name": "train_sdxl.py"},
     "sdxl_cache_text_encoder_outputs": {

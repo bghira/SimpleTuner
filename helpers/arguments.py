@@ -728,7 +728,13 @@ def parse_args(input_args=None):
         help="Whether or not to use stochastic bf16 in Adam. Currently the only supported optimizer.",
     )
     parser.add_argument(
-        "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
+        "--max_grad_norm",
+        default=2.0,
+        type=float,
+        help=(
+            "Clipping the max gradient norm can help prevent exploding gradients, but"
+            " may also harm training by introducing artifacts or making it hard to train artifacts away."
+        ),
     )
     parser.add_argument(
         "--push_to_hub",

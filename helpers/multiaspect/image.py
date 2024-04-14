@@ -89,9 +89,12 @@ class MultiaspectImage:
                 )
             )
         elif resolution_type == "area":
+            original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                (original_width, original_height)
+            )
             (target_width, target_height, new_aspect_ratio) = (
                 MultiaspectImage.calculate_new_size_by_pixel_area(
-                    original_width, original_height, resolution
+                    original_aspect_ratio, resolution
                 )
             )
             # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
@@ -129,8 +132,7 @@ class MultiaspectImage:
                     original_megapixel_resolution = original_resolution / 1e3
                     (target_width, target_height, new_aspect_ratio) = (
                         MultiaspectImage.calculate_new_size_by_pixel_area(
-                            original_width,
-                            original_height,
+                            original_aspect_ratio,
                             original_megapixel_resolution,
                         )
                     )
@@ -345,7 +347,9 @@ class MultiaspectImage:
 
             new_image_size = (intermediate_width, intermediate_height)
             if input_image:
-                input_image = input_image.resize(new_image_size, resample=Image.LANCZOS)
+                input_image = input_image.resize(
+                    new_image_size, resample=Image.Resampling.LANCZOS
+                )
             current_width, current_height = new_image_size
             logger.debug(
                 f"Resized image to intermediate size: {current_width}x{current_height}."
@@ -354,7 +358,7 @@ class MultiaspectImage:
         # Final resize to target dimensions
         if input_image:
             input_image = input_image.resize(
-                (target_width, target_height), resample=Image.LANCZOS
+                (target_width, target_height), resample=Image.Resampling.LANCZOS
             )
             logger.debug(f"Final image size: {input_image.size}.")
             return input_image
@@ -389,7 +393,7 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
     @staticmethod
-    def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: float):
+    def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: int):
         aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
         if W < H:
             W = resolution
@@ -408,9 +412,9 @@ class MultiaspectImage:
         return int(W), int(H), new_aspect_ratio
 
     @staticmethod
-    def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float):
-        # Calculate initial dimensions based on aspect ratio and target megapixels
-        aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
+    def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float):
+        if type(aspect_ratio) != float:
+            raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
         total_pixels = max(megapixels * 1e6, 1e6)
         W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
         H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))

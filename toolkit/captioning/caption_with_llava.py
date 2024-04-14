@@ -2,8 +2,15 @@ import os, logging, re, random, argparse, json, torch
 from PIL import Image
 from tqdm import tqdm
 import requests, io
-from transformers import BitsAndBytesConfig
 
+try:
+    from transformers import BitsAndBytesConfig
+except:
+    pass
+try:
+    from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+except:
+    pass
 from transformers import AutoProcessor, LlavaForConditionalGeneration
 
 logger = logging.getLogger("Captioner")
@@ -164,31 +171,65 @@ def process_parquet_dataset(args, model, processor):
 def load_llava_model(
     model_path: str = "llava-hf/llava-1.5-7b-hf", precision: str = "fp4"
 ):
-    bnb_config = BitsAndBytesConfig()
-    if precision == "fp4":
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
+    try:
+        bnb_config = BitsAndBytesConfig()
+        if precision == "fp4":
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+        elif precision == "fp8":
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+            )
+        torch_dtype = None
+    except:
+        bnb_config = None
+        torch_dtype = torch.float16
+    if "1.6" in model_path:
+        model = LlavaNextForConditionalGeneration.from_pretrained(
+            model_path,
+            quantization_config=bnb_config,
+            torch_dtype=torch_dtype,
+            device_map="auto",
         )
-    elif precision == "fp8":
-        bnb_config = BitsAndBytesConfig(
-            load_in_8bit=True,
+    else:
+        model = LlavaForConditionalGeneration.from_pretrained(
+            model_path,
+            quantization_config=bnb_config,
+            torch_dtype=torch_dtype,
+            device_map="auto",
         )
-    model = LlavaForConditionalGeneration.from_pretrained(
-        model_path, quantization_config=bnb_config, device_map="auto"
-    )
-    processor = AutoProcessor.from_pretrained(model_path)
+    if "1.6" in model_path:
+        autoprocessor_cls = LlavaNextProcessor
+    else:
+        autoprocessor_cls = AutoProcessor
+    processor = autoprocessor_cls.from_pretrained(model_path)
 
     return model, processor
 
 
 # Function to evaluate the model
 def eval_model(args, image_file, model, processor):
-    images = [image_file]
-    prompt = f"<image>\nUSER: {args.query_str}\nASSISTANT:"
-    inputs = processor(text=prompt, images=images, return_tensors="pt").to("cuda")
+
+    if type(processor) == LlavaNextProcessor:
+        logging.info("Using LLaVA 1.6+ model.")
+        prompt = f"<|im_start|>system\nAnswer the question carefully, without speculation.<|im_end|><|im_start|>user\n<image>\n{args.query_str}<|im_end|><|im_start|>assistant\n"
+        inputs = processor(text=prompt, images=image_file, return_tensors="pt").to(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available() else "cpu"
+        )
+    else:
+        prompt = f"<image>\nUSER: {args.query_str}\nASSISTANT:"
+        images = [image_file]
+        inputs = processor(text=prompt, images=images, return_tensors="pt").to(
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps" if torch.backends.mps.is_available() else "cpu"
+        )
     with torch.inference_mode():
         generate_ids = model.generate(
             **inputs,

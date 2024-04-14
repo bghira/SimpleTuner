@@ -341,11 +341,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 to_yield = self._validate_and_yield_images_from_samples(
                     samples, self.buckets[self.current_bucket]
                 )
+                self.debug_log(
+                    f"Building batch with {len(self.batch_accumulator)} samples."
+                )
                 if len(self.batch_accumulator) < self.batch_size:
                     remaining_entries_needed = self.batch_size - len(
                         self.batch_accumulator
                     )
                     # Now we'll add only remaining_entries_needed amount to the accumulator:
+                    self.debug_log(
+                        f"Current bucket: {self.current_bucket}. Adding samples with aspect ratios: {[i['aspect_ratio'] for i in to_yield[:remaining_entries_needed]]}"
+                    )
                     self.batch_accumulator.extend(to_yield[:remaining_entries_needed])
                 # If the batch is full, yield it
                 if len(self.batch_accumulator) >= self.batch_size:

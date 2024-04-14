@@ -29,8 +29,15 @@ class MultiAspectDataset(Dataset):
 
     def __getitem__(self, image_tuple):
         output_data = []
+        first_aspect_ratio = None
         for sample in image_tuple:
             image_metadata = sample
+            if first_aspect_ratio is None:
+                first_aspect_ratio = image_metadata["aspect_ratio"]
+            elif first_aspect_ratio != image_metadata["aspect_ratio"]:
+                raise ValueError(
+                    f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {image_metadata['aspect_ratio']}"
+                )
             if (
                 image_metadata["original_size"] is None
                 or image_metadata["target_size"] is None
