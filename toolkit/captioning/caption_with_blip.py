@@ -1,15 +1,15 @@
-import os
-import logging
-import xformers
-import accelerate
-import re
-import random
+import os, torch, logging, re, random
 from PIL import Image
 from clip_interrogator import Config, Interrogator, LabelTable, load_list
+from clip_interrogator import clip_interrogator
+clip_interrogator.CAPTION_MODELS.update({
+    'unography': 'unography/blip-large-long-cap',           # 1.9GB
+})
+print(f"Models supported: {clip_interrogator.CAPTION_MODELS}")
 
 # Directory where the images are located
-input_directory_path = "/datasets/pexels"
-output_dir = "/datasets/captioned_pexels"
+input_directory_path = "/Volumes/datasets/photo-concept-bucket/image_data"
+output_dir = "/Volumes/datasets/photo-concept-bucket/image_data_captioned"
 caption_strategy = "text"
 
 
@@ -42,11 +42,11 @@ def content_to_filename(content):
 
 
 def interrogator(
-    clip_model_name="ViT-H-14/laion2b_s32b_b79k", blip_model="blip2-flan-t5-xl"
+    clip_model_name="ViT-H-14/laion2b_s32b_b79k", blip_model="unography"
 ):
     # Create an Interrogator instance with the latest CLIP model for Stable Diffusion 2.1
     conf = Config(
-        clip_model_name=clip_model_name, clip_offload=True, caption_offload=True
+        clip_model_name=clip_model_name, clip_offload=True, caption_offload=True, caption_max_length=170, device="cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
     )
     conf.caption_model_name = blip_model
     ci = Interrogator(conf)
@@ -90,20 +90,22 @@ def process_directory(image_dir="images", terms_file=None, active_interrogator=N
                 )
                 new_filepath = os.path.join(output_dir, new_filename)
 
-                # Ensure no overwriting
-                counter = 1
-                while os.path.exists(new_filepath):
-                    new_filepath = os.path.join(
-                        output_dir,
-                        f"{new_filename.rsplit('.', 1)[0]}_{counter}.{new_filename.rsplit('.', 1)[1]}",
-                    )
-                    counter += 1
-
-                image.save(new_filepath)
-
                 if caption_strategy == "text":
                     with open(new_filepath + ".txt", "w") as f:
                         f.write(best_match)
+                else:
+                    # Ensure no overwriting
+                    counter = 1
+                    while os.path.exists(new_filepath):
+                        new_filepath = os.path.join(
+                            output_dir,
+                            f"{new_filename.rsplit('.', 1)[0]}_{counter}.{new_filename.rsplit('.', 1)[1]}",
+                        )
+                        counter += 1
+
+                    image.save(new_filepath)
+                image.close()
+
 
             except Exception as e:
                 logging.error(f"Error processing {filename}: {str(e)}")

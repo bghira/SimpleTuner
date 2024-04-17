@@ -335,7 +335,7 @@ def configure_multi_databackend(
     all_captions = []
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
-        if dataset_type is not None:
+        if dataset_type is not None and dataset_type != "image":
             # Skip configuration of text embed backends. It is done earlier.
             continue
         if ("disabled" in backend and backend["disabled"]) or (
