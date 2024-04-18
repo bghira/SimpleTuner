@@ -23,6 +23,8 @@ if [[ $PUBLIC_KEY ]]; then
 	chmod 700 -R ~/.ssh
 fi
 
+# Start SSH server
 service ssh start
 
+# 🫡
 sleep infinity
