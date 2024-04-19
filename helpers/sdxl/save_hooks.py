@@ -8,7 +8,8 @@ from diffusers.utils import (
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 
-from diffusers import UNet2DConditionModel, StableDiffusionXLPipeline
+from diffusers import UNet2DConditionModel
+from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
 import os, logging, shutil, torch
 
