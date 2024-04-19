@@ -63,6 +63,9 @@ export RESOLUTION_TYPE="pixel"
 # If RESOLUTION_TYPE="area", the minimum resolution specifies the total image area, measured in megapixels. Recommended: 1.
 export MINIMUM_RESOLUTION=$RESOLUTION
 
+# How many decimals to round aspect buckets to.
+#export ASPECT_BUCKET_ROUNDING=2
+
 # Use this to append an instance prompt to each caption, used for adding trigger words.
 # This has not been tested in SDXL.
 #export INSTANCE_PROMPT="lotr style "

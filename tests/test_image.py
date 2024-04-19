@@ -150,7 +150,9 @@ class TestMultiaspectImage(unittest.TestCase):
     def test_prepare_image_valid(self):
         with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             mock_args.return_value = Mock(
-                resolution_type="pixel", resolution=self.resolution, crop_style="random"
+                resolution_type="pixel",
+                resolution=self.resolution,
+                crop_style="random",
             )
             prepared_img, crop_coordinates, aspect_ratio = (
                 MultiaspectImage.prepare_image(

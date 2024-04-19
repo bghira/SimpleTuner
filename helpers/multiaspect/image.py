@@ -444,22 +444,24 @@ class MultiaspectImage:
 
         Args:
             image (PIL.Image): The image to calculate the aspect ratio for.
-            rounding (int): The number of decimal places to round the aspect ratio to.
 
         Returns:
             float: The rounded aspect ratio of the image.
         """
+        to_round = StateTracker.get_args().aspect_bucket_rounding
+        if not isinstance(image, int):
+            to_round = rounding
         if isinstance(image, Image.Image):
             width, height = image.size
         elif isinstance(image, tuple):
             width, height = image
         else:
             width, height = image.size
-        aspect_ratio = round(width / height, rounding)
+        aspect_ratio = round(width / height, to_round)
         return aspect_ratio
 
     @staticmethod
-    def determine_bucket_for_aspect_ratio(aspect_ratio, rounding: int = 2):
+    def determine_bucket_for_aspect_ratio(aspect_ratio):
         """
         Determine the correct bucket for a given aspect ratio.
 
@@ -470,4 +472,4 @@ class MultiaspectImage:
             str: The bucket corresponding to the aspect ratio.
         """
         # The logic for determining the bucket can be based on the aspect ratio directly
-        return str(round(aspect_ratio, rounding))
+        return str(aspect_ratio)
