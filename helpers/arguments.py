@@ -448,7 +448,7 @@ def parse_args(input_args=None):
         "--aspect_bucket_rounding",
         type=int,
         default=None,
-        range=(1, 10),
+        choices=range(1, 10),
         help=(
             "The number of decimal places to round the aspect ratio to. This is used to create buckets for aspect ratios."
             " For higher precision, ensure the image sizes remain compatible. Higher precision levels result in a"
