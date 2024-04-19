@@ -795,9 +795,6 @@ class MetadataBackend:
             )
             return True
         target_resolution = tuple(metadata_target_size)
-        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            original_resolution
-        )
         recalculated_width, recalculated_height, recalculated_aspect_ratio = (
             self._recalculate_target_resolution(original_resolution)
         )
@@ -824,7 +821,7 @@ class MetadataBackend:
 
         actual_aspect_ratio = self._get_aspect_ratio_from_tensor(cache_content)
         expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
-            actual_aspect_ratio
+            recalculated_aspect_ratio
         )
         logger.debug(
             f"Expected bucket for {cache_file}: {expected_bucket} vs actual {actual_aspect_ratio}"

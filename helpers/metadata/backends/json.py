@@ -215,9 +215,6 @@ class JsonMetadataBackend(MetadataBackend):
                     statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
                 image_metadata["original_size"] = image.size
-                original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                    image, aspect_ratio_rounding
-                )
                 image, crop_coordinates, new_aspect_ratio = (
                     MultiaspectImage.prepare_image(
                         image=image,

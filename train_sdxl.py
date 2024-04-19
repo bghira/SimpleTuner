@@ -62,11 +62,11 @@ from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
+from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
     AutoencoderKL,
     DDIMScheduler,
     DDPMScheduler,
-    StableDiffusionXLPipeline,
     DPMSolverMultistepScheduler,
     UNet2DConditionModel,
     EulerDiscreteScheduler,

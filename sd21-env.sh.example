@@ -89,6 +89,10 @@ export TRAIN_BATCH_SIZE=1
 export RESOLUTION_TYPE="area"
 export RESOLUTION=1.0          # 1.0 Megapixel training sizes
 export MINIMUM_RESOLUTION=$RESOLUTION
+
+# How many decimals to round aspect buckets to.
+#export ASPECT_BUCKET_ROUNDING=2
+
 # Validation is when the model is used during training to make test outputs.
 export VALIDATION_RESOLUTION=$RESOLUTION                                            # The square resolution of the validation images. Default: $RESOLUTION
 export VALIDATION_STEPS=250                                                         # How long between each validation run. Default: 250
