@@ -203,8 +203,8 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
 fi
 
 export PURE_BF16_ARGS=""
-if ! [ -z "$USE_PURE_BF16" ] && [[ "$USE_PURE_BF16" == "true" ]]; then
-    PURE_BF16_ARGS="--adamw_bf16"
+if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
+    PURE_BF16_ARGS="--adam_bfloat16"
     MIXED_PRECISION="bf16"
 fi
 
@@ -240,7 +240,7 @@ case $OPTIMIZER in
         export OPTIMIZER_ARG=""
         ;;
     "adamw_bf16")
-        export OPTIMIZER_ARG="--adamw_bf16"
+        export OPTIMIZER_ARG="--adam_bfloat16"
         ;;
     "adamw8bit")
         export OPTIMIZER_ARG="--use_8bit_adam"
