@@ -294,6 +294,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )
+            if image_metadata is None:
+                image_metadata = {}
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
