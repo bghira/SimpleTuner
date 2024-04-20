@@ -767,6 +767,7 @@ def main():
         text_encoder = accelerator.prepare(text_encoder)
     elif args.fully_unload_text_encoder:
         del text_encoder
+        text_encoder = None
 
     # Conditionally prepare the EMA model if required
     if args.use_ema:
