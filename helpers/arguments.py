@@ -1322,18 +1322,18 @@ def parse_args(input_args=None):
 
     if (
         args.validation_resolution.isdigit()
-        and args.validation_resolution < 128
+        and int(args.validation_resolution) < 128
         and "deepfloyd" not in args.model_type
     ):
         # Convert from megapixels to pixels:
         log_msg = f"It seems that --validation_resolution was given in megapixels ({args.validation_resolution}). Converting to pixel measurement:"
-        if args.validation_resolution == 1:
+        if int(args.validation_resolution) == 1:
             args.validation_resolution = 1024
         else:
-            args.validation_resolution = int(args.validation_resolution * 1e3)
+            args.validation_resolution = int(int(args.validation_resolution) * 1e3)
             # Make it divisible by 8:
-            args.validation_resolution = int(args.validation_resolution / 8) * 8
-        logger.info(f"{log_msg} {args.validation_resolution}px")
+            args.validation_resolution = int(int(args.validation_resolution) / 8) * 8
+        logger.info(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 
