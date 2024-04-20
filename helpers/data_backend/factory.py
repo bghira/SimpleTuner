@@ -98,6 +98,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         maximum_image_size
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
+        and "deepfloyd" not in args.model_type
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -115,6 +116,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         target_downsample_size
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
+        and "deepfloyd" not in args.model_type
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -594,40 +596,41 @@ def configure_multi_databackend(
             f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
         )
 
-        logger.info(f"(id={init_backend['id']}) Creating VAE latent cache.")
-        init_backend["vaecache"] = VAECache(
-            id=init_backend["id"],
-            vae=StateTracker.get_vae(),
-            accelerator=accelerator,
-            metadata_backend=init_backend["metadata_backend"],
-            data_backend=init_backend["data_backend"],
-            instance_data_root=init_backend["instance_data_root"],
-            delete_problematic_images=backend.get(
-                "delete_problematic_images", args.delete_problematic_images
-            ),
-            resolution=backend.get("resolution", args.resolution),
-            resolution_type=backend.get("resolution_type", args.resolution_type),
-            maximum_image_size=backend.get(
-                "maximum_image_size", args.maximum_image_size
-            ),
-            target_downsample_size=backend.get(
-                "target_downsample_size", args.target_downsample_size
-            ),
-            minimum_image_size=backend.get(
-                "minimum_image_size", args.minimum_image_size
-            ),
-            vae_batch_size=args.vae_batch_size,
-            write_batch_size=args.write_batch_size,
-            cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
-            max_workers=backend.get("max_workers", 32),
-            vae_cache_preprocess=args.vae_cache_preprocess,
-        )
+        if "deepfloyd" not in StateTracker.get_args().model_type:
+            logger.info(f"(id={init_backend['id']}) Creating VAE latent cache.")
+            init_backend["vaecache"] = VAECache(
+                id=init_backend["id"],
+                vae=StateTracker.get_vae(),
+                accelerator=accelerator,
+                metadata_backend=init_backend["metadata_backend"],
+                data_backend=init_backend["data_backend"],
+                instance_data_root=init_backend["instance_data_root"],
+                delete_problematic_images=backend.get(
+                    "delete_problematic_images", args.delete_problematic_images
+                ),
+                resolution=backend.get("resolution", args.resolution),
+                resolution_type=backend.get("resolution_type", args.resolution_type),
+                maximum_image_size=backend.get(
+                    "maximum_image_size", args.maximum_image_size
+                ),
+                target_downsample_size=backend.get(
+                    "target_downsample_size", args.target_downsample_size
+                ),
+                minimum_image_size=backend.get(
+                    "minimum_image_size", args.minimum_image_size
+                ),
+                vae_batch_size=args.vae_batch_size,
+                write_batch_size=args.write_batch_size,
+                cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
+                max_workers=backend.get("max_workers", 32),
+                vae_cache_preprocess=args.vae_cache_preprocess,
+            )
 
-        if args.vae_cache_preprocess:
-            logger.info(f"(id={init_backend['id']}) Discovering cache objects..")
-            if accelerator.is_local_main_process:
-                init_backend["vaecache"].discover_all_files()
-            accelerator.wait_for_everyone()
+            if args.vae_cache_preprocess:
+                logger.info(f"(id={init_backend['id']}) Discovering cache objects..")
+                if accelerator.is_local_main_process:
+                    init_backend["vaecache"].discover_all_files()
+                accelerator.wait_for_everyone()
 
         if (
             (
@@ -636,6 +639,7 @@ def configure_multi_databackend(
             )
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
+            and "deepfloyd" not in StateTracker.get_args().model_type
         ):
             logger.info(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."

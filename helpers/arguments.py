@@ -32,7 +32,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["full", "lora"],
+        choices=["full", "lora", "deepfloyd-full"],
         default="full",
         help=(
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
@@ -492,6 +492,28 @@ def parse_args(input_args=None):
         action="store_true",
         help="(SD 2.x only) Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
+    # DeepFloyd
+    parser.add_argument(
+        "--tokenizer_max_length",
+        type=int,
+        default=None,
+        required=False,
+        help="The maximum length of the tokenizer. If not set, will default to the tokenizer's max length.",
+    )
+    parser.add_argument(
+        "--text_encoder_use_attention_mask",
+        action="store_true",
+        required=False,
+        help="Whether to use attention mask for the text encoder",
+    )
+    parser.add_argument(
+        "--class_labels_conditioning",
+        required=False,
+        default=None,
+        choices=["timesteps"],
+        help="The optional `class_label` conditioning to pass to the unet, available values are `timesteps`.",
+    )
+    # End DeepFloyd-specific settings
     parser.add_argument(
         "--train_batch_size",
         type=int,
@@ -1296,6 +1318,7 @@ def parse_args(input_args=None):
         args.pretrained_vae_model_name_or_path is not None
         and StateTracker.get_model_type() == "legacy"
         and "sdxl" in args.pretrained_vae_model_name_or_path
+        and "deepfloyd" not in args.model_type
     ):
         logger.error(
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
@@ -1307,7 +1330,7 @@ def parse_args(input_args=None):
     logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
     logger.info(f"Text Cache location: {args.cache_dir_text}")
 
-    if args.validation_resolution < 128:
+    if args.validation_resolution < 128 and "deepfloyd" not in args.model_type:
         # Convert from megapixels to pixels:
         log_msg = f"It seems that --validation_resolution was given in megapixels ({args.validation_resolution}). Converting to pixel measurement:"
         if args.validation_resolution == 1:

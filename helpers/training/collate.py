@@ -2,6 +2,7 @@ import torch, logging, concurrent.futures, numpy as np
 from os import environ
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info
+from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_batch_luminance
 from accelerate.logging import get_logger
 from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +70,38 @@ def extract_filepaths(examples):
     return filepaths
 
 
+def fetch_pixel_values(fp, data_backend_id: str):
+    """Worker method to fetch pixel values for a single image."""
+    debug_log(
+        f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}"
+    )
+    pixels = StateTracker.get_data_backend(data_backend_id)["data_backend"].read_image(
+        fp
+    )
+    """
+        def prepare_image(
+        resolution: float,
+        image: Image = None,
+        image_metadata: dict = None,
+        resolution_type: str = "pixel",
+        id: str = "foo",
+    ):
+
+    """
+    backend_config = StateTracker.get_data_backend_config(data_backend_id)
+    logger.info(f"Backend config: {backend_config}")
+    reformed_image, _, _ = MultiaspectImage.prepare_image(
+        resolution=backend_config["resolution"],
+        image=pixels,
+        image_metadata=None,
+        resolution_type=backend_config["resolution_type"],
+        id=data_backend_id,
+    )
+    image_transform = MultiaspectImage.get_image_transforms()(reformed_image)
+
+    return image_transform
+
+
 def fetch_latent(fp, data_backend_id: str):
     """Worker method to fetch latent for a single image."""
     debug_log(
@@ -83,9 +116,30 @@ def fetch_latent(fp, data_backend_id: str):
     return latent
 
 
+def deepfloyd_pixels(filepaths, data_backend_id: str):
+    """DeepFloyd doesn't use the VAE. We retrieve, normalise, and stack the pixel tensors directly."""
+    # Use a thread pool to fetch latents concurrently
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            pixels = list(
+                executor.map(
+                    fetch_pixel_values, filepaths, [data_backend_id] * len(filepaths)
+                )
+            )
+    except Exception as e:
+        logger.error(f"(id={data_backend_id}) Error while computing pixels: {e}")
+        raise
+
+    return pixels
+
+
 def compute_latents(filepaths, data_backend_id: str):
     # Use a thread pool to fetch latents concurrently
     try:
+        if "deepfloyd" in StateTracker.get_args().model_type:
+            latents = deepfloyd_pixels(filepaths, data_backend_id)
+
+            return latents
         if not StateTracker.get_args().vae_cache_preprocess:
             latents = StateTracker.get_vaecache(id=data_backend_id).encode_images(
                 [None] * len(filepaths), filepaths

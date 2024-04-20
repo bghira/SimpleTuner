@@ -50,7 +50,8 @@ class MultiaspectImage:
         original_width, original_height = image_size
         original_resolution = resolution
         # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-        original_resolution = original_resolution * 1e3
+        if resolution_type == "area":
+            original_resolution = original_resolution * 1e3
         # Make resolution a multiple of 64
         original_resolution = MultiaspectImage._round_to_nearest_multiple(
             original_resolution, 64

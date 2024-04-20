@@ -717,6 +717,8 @@ class MetadataBackend:
             vae_cache: The VAECache object.
             vae_cache_behavior (str): Behavior for handling inconsistencies ('sync' or 'recreate').
         """
+        if "deepfloyd" in StateTracker.get_args().model_type:
+            return
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
         logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")

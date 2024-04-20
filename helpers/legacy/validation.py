@@ -211,6 +211,16 @@ def log_validations(
                             else torch.bfloat16
                         ),
                     )
+                scheduler_args = {}
+
+                if "variance_type" in pipeline.scheduler.config:
+                    variance_type = pipeline.scheduler.config.variance_type
+
+                    if variance_type in ["learned", "learned_range"]:
+                        variance_type = "fixed_small"
+
+                    scheduler_args["variance_type"] = variance_type
+
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
                     args.validation_noise_scheduler
                 ].from_pretrained(
@@ -219,6 +229,7 @@ def log_validations(
                     prediction_type=args.prediction_type,
                     timestep_spacing=args.inference_scheduler_timestep_spacing,
                     rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                    **scheduler_args,
                 )
             if args.validation_torch_compile and not is_compiled_module(pipeline.unet):
                 logger.warning(

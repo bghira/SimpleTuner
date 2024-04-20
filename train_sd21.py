@@ -288,9 +288,17 @@ def main():
                 revision=args.revision,
             ),
         )
-        vae = AutoencoderKL.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
-        )
+        from transformers import T5EncoderModel
+
+        if "deepfloyd" not in args.model_type:
+            vae = AutoencoderKL.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="vae",
+                revision=args.revision,
+            )
+            vae.requires_grad_(False)
+        else:
+            vae = None
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     ).to(weight_dtype)
@@ -300,7 +308,6 @@ def main():
         logger.info(f"Applying BitFit freezing strategy to the U-net.")
         unet = apply_bitfit_freezing(unet)
 
-    vae.requires_grad_(False)
     if not args.train_text_encoder:
         text_encoder.requires_grad_(False)
 
@@ -501,7 +508,7 @@ def main():
         extra_optimizer_args["lr"] = args.learning_rate
 
     # Optimizer creation
-    if args.model_type == "full":
+    if args.model_type == "full" or args.model_type == "deepfloyd-full":
         params_to_optimize = (
             itertools.chain(unet.parameters(), text_encoder.parameters())
             if args.train_text_encoder
@@ -541,27 +548,28 @@ def main():
     logging.info("Moving text encoder to GPU..")
     text_encoder.to(accelerator.device, dtype=weight_dtype)
 
-    # Move vae, unet and text_encoder to device and cast to weight_dtype
-    # The VAE is in float32 to avoid NaN losses.
-    vae_dtype = torch.bfloat16
-    if hasattr(args, "vae_dtype"):
-        logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
-        )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16" or args.mixed_precision == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
-            vae_dtype = torch.float16
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.bfloat16
-    logger.debug(f"Moving VAE to GPU with {vae_dtype} precision level.")
-    vae.to(accelerator.device, dtype=vae_dtype)
-    logger.info(f"Loaded VAE into VRAM.")
-    StateTracker.set_vae_dtype(vae_dtype)
-    StateTracker.set_vae(vae)
+    if vae is not None:
+        # Move vae, unet and text_encoder to device and cast to weight_dtype
+        # The VAE is in float32 to avoid NaN losses.
+        vae_dtype = torch.bfloat16
+        if hasattr(args, "vae_dtype"):
+            logger.info(
+                f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp16, fp32, default"
+            )
+            # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+            if args.vae_dtype == "bf16" or args.mixed_precision == "bf16":
+                vae_dtype = torch.bfloat16
+            elif args.vae_dtype == "fp16" or args.mixed_precision == "fp16":
+                vae_dtype = torch.float16
+            elif args.vae_dtype == "fp32":
+                vae_dtype = torch.float32
+            elif args.vae_dtype == "none" or args.vae_dtype == "default":
+                vae_dtype = torch.bfloat16
+        logger.debug(f"Moving VAE to GPU with {vae_dtype} precision level.")
+        vae.to(accelerator.device, dtype=vae_dtype)
+        logger.info(f"Loaded VAE into VRAM.")
+        StateTracker.set_vae_dtype(vae_dtype)
+        StateTracker.set_vae(vae)
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
@@ -790,7 +798,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded and args.vae_cache_preprocess:
+    if vae is not None and not args.keep_vae_loaded and args.vae_cache_preprocess:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         import gc
 
@@ -893,7 +901,7 @@ def main():
                 }
             },
         )
-
+    torch.autograd.set_detect_anomaly(True)
     logger.info("***** Running training *****")
     total_num_batches = sum(
         [
@@ -951,7 +959,8 @@ def main():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
                 logger.debug(f"Backend config: {backend_config}")
                 if (
-                    "vae_cache_clear_each_epoch" in backend_config
+                    "deepfloyd" not in args.model_type
+                    and "vae_cache_clear_each_epoch" in backend_config
                     and backend_config["vae_cache_clear_each_epoch"]
                 ):
                     # We will clear the cache and then rebuild it. This is useful for random crops.
@@ -1009,7 +1018,9 @@ def main():
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["batch_luminance"])
 
-            with accelerator.accumulate(training_models):
+            with accelerator.accumulate(
+                training_models
+            ), torch.autograd.detect_anomaly():
                 training_logger.debug(
                     f"Sending latent batch from pinned memory to device"
                 )
@@ -1101,17 +1112,41 @@ def main():
                     f"\n -> Timesteps dtype: {timesteps.dtype}"
                     f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
                 )
+                if "deepfloyd-stage2" in args.model_type:
+                    class_labels = timesteps
+                else:
+                    class_labels = None
+
+                # assert all inputs are finite
+                assert torch.isfinite(latents).all()
+                assert torch.isfinite(noise).all()
+                assert torch.isfinite(timesteps).all()
+                assert torch.isfinite(encoder_hidden_states).all()
 
                 model_pred = unet(
-                    noisy_latents, timesteps, encoder_hidden_states
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states,
+                    class_labels=class_labels,
                 ).sample
+
+                assert torch.isfinite(model_pred).all()
+
+                if model_pred.shape[1] == 6:
+                    # Chop the variance off of DeepFloyd models.
+                    model_pred, _ = torch.chunk(model_pred, 2, dim=1)
+                    logger.error(
+                        f"Model pred is finite: {torch.isfinite(model_pred).all()}"
+                    )
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if noise_scheduler.config.prediction_type == "sample":
                     model_pred = model_pred - noise
 
                 if args.snr_gamma is None:
-                    training_logger.debug(f"Calculating loss")
+                    training_logger.debug(
+                        f"Calculating loss for {model_pred.shape} vs {target.shape}"
+                    )
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
@@ -1373,7 +1408,7 @@ def main():
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
 
-        if StateTracker.get_vae() is None:
+        if StateTracker.get_vae() is None and "deepfloyd" not in args.model_type:
             StateTracker.set_vae(
                 AutoencoderKL.from_pretrained(
                     args.pretrained_vae_model_name_or_path,
@@ -1386,13 +1421,24 @@ def main():
                     force_upcast=False,
                 )
             )
-        pipeline = StableDiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            text_encoder=text_encoder,
-            vae=StateTracker.get_vae(),
-            unet=unet,
-            revision=args.revision,
-        )
+        if "deepfloyd" in args.model_type:
+            from diffusers import DiffusionPipeline
+
+            pipeline = DiffusionPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                text_encoder=text_encoder,
+                unet=unet,
+                revision=args.revision,
+            )
+        else:
+            pipeline = StableDiffusionPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                text_encoder=text_encoder,
+                vae=StateTracker.get_vae(),
+                unet=unet,
+                revision=args.revision,
+            )
+
         pipeline.set_progress_bar_config(disable=True)
         pipeline.scheduler = SCHEDULER_NAME_MAP[
             args.validation_noise_scheduler
@@ -1446,7 +1492,8 @@ def main():
                     else torch.bfloat16 if torch.cuda.is_available() else torch.float32
                 ),
             )
-            pipeline.components["vae"].to(vae_dtype)
+            if "vae" in pipeline.components:
+                pipeline.components["vae"].to(vae_dtype)
             pipeline.scheduler = SCHEDULER_NAME_MAP[
                 args.validation_noise_scheduler
             ].from_pretrained(
