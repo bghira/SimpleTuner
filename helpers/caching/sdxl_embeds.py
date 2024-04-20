@@ -302,13 +302,12 @@ class TextEmbeddingCache:
         text_inputs = self.tokenize_deepfloyd_prompt(
             prompt, tokenizer_max_length=StateTracker.get_args().tokenizer_max_length
         )
-        logger.debug(f"Text inputs: {text_inputs}")
         result = self.encode_deepfloyd_prompt(
             text_inputs.input_ids,
             text_inputs.attention_mask,
             text_encoder_use_attention_mask=StateTracker.get_args().text_encoder_use_attention_mask,
         )
-        logger.debug(f"Result: {result}")
+        del text_inputs
 
         return result
 
