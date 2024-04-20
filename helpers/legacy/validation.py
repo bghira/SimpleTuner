@@ -172,7 +172,7 @@ def log_validations(
             vae_subfolder_path = "vae"
             if args.pretrained_vae_model_name_or_path is not None:
                 vae_subfolder_path = None
-            if vae is None:
+            if vae is None and "deepfloyd" not in args.model_type:
                 vae = AutoencoderKL.from_pretrained(
                     vae_path,
                     subfolder=vae_subfolder_path,
