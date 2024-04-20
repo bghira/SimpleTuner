@@ -572,7 +572,8 @@ class TextEmbeddingCache:
                         prompt_embeds = self.encode_legacy_prompt(
                             self.text_encoders[0], self.tokenizers[0], [prompt]
                         )
-                    prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
                     self.save_to_cache(filename, prompt_embeds)
 
                 prompt_embeds_all.append(prompt_embeds)
