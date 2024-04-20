@@ -220,6 +220,8 @@ def log_validations(
                         variance_type = "fixed_small"
 
                     scheduler_args["variance_type"] = variance_type
+                if "deepfloyd" in args.model_type:
+                    args.validation_noise_scheduler = "ddpm"
 
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
                     args.validation_noise_scheduler
