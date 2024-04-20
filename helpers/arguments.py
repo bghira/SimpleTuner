@@ -30,6 +30,23 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--use_soft_min_snr",
+        action="store_true",
+        help=(
+            "If set, will use the soft min SNR calculation method. This method uses the sigma_data parameter."
+            " If not provided, the method will raise an error."
+        ),
+    )
+    parser.add_argument(
+        "--soft_min_snr_sigma_data",
+        default=None,
+        type=float,
+        help=(
+            "The standard deviation of the data used in the soft min weighting method."
+            " This is required when using the soft min SNR calculation method."
+        ),
+    )
+    parser.add_argument(
         "--model_type",
         type=str,
         choices=["full", "lora", "deepfloyd-full", "deepfloyd-lora"],

@@ -1155,7 +1155,21 @@ def main():
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
                     training_logger.debug(f"Using min-SNR loss")
-                    snr = compute_snr(timesteps, noise_scheduler)
+                    snr = compute_snr(
+                        timesteps=timesteps,
+                        noise_scheduler=noise_scheduler,
+                        use_soft_min=(
+                            True
+                            if "deepfloyd" in args.model_type
+                            or args.use_soft_min_snr is True
+                            else False
+                        ),
+                        sigma_data=(
+                            1.0
+                            if args.soft_min_snr_sigma_data is None
+                            else args.soft_min_snr_sigma_data
+                        ),
+                    )
                     snr_divisor = snr
                     if noise_scheduler.config.prediction_type == "v_prediction":
                         snr_divisor = snr + 1
