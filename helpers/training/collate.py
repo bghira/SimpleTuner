@@ -128,6 +128,8 @@ def deepfloyd_pixels(filepaths, data_backend_id: str):
     except Exception as e:
         logger.error(f"(id={data_backend_id}) Error while computing pixels: {e}")
         raise
+    pixels = torch.stack(pixels)
+    pixels = pixels.to(memory_format=torch.contiguous_format).float()
 
     return pixels
 
@@ -300,7 +302,7 @@ def collate_fn(batch):
             example["drop_conditioning"] = False
 
     debug_log("Collect luminance values")
-    if 'luminance' in examples[0]:
+    if "luminance" in examples[0]:
         batch_luminance = [example["luminance"] for example in examples]
     else:
         batch_luminance = [0] * len(examples)
@@ -310,9 +312,11 @@ def collate_fn(batch):
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
     latent_batch = compute_latents(filepaths, data_backend_id)
-    if 'deepfloyd' not in StateTracker.get_args().model_type:
+    if "deepfloyd" not in StateTracker.get_args().model_type:
         debug_log("Check latents")
-        latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, batch)
+        latent_batch = check_latent_shapes(
+            latent_batch, filepaths, data_backend_id, batch
+        )
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
