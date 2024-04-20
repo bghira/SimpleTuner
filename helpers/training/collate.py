@@ -300,7 +300,10 @@ def collate_fn(batch):
             example["drop_conditioning"] = False
 
     debug_log("Collect luminance values")
-    batch_luminance = [example["luminance"] for example in examples]
+    if 'luminance' in examples[0]:
+        batch_luminance = [example["luminance"] for example in examples]
+    else:
+        batch_luminance = [0] * len(examples)
     # average it
     batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
