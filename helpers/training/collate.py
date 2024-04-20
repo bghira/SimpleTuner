@@ -310,8 +310,9 @@ def collate_fn(batch):
     filepaths = extract_filepaths(examples)
     debug_log("Compute latents")
     latent_batch = compute_latents(filepaths, data_backend_id)
-    debug_log("Check latents")
-    latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, batch)
+    if 'deepfloyd' not in StateTracker.get_args().model_type:
+        debug_log("Check latents")
+        latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, batch)
 
     # Compute embeddings and handle dropped conditionings
     debug_log("Extract captions")
