@@ -125,12 +125,16 @@ def get_validation_resolutions():
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
-    if "," in StateTracker.get_args().validation_resolution:
+    validation_resolution_parameter = StateTracker.get_args().validation_resolution
+    if (
+        type(validation_resolution_parameter) is str
+        and "," in validation_resolution_parameter
+    ):
         return [
             parse_validation_resolution(res)
-            for res in StateTracker.get_args().validation_resolution.split(",")
+            for res in validation_resolution_parameter.split(",")
         ]
-    return [parse_validation_resolution(StateTracker.get_args().validation_resolution)]
+    return [parse_validation_resolution(validation_resolution_parameter)]
 
 
 def log_validations(

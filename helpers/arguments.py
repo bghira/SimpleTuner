@@ -902,7 +902,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--validation_resolution",
-        type=float,
+        type=str,
         default=256,
         help="Square resolution images will be output at this resolution (256x256).",
     )
@@ -1320,7 +1320,11 @@ def parse_args(input_args=None):
         logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
         logger.info(f"Text Cache location: {args.cache_dir_text}")
 
-    if args.validation_resolution < 128 and "deepfloyd" not in args.model_type:
+    if (
+        args.validation_resolution.isdigit()
+        and args.validation_resolution < 128
+        and "deepfloyd" not in args.model_type
+    ):
         # Convert from megapixels to pixels:
         log_msg = f"It seems that --validation_resolution was given in megapixels ({args.validation_resolution}). Converting to pixel measurement:"
         if args.validation_resolution == 1:
