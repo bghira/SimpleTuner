@@ -111,7 +111,7 @@ def parse_validation_resolution(input_str: str) -> tuple:
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
-    if isinstance(input_str, int):
+    if isinstance(input_str, int) or input_str.isdigit():
         return (input_str, input_str)
     if "x" in input_str:
         pieces = input_str.split("x")
@@ -408,6 +408,7 @@ def log_validations(
                         args.validation_guidance_rescale,
                     )
                 validation_resolutions = get_validation_resolutions()
+                logger.debug(f"Resolutions for validation: {validation_resolutions}")
                 for resolution in validation_resolutions:
                     validation_resolution_width, validation_resolution_height = (
                         resolution
