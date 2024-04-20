@@ -1303,17 +1303,6 @@ def parse_args(input_args=None):
             )
             sys.exit(1)
 
-    if args.cache_dir_vae is None or args.cache_dir_vae == "":
-        args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
-    if args.cache_dir_text is None or args.cache_dir_text == "":
-        args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-    for target_dir in [
-        Path(args.cache_dir),
-        Path(args.cache_dir_vae),
-        Path(args.cache_dir_text),
-    ]:
-        os.makedirs(target_dir, exist_ok=True)
-
     if (
         args.pretrained_vae_model_name_or_path is not None
         and StateTracker.get_model_type() == "legacy"
@@ -1324,11 +1313,12 @@ def parse_args(input_args=None):
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
         )
         args.pretrained_vae_model_name_or_path = None
-    logger.info(
-        f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
-    )
-    logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
-    logger.info(f"Text Cache location: {args.cache_dir_text}")
+    if "deepfloyd" not in args.model_type:
+        logger.info(
+            f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
+        )
+        logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
+        logger.info(f"Text Cache location: {args.cache_dir_text}")
 
     if args.validation_resolution < 128 and "deepfloyd" not in args.model_type:
         # Convert from megapixels to pixels:
