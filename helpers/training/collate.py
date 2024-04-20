@@ -89,7 +89,6 @@ def fetch_pixel_values(fp, data_backend_id: str):
 
     """
     backend_config = StateTracker.get_data_backend_config(data_backend_id)
-    logger.info(f"Backend config: {backend_config}")
     reformed_image, _, _ = MultiaspectImage.prepare_image(
         resolution=backend_config["resolution"],
         image=pixels,

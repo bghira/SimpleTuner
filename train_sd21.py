@@ -1138,9 +1138,6 @@ def main():
                 if model_pred.shape[1] == 6:
                     # Chop the variance off of DeepFloyd models.
                     model_pred, _ = torch.chunk(model_pred, 2, dim=1)
-                    logger.error(
-                        f"Model pred is finite: {torch.isfinite(model_pred).all()}"
-                    )
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if noise_scheduler.config.prediction_type == "sample":
