@@ -362,12 +362,16 @@ def log_validations(
                 #     f"\n -> Resolution: {args.validation_resolution}"
                 #     f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
                 # )
-                extra_validation_kwargs["pooled_prompt_embeds"] = (
-                    current_validation_pooled_embeds,
-                )
-                extra_validation_kwargs["negative_pooled_prompt_embeds"] = (
-                    validation_negative_pooled_embeds,
-                )
+                if "deepfloyd" not in args.model_type:
+                    extra_validation_kwargs["pooled_prompt_embeds"] = (
+                        current_validation_pooled_embeds
+                    )
+                    extra_validation_kwargs["negative_pooled_prompt_embeds"] = (
+                        validation_negative_pooled_embeds
+                    )
+                    extra_validation_kwargs["guidance_rescale"] = (
+                        args.validation_guidance_rescale,
+                    )
                 validation_images.extend(
                     pipeline(
                         prompt_embeds=current_validation_prompt_embeds,
@@ -375,7 +379,6 @@ def log_validations(
                         num_images_per_prompt=args.num_validation_images,
                         num_inference_steps=args.validation_num_inference_steps,
                         guidance_scale=args.validation_guidance,
-                        guidance_rescale=args.validation_guidance_rescale,
                         height=int(args.validation_resolution),
                         width=int(args.validation_resolution),
                         **extra_validation_kwargs,
