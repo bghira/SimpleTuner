@@ -32,7 +32,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["full", "lora", "deepfloyd-full"],
+        choices=["full", "lora", "deepfloyd-full", "deepfloyd-lora"],
         default="full",
         help=(
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."

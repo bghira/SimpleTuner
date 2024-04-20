@@ -287,7 +287,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         for image_path in samples:
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if (
-                StateTracker.get_args().model_type not in ["legacy", "deepfloyd-full"]
+                StateTracker.get_args().model_type
+                not in ["legacy", "deepfloyd-full", "deepfloyd-lora"]
                 and "crop_coordinates" not in image_metadata
             ):
                 raise Exception(

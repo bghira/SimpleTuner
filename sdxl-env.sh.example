@@ -18,6 +18,8 @@ if [[ "$MODEL_TYPE" == "full" ]]; then
 elif [[ "$MODEL_TYPE" == "lora" ]]; then
     # As of v0.9.2 of SimpleTuner, LoRA can not use BitFit.
     export USE_BITFIT=false
+elif [[ "$MODEL_TYPE" == "deepfloyd-full" ]]; then
+    export USE_BITFIT=true
 fi
 
 # Restart where we left off. Change this to "checkpoint-1234" to start from a specific checkpoint.

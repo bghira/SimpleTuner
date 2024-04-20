@@ -183,7 +183,7 @@ def main():
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):
-        if args.model_type == "lora":
+        if "lora" in args.model_type:
             logger.error(
                 "LoRA can not be trained with DeepSpeed. Please disable DeepSpeed via 'accelerate config' before reattempting."
             )
@@ -322,7 +322,7 @@ def main():
                 )
             unet.enable_xformers_memory_efficient_attention()
 
-    if args.model_type == "lora":
+    if "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
@@ -514,7 +514,7 @@ def main():
             if args.train_text_encoder
             else unet.parameters()
         )
-    elif args.model_type == "lora":
+    elif args.model_type == "lora" or args.model_type == "deepfloyd-lora":
         params_to_optimize = list(filter(lambda p: p.requires_grad, unet.parameters()))
         if args.train_text_encoder:
             params_to_optimize = params_to_optimize + list(
@@ -1385,7 +1385,7 @@ def main():
         unet = accelerator.unwrap_model(unet)
         if args.model_type == "full" and args.train_text_encoder:
             text_encoder = accelerator.unwrap_model(text_encoder)
-        elif args.model_type == "lora":
+        elif "lora" in args.model_type:
             unet_lora_layers = convert_state_dict_to_diffusers(
                 get_peft_model_state_dict(unet)
             )
@@ -1451,12 +1451,12 @@ def main():
             timestep_spacing="trailing",
             rescale_betas_zero_snr=True,
         )
-        if args.model_type == "full":
+        if "full" in args.model_type:
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
                 safe_serialization=True,
             )
-        elif args.model_type == "lora":
+        elif "lora" in args.model_type:
             pipeline.save_lora_weights(args.output_dir)
 
         if args.push_to_hub:
