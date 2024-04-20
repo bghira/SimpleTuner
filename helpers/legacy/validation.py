@@ -362,12 +362,16 @@ def log_validations(
                 #     f"\n -> Resolution: {args.validation_resolution}"
                 #     f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
                 # )
+                extra_validation_kwargs["pooled_prompt_embeds"] = (
+                    current_validation_pooled_embeds,
+                )
+                extra_validation_kwargs["negative_pooled_prompt_embeds"] = (
+                    validation_negative_pooled_embeds,
+                )
                 validation_images.extend(
                     pipeline(
                         prompt_embeds=current_validation_prompt_embeds,
-                        pooled_prompt_embeds=current_validation_pooled_embeds,
                         negative_prompt_embeds=validation_negative_prompt_embeds,
-                        negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
                         num_images_per_prompt=args.num_validation_images,
                         num_inference_steps=args.validation_num_inference_steps,
                         guidance_scale=args.validation_guidance,
