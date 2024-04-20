@@ -335,7 +335,7 @@ def log_validations(
                     "\n Device allocations:"
                     f"\n -> unet on {pipeline.unet.device}"
                     f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
-                    f"\n -> vae on {pipeline.vae.device}"
+                    f"\n -> vae on {pipeline.vae.device if hasattr(pipeline, 'vae') else None}"
                     f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
                     f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
                     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
