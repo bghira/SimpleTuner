@@ -330,29 +330,29 @@ def log_validations(
                     )
                 )
 
-                logger.debug(
-                    f"Generating validation image: {validation_prompt}"
-                    "\n Device allocations:"
-                    f"\n -> unet on {pipeline.unet.device}"
-                    f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
-                    f"\n -> vae on {pipeline.vae.device if hasattr(pipeline, 'vae') else None}"
-                    f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
-                    f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device if current_validation_pooled_embeds is not None else None}"
-                    f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
-                    f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device if validation_negative_pooled_embeds is not None else None}"
-                )
+                # logger.debug(
+                #     f"Generating validation image: {validation_prompt}"
+                #     "\n Device allocations:"
+                #     f"\n -> unet on {pipeline.unet.device}"
+                #     f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
+                #     f"\n -> vae on {pipeline.vae.device if hasattr(pipeline, 'vae') else None}"
+                #     f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
+                #     f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device if current_validation_pooled_embeds is not None else None}"
+                #     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
+                #     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device if validation_negative_pooled_embeds is not None else None}"
+                # )
 
-                logger.debug(
-                    f"Generating validation image: {validation_prompt}"
-                    f"\n Weight dtypes:"
-                    f"\n -> unet: {pipeline.unet.dtype}"
-                    f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
-                    f"\n -> vae: {pipeline.vae.dtype}"
-                    f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
-                    f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
-                    f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
-                    f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
-                )
+                # logger.debug(
+                #     f"Generating validation image: {validation_prompt}"
+                #     f"\n Weight dtypes:"
+                #     f"\n -> unet: {pipeline.unet.dtype}"
+                #     f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
+                #     f"\n -> vae: {pipeline.vae.dtype}"
+                #     f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
+                #     f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
+                #     f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
+                #     f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
+                # )
                 # logger.debug(
                 #     f"Generating validation image: {validation_prompt}"
                 #     f"\n -> Number of images: {args.num_validation_images}"
