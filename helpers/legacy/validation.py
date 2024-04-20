@@ -104,6 +104,35 @@ def prepare_validation_prompt_list(args, embed_cache):
             )
 
 
+def parse_validation_resolution(input_str: str) -> tuple:
+    """
+    If the args.validation_resolution:
+     - is an int, we'll treat it as height and width square aspect
+     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
+     - if it has comma, we will split and treat each value as above
+    """
+    if isinstance(input_str, int):
+        return (input_str, input_str)
+    if "x" in input_str:
+        pieces = input_str.split("x")
+        return (int(pieces[0]), int(pieces[1]))
+
+
+def get_validation_resolutions():
+    """
+    If the args.validation_resolution:
+     - is an int, we'll treat it as height and width square aspect
+     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
+     - if it has comma, we will split and treat each value as above
+    """
+    if "," in StateTracker.get_args().validation_resolution:
+        return [
+            parse_validation_resolution(res)
+            for res in StateTracker.get_args().validation_resolution.split(",")
+        ]
+    return [parse_validation_resolution(StateTracker.get_args().validation_resolution)]
+
+
 def log_validations(
     accelerator,
     prompt_handler,
@@ -374,24 +403,29 @@ def log_validations(
                     extra_validation_kwargs["guidance_rescale"] = (
                         args.validation_guidance_rescale,
                     )
-                validation_images.extend(
-                    pipeline(
-                        prompt_embeds=current_validation_prompt_embeds,
-                        negative_prompt_embeds=validation_negative_prompt_embeds,
-                        num_images_per_prompt=args.num_validation_images,
-                        num_inference_steps=args.validation_num_inference_steps,
-                        guidance_scale=args.validation_guidance,
-                        height=int(args.validation_resolution),
-                        width=int(args.validation_resolution),
-                        **extra_validation_kwargs,
-                    ).images
-                )
-                validation_images[-1].save(
-                    os.path.join(
-                        val_save_dir,
-                        f"step_{global_step}_val_img_{len(validation_images)}.png",
+                validation_resolutions = get_validation_resolutions()
+                for resolution in validation_resolutions:
+                    validation_resolution_width, validation_resolution_height = (
+                        resolution
                     )
-                )
+                    validation_images.extend(
+                        pipeline(
+                            prompt_embeds=current_validation_prompt_embeds,
+                            negative_prompt_embeds=validation_negative_prompt_embeds,
+                            num_images_per_prompt=args.num_validation_images,
+                            num_inference_steps=args.validation_num_inference_steps,
+                            guidance_scale=args.validation_guidance,
+                            height=int(validation_resolution_height),
+                            width=int(validation_resolution_width),
+                            **extra_validation_kwargs,
+                        ).images
+                    )
+                    validation_images[-1].save(
+                        os.path.join(
+                            val_save_dir,
+                            f"step_{global_step}_val_img_{len(validation_images)}_{str(resolution)}.png",
+                        )
+                    )
 
                 logger.debug(f"Completed generating image: {validation_prompt}")
 
