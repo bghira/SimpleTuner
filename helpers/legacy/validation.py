@@ -302,7 +302,10 @@ def log_validations(
                     logger.debug(
                         f"Validations received the prompt embed: positive={current_validation_prompt_embeds.shape}, negative={validation_negative_prompt_embeds.shape}"
                     )
-                    if prompt_handler is not None:
+                    if (
+                        prompt_handler is not None
+                        and "deepfloyd" not in args.model_type
+                    ):
                         for text_encoder in prompt_handler.text_encoders:
                             if text_encoder:
                                 text_encoder = text_encoder.to(accelerator.device)
