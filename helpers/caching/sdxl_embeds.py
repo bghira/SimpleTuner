@@ -292,8 +292,8 @@ class TextEmbeddingCache:
             text_input_ids,
             attention_mask=attention_mask,
             return_dict=False,
-        ).to("cpu")
-        prompt_embeds = prompt_embeds[0]
+        )
+        prompt_embeds = prompt_embeds[0].to("cpu")
 
         return prompt_embeds
 
