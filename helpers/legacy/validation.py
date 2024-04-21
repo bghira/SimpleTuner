@@ -23,6 +23,32 @@ logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
+def deepfloyd_validation_images():
+    """
+    From each data backend, collect the top 5 images for validation, such that
+    we select the same images on each startup, unless the dataset changes.
+
+    Returns:
+        dict: A dictionary of shortname to image paths.
+    """
+    data_backends = StateTracker.get_data_backends()
+    validation_data_backend_id = StateTracker.get_args().eval_dataset_id
+    validation_set = []
+    for data_backend in data_backends:
+        if (
+            validation_data_backend_id is not None
+            and data_backend["id"] != validation_data_backend_id
+        ):
+            continue
+        if "sampler" in data_backend:
+            validation_set.extend(
+                data_backend["sampler"].retrieve_validation_set(
+                    batch_size=StateTracker.get_args().num_eval_images
+                )
+            )
+    return validation_set
+
+
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
@@ -33,6 +59,18 @@ def prepare_validation_prompt_list(args, embed_cache):
             f"Embed cache engine did not contain a model_type. Cannot continue."
         )
     model_type = embed_cache.model_type
+    validation_sample_images = None
+    if "deepfloyd-stage2" in StateTracker.get_args().model_type:
+        # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
+        # If we don't do it here, they won't be available at inference time.
+        validation_sample_images = deepfloyd_validation_images()
+        if len(validation_sample_images) > 0:
+            StateTracker.set_validation_sample_images(validation_sample_images)
+            # Collect the prompts for the validation images.
+            for _validation_sample in validation_sample_images:
+                _, validation_prompt, _ = _validation_sample
+                embed_cache.compute_embeddings_for_prompts([validation_prompt])
+
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
         from helpers.prompts import prompts as prompt_library
@@ -237,6 +275,7 @@ def log_validations(
                         tokenizer=None,
                         vae=vae,
                         revision=args.revision,
+                        safety_checker=None,
                         torch_dtype=(
                             torch.bfloat16
                             if torch.backends.mps.is_available()
@@ -291,13 +330,23 @@ def log_validations(
                 extra_validation_kwargs["generator"] = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.validation_seed or args.seed or 0)
+            _content = zip(
+                validation_shortnames,
+                validation_prompts,
+                [None] * len(validation_prompts),
+            )
+            if args.model == "deepfloyd-stage2":
+                _content = StateTracker.get_validation_sample_images()
+
             for _validation_prompt in tqdm(
-                zip(validation_shortnames, validation_prompts),
+                _content,
                 leave=False,
                 ncols=125,
                 desc="Generating validation images",
             ):
-                validation_shortname, validation_prompt = _validation_prompt
+                validation_shortname, validation_prompt, validation_sample = (
+                    _validation_prompt
+                )
                 logger.debug(f"Validation image: {validation_prompt}")
                 # Each validation prompt needs its own embed.
                 if StateTracker.get_model_type() == "sdxl":
@@ -408,6 +457,16 @@ def log_validations(
                     extra_validation_kwargs["guidance_rescale"] = (
                         args.validation_guidance_rescale,
                     )
+                from helpers.multiaspect.image import MultiaspectImage
+
+                if validation_sample is not None:
+                    # Resize the input sample so that we can validate the model's upscaling performance.
+                    extra_validation_kwargs["image"] = validation_sample.resize(
+                        MultiaspectImage.calculate_new_size_by_pixel_edge(
+                            validation_sample.size[0], validation_sample.size[1], 64
+                        )
+                    )
+
                 validation_resolutions = get_validation_resolutions()
                 logger.debug(f"Resolutions for validation: {validation_resolutions}")
                 if validation_shortname not in validation_images:

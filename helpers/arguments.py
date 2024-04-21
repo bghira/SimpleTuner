@@ -49,7 +49,14 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["full", "lora", "deepfloyd-full", "deepfloyd-lora"],
+        choices=[
+            "full",
+            "lora",
+            "deepfloyd-full",
+            "deepfloyd-lora",
+            "deepfloyd-stage2",
+            "deepfloyd-stage2-lora",
+        ],
         default="full",
         help=(
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
@@ -905,6 +912,25 @@ def parse_args(input_args=None):
             "Run validation every X steps. Validation consists of running the prompt"
             " `args.validation_prompt` multiple times: `args.num_validation_images`"
             " and logging the images."
+        ),
+    )
+    parser.add_argument(
+        "--num_eval_images",
+        type=int,
+        default=4,
+        help=(
+            "If possible, this many eval images will be selected from each dataset."
+            " This is used when training super-resolution models such as DeepFloyd Stage II,"
+            " which will upscale input images from the training set."
+        ),
+    )
+    parser.add_argument(
+        "--eval_dataset_id",
+        type=str,
+        default=None,
+        help=(
+            "When provided, only this dataset's images will be used as the eval set, to keep"
+            " the training and eval images split."
         ),
     )
     parser.add_argument(

@@ -514,7 +514,11 @@ def main():
             if args.train_text_encoder
             else unet.parameters()
         )
-    elif args.model_type == "lora" or args.model_type == "deepfloyd-lora":
+    elif (
+        args.model_type == "lora"
+        or args.model_type == "deepfloyd-lora"
+        or args.model_type == "deepfloyd-stage2-lora"
+    ):
         params_to_optimize = list(filter(lambda p: p.requires_grad, unet.parameters()))
         if args.train_text_encoder:
             params_to_optimize = params_to_optimize + list(
@@ -1058,7 +1062,8 @@ def main():
                             noise
                         )
 
-                bsz = latents.shape[0]
+                bsz, channels, height, width = latents.shape
+
                 logger.debug(f"Working on batch size: {bsz}")
                 # Sample a random timestep for each image, potentially biased by the timestep weights.
                 # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
@@ -1115,6 +1120,10 @@ def main():
                     f"\n -> Timesteps dtype: {timesteps.dtype}"
                     f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
                 )
+                if unwrap_model(accelerator, unet).config.in_channels == channels * 2:
+                    # deepfloyd stage ii requires the inputs to be doubled. note that we're working in pixels, not latents.
+                    noisy_latents = torch.cat([noisy_latents, noisy_latents], dim=1)
+
                 if "deepfloyd-stage2" in args.model_type:
                     class_labels = timesteps
                 else:

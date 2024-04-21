@@ -257,6 +257,9 @@ if [[ "$MODEL_TYPE" == "deepfloyd-full" ]] && [[ "$USE_DORA" != "false" ]]; then
 elif [[ "$MODEL_TYPE" == "deepfloyd-lora" ]] && [[ "$USE_DORA" != "false" ]]; then
     echo "Enabling DoRA."
     DORA_ARGS="--use_dora"
+elif [[ "$MODEL_TYPE" == "deepfloyd-stage2-lora" ]] && [[ "$USE_DORA" != "false" ]]; then
+    echo "Enabling DoRA."
+    DORA_ARGS="--use_dora"
 fi
 
 export BITFIT_ARGS=""
@@ -269,6 +272,8 @@ elif [[ "$MODEL_TYPE" == "deepfloyd-full" ]] && [[ "$USE_BITFIT" != "false" ]]; 
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
 elif [[ "$MODEL_TYPE" == "deepfloyd-lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Cannot use BitFit with a full u-net training task. Disabling."
+elif [[ "$MODEL_TYPE" == "deepfloyd-stage2-lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
     echo "Cannot use BitFit with a full u-net training task. Disabling."
 fi
 
