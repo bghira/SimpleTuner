@@ -23,6 +23,7 @@ from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
+
 def deepfloyd_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
@@ -48,6 +49,7 @@ def deepfloyd_validation_images():
             )
     return validation_set
 
+
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
@@ -59,7 +61,7 @@ def prepare_validation_prompt_list(args, embed_cache):
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
-    if 'deepfloyd-stage2' in StateTracker.get_args().model_type:
+    if "deepfloyd-stage2" in StateTracker.get_args().model_type:
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
         validation_sample_images = deepfloyd_validation_images()
@@ -68,7 +70,7 @@ def prepare_validation_prompt_list(args, embed_cache):
             # Collect the prompts for the validation images.
             for _validation_sample in validation_sample_images:
                 _, validation_prompt, _ = _validation_sample
-                embed_cache.([validation_prompt])
+                embed_cache.compute_embeddings_for_prompts([validation_prompt])
 
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
