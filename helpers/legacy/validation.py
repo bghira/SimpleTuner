@@ -2,6 +2,7 @@ import logging, os, torch, numpy as np
 from tqdm import tqdm
 from diffusers.utils import is_wandb_available
 from diffusers.utils.torch_utils import is_compiled_module
+from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_luminance
 from helpers.training.state_tracker import StateTracker
 from helpers.training.wrappers import unwrap_model
@@ -21,7 +22,6 @@ from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 
 logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
-
 
 def deepfloyd_validation_images():
     """
@@ -48,7 +48,6 @@ def deepfloyd_validation_images():
             )
     return validation_set
 
-
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
@@ -60,7 +59,7 @@ def prepare_validation_prompt_list(args, embed_cache):
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
-    if "deepfloyd-stage2" in StateTracker.get_args().model_type:
+    if 'deepfloyd-stage2' in StateTracker.get_args().model_type:
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
         validation_sample_images = deepfloyd_validation_images()
@@ -69,7 +68,7 @@ def prepare_validation_prompt_list(args, embed_cache):
             # Collect the prompts for the validation images.
             for _validation_sample in validation_sample_images:
                 _, validation_prompt, _ = _validation_sample
-                embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                embed_cache.([validation_prompt])
 
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
@@ -335,7 +334,7 @@ def log_validations(
                 validation_prompts,
                 [None] * len(validation_prompts),
             )
-            if args.model == "deepfloyd-stage2":
+            if "deepfloyd-stage2" in args.model_type:
                 _content = StateTracker.get_validation_sample_images()
 
             for _validation_prompt in tqdm(
@@ -457,7 +456,6 @@ def log_validations(
                     extra_validation_kwargs["guidance_rescale"] = (
                         args.validation_guidance_rescale,
                     )
-                from helpers.multiaspect.image import MultiaspectImage
 
                 if validation_sample is not None:
                     # Resize the input sample so that we can validate the model's upscaling performance.
