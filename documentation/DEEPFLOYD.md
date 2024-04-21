@@ -7,8 +7,7 @@
 ## Background
 
 In spring of 2023, StabilityAI released a cascaded pixel diffusion model called DeepFloyd.
-
-![](https://huggingface.co/DeepFloyd/IF-I-M-v1.0/resolve/main/pics/deepfloyd_if_scheme.jpg)
+![](https://tripleback.net/public/deepfloyd.png)
 
 Comparing briefly to Stable Diffusion XL:
 - Text encoder
