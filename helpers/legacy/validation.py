@@ -433,7 +433,7 @@ def log_validations(
                     validation_image.save(
                         os.path.join(
                             val_save_dir,
-                            f"step_{global_step}_{validation_shortnames}_{str(validation_resolutions[validation_img_idx])}.png",
+                            f"step_{global_step}_{validation_shortname}_{str(validation_resolutions[validation_img_idx])}.png",
                         )
                     )
 
