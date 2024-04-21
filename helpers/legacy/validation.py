@@ -284,19 +284,20 @@ def log_validations(
             if not os.path.exists(val_save_dir):
                 os.makedirs(val_save_dir)
 
-            validation_images = []
+            validation_images = {}
             pipeline = pipeline.to(accelerator.device)
             extra_validation_kwargs = {}
             if not args.validation_randomize:
                 extra_validation_kwargs["generator"] = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.validation_seed or args.seed or 0)
-            for validation_prompt in tqdm(
-                validation_prompts,
+            for _validation_prompt in tqdm(
+                zip(validation_shortnames, validation_prompts),
                 leave=False,
                 ncols=125,
                 desc="Generating validation images",
             ):
+                validation_shortname, validation_prompt = _validation_prompt
                 logger.debug(f"Validation image: {validation_prompt}")
                 # Each validation prompt needs its own embed.
                 if StateTracker.get_model_type() == "sdxl":
@@ -409,11 +410,13 @@ def log_validations(
                     )
                 validation_resolutions = get_validation_resolutions()
                 logger.debug(f"Resolutions for validation: {validation_resolutions}")
+                if validation_shortname not in validation_images:
+                    validation_images[validation_shortname] = []
                 for resolution in validation_resolutions:
                     validation_resolution_width, validation_resolution_height = (
                         resolution
                     )
-                    validation_images.extend(
+                    validation_images[validation_shortname].extend(
                         pipeline(
                             prompt_embeds=current_validation_prompt_embeds,
                             negative_prompt_embeds=validation_negative_prompt_embeds,
@@ -425,10 +428,12 @@ def log_validations(
                             **extra_validation_kwargs,
                         ).images
                     )
-                    validation_images[-1].save(
+                validation_img_idx = 0
+                for validation_image in validation_images[validation_shortname]:
+                    validation_image.save(
                         os.path.join(
                             val_save_dir,
-                            f"step_{global_step}_val_img_{len(validation_images)}_{str(resolution)}.png",
+                            f"step_{global_step}_{validation_shortnames}_{str(validation_resolutions[validation_img_idx])}.png",
                         )
                     )
 
@@ -436,24 +441,33 @@ def log_validations(
 
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
-                    validation_document = {}
-                    validation_luminance = []
-                    for idx, validation_image in enumerate(validation_images):
-                        # Create a WandB entry containing each image.
-                        validation_document[validation_shortnames[idx]] = wandb.Image(
-                            validation_image
-                        )
-                        # Compute the luminance of each image.
-                        validation_luminance.append(
-                            calculate_luminance(validation_image)
-                        )
-                    # Compute the mean luminance across all samples:
-                    validation_luminance = torch.tensor(validation_luminance)
-                    validation_document["validation_luminance"] = (
-                        validation_luminance.mean()
-                    )
-                    del validation_luminance
-                    tracker.log(validation_document, step=global_step)
+                    resolution_list = [
+                        f"{res[0]}x{res[1]}" for res in validation_resolutions
+                    ]
+                    columns = [
+                        "Prompt",
+                        *resolution_list,
+                        "Mean Luminance",
+                    ]
+                    table = wandb.Table(columns=columns)
+
+                    # Process each prompt and its associated images
+                    for prompt_shortname, image_list in validation_images.items():
+                        wandb_images = []
+                        luminance_values = []
+                        for image in image_list:
+                            wandb_image = wandb.Image(image)
+                            wandb_images.append(wandb_image)
+                            luminance = calculate_luminance(image)
+                            luminance_values.append(luminance)
+                        mean_luminance = torch.tensor(luminance_values).mean().item()
+                        while len(wandb_images) < len(resolution_list):
+                            # any missing images will crash it. use None so they are indexed.
+                            wandb_images.append(None)
+                        table.add_data(prompt_shortname, *wandb_images, mean_luminance)
+
+                    # Log the table to Weights & Biases
+                    tracker.log({"Validation Gallery": table}, step=global_step)
 
             if validation_type == "validation" and args.use_ema:
                 # Switch back to the original UNet parameters.
