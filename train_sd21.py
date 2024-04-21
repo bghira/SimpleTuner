@@ -511,7 +511,7 @@ def main():
     if (
         args.model_type == "full"
         or args.model_type == "deepfloyd-full"
-        or args.model_type == "deepfloyd-stage2-full"
+        or args.model_type == "deepfloyd-stage2"
     ):
         params_to_optimize = (
             itertools.chain(unet.parameters(), text_encoder.parameters())
@@ -1211,18 +1211,17 @@ def main():
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 logger.debug(f"Backwards pass.")
-                logger.info(f"Hiden states: {encoder_hidden_states.shape}")
-                logger.info(f"Model prediction: {model_pred.shape}")
-                logger.info(f"Target: {target.shape}")
-                logger.info(f"Class labels: {class_labels}")
                 accelerator.backward(loss)
+                grad_norm = None
                 if (
                     accelerator.sync_gradients
                     and not args.use_adafactor_optimizer
                     and args.max_grad_norm > 0
                 ):
                     # Adafactor shouldn't have gradient clipping applied.
-                    accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
+                    grad_norm = accelerator.clip_grad_norm_(
+                        params_to_optimize, args.max_grad_norm
+                    )
                 training_logger.debug(f"Stepping components forward.")
                 optimizer.step()
                 lr_scheduler.step(**scheduler_kwargs)
@@ -1245,6 +1244,8 @@ def main():
                     "learning_rate": lr,
                     "epoch": epoch,
                 }
+                if grad_norm is not None:
+                    logs["grad_norm"] = grad_norm
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1

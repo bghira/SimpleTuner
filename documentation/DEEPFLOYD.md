@@ -84,7 +84,7 @@ As such, we'll be making use of the `sd2x-env.sh` configuration file for tuning 
 # Possible values:
 # - deepfloyd-full
 # - deepfloyd-lora
-# - deepfloyd-stage2-full
+# - deepfloyd-stage2
 # - deepfloyd-stage2-lora
 export MODEL_TYPE="deepfloyd-lora"
 
