@@ -222,3 +222,9 @@ pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, var
 > ⚠️ Note that the first value for `DiffusionPipeline.from_pretrained(...)` is set to `IF-I-M-v1.0`, but you must update this to use the base model path that you trained your LoRA on.
 
 > ⚠️ Note that not all of the recommendations from Hugging Face apply to SimpleTuner. For example, we can tune DeepFloyd stage I LoRA in just 22G of VRAM vs 28G for Diffusers' example dreambooth scripts thanks to efficient pre-caching and pure-bf16 optimiser states. 8Bit AdamW isn't currently supported by SimpleTuner.
+
+## Fine-tuning the super-resolution stage II model
+
+Currently, stage II training has a bug in SimpleTuner resulting in a crash on the first step.
+
+This is being identified and resolved, but until then, only stage I can be tuned.
