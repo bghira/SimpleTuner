@@ -33,6 +33,7 @@ class JsonMetadataBackend(MetadataBackend):
         delete_problematic_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
+        cache_file_suffix: str = None,
     ):
         super().__init__(
             id=id,
@@ -47,6 +48,7 @@ class JsonMetadataBackend(MetadataBackend):
             delete_problematic_images=delete_problematic_images,
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
+            cache_file_suffix=cache_file_suffix,
         )
 
     def __len__(self):

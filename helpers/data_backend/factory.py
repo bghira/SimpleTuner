@@ -436,13 +436,14 @@ def configure_multi_databackend(
             ),
             cache_file=os.path.join(
                 init_backend["instance_data_root"],
-                "aspect_ratio_bucket_indices.json",
+                "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
                 init_backend["instance_data_root"],
-                "aspect_ratio_bucket_metadata.json",
+                "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
+            cache_file_suffix=backend.get("cache_file_suffix", None),
             **metadata_backend_args,
         )
 
