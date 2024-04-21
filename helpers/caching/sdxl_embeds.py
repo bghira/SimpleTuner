@@ -278,15 +278,9 @@ class TextEmbeddingCache:
 
         return text_inputs
 
-    def encode_deepfloyd_prompt(
-        self, input_ids, attention_mask, text_encoder_use_attention_mask=True
-    ):
+    def encode_deepfloyd_prompt(self, input_ids, attention_mask):
         text_input_ids = input_ids.to(self.text_encoders[0].device)
-
-        if text_encoder_use_attention_mask:
-            attention_mask = attention_mask.to(self.text_encoders[0].device)
-        else:
-            attention_mask = None
+        attention_mask = attention_mask.to(self.text_encoders[0].device)
 
         prompt_embeds = self.text_encoders[0](
             text_input_ids,
@@ -305,7 +299,6 @@ class TextEmbeddingCache:
         result = self.encode_deepfloyd_prompt(
             text_inputs.input_ids,
             text_inputs.attention_mask,
-            text_encoder_use_attention_mask=StateTracker.get_args().text_encoder_use_attention_mask,
         )
         del text_inputs
 

@@ -524,19 +524,6 @@ def parse_args(input_args=None):
         required=False,
         help="The maximum length of the tokenizer. If not set, will default to the tokenizer's max length.",
     )
-    parser.add_argument(
-        "--text_encoder_use_attention_mask",
-        action="store_true",
-        required=False,
-        help="Whether to use attention mask for the text encoder",
-    )
-    parser.add_argument(
-        "--class_labels_conditioning",
-        required=False,
-        default=None,
-        choices=["timesteps"],
-        help="The optional `class_label` conditioning to pass to the unet, available values are `timesteps`.",
-    )
     # End DeepFloyd-specific settings
     parser.add_argument(
         "--train_batch_size",
