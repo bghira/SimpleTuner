@@ -242,6 +242,9 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.bfloat16
+    if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
+        weight_dtype = torch.float32
+        args.adam_bfloat16 = False
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load the scheduler, tokenizer and models.
@@ -549,9 +552,10 @@ def main():
             params_to_optimize,
             **extra_optimizer_args,
         )
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.bfloat16
+    from helpers.legacy.validation import get_validation_resolutions
+
+    # Kick out an early error for DF II trainers that used the wrong resolutions.
+    get_validation_resolutions()
     # Move text_encoder to device and cast to weight_dtype)
     logging.info("Moving text encoder to GPU..")
     text_encoder.to(accelerator.device, dtype=weight_dtype)
@@ -1040,7 +1044,6 @@ def main():
                 )
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
-                noise = torch.randn_like(latents)
                 if args.offset_noise:
                     if (
                         args.noise_offset_probability == 1.0
@@ -1065,7 +1068,6 @@ def main():
                         noise = noise + args.input_perturbation * torch.randn_like(
                             noise
                         )
-
                 bsz, channels, height, width = latents.shape
 
                 logger.debug(f"Working on batch size: {bsz}")
