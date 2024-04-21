@@ -508,7 +508,11 @@ def main():
         extra_optimizer_args["lr"] = args.learning_rate
 
     # Optimizer creation
-    if args.model_type == "full" or args.model_type == "deepfloyd-full":
+    if (
+        args.model_type == "full"
+        or args.model_type == "deepfloyd-full"
+        or args.model_type == "deepfloyd-stage2-full"
+    ):
         params_to_optimize = (
             itertools.chain(unet.parameters(), text_encoder.parameters())
             if args.train_text_encoder
@@ -1129,20 +1133,12 @@ def main():
                 else:
                     class_labels = None
 
-                # assert all inputs are finite
-                assert torch.isfinite(latents).all()
-                assert torch.isfinite(noise).all()
-                assert torch.isfinite(timesteps).all()
-                assert torch.isfinite(encoder_hidden_states).all()
-
                 model_pred = unet(
                     noisy_latents,
                     timesteps,
                     encoder_hidden_states,
                     class_labels=class_labels,
                 ).sample
-
-                assert torch.isfinite(model_pred).all()
 
                 if model_pred.shape[1] == 6:
                     # Chop the variance off of DeepFloyd models.
@@ -1215,6 +1211,10 @@ def main():
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 logger.debug(f"Backwards pass.")
+                logger.info(f"Hiden states: {encoder_hidden_states.shape}")
+                logger.info(f"Model prediction: {model_pred.shape}")
+                logger.info(f"Target: {target.shape}")
+                logger.info(f"Class labels: {class_labels}")
                 accelerator.backward(loss)
                 if (
                     accelerator.sync_gradients

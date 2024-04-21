@@ -281,12 +281,17 @@ if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
 elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
-    echo "Cannot use BitFit with a full u-net training task. Disabling."
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
 elif [[ "$MODEL_TYPE" == "deepfloyd-full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+elif [[ "$MODEL_TYPE" == "deepfloyd-stage2" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Enabling BitFit."
+    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
 elif [[ "$MODEL_TYPE" == "deepfloyd-lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
-    echo "Cannot use BitFit with a full u-net training task. Disabling."
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
+elif [[ "$MODEL_TYPE" == "deepfloyd-stage2-lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
 fi
 
 export ASPECT_BUCKET_ROUNDING_ARGS=""
