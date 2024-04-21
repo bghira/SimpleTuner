@@ -189,6 +189,7 @@ def load_llava_model(
         bnb_config = None
         torch_dtype = torch.float16
     if "1.6" in model_path:
+        logger.info("Using LLaVA 1.6+ model.")
         model = LlavaNextForConditionalGeneration.from_pretrained(
             model_path,
             quantization_config=bnb_config,
@@ -196,6 +197,7 @@ def load_llava_model(
             device_map="auto",
         )
     else:
+        logger.info("Using LLaVA 1.5 model.")
         model = LlavaForConditionalGeneration.from_pretrained(
             model_path,
             quantization_config=bnb_config,
@@ -203,8 +205,10 @@ def load_llava_model(
             device_map="auto",
         )
     if "1.6" in model_path:
+        logger.info("Using LLaVA 1.6+ model processor.")
         autoprocessor_cls = LlavaNextProcessor
     else:
+        logger.info("Using LLaVA 1.5 model processor.")
         autoprocessor_cls = AutoProcessor
     processor = autoprocessor_cls.from_pretrained(model_path)
 
@@ -222,6 +226,7 @@ def eval_model(args, image_file, model, processor):
             if torch.cuda.is_available()
             else "mps" if torch.backends.mps.is_available() else "cpu"
         )
+        logging.info(f"Inputs: {inputs}")
     else:
         prompt = f"<image>\nUSER: {args.query_str}\nASSISTANT:"
         images = [image_file]
