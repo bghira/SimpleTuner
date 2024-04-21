@@ -1350,6 +1350,13 @@ def parse_args(input_args=None):
         logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
         logger.info(f"Text Cache location: {args.cache_dir_text}")
 
+    if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
+        logger.warning(
+            "DeepFloyd Stage II requires a resolution of at least 256. Setting to 256."
+        )
+        args.resolution = 256
+        args.resolution_type = "pixel"
+
     if (
         args.validation_resolution.isdigit()
         and int(args.validation_resolution) < 128

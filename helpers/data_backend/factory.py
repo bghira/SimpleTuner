@@ -527,6 +527,31 @@ def configure_multi_databackend(
             datasets=[init_backend["metadata_backend"]],
         )
 
+        if "deepfloyd" in args.model_type:
+            if init_backend["metadata_backend"].resolution_type == "area":
+                logger.warning(
+                    "Resolution type is 'area', but should be 'pixel' for DeepFloyd. Unexpected results may occur."
+                )
+                if init_backend["metadata_backend"].resolution > 0.25:
+                    logger.warning(
+                        "Resolution is greater than 0.25 megapixels. This may lead to unconstrained memory requirements."
+                    )
+            if init_backend["metadata_backend"].resolution_type == "pixel":
+                if (
+                    "stage2" not in args.model_type
+                    and init_backend["metadata_backend"].resolution > 64
+                ):
+                    logger.warning(
+                        "Resolution is greater than 64 pixels, which will possibly lead to poor quality results."
+                    )
+
+        if "deepfloyd-stage2" in args.model_type:
+            # Resolution must be at least 256 for Stage II.
+            if init_backend["metadata_backend"].resolution < 256:
+                logger.warning(
+                    "Increasing resolution to 256, as is required for DF Stage II."
+                )
+
         init_backend["sampler"] = MultiAspectSampler(
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],

@@ -35,17 +35,27 @@ def deepfloyd_validation_images():
     data_backends = StateTracker.get_data_backends()
     validation_data_backend_id = StateTracker.get_args().eval_dataset_id
     validation_set = []
-    for data_backend in data_backends:
+    logger.info("Collecting DF-II validation images")
+    for _data_backend in data_backends:
+        data_backend = StateTracker.get_data_backend(_data_backend)
+        if "id" not in data_backend:
+            continue
+        logger.info(f"Checking data backend: {data_backend['id']}")
         if (
             validation_data_backend_id is not None
             and data_backend["id"] != validation_data_backend_id
         ):
+            logger.warning(f"Not collecting images from {data_backend['id']}")
             continue
         if "sampler" in data_backend:
             validation_set.extend(
                 data_backend["sampler"].retrieve_validation_set(
                     batch_size=StateTracker.get_args().num_eval_images
                 )
+            )
+        else:
+            logger.warning(
+                f"Data backend {data_backend['id']} does not have a sampler. Skipping."
             )
     return validation_set
 
@@ -68,7 +78,11 @@ def prepare_validation_prompt_list(args, embed_cache):
         if len(validation_sample_images) > 0:
             StateTracker.set_validation_sample_images(validation_sample_images)
             # Collect the prompts for the validation images.
-            for _validation_sample in validation_sample_images:
+            for _validation_sample in tqdm(
+                validation_sample_images,
+                ncols=100,
+                desc="Precomputing DeepFloyd stage 2 eval prompt embeds",
+            ):
                 _, validation_prompt, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts([validation_prompt])
 
@@ -151,9 +165,22 @@ def parse_validation_resolution(input_str: str) -> tuple:
      - if it has comma, we will split and treat each value as above
     """
     if isinstance(input_str, int) or input_str.isdigit():
+        if (
+            "deepfloyd-stage2" in StateTracker.get_args().model_type
+            and int(input_str) < 256
+        ):
+            raise ValueError(
+                "Cannot use less than 256 resolution for DeepFloyd stage 2."
+            )
         return (input_str, input_str)
     if "x" in input_str:
         pieces = input_str.split("x")
+        if "deepfloyd-stage2" in StateTracker.get_args().model_type and (
+            int(pieces[0]) < 256 or int(pieces[1]) < 256
+        ):
+            raise ValueError(
+                "Cannot use less than 256 resolution for DeepFloyd stage 2."
+            )
         return (int(pieces[0]), int(pieces[1]))
 
 
@@ -269,6 +296,10 @@ def log_validations(
                     )
                 elif StateTracker.get_model_type() == "legacy":
                     pipeline_cls = DiffusionPipeline
+                    if "deepfloyd-stage2" in args.model_type:
+                        from diffusers.pipelines import IFSuperResolutionPipeline
+
+                        pipeline_cls = IFSuperResolutionPipeline
                     pipeline = pipeline_cls.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=unwrap_model(accelerator, unet),
@@ -338,6 +369,9 @@ def log_validations(
             )
             if "deepfloyd-stage2" in args.model_type:
                 _content = StateTracker.get_validation_sample_images()
+                logger.info(
+                    f"Processing {len(_content)} DeepFloyd stage 2 validation images."
+                )
 
             for _validation_prompt in tqdm(
                 _content,
@@ -461,10 +495,13 @@ def log_validations(
 
                 if validation_sample is not None:
                     # Resize the input sample so that we can validate the model's upscaling performance.
-                    extra_validation_kwargs["image"] = validation_sample.resize(
+                    width, height, _ = (
                         MultiaspectImage.calculate_new_size_by_pixel_edge(
                             validation_sample.size[0], validation_sample.size[1], 64
                         )
+                    )
+                    extra_validation_kwargs["image"] = validation_sample.resize(
+                        (width, height)
                     )
 
                 validation_resolutions = get_validation_resolutions()
@@ -501,7 +538,7 @@ def log_validations(
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
                     resolution_list = [
-                        f"{res[0]}x{res[1]}" for res in validation_resolutions
+                        f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
                     ]
                     columns = [
                         "Prompt",

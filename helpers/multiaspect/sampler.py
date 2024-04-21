@@ -145,7 +145,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             validation_prompt = PromptHandler.magic_prompt(
                 sampler_backend_id=self.id,
                 data_backend=self.data_backend,
-                image_path=image_metadata["image_path"],
+                image_path=image_path,
                 caption_strategy=self.caption_strategy,
                 use_captions=self.use_captions,
                 prepend_instance_prompt=self.prepend_instance_prompt,
