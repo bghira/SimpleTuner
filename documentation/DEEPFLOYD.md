@@ -224,6 +224,14 @@ pipe.scheduler = pipe.scheduler.__class__.from_config(pipe.scheduler.config, var
 
 ## Fine-tuning the super-resolution stage II model
 
-Currently, stage II training has a bug in SimpleTuner resulting in a crash on the first step.
+DeepFloyd's stage II model takes inputs around 64x64 (or 96x64) images, and returns the resulting upscaled image using the `VALIDATION_RESOLUTION` setting.
 
-This is being identified and resolved, but until then, only stage I can be tuned.
+The eval images are automatically collected from your datasets, such that `--num_eval_images` will specify how many upscale images to select from each dataset. The images are currently selected at random - but they'll remain the same on each session.
+
+A few more checks are in place to ensure you don't accidentally run with the incorrect sizes set.
+
+To train stage II, you just need to follow the steps above, using `deepfloyd-stage2-lora` in place of `deepfloyd-lora` for `MODEL_TYPE`:
+
+```bash
+export MODEL_TYPE="deepfloyd-stage2-lora"
+```
