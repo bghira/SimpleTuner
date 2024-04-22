@@ -1,5 +1,7 @@
 ## Setup
 
+For users that wish to make use of Docker or another container orchestration platform, see [this document](/documentation/DOCKER.md) first.
+
 1. Clone the repository and install the dependencies:
 
 ```bash
