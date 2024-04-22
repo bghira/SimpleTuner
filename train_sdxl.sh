@@ -27,8 +27,8 @@ if [ -z "${MIXED_PRECISION}" ]; then
 fi
 
 export PURE_BF16_ARGS=""
-if ! [ -z "$USE_PURE_BF16" ] && [[ "$USE_PURE_BF16" == "true" ]]; then
-    PURE_BF16_ARGS="--adamw_bf16"
+if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
+    PURE_BF16_ARGS="--adam_bfloat16"
     MIXED_PRECISION="bf16"
 fi
 
@@ -254,10 +254,17 @@ fi
 export DORA_ARGS=""
 if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_DORA" != "false" ]]; then
     echo "Cannot use DoRA with a full u-net training task. Disabling DoRA."
-    export USE_DORA="false"
 elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
     echo "Enabling DoRA."
     DORA_ARGS="--use_dora"
+fi
+
+export BITFIT_ARGS=""
+if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Enabling BitFit."
+    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
 fi
 
 export BITFIT_ARGS=""

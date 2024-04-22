@@ -33,6 +33,7 @@ class ParquetMetadataBackend(MetadataBackend):
         delete_problematic_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
+        cache_file_suffix: str = None,
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
@@ -49,6 +50,7 @@ class ParquetMetadataBackend(MetadataBackend):
             delete_problematic_images=delete_problematic_images,
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
+            cache_file_suffix=cache_file_suffix,
         )
         self.load_parquet_database()
 

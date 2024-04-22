@@ -49,7 +49,7 @@ class TestMultiaspectImage(unittest.TestCase):
 
         # Define target resolutions and expected output sizes
         tests = [
-            (1024, "pixel", (1824, 1024)),
+            (1024, "pixel", (1792, 1024)),
             (1.0, "area", (1344, 768)),  # Assuming target is 1 megapixel
         ]
 

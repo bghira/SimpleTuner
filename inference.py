@@ -15,8 +15,8 @@ logger = logging.getLogger("SimpleTuner-inference")
 logger.setLevel(logging.INFO)
 # Load the pipeline with the same arguments (model, revision) that were used for training
 model_id = "stabilityai/stable-diffusion-2"
-model_id = "ptx0/pseudo-flex-base"
-base_dir = "/notebooks/datasets"
+model_id = "ptx0/terminus-xl-gamma-v2-1"
+base_dir = "/Volumes/models/training"
 model_path = os.path.join(base_dir, "models")
 # output_test_dir = os.path.join(base_dir, 'test_results')
 output_test_dir = os.path.join(base_dir, "encoder_test")
@@ -110,7 +110,11 @@ for checkpoint in checkpoints:
                 rescale_betas_zero_snr=True,
                 timestep_spacing="trailing",
             )
-            pipeline.to("cuda")
+            pipeline.to(
+                "cuda"
+                if torch.cuda.is_available()
+                else "mps" if torch.mps.is_available() else "cpu"
+            )
         except Exception as e:
             logging.info(
                 f"Could not generate pipeline for checkpoint {checkpoint}: {e}"
@@ -130,6 +134,7 @@ for checkpoint in checkpoints:
                 logging.info(f"Negative: {negative}")
                 conditioning = compel.build_conditioning_tensor(prompt)
                 generator = torch.Generator(device="cuda").manual_seed(torch_seed)
+                pipeline.do_guidance_rescale_before = 20
                 output = pipeline(
                     generator=generator,
                     negative_prompt_embeds=negative_embed,

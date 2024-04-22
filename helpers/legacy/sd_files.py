@@ -37,6 +37,10 @@ def import_model_class_from_model_name_or_path(
         )
 
         return RobertaSeriesModelWithTransformation
+    elif model_class == "T5EncoderModel":
+        from transformers import T5EncoderModel
+
+        return T5EncoderModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -55,7 +59,7 @@ def register_file_hooks(
         StateTracker.save_training_state(
             os.path.join(output_dir, "training_state.json")
         )
-        if StateTracker.get_args().model_type == "lora":
+        if "lora" in StateTracker.get_args().model_type:
             # there are only two options here. Either are just the unet attn processor layers
             # or there are the unet and text encoder atten layers
             unet_lora_layers_to_save = None
@@ -141,7 +145,7 @@ def register_file_hooks(
             else:
                 raise ValueError(f"unexpected save model: {model.__class__}")
 
-        if args.model_type == "lora":
+        if "lora" in args.model_type:
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
 
             lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
