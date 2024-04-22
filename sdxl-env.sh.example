@@ -136,7 +136,7 @@ export ALLOW_TF32=true
 # AdamW 8Bit is a robust and lightweight choice. Adafactor might reduce memory consumption, and Dadaptation is slow and experimental.
 # AdamW is the default optimizer, but it uses a lot of memory and is slower than AdamW8Bit or Adafactor.
 # Choices: adamw, adamw8bit, adafactor, dadaptation
-export OPTIMIZER="adamw8bit"
+export OPTIMIZER="adamw_bf16"
 
 
 # EMA is a strong regularisation method that uses a lot of extra VRAM to hold two copies of the weights.
@@ -190,4 +190,4 @@ export ACCELERATE_EXTRA_ARGS=""                          # --multi_gpu or other 
 # With Pytorch 2.1, you might have pretty good luck here.
 # If you're using aspect bucketing however, each resolution change will recompile. Seriously, just don't do it.
 # Well, then again... Pytorch 2.2 has support for dynamic shapes. Why not?
-export TRAINING_DYNAMO_BACKEND='inductor'                # or 'no' if you want to disable torch compile in case of performance issues or lack of support (eg. AMD)
+export TRAINING_DYNAMO_BACKEND='no'                # or 'no' if you want to disable torch compile in case of performance issues or lack of support (eg. AMD)
