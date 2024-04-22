@@ -187,7 +187,7 @@ def main():
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):
-        if args.model_type == "lora":
+        if "lora" in args.model_type:
             logger.error(
                 "LoRA can not be trained with DeepSpeed. Please disable DeepSpeed via 'accelerate config' before reattempting."
             )
@@ -348,7 +348,7 @@ def main():
                 "xformers is not available. Make sure it is installed correctly"
             )
 
-    if args.model_type == "lora":
+    if "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
@@ -685,7 +685,7 @@ def main():
             raise ValueError(
                 "Full model tuning does not currently support text encoder training."
             )
-    elif args.model_type == "lora":
+    elif "lora" in args.model_type:
         params_to_optimize = list(filter(lambda p: p.requires_grad, unet.parameters()))
         if args.train_text_encoder:
             params_to_optimize = (
@@ -859,7 +859,7 @@ def main():
         train_dataloaders.append(accelerator.prepare(backend["train_dataloader"]))
     idx_count = 0
 
-    if args.model_type == "lora" and args.train_text_encoder:
+    if "lora" in args.model_type and args.train_text_encoder:
         logger.info("Preparing text encoders for training.")
         text_encoder_1, text_encoder_2 = accelerator.prepare(
             text_encoder_1, text_encoder_2
@@ -1082,7 +1082,7 @@ def main():
 
         unet.train()
         training_models = [unet]
-        if args.model_type == "lora" and args.train_text_encoder:
+        if "lora" in args.model_type and args.train_text_encoder:
             text_encoder_1.train()
             text_encoder_2.train()
             training_models.append(text_encoder_1)
@@ -1478,7 +1478,7 @@ def main():
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unet = unwrap_model(accelerator, unet)
-        if args.model_type == "lora":
+        if "lora" in args.model_type:
             unet_lora_layers = convert_state_dict_to_diffusers(
                 get_peft_model_state_dict(unet)
             )
@@ -1581,7 +1581,7 @@ def main():
                 validation_type="finish",
                 pipeline=pipeline,
             )
-        elif args.model_type == "lora":
+        elif "lora" in args.model_type:
             # load attention processors. They were saved earlier.
             pipeline.load_lora_weights(args.output_dir)
             log_validations(

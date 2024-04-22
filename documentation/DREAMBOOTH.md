@@ -34,8 +34,11 @@ The model contains something called a "prior" which could, in theory, be preserv
 
 Following the [tutorial](/TUTORIAL.md) is required before you can continue into Dreambooth-specific configuration.
 
-Recommended configuration values for `sdxl-env.sh` or `sd2x-env.sh`:
+For DeepFloyd tuning, it's recommended to visit [this page](/documentation/DEEPFLOYD.md) for specific tips related to that model's setup.
 
+For Stable Diffusion 1.x/2.x/XL, here are recommended configuration values.
+
+Located in `sdxl-env.sh` or `sd2x-env.sh`:
 ```bash
 TRAIN_BATCH_SIZE=1
 
@@ -47,7 +50,7 @@ LR_WARMUP_STEPS=100
 OPTIMIZER=adamw_bf16
 
 MAX_NUM_STEPS=1000
-NUM_EPOCHS=25
+NUM_EPOCHS=0
 
 VALIDATION_STEPS=100
 VALIDATION_PROMPT="a photograph of subjectname"

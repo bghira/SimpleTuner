@@ -32,6 +32,7 @@ class MetadataBackend:
         delete_problematic_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
+        cache_file_suffix: str = None,
     ):
         self.id = id
         if self.id != data_backend.id:
@@ -42,8 +43,11 @@ class MetadataBackend:
         self.data_backend = data_backend
         self.batch_size = batch_size
         self.instance_data_root = instance_data_root
-        self.cache_file = Path(cache_file)
-        self.metadata_file = Path(metadata_file)
+        if cache_file_suffix is not None:
+            cache_file = f"{cache_file}_{cache_file_suffix}"
+            metadata_file = f"{metadata_file}_{cache_file_suffix}"
+        self.cache_file = Path(f"{cache_file}.json")
+        self.metadata_file = Path(f"{metadata_file}.json")
         self.aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
@@ -717,6 +721,8 @@ class MetadataBackend:
             vae_cache: The VAECache object.
             vae_cache_behavior (str): Behavior for handling inconsistencies ('sync' or 'recreate').
         """
+        if "deepfloyd" in StateTracker.get_args().model_type:
+            return
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
         logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")

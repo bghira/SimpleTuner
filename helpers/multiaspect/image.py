@@ -50,7 +50,8 @@ class MultiaspectImage:
         original_width, original_height = image_size
         original_resolution = resolution
         # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-        original_resolution = original_resolution * 1e3
+        if resolution_type == "area":
+            original_resolution = original_resolution * 1e3
         # Make resolution a multiple of 64
         original_resolution = MultiaspectImage._round_to_nearest_multiple(
             original_resolution, 64
@@ -398,15 +399,15 @@ class MultiaspectImage:
         if W < H:
             W = resolution
             H = MultiaspectImage._round_to_nearest_multiple(
-                resolution / aspect_ratio, 8
+                resolution / aspect_ratio, 64
             )
         elif H < W:
             H = resolution
             W = MultiaspectImage._round_to_nearest_multiple(
-                resolution * aspect_ratio, 8
+                resolution * aspect_ratio, 64
             )
         else:
-            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 8)
+            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
 
         new_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
         return int(W), int(H), new_aspect_ratio

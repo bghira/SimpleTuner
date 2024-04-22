@@ -41,7 +41,7 @@ class SDXLSaveHook:
         StateTracker.save_training_state(
             os.path.join(output_dir, "training_state.json")
         )
-        if self.args.model_type == "lora":
+        if "lora" in self.args.model_type:
             # there are only two options here. Either are just the unet attn processor layers
             # or there are the unet and text encoder atten layers
             unet_lora_layers_to_save = None
@@ -118,7 +118,7 @@ class SDXLSaveHook:
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
 
-        if self.args.model_type == "lora":
+        if "lora" in self.args.model_type:
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
             unet_ = None
             text_encoder_one_ = None

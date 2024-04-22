@@ -1,4 +1,5 @@
 from torch.utils.data import Dataset
+from helpers.training.state_tracker import StateTracker
 from pathlib import Path
 import logging, os
 
@@ -32,15 +33,19 @@ class MultiAspectDataset(Dataset):
         first_aspect_ratio = None
         for sample in image_tuple:
             image_metadata = sample
-            if first_aspect_ratio is None:
-                first_aspect_ratio = image_metadata["aspect_ratio"]
-            elif first_aspect_ratio != image_metadata["aspect_ratio"]:
-                raise ValueError(
-                    f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {image_metadata['aspect_ratio']}"
-                )
+            if 'aspect_ratio' in image_metadata:
+                if first_aspect_ratio is None:
+                    first_aspect_ratio = image_metadata["aspect_ratio"]
+                elif first_aspect_ratio != image_metadata["aspect_ratio"]:
+                    raise ValueError(
+                        f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {image_metadata['aspect_ratio']}"
+                    )
             if (
-                image_metadata["original_size"] is None
-                or image_metadata["target_size"] is None
+                "deepfloyd" not in StateTracker.get_args().model_type
+                and (
+                    image_metadata["original_size"] is None
+                    or image_metadata["target_size"] is None
+                )
             ):
                 raise Exception(
                     f"Metadata was unavailable for image: {image_metadata['image_path']}. Ensure --skip_file_discovery=metadata is not set."

@@ -125,6 +125,36 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.metadata_backend.aspect_ratio_bucket_indices.keys()
         )  # These keys are a float value, eg. 1.78.
 
+    def retrieve_validation_set(self, batch_size: int):
+        """
+        Return random images from the set. They should be paired with their caption.
+
+        Args:
+            batch_size (int): Number of images to return.
+        Returns:
+            list: a list of tuples(validation_shortname, validation_prompt, validation_sample)
+        """
+        results = (
+            []
+        )  # [tuple(validation_shortname, validation_prompt, validation_sample)]
+        for _ in range(batch_size):
+            image_path = self._yield_random_image()
+            image_data = self.data_backend.read_image(image_path)
+            image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
+            validation_shortname = os.path.basename(image_path)[:10]
+            validation_prompt = PromptHandler.magic_prompt(
+                sampler_backend_id=self.id,
+                data_backend=self.data_backend,
+                image_path=image_path,
+                caption_strategy=self.caption_strategy,
+                use_captions=self.use_captions,
+                prepend_instance_prompt=self.prepend_instance_prompt,
+                instance_prompt=self.instance_prompt,
+            )
+            results.append((validation_shortname, validation_prompt, image_data))
+
+        return results
+
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
         image_path = random.choice(
@@ -286,10 +316,22 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         to_yield = []
         for image_path in samples:
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
-            if "crop_coordinates" not in image_metadata:
+            if (
+                StateTracker.get_args().model_type
+                not in [
+                    "legacy",
+                    "deepfloyd-full",
+                    "deepfloyd-lora",
+                    "deepfloyd-stage2",
+                    "deepfloyd-stage2-lora",
+                ]
+                and "crop_coordinates" not in image_metadata
+            ):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )
+            if image_metadata is None:
+                image_metadata = {}
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
@@ -349,9 +391,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         self.batch_accumulator
                     )
                     # Now we'll add only remaining_entries_needed amount to the accumulator:
-                    self.debug_log(
-                        f"Current bucket: {self.current_bucket}. Adding samples with aspect ratios: {[i['aspect_ratio'] for i in to_yield[:remaining_entries_needed]]}"
-                    )
+                    if "aspect_ratio" in to_yield[0]:
+                        self.debug_log(
+                            f"Current bucket: {self.current_bucket}. Adding samples with aspect ratios: {[i['aspect_ratio'] for i in to_yield[:remaining_entries_needed]]}"
+                        )
                     self.batch_accumulator.extend(to_yield[:remaining_entries_needed])
                 # If the batch is full, yield it
                 if len(self.batch_accumulator) >= self.batch_size:

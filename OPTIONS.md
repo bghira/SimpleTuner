@@ -166,9 +166,13 @@ This guide provides a user-friendly breakdown of the command-line options availa
 This is a basic overview meant to help you get started. For a complete list of options and more detailed explanations, please refer to the full specification:
 
 ```
-usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
-                     [--lora_type {Standard}] [--lora_rank LORA_RANK]
-                     [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
+usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
+                     [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
+                     [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
+                     [--lora_type {Standard}]
+                     [--lora_init_type {default,gaussian,loftq}]
+                     [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
+                     [--lora_dropout LORA_DROPOUT]
                      --pretrained_model_name_or_path
                      PRETRAINED_MODEL_NAME_OR_PATH
                      [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
@@ -204,10 +208,12 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--seed_for_each_device SEED_FOR_EACH_DEVICE]
                      [--resolution RESOLUTION]
                      [--resolution_type {pixel,area}]
+                     [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
                      [--minimum_image_size MINIMUM_IMAGE_SIZE]
                      [--maximum_image_size MAXIMUM_IMAGE_SIZE]
                      [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
                      [--train_text_encoder]
+                     [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
                      [--train_batch_size TRAIN_BATCH_SIZE]
                      [--num_train_epochs NUM_TRAIN_EPOCHS]
                      [--max_train_steps MAX_TRAIN_STEPS]
@@ -252,6 +258,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--model_type {full,lora}]
                      [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
                      [--num_validation_images NUM_VALIDATION_IMAGES]
                      [--validation_steps VALIDATION_STEPS]
+                     [--num_eval_images NUM_EVAL_IMAGES]
+                     [--eval_dataset_id EVAL_DATASET_ID]
                      [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
                      [--validation_resolution VALIDATION_RESOLUTION]
                      [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
@@ -291,7 +299,14 @@ options:
                         SNR weighting gamma to be used if rebalancing the
                         loss. Recommended value is 5.0. More details here:
                         https://arxiv.org/abs/2303.09556.
-  --model_type {full,lora}
+  --use_soft_min_snr    If set, will use the soft min SNR calculation method.
+                        This method uses the sigma_data parameter. If not
+                        provided, the method will raise an error.
+  --soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA
+                        The standard deviation of the data used in the soft
+                        min weighting method. This is required when using the
+                        soft min SNR calculation method.
+  --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
@@ -300,6 +315,16 @@ options:
                         a different type of LoRA to train here. Currently,
                         only 'Standard' type is supported. This option exists
                         for compatibility with Kohya configuration files.
+  --lora_init_type {default,gaussian,loftq}
+                        The initialization type for the LoRA model. 'default'
+                        will use Microsoft's initialization method, 'gaussian'
+                        will use a Gaussian scaled distribution, and 'loftq'
+                        will use LoftQ initialization. In short experiments,
+                        'default' produced accurate results earlier in
+                        training, 'gaussian' had slightly more creative
+                        outputs, and LoftQ produces an entirely different
+                        result with worse quality at first, taking potentially
+                        longer to converge than the other methods.
   --lora_rank LORA_RANK
                         The dimension of the LoRA update matrices.
   --lora_alpha LORA_ALPHA
@@ -518,6 +543,13 @@ options:
                         resized to the resolution by pixel edge. If 'area',
                         the images will be resized so the pixel area is this
                         many megapixels.
+  --aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}
+                        The number of decimal places to round the aspect ratio
+                        to. This is used to create buckets for aspect ratios.
+                        For higher precision, ensure the image sizes remain
+                        compatible. Higher precision levels result in a
+                        greater number of buckets, which may not be a
+                        desirable outcome.
   --minimum_image_size MINIMUM_IMAGE_SIZE
                         The minimum resolution for both sides of input images.
                         If --delete_unwanted_images is set, images smaller
@@ -545,6 +577,9 @@ options:
                         cropping to 1 megapixel.
   --train_text_encoder  (SD 2.x only) Whether to train the text encoder. If
                         set, the text encoder should be float32 precision.
+  --tokenizer_max_length TOKENIZER_MAX_LENGTH
+                        The maximum length of the tokenizer. If not set, will
+                        default to the tokenizer's max length.
   --train_batch_size TRAIN_BATCH_SIZE
                         Batch size (per device) for the training dataloader.
   --num_train_epochs NUM_TRAIN_EPOCHS
@@ -658,7 +693,10 @@ options:
   --adam_bfloat16       Whether or not to use stochastic bf16 in Adam.
                         Currently the only supported optimizer.
   --max_grad_norm MAX_GRAD_NORM
-                        Max gradient norm.
+                        Clipping the max gradient norm can help prevent
+                        exploding gradients, but may also harm training by
+                        introducing artifacts or making it hard to train
+                        artifacts away.
   --push_to_hub         Whether or not to push the model to the Hub.
   --hub_token HUB_TOKEN
                         The token to use to push to the Model Hub. Do not use
@@ -719,6 +757,15 @@ options:
                         running the prompt `args.validation_prompt` multiple
                         times: `args.num_validation_images` and logging the
                         images.
+  --num_eval_images NUM_EVAL_IMAGES
+                        If possible, this many eval images will be selected
+                        from each dataset. This is used when training super-
+                        resolution models such as DeepFloyd Stage II, which
+                        will upscale input images from the training set.
+  --eval_dataset_id EVAL_DATASET_ID
+                        When provided, only this dataset's images will be used
+                        as the eval set, to keep the training and eval images
+                        split.
   --validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS
                         The default scheduler, DDIM, benefits from more steps.
                         UniPC can do well with just 10-15. For more speed

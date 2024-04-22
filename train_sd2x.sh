@@ -203,8 +203,8 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
 fi
 
 export PURE_BF16_ARGS=""
-if ! [ -z "$USE_PURE_BF16" ] && [[ "$USE_PURE_BF16" == "true" ]]; then
-    PURE_BF16_ARGS="--adamw_bf16"
+if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
+    PURE_BF16_ARGS="--adam_bfloat16"
     MIXED_PRECISION="bf16"
 fi
 
@@ -240,7 +240,7 @@ case $OPTIMIZER in
         export OPTIMIZER_ARG=""
         ;;
     "adamw_bf16")
-        export OPTIMIZER_ARG="--adamw_bf16"
+        export OPTIMIZER_ARG="--adam_bfloat16"
         ;;
     "adamw8bit")
         export OPTIMIZER_ARG="--use_8bit_adam"
@@ -268,12 +268,30 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
     DORA_ARGS="--use_dora"
 fi
 
+export DORA_ARGS=""
+if [[ "$MODEL_TYPE" == "deepfloyd-full" ]] && [[ "$USE_DORA" != "false" ]]; then
+    echo "Cannot use DoRA with a full u-net training task. Disabling DoRA."
+elif [[ "$MODEL_TYPE" == "deepfloyd-lora" ]] && [[ "$USE_DORA" != "false" ]]; then
+    echo "Enabling DoRA."
+    DORA_ARGS="--use_dora"
+fi
+
 export BITFIT_ARGS=""
 if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
 elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
-    echo "Cannot use BitFit with a full u-net training task. Disabling."
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
+elif [[ "$MODEL_TYPE" == "deepfloyd-full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Enabling BitFit."
+    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+elif [[ "$MODEL_TYPE" == "deepfloyd-stage2" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Enabling BitFit."
+    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+elif [[ "$MODEL_TYPE" == "deepfloyd-lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
+elif [[ "$MODEL_TYPE" == "deepfloyd-stage2-lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+    echo "Cannot use BitFit with a LoRA training task. Disabling."
 fi
 
 export ASPECT_BUCKET_ROUNDING_ARGS=""

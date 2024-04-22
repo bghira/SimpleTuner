@@ -221,6 +221,8 @@ Here's a breakdown of what each environment variable does:
   - Optionally, a user prompt library or the built-in prompt library may be used to generate more than 84 images on each checkpoint across a large number of concepts.
   - See `--user_prompt_library` for more information.
 
+  For DeepFloyd, a page is maintained with specific options to set. Visit [this document](/documentation/DEEPFLOYD.md) for a head start.
+
 #### Data Locations
 
 - `BASE_DIR`, `INSTANCE_DIR`, `OUTPUT_DIR`: Directories for the training data, instance data, and output models.

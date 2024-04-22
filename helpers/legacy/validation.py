@@ -2,6 +2,7 @@ import logging, os, torch, numpy as np
 from tqdm import tqdm
 from diffusers.utils import is_wandb_available
 from diffusers.utils.torch_utils import is_compiled_module
+from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_luminance
 from helpers.training.state_tracker import StateTracker
 from helpers.training.wrappers import unwrap_model
@@ -23,6 +24,42 @@ logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
+def deepfloyd_validation_images():
+    """
+    From each data backend, collect the top 5 images for validation, such that
+    we select the same images on each startup, unless the dataset changes.
+
+    Returns:
+        dict: A dictionary of shortname to image paths.
+    """
+    data_backends = StateTracker.get_data_backends()
+    validation_data_backend_id = StateTracker.get_args().eval_dataset_id
+    validation_set = []
+    logger.info("Collecting DF-II validation images")
+    for _data_backend in data_backends:
+        data_backend = StateTracker.get_data_backend(_data_backend)
+        if "id" not in data_backend:
+            continue
+        logger.info(f"Checking data backend: {data_backend['id']}")
+        if (
+            validation_data_backend_id is not None
+            and data_backend["id"] != validation_data_backend_id
+        ):
+            logger.warning(f"Not collecting images from {data_backend['id']}")
+            continue
+        if "sampler" in data_backend:
+            validation_set.extend(
+                data_backend["sampler"].retrieve_validation_set(
+                    batch_size=StateTracker.get_args().num_eval_images
+                )
+            )
+        else:
+            logger.warning(
+                f"Data backend {data_backend['id']} does not have a sampler. Skipping."
+            )
+    return validation_set
+
+
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
@@ -33,6 +70,22 @@ def prepare_validation_prompt_list(args, embed_cache):
             f"Embed cache engine did not contain a model_type. Cannot continue."
         )
     model_type = embed_cache.model_type
+    validation_sample_images = None
+    if "deepfloyd-stage2" in StateTracker.get_args().model_type:
+        # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
+        # If we don't do it here, they won't be available at inference time.
+        validation_sample_images = deepfloyd_validation_images()
+        if len(validation_sample_images) > 0:
+            StateTracker.set_validation_sample_images(validation_sample_images)
+            # Collect the prompts for the validation images.
+            for _validation_sample in tqdm(
+                validation_sample_images,
+                ncols=100,
+                desc="Precomputing DeepFloyd stage 2 eval prompt embeds",
+            ):
+                _, validation_prompt, _ = _validation_sample
+                embed_cache.compute_embeddings_for_prompts([validation_prompt])
+
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
         from helpers.prompts import prompts as prompt_library
@@ -104,6 +157,52 @@ def prepare_validation_prompt_list(args, embed_cache):
             )
 
 
+def parse_validation_resolution(input_str: str) -> tuple:
+    """
+    If the args.validation_resolution:
+     - is an int, we'll treat it as height and width square aspect
+     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
+     - if it has comma, we will split and treat each value as above
+    """
+    if isinstance(input_str, int) or input_str.isdigit():
+        if (
+            "deepfloyd-stage2" in StateTracker.get_args().model_type
+            and int(input_str) < 256
+        ):
+            raise ValueError(
+                "Cannot use less than 256 resolution for DeepFloyd stage 2."
+            )
+        return (input_str, input_str)
+    if "x" in input_str:
+        pieces = input_str.split("x")
+        if "deepfloyd-stage2" in StateTracker.get_args().model_type and (
+            int(pieces[0]) < 256 or int(pieces[1]) < 256
+        ):
+            raise ValueError(
+                "Cannot use less than 256 resolution for DeepFloyd stage 2."
+            )
+        return (int(pieces[0]), int(pieces[1]))
+
+
+def get_validation_resolutions():
+    """
+    If the args.validation_resolution:
+     - is an int, we'll treat it as height and width square aspect
+     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
+     - if it has comma, we will split and treat each value as above
+    """
+    validation_resolution_parameter = StateTracker.get_args().validation_resolution
+    if (
+        type(validation_resolution_parameter) is str
+        and "," in validation_resolution_parameter
+    ):
+        return [
+            parse_validation_resolution(res)
+            for res in validation_resolution_parameter.split(",")
+        ]
+    return [parse_validation_resolution(validation_resolution_parameter)]
+
+
 def log_validations(
     accelerator,
     prompt_handler,
@@ -172,7 +271,7 @@ def log_validations(
             vae_subfolder_path = "vae"
             if args.pretrained_vae_model_name_or_path is not None:
                 vae_subfolder_path = None
-            if vae is None:
+            if vae is None and "deepfloyd" not in args.model_type:
                 vae = AutoencoderKL.from_pretrained(
                     vae_path,
                     subfolder=vae_subfolder_path,
@@ -197,6 +296,10 @@ def log_validations(
                     )
                 elif StateTracker.get_model_type() == "legacy":
                     pipeline_cls = DiffusionPipeline
+                    if "deepfloyd-stage2" in args.model_type:
+                        from diffusers.pipelines import IFSuperResolutionPipeline
+
+                        pipeline_cls = IFSuperResolutionPipeline
                     pipeline = pipeline_cls.from_pretrained(
                         args.pretrained_model_name_or_path,
                         unet=unwrap_model(accelerator, unet),
@@ -204,6 +307,7 @@ def log_validations(
                         tokenizer=None,
                         vae=vae,
                         revision=args.revision,
+                        safety_checker=None,
                         torch_dtype=(
                             torch.bfloat16
                             if torch.backends.mps.is_available()
@@ -211,6 +315,18 @@ def log_validations(
                             else torch.bfloat16
                         ),
                     )
+                scheduler_args = {}
+
+                if "variance_type" in pipeline.scheduler.config:
+                    variance_type = pipeline.scheduler.config.variance_type
+
+                    if variance_type in ["learned", "learned_range"]:
+                        variance_type = "fixed_small"
+
+                    scheduler_args["variance_type"] = variance_type
+                if "deepfloyd" in args.model_type:
+                    args.validation_noise_scheduler = "ddpm"
+
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
                     args.validation_noise_scheduler
                 ].from_pretrained(
@@ -219,6 +335,7 @@ def log_validations(
                     prediction_type=args.prediction_type,
                     timestep_spacing=args.inference_scheduler_timestep_spacing,
                     rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                    **scheduler_args,
                 )
             if args.validation_torch_compile and not is_compiled_module(pipeline.unet):
                 logger.warning(
@@ -238,19 +355,33 @@ def log_validations(
             if not os.path.exists(val_save_dir):
                 os.makedirs(val_save_dir)
 
-            validation_images = []
+            validation_images = {}
             pipeline = pipeline.to(accelerator.device)
             extra_validation_kwargs = {}
             if not args.validation_randomize:
                 extra_validation_kwargs["generator"] = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.validation_seed or args.seed or 0)
-            for validation_prompt in tqdm(
+            _content = zip(
+                validation_shortnames,
                 validation_prompts,
+                [None] * len(validation_prompts),
+            )
+            if "deepfloyd-stage2" in args.model_type:
+                _content = StateTracker.get_validation_sample_images()
+                logger.info(
+                    f"Processing {len(_content)} DeepFloyd stage 2 validation images."
+                )
+
+            for _validation_prompt in tqdm(
+                _content,
                 leave=False,
                 ncols=125,
                 desc="Generating validation images",
             ):
+                validation_shortname, validation_prompt, validation_sample = (
+                    _validation_prompt
+                )
                 logger.debug(f"Validation image: {validation_prompt}")
                 # Each validation prompt needs its own embed.
                 if StateTracker.get_model_type() == "sdxl":
@@ -291,7 +422,10 @@ def log_validations(
                     logger.debug(
                         f"Validations received the prompt embed: positive={current_validation_prompt_embeds.shape}, negative={validation_negative_prompt_embeds.shape}"
                     )
-                    if prompt_handler is not None:
+                    if (
+                        prompt_handler is not None
+                        and "deepfloyd" not in args.model_type
+                    ):
                         for text_encoder in prompt_handler.text_encoders:
                             if text_encoder:
                                 text_encoder = text_encoder.to(accelerator.device)
@@ -316,29 +450,29 @@ def log_validations(
                     )
                 )
 
-                logger.debug(
-                    f"Generating validation image: {validation_prompt}"
-                    "\n Device allocations:"
-                    f"\n -> unet on {pipeline.unet.device}"
-                    f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
-                    f"\n -> vae on {pipeline.vae.device}"
-                    f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
-                    f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device}"
-                    f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
-                    f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device}"
-                )
+                # logger.debug(
+                #     f"Generating validation image: {validation_prompt}"
+                #     "\n Device allocations:"
+                #     f"\n -> unet on {pipeline.unet.device}"
+                #     f"\n -> text_encoder on {pipeline.text_encoder.device if pipeline.text_encoder is not None else None}"
+                #     f"\n -> vae on {pipeline.vae.device if hasattr(pipeline, 'vae') else None}"
+                #     f"\n -> current_validation_prompt_embeds on {current_validation_prompt_embeds.device}"
+                #     f"\n -> current_validation_pooled_embeds on {current_validation_pooled_embeds.device if current_validation_pooled_embeds is not None else None}"
+                #     f"\n -> validation_negative_prompt_embeds on {validation_negative_prompt_embeds.device}"
+                #     f"\n -> validation_negative_pooled_embeds on {validation_negative_pooled_embeds.device if validation_negative_pooled_embeds is not None else None}"
+                # )
 
-                logger.debug(
-                    f"Generating validation image: {validation_prompt}"
-                    f"\n Weight dtypes:"
-                    f"\n -> unet: {pipeline.unet.dtype}"
-                    f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
-                    f"\n -> vae: {pipeline.vae.dtype}"
-                    f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
-                    f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
-                    f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
-                    f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
-                )
+                # logger.debug(
+                #     f"Generating validation image: {validation_prompt}"
+                #     f"\n Weight dtypes:"
+                #     f"\n -> unet: {pipeline.unet.dtype}"
+                #     f"\n -> text_encoder: {pipeline.text_encoder.dtype if pipeline.text_encoder is not None else None}"
+                #     f"\n -> vae: {pipeline.vae.dtype}"
+                #     f"\n -> current_validation_prompt_embeds: {current_validation_prompt_embeds.dtype}"
+                #     f"\n -> current_validation_pooled_embeds: {current_validation_pooled_embeds.dtype}"
+                #     f"\n -> validation_negative_prompt_embeds: {validation_negative_prompt_embeds.dtype}"
+                #     f"\n -> validation_negative_pooled_embeds: {validation_negative_pooled_embeds.dtype}"
+                # )
                 # logger.debug(
                 #     f"Generating validation image: {validation_prompt}"
                 #     f"\n -> Number of images: {args.num_validation_images}"
@@ -348,50 +482,88 @@ def log_validations(
                 #     f"\n -> Resolution: {args.validation_resolution}"
                 #     f"\n -> Extra validation kwargs: {extra_validation_kwargs}"
                 # )
-                validation_images.extend(
-                    pipeline(
-                        prompt_embeds=current_validation_prompt_embeds,
-                        pooled_prompt_embeds=current_validation_pooled_embeds,
-                        negative_prompt_embeds=validation_negative_prompt_embeds,
-                        negative_pooled_prompt_embeds=validation_negative_pooled_embeds,
-                        num_images_per_prompt=args.num_validation_images,
-                        num_inference_steps=args.validation_num_inference_steps,
-                        guidance_scale=args.validation_guidance,
-                        guidance_rescale=args.validation_guidance_rescale,
-                        height=int(args.validation_resolution),
-                        width=int(args.validation_resolution),
-                        **extra_validation_kwargs,
-                    ).images
-                )
-                validation_images[-1].save(
-                    os.path.join(
-                        val_save_dir,
-                        f"step_{global_step}_val_img_{len(validation_images)}.png",
+                if "deepfloyd" not in args.model_type:
+                    extra_validation_kwargs["pooled_prompt_embeds"] = (
+                        current_validation_pooled_embeds
                     )
-                )
+                    extra_validation_kwargs["negative_pooled_prompt_embeds"] = (
+                        validation_negative_pooled_embeds
+                    )
+                    extra_validation_kwargs["guidance_rescale"] = (
+                        args.validation_guidance_rescale,
+                    )
+
+                if validation_sample is not None:
+                    # Resize the input sample so that we can validate the model's upscaling performance.
+                    width, height, _ = (
+                        MultiaspectImage.calculate_new_size_by_pixel_edge(
+                            validation_sample.size[0], validation_sample.size[1], 64
+                        )
+                    )
+                    extra_validation_kwargs["image"] = validation_sample.resize(
+                        (width, height)
+                    )
+
+                validation_resolutions = get_validation_resolutions()
+                logger.debug(f"Resolutions for validation: {validation_resolutions}")
+                if validation_shortname not in validation_images:
+                    validation_images[validation_shortname] = []
+                for resolution in validation_resolutions:
+                    validation_resolution_width, validation_resolution_height = (
+                        resolution
+                    )
+                    validation_images[validation_shortname].extend(
+                        pipeline(
+                            prompt_embeds=current_validation_prompt_embeds,
+                            negative_prompt_embeds=validation_negative_prompt_embeds,
+                            num_images_per_prompt=args.num_validation_images,
+                            num_inference_steps=args.validation_num_inference_steps,
+                            guidance_scale=args.validation_guidance,
+                            height=int(validation_resolution_height),
+                            width=int(validation_resolution_width),
+                            **extra_validation_kwargs,
+                        ).images
+                    )
+                validation_img_idx = 0
+                for validation_image in validation_images[validation_shortname]:
+                    validation_image.save(
+                        os.path.join(
+                            val_save_dir,
+                            f"step_{global_step}_{validation_shortname}_{str(validation_resolutions[validation_img_idx])}.png",
+                        )
+                    )
 
                 logger.debug(f"Completed generating image: {validation_prompt}")
 
             for tracker in accelerator.trackers:
                 if tracker.name == "wandb":
-                    validation_document = {}
-                    validation_luminance = []
-                    for idx, validation_image in enumerate(validation_images):
-                        # Create a WandB entry containing each image.
-                        validation_document[validation_shortnames[idx]] = wandb.Image(
-                            validation_image
-                        )
-                        # Compute the luminance of each image.
-                        validation_luminance.append(
-                            calculate_luminance(validation_image)
-                        )
-                    # Compute the mean luminance across all samples:
-                    validation_luminance = torch.tensor(validation_luminance)
-                    validation_document["validation_luminance"] = (
-                        validation_luminance.mean()
-                    )
-                    del validation_luminance
-                    tracker.log(validation_document, step=global_step)
+                    resolution_list = [
+                        f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
+                    ]
+                    columns = [
+                        "Prompt",
+                        *resolution_list,
+                        "Mean Luminance",
+                    ]
+                    table = wandb.Table(columns=columns)
+
+                    # Process each prompt and its associated images
+                    for prompt_shortname, image_list in validation_images.items():
+                        wandb_images = []
+                        luminance_values = []
+                        for image in image_list:
+                            wandb_image = wandb.Image(image)
+                            wandb_images.append(wandb_image)
+                            luminance = calculate_luminance(image)
+                            luminance_values.append(luminance)
+                        mean_luminance = torch.tensor(luminance_values).mean().item()
+                        while len(wandb_images) < len(resolution_list):
+                            # any missing images will crash it. use None so they are indexed.
+                            wandb_images.append(None)
+                        table.add_data(prompt_shortname, *wandb_images, mean_luminance)
+
+                    # Log the table to Weights & Biases
+                    tracker.log({"Validation Gallery": table}, step=global_step)
 
             if validation_type == "validation" and args.use_ema:
                 # Switch back to the original UNet parameters.

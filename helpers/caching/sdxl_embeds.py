@@ -262,6 +262,47 @@ class TextEmbeddingCache:
                 self.text_encoders[0], self.tokenizers[0], prompt
             )
 
+    def tokenize_deepfloyd_prompt(self, prompt, tokenizer_max_length=None):
+        if tokenizer_max_length is not None:
+            max_length = tokenizer_max_length
+        else:
+            max_length = self.tokenizers[0].model_max_length
+
+        text_inputs = self.tokenizers[0](
+            prompt,
+            truncation=True,
+            padding="max_length",
+            max_length=max_length,
+            return_tensors="pt",
+        )
+
+        return text_inputs
+
+    def encode_deepfloyd_prompt(self, input_ids, attention_mask):
+        text_input_ids = input_ids.to(self.text_encoders[0].device)
+        attention_mask = attention_mask.to(self.text_encoders[0].device)
+        prompt_embeds = self.text_encoders[0](
+            text_input_ids,
+            attention_mask=attention_mask,
+            return_dict=False,
+        )
+        prompt_embeds = prompt_embeds[0].to("cpu")
+
+        return prompt_embeds
+
+    def compute_deepfloyd_prompt(self, prompt: str):
+        logger.debug(f"Computing deepfloyd prompt for: {prompt}")
+        text_inputs = self.tokenize_deepfloyd_prompt(
+            prompt, tokenizer_max_length=StateTracker.get_args().tokenizer_max_length
+        )
+        result = self.encode_deepfloyd_prompt(
+            text_inputs.input_ids,
+            text_inputs.attention_mask,
+        )
+        del text_inputs
+
+        return result
+
     def compute_embeddings_for_prompts(
         self,
         all_prompts,
@@ -515,10 +556,15 @@ class TextEmbeddingCache:
                         while self.write_queue.qsize() > 100:
                             logger.debug(f"Waiting for write thread to catch up.")
                             time.sleep(5)
-                    prompt_embeds = self.encode_legacy_prompt(
-                        self.text_encoders[0], self.tokenizers[0], [prompt]
-                    )
-                    prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                    if "deepfloyd" in StateTracker.get_args().model_type:
+                        # TODO: Batch this
+                        prompt_embeds = self.compute_deepfloyd_prompt(prompt)
+                    else:
+                        prompt_embeds = self.encode_legacy_prompt(
+                            self.text_encoders[0], self.tokenizers[0], [prompt]
+                        )
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
                     self.save_to_cache(filename, prompt_embeds)
 
                 prompt_embeds_all.append(prompt_embeds)

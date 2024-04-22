@@ -37,6 +37,8 @@ class StateTracker:
     exhausted_backends = []
     # A dict of backend IDs to the number of times they have been repeated.
     repeats = {}
+    # The images we'll use for upscaling at validation time. Stored at startup.
+    validation_sample_images = []
     vae = None
     vae_dtype = None
     weight_dtype = None
@@ -299,6 +301,14 @@ class StateTracker:
         if not cls.all_caption_files:
             cls.all_caption_files = cls._load_from_disk("all_caption_files")
         return cls.all_caption_files
+
+    @classmethod
+    def get_validation_sample_images(cls):
+        return cls.validation_sample_images
+
+    @classmethod
+    def set_validation_sample_images(cls, validation_sample_images):
+        cls.validation_sample_images = validation_sample_images
 
     @classmethod
     def register_data_backend(cls, data_backend):

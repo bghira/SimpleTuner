@@ -30,9 +30,33 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--use_soft_min_snr",
+        action="store_true",
+        help=(
+            "If set, will use the soft min SNR calculation method. This method uses the sigma_data parameter."
+            " If not provided, the method will raise an error."
+        ),
+    )
+    parser.add_argument(
+        "--soft_min_snr_sigma_data",
+        default=None,
+        type=float,
+        help=(
+            "The standard deviation of the data used in the soft min weighting method."
+            " This is required when using the soft min SNR calculation method."
+        ),
+    )
+    parser.add_argument(
         "--model_type",
         type=str,
-        choices=["full", "lora"],
+        choices=[
+            "full",
+            "lora",
+            "deepfloyd-full",
+            "deepfloyd-lora",
+            "deepfloyd-stage2",
+            "deepfloyd-stage2-lora",
+        ],
         default="full",
         help=(
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
@@ -492,6 +516,15 @@ def parse_args(input_args=None):
         action="store_true",
         help="(SD 2.x only) Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
+    # DeepFloyd
+    parser.add_argument(
+        "--tokenizer_max_length",
+        type=int,
+        default=None,
+        required=False,
+        help="The maximum length of the tokenizer. If not set, will default to the tokenizer's max length.",
+    )
+    # End DeepFloyd-specific settings
     parser.add_argument(
         "--train_batch_size",
         type=int,
@@ -869,6 +902,25 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--num_eval_images",
+        type=int,
+        default=4,
+        help=(
+            "If possible, this many eval images will be selected from each dataset."
+            " This is used when training super-resolution models such as DeepFloyd Stage II,"
+            " which will upscale input images from the training set."
+        ),
+    )
+    parser.add_argument(
+        "--eval_dataset_id",
+        type=str,
+        default=None,
+        help=(
+            "When provided, only this dataset's images will be used as the eval set, to keep"
+            " the training and eval images split."
+        ),
+    )
+    parser.add_argument(
         "--validation_num_inference_steps",
         type=int,
         default=30,
@@ -880,7 +932,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--validation_resolution",
-        type=float,
+        type=str,
         default=256,
         help="Square resolution images will be output at this resolution (256x256).",
     )
@@ -1281,42 +1333,44 @@ def parse_args(input_args=None):
             )
             sys.exit(1)
 
-    if args.cache_dir_vae is None or args.cache_dir_vae == "":
-        args.cache_dir_vae = os.path.join(args.output_dir, "cache_vae")
-    if args.cache_dir_text is None or args.cache_dir_text == "":
-        args.cache_dir_text = os.path.join(args.output_dir, "cache_text")
-    for target_dir in [
-        Path(args.cache_dir),
-        Path(args.cache_dir_vae),
-        Path(args.cache_dir_text),
-    ]:
-        os.makedirs(target_dir, exist_ok=True)
-
     if (
         args.pretrained_vae_model_name_or_path is not None
         and StateTracker.get_model_type() == "legacy"
         and "sdxl" in args.pretrained_vae_model_name_or_path
+        and "deepfloyd" not in args.model_type
     ):
         logger.error(
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
         )
         args.pretrained_vae_model_name_or_path = None
-    logger.info(
-        f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
-    )
-    logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
-    logger.info(f"Text Cache location: {args.cache_dir_text}")
+    if "deepfloyd" not in args.model_type:
+        logger.info(
+            f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
+        )
+        logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
+        logger.info(f"Text Cache location: {args.cache_dir_text}")
 
-    if args.validation_resolution < 128:
+    if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
+        logger.warning(
+            "DeepFloyd Stage II requires a resolution of at least 256. Setting to 256."
+        )
+        args.resolution = 256
+        args.resolution_type = "pixel"
+
+    if (
+        args.validation_resolution.isdigit()
+        and int(args.validation_resolution) < 128
+        and "deepfloyd" not in args.model_type
+    ):
         # Convert from megapixels to pixels:
         log_msg = f"It seems that --validation_resolution was given in megapixels ({args.validation_resolution}). Converting to pixel measurement:"
-        if args.validation_resolution == 1:
+        if int(args.validation_resolution) == 1:
             args.validation_resolution = 1024
         else:
-            args.validation_resolution = int(args.validation_resolution * 1e3)
+            args.validation_resolution = int(int(args.validation_resolution) * 1e3)
             # Make it divisible by 8:
-            args.validation_resolution = int(args.validation_resolution / 8) * 8
-        logger.info(f"{log_msg} {args.validation_resolution}px")
+            args.validation_resolution = int(int(args.validation_resolution) / 8) * 8
+        logger.info(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 
