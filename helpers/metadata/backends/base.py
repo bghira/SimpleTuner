@@ -746,7 +746,7 @@ class MetadataBackend:
         self.save_cache()
 
     def _recalculate_target_resolution(
-        self, original_resolution: tuple, original_aspect_ratio: float = None
+        self, original_aspect_ratio: float
     ) -> tuple:
         """Given the original resolution, use our backend config to properly recalculate the size."""
         resolution_type = StateTracker.get_data_backend_config(self.id)[
@@ -755,7 +755,7 @@ class MetadataBackend:
         resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
         if resolution_type == "pixel":
             return MultiaspectImage.calculate_new_size_by_pixel_edge(
-                original_resolution[0], original_resolution[1], resolution
+                original_aspect_ratio, resolution
             )
         elif resolution_type == "area":
             if original_aspect_ratio is None:
@@ -802,7 +802,9 @@ class MetadataBackend:
             return True
         target_resolution = tuple(metadata_target_size)
         recalculated_width, recalculated_height, recalculated_aspect_ratio = (
-            self._recalculate_target_resolution(original_resolution)
+            self._recalculate_target_resolution(
+                original_aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(original_resolution)
+            )
         )
         recalculated_target_resolution = (recalculated_width, recalculated_height)
         logger.debug(

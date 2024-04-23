@@ -83,16 +83,16 @@ class MultiaspectImage:
                 downsample_before_crop = True
 
         # Calculate new size
+        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            (original_width, original_height)
+        )
         if resolution_type == "pixel":
             (target_width, target_height, new_aspect_ratio) = (
                 MultiaspectImage.calculate_new_size_by_pixel_edge(
-                    original_width, original_height, resolution
+                    original_aspect_ratio, resolution
                 )
             )
         elif resolution_type == "area":
-            original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                (original_width, original_height)
-            )
             (target_width, target_height, new_aspect_ratio) = (
                 MultiaspectImage.calculate_new_size_by_pixel_area(
                     original_aspect_ratio, resolution
@@ -140,7 +140,7 @@ class MultiaspectImage:
                 elif resolution_type == "pixel":
                     (target_width, target_height, new_aspect_ratio) = (
                         MultiaspectImage.calculate_new_size_by_pixel_edge(
-                            original_width, original_height, original_resolution
+                            original_aspect_ratio, original_resolution
                         )
                     )
                 logger.debug(
@@ -394,23 +394,36 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
     @staticmethod
-    def calculate_new_size_by_pixel_edge(W: int, H: int, resolution: int):
-        aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
-        if W < H:
-            W = resolution
-            H = MultiaspectImage._round_to_nearest_multiple(
-                resolution / aspect_ratio, 64
-            )
-        elif H < W:
-            H = resolution
-            W = MultiaspectImage._round_to_nearest_multiple(
-                resolution * aspect_ratio, 64
-            )
-        else:
-            W = H = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
+    def calculate_new_size_by_pixel_edge(aspect_ratio: float, resolution: int):
+        """
+        Calculate the width, height, and new AR of a 64-px aligned size, where resolution is the smaller edge length.
 
-        new_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W, H))
+        Args:
+            aspect_ratio (float): The aspect ratio of the image.
+            resolution (int): The resolution of the smaller edge of the image.
+            
         return int(W), int(H), new_aspect_ratio
+        """
+        if type(aspect_ratio) != float:
+            raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
+        if type(resolution) != int and type(resolution) != float:
+            raise ValueError(f"Resolution must be an int, not {type(resolution)}")
+        W_initial = int(round(sqrt(resolution * aspect_ratio)))
+        H_initial = int(round(sqrt(resolution / aspect_ratio)))
+
+        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial, 64)
+        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial, 64)
+
+        # Ensure the adjusted dimensions meet the resolution requirement
+        while min(W_adjusted, H_adjusted) < resolution:
+            W_adjusted += 64
+            H_adjusted = MultiaspectImage._round_to_nearest_multiple(int(round(W_adjusted * aspect_ratio)), 64)
+
+        return (
+            W_adjusted,
+            H_adjusted,
+            MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
+        )
 
     @staticmethod
     def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float):
