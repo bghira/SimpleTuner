@@ -401,15 +401,22 @@ class MultiaspectImage:
         Args:
             aspect_ratio (float): The aspect ratio of the image.
             resolution (int): The resolution of the smaller edge of the image.
-            
+
         return int(W), int(H), new_aspect_ratio
         """
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
         if type(resolution) != int and type(resolution) != float:
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
-        W_initial = int(round(sqrt(resolution * aspect_ratio)))
-        H_initial = int(round(sqrt(resolution / aspect_ratio)))
+        if aspect_ratio > 1:
+            W_initial = resolution * aspect_ratio
+            H_initial = resolution
+        elif aspect_ratio < 1:
+            W_initial = resolution
+            H_initial = resolution / aspect_ratio
+        else:
+            W_initial = resolution
+            H_initial = resolution
 
         W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial, 64)
         H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial, 64)
@@ -417,7 +424,9 @@ class MultiaspectImage:
         # Ensure the adjusted dimensions meet the resolution requirement
         while min(W_adjusted, H_adjusted) < resolution:
             W_adjusted += 64
-            H_adjusted = MultiaspectImage._round_to_nearest_multiple(int(round(W_adjusted * aspect_ratio)), 64)
+            H_adjusted = MultiaspectImage._round_to_nearest_multiple(
+                int(round(W_adjusted * aspect_ratio)), 64
+            )
 
         return (
             W_adjusted,
