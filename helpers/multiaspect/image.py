@@ -52,9 +52,9 @@ class MultiaspectImage:
         # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
         if resolution_type == "area":
             original_resolution = original_resolution * 1e3
-        # Make resolution a multiple of 64
+        # Make resolution a multiple of StateTracker.get_args().aspect_bucket_alignment
         original_resolution = MultiaspectImage._round_to_nearest_multiple(
-            original_resolution, 64
+            original_resolution
         )
 
         # Downsample before we handle, if necessary.
@@ -100,8 +100,8 @@ class MultiaspectImage:
             )
             # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
             resolution = resolution * 1e3
-            # Make resolution a multiple of 64
-            resolution = MultiaspectImage._round_to_nearest_multiple(resolution, 64)
+            # Make resolution a multiple of StateTracker.get_args().aspect_bucket_alignment
+            resolution = MultiaspectImage._round_to_nearest_multiple(resolution)
             logger.debug(
                 f"After area resize, our image will be {target_width}x{target_height} with an overridden resolution of {resolution} pixels."
             )
@@ -300,8 +300,9 @@ class MultiaspectImage:
             return MultiaspectImage._crop_random(image, target_width, target_height)
 
     @staticmethod
-    def _round_to_nearest_multiple(value, multiple):
+    def _round_to_nearest_multiple(value):
         """Round a value to the nearest multiple."""
+        multiple = StateTracker.get_args().aspect_bucket_alignment
         rounded = round(value / multiple) * multiple
         return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
@@ -396,7 +397,7 @@ class MultiaspectImage:
     @staticmethod
     def calculate_new_size_by_pixel_edge(aspect_ratio: float, resolution: int):
         """
-        Calculate the width, height, and new AR of a 64-px aligned size, where resolution is the smaller edge length.
+        Calculate the width, height, and new AR of a pixel-aligned size, where resolution is the smaller edge length.
 
         Args:
             aspect_ratio (float): The aspect ratio of the image.
@@ -418,14 +419,14 @@ class MultiaspectImage:
             W_initial = resolution
             H_initial = resolution
 
-        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial, 64)
-        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial, 64)
+        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
+        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
 
         # Ensure the adjusted dimensions meet the resolution requirement
         while min(W_adjusted, H_adjusted) < resolution:
-            W_adjusted += 64
+            W_adjusted += StateTracker.get_args().aspect_bucket_alignment
             H_adjusted = MultiaspectImage._round_to_nearest_multiple(
-                int(round(W_adjusted * aspect_ratio)), 64
+                int(round(W_adjusted * aspect_ratio))
             )
 
         return (
@@ -442,17 +443,15 @@ class MultiaspectImage:
         W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
         H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
 
-        # Ensure divisibility by 64 for both dimensions with minimal adjustment
-        def adjust_for_divisibility(n):
-            return (n + 63) // 64 * 64
-
-        W_adjusted = adjust_for_divisibility(W_initial)
-        H_adjusted = adjust_for_divisibility(H_initial)
+        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
+        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
 
         # Ensure the adjusted dimensions meet the megapixel requirement
         while W_adjusted * H_adjusted < total_pixels:
-            W_adjusted += 64
-            H_adjusted = adjust_for_divisibility(int(round(W_adjusted / aspect_ratio)))
+            W_adjusted += StateTracker.get_args().aspect_bucket_alignment
+            H_adjusted = MultiaspectImage._round_to_nearest_multiple(
+                int(round(W_adjusted / aspect_ratio))
+            )
 
         return (
             W_adjusted,
@@ -478,6 +477,8 @@ class MultiaspectImage:
             width, height = image.size
         elif isinstance(image, tuple):
             width, height = image
+        elif isinstance(image, float):
+            return round(image, to_round)
         else:
             width, height = image.size
         aspect_ratio = round(width / height, to_round)

@@ -72,6 +72,7 @@ class TestMultiaspectImage(unittest.TestCase):
                 resolution=self.resolution,
                 crop_style="random",
                 aspect_bucket_rounding=2,
+                aspect_bucket_alignment=64,
             )
 
             for resolution, resolution_type, expected_size, test_image in tests:
@@ -112,43 +113,51 @@ class TestMultiaspectImage(unittest.TestCase):
         resolutions = range(
             5, 20, 5
         )  # Using a simplified resolution from the logs for the test
-        for aspect_ratio in set(input_sizes_dict.keys()):
-            for resolution in resolutions:
-                resolution = resolution / 10  # Convert to megapixels
-                output_sizes = []
-                new_aspect_ratios = []
-                for size in input_sizes_dict[aspect_ratio]:
-                    should_use_real_image = random.choice([True, False])
-                    image = (
-                        Image.new("RGB", size) if should_use_real_image else None
-                    )  # Creating a dummy PIL image with the given size
-                    image_metadata = (
-                        None if should_use_real_image else {"original_size": size}
-                    )
-                    function_result, _, new_aspect_ratio = (
-                        MultiaspectImage.prepare_image(
-                            image=image,
-                            image_metadata=image_metadata,
-                            resolution=resolution,
-                            resolution_type="area",
+        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+            mock_args.return_value = Mock(
+                resolution_type="pixel",
+                resolution=self.resolution,
+                crop_style="random",
+                aspect_bucket_rounding=2,
+                aspect_bucket_alignment=64,
+            )
+            for aspect_ratio in set(input_sizes_dict.keys()):
+                for resolution in resolutions:
+                    resolution = resolution / 10  # Convert to megapixels
+                    output_sizes = []
+                    new_aspect_ratios = []
+                    for size in input_sizes_dict[aspect_ratio]:
+                        should_use_real_image = random.choice([True, False])
+                        image = (
+                            Image.new("RGB", size) if should_use_real_image else None
+                        )  # Creating a dummy PIL image with the given size
+                        image_metadata = (
+                            None if should_use_real_image else {"original_size": size}
                         )
-                    )
-                    if hasattr(function_result, "size"):
-                        output_size = function_result.size
-                    else:
-                        output_size = function_result
-                    output_sizes.append(output_size)
-                    new_aspect_ratios.append(new_aspect_ratio)
+                        function_result, _, new_aspect_ratio = (
+                            MultiaspectImage.prepare_image(
+                                image=image,
+                                image_metadata=image_metadata,
+                                resolution=resolution,
+                                resolution_type="area",
+                            )
+                        )
+                        if hasattr(function_result, "size"):
+                            output_size = function_result.size
+                        else:
+                            output_size = function_result
+                        output_sizes.append(output_size)
+                        new_aspect_ratios.append(new_aspect_ratio)
 
-                # Check if all output sizes are the same, indicating consistent resizing/cropping
-                self.assertTrue(
-                    all(size == output_sizes[0] for size in output_sizes),
-                    f"Output sizes are not consistent for {resolution} MP",
-                )
-                self.assertTrue(
-                    all(size == new_aspect_ratios[0] for size in new_aspect_ratios),
-                    f"Output sizes are not consistent for {resolution} MP",
-                )
+                    # Check if all output sizes are the same, indicating consistent resizing/cropping
+                    self.assertTrue(
+                        all(size == output_sizes[0] for size in output_sizes),
+                        f"Output sizes are not consistent for {resolution} MP",
+                    )
+                    self.assertTrue(
+                        all(size == new_aspect_ratios[0] for size in new_aspect_ratios),
+                        f"Output sizes are not consistent for {resolution} MP",
+                    )
 
     def test_crop_corner(self):
         cropped_image, _ = MultiaspectImage._crop_corner(
@@ -175,6 +184,7 @@ class TestMultiaspectImage(unittest.TestCase):
                 resolution=self.resolution,
                 crop_style="random",
                 aspect_bucket_rounding=2,
+                aspect_bucket_alignment=64,
             )
             prepared_img, crop_coordinates, aspect_ratio = (
                 MultiaspectImage.prepare_image(
@@ -208,6 +218,7 @@ class TestMultiaspectImage(unittest.TestCase):
                 resolution=self.resolution,
                 crop_style="random",
                 aspect_bucket_rounding=2,
+                aspect_bucket_alignment=64,
             )
 
             for mp in test_megapixels:
@@ -246,9 +257,14 @@ class TestMultiaspectImage(unittest.TestCase):
                 6527,
                 1.0,
             ),  # Original resolution and target megapixels, ar=0.695
+            (
+                832,
+                1216,
+                1.0,
+            ),
         ]
         expected_size = (
-            896,
+            832,
             1216,
         )  # Expected final size for all test cases based on a fixed aspect ratio
 
@@ -258,11 +274,12 @@ class TestMultiaspectImage(unittest.TestCase):
                 resolution=self.resolution,
                 crop_style="random",
                 aspect_bucket_rounding=2,
+                aspect_bucket_alignment=64,
             )
             for W, H, megapixels in test_cases:
                 W_final, H_final, new_aspect_ratio = (
                     MultiaspectImage.calculate_new_size_by_pixel_area(
-                        (W / H), megapixels
+                        MultiaspectImage.calculate_image_aspect_ratio(W / H), megapixels
                     )
                 )
                 self.assertEqual(
@@ -300,6 +317,7 @@ class TestMultiaspectImage(unittest.TestCase):
                 resolution=self.resolution,
                 crop_style="random",
                 aspect_bucket_rounding=2,
+                aspect_bucket_alignment=64,
             )
 
             for W, H, megapixels in test_cases:
