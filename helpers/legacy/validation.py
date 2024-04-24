@@ -489,13 +489,26 @@ def log_validations(
                         (width, height)
                     )
 
-                validation_resolutions = get_validation_resolutions()
+                validation_resolutions = (
+                    get_validation_resolutions()
+                    if "deepfloyd" not in args.model_type
+                    else ["base-256"]
+                )
                 logger.debug(f"Resolutions for validation: {validation_resolutions}")
                 if validation_shortname not in validation_images:
                     validation_images[validation_shortname] = []
+
                 for resolution in validation_resolutions:
-                    validation_resolution_width, validation_resolution_height = (
-                        resolution
+                    if "deepfloyd" not in args.model_type:
+                        validation_resolution_width, validation_resolution_height = (
+                            resolution
+                        )
+                    else:
+                        validation_resolution_width, validation_resolution_height = (
+                            val * 4 for val in extra_validation_kwargs["image"].size
+                        )
+                    logger.info(
+                        f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}"
                     )
                     validation_images[validation_shortname].extend(
                         pipeline(
@@ -504,8 +517,12 @@ def log_validations(
                             num_images_per_prompt=args.num_validation_images,
                             num_inference_steps=args.validation_num_inference_steps,
                             guidance_scale=args.validation_guidance,
-                            height=int(validation_resolution_height),
-                            width=int(validation_resolution_width),
+                            height=MultiaspectImage._round_to_nearest_multiple(
+                                int(validation_resolution_height)
+                            ),
+                            width=MultiaspectImage._round_to_nearest_multiple(
+                                int(validation_resolution_width)
+                            ),
                             **extra_validation_kwargs,
                         ).images
                     )
