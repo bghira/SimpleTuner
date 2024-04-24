@@ -497,7 +497,7 @@ def log_validations(
                     # Resize the input sample so that we can validate the model's upscaling performance.
                     width, height, _ = (
                         MultiaspectImage.calculate_new_size_by_pixel_edge(
-                            validation_sample.size[0], validation_sample.size[1], 64
+                            validation_sample.size[0], validation_sample.size[1]
                         )
                     )
                     extra_validation_kwargs["image"] = validation_sample.resize(
