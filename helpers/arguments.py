@@ -480,6 +480,19 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--aspect_bucket_alignment",
+        type=int,
+        choices=[8, 64],
+        default=64,
+        help=(
+            "When training diffusion models, the image sizes generally must align to a 64 pixel interval."
+            " This is an exception when training models like DeepFloyd that use a base resolution of 64 pixels,"
+            " as aligning to 64 pixels would result in a 1:1 or 2:1 aspect ratio, overly distorting images."
+            " For DeepFloyd, this value is set to 8, but all other training defaults to 64. You may experiment"
+            " with this value, but it is not recommended."
+        ),
+    )
+    parser.add_argument(
         "--minimum_image_size",
         type=float,
         default=None,
@@ -1349,6 +1362,12 @@ def parse_args(input_args=None):
         )
         logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
         logger.info(f"Text Cache location: {args.cache_dir_text}")
+    else:
+        if args.aspect_bucket_alignment != 8:
+            logger.warning(
+                "Overriding aspect bucket alignment pixel interval to 8px instead of 64px."
+            )
+            args.aspect_bucket_alignment = 8
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
         logger.warning(

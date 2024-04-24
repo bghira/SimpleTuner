@@ -490,7 +490,7 @@ def log_validations(
                         validation_negative_pooled_embeds
                     )
                     extra_validation_kwargs["guidance_rescale"] = (
-                        args.validation_guidance_rescale,
+                        args.validation_guidance_rescale
                     )
 
                 if validation_sample is not None:
