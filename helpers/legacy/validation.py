@@ -229,39 +229,21 @@ def log_validations(
     pipeline: DiffusionPipeline = None,
 ):
     if accelerator.is_main_process:
-        logger.debug(
-            f"Performing validation every {args.validation_steps} steps."
-            f" We are on step {global_step} and have {len(validation_prompts)} validation prompts."
-            f" We have {global_step} steps of progress done and are resuming from {resume_global_step}."
-            f" We are on step {step} of the current epoch. We have {len(validation_prompts)} validation prompts."
-            f" We have {step % args.gradient_accumulation_steps} gradient accumulation steps remaining."
-        )
         if validation_type == "finish" or (
             validation_prompts
             and global_step % args.validation_steps == 0
             and step % args.gradient_accumulation_steps == 0
             and StateTracker.get_global_step() > resume_global_step
         ):
-            logger.debug(
-                f"We might want to process validations, because we have {len(validation_prompts)} validation prompts,"
-                f" and we are on step {global_step} which meshes with our specified interval of {args.validation_steps} steps."
-            )
             if (
                 validation_prompts is None
                 or validation_prompts == []
                 or args.num_validation_images is None
                 or args.num_validation_images <= 0
             ):
-                logger.warning(
-                    f"Not generating any validation images for this checkpoint. Live dangerously and prosper, pal!"
-                )
                 return
             logger.debug(
                 f"We have valid prompts to process, this is looking better for our decision tree.."
-            )
-
-            logger.info(
-                f"Running validation... \n Generating {len(validation_prompts)} images."
             )
             # create pipeline
             if validation_type == "validation" and args.use_ema:
@@ -543,6 +525,7 @@ def log_validations(
                     resolution_list = [
                         f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
                     ]
+
                     columns = [
                         "Prompt",
                         *resolution_list,
@@ -554,7 +537,11 @@ def log_validations(
                     for prompt_shortname, image_list in validation_images.items():
                         wandb_images = []
                         luminance_values = []
+                        logger.debug(
+                            f"Prompt {prompt_shortname} has {len(image_list)} images"
+                        )
                         for image in image_list:
+                            logger.debug(f"Adding to table: {image}")
                             wandb_image = wandb.Image(image)
                             wandb_images.append(wandb_image)
                             luminance = calculate_luminance(image)
@@ -562,6 +549,7 @@ def log_validations(
                         mean_luminance = torch.tensor(luminance_values).mean().item()
                         while len(wandb_images) < len(resolution_list):
                             # any missing images will crash it. use None so they are indexed.
+                            logger.debug(f"Found a missing image - masking with a None")
                             wandb_images.append(None)
                         table.add_data(prompt_shortname, *wandb_images, mean_luminance)
 
