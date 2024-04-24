@@ -141,7 +141,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_path = self._yield_random_image()
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
-            validation_shortname = os.path.basename(image_path)[:10]
+            validation_shortname = f"{self.id}_{os.path.basename(image_path)[:10]}"
             validation_prompt = PromptHandler.magic_prompt(
                 sampler_backend_id=self.id,
                 data_backend=self.data_backend,
