@@ -499,7 +499,8 @@ def log_validations(
                         MultiaspectImage.calculate_new_size_by_pixel_edge(
                             MultiaspectImage.calculate_image_aspect_ratio(
                                 validation_sample.size[0] / validation_sample.size[1]
-                            )
+                            ),
+                            64,
                         )
                     )
                     extra_validation_kwargs["image"] = validation_sample.resize(
