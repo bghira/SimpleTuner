@@ -471,13 +471,16 @@ class MultiaspectImage:
             float: The rounded aspect ratio of the image.
         """
         to_round = StateTracker.get_args().aspect_bucket_rounding
-        if not isinstance(image, int):
+        if to_round is None:
             to_round = rounding
         if isinstance(image, Image.Image):
+            # An actual image was passed in.
             width, height = image.size
         elif isinstance(image, tuple):
+            # An image.size or a similar (W, H) tuple was provided.
             width, height = image
         elif isinstance(image, float):
+            # An externally-calculated aspect ratio was given to round.
             return round(image, to_round)
         else:
             width, height = image.size

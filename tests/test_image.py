@@ -33,6 +33,7 @@ class TestMultiaspectImage(unittest.TestCase):
         """
         Test that the aspect ratio calculation returns expected results.
         """
+        StateTracker.set_args(MagicMock(aspect_bucket_rounding=2))
         self.assertEqual(
             MultiaspectImage.calculate_image_aspect_ratio((1920, 1080)), 1.78
         )
