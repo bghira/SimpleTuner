@@ -355,7 +355,9 @@ class ParquetMetadataBackend(MetadataBackend):
                     image_metadata["original_size"][0]
                     / image_metadata["original_size"][1]
                 )
-            aspect_ratio = round(aspect_ratio, aspect_ratio_rounding)
+            aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                image_metadata["original_size"]
+            )
             target_size, crop_coordinates, new_aspect_ratio = (
                 MultiaspectImage.prepare_image(
                     image_metadata=image_metadata,
