@@ -1346,6 +1346,12 @@ def parse_args(input_args=None):
             )
             sys.exit(1)
 
+    if args.max_train_steps is not None and args.num_train_epochs > 0:
+        logger.error(
+            "When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0."
+        )
+        sys.exit(1)
+
     if (
         args.pretrained_vae_model_name_or_path is not None
         and StateTracker.get_model_type() == "legacy"
