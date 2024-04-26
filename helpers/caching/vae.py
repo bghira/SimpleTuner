@@ -595,7 +595,11 @@ class VAECache:
                     # retrieve image data from Generator, image_data:
                     filepath = image_paths.pop()
                     image = image_data.pop()
-                    aspect_bucket = MultiaspectImage.calculate_image_aspect_ratio(image)
+                    aspect_bucket = (
+                        self.metadata_backend.get_metadata_attribute_by_filepath(
+                            filepath=filepath, attribute="aspect_bucket"
+                        )
+                    )
                 else:
                     filepath, image, aspect_bucket = self.process_queue.get()
                 if self.minimum_image_size is not None:
