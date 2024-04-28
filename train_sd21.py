@@ -963,7 +963,7 @@ def main():
         if current_epoch >= args.num_train_epochs + 1:
             # This might immediately end training, but that's useful for simply exporting the model.
             logger.info(
-                f"Training run is complete ({args.num_train_epochs}/{args.num_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
+                f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
             )
             break
         if first_epoch != epoch:
@@ -1080,7 +1080,7 @@ def main():
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
-                    timesteps_buffer.append((step, timestep))
+                    timesteps_buffer.append((global_step, timestep))
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
@@ -1393,7 +1393,7 @@ def main():
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
                 logger.info(
-                    f"Training run is complete ({args.num_train_epochs}/{args.num_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
+                    f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
                 )
                 break
         if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
