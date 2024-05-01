@@ -1,0 +1,51 @@
+[tool.poetry]
+name = "simpletuner"
+version = "0.1.0"
+description = "Stable Diffusion 2.x and XL tuner."
+authors = ["bghira"]
+license = "SUL"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.13"
+torch = {version = "^2.3", source = "pytorch-rocm"}
+torchmetrics = {version = "^1", source = "pytorch-rocm"}
+torchvision = {version = "*", source = "pytorch-rocm"}
+triton = {version = "*", source = "pytorch-rocm"}
+pytorch-triton-rocm = {version = "*", source = "pytorch-rocm"}
+accelerate = "^0.26"
+boto3 = "^1"
+botocore = "^1"
+clip-interrogator = "^0.6"
+colorama = "^0.4"
+compel = "^2"
+dadaptation = "^3"
+datasets = "^2"
+diffusers = "^0.27"
+iterutils = "^0.1"
+numpy = "^1"
+open-clip-torch = "^2"
+opencv-python = "^4"
+pandas = "^2"
+peft = "^0.9"
+pillow = "^10"
+prodigyopt = "^1"
+regex = "^2023.12.25"
+requests = "^2"
+safetensors = "^0.4"
+scipy = "^1"
+tensorboard = "^2"
+torchsde = "^0.2"
+transformers = "^4"
+urllib3 = "<1.27"
+wandb = "^0.16"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[[tool.poetry.source]]
+priority = "explicit"
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.0"
