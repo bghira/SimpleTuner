@@ -110,14 +110,22 @@ class MetadataBackend:
         for file in files:
             if str(file) not in existing_files_set:
                 logger.debug(f"Processing file {file}.")
-                local_aspect_ratio_bucket_indices = self._process_for_bucket(
-                    file,
-                    local_aspect_ratio_bucket_indices,
-                    metadata_updates=local_metadata_updates,
-                    delete_problematic_images=self.delete_problematic_images,
-                    statistics=statistics,
+                try:
+                    local_aspect_ratio_bucket_indices = self._process_for_bucket(
+                        file,
+                        local_aspect_ratio_bucket_indices,
+                        metadata_updates=local_metadata_updates,
+                        delete_problematic_images=self.delete_problematic_images,
+                        statistics=statistics,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error processing file {file}. Reason: {e}. Skipping."
+                    )
+                    statistics["skipped"]["error"] += 1
+                logger.debug(
+                    f"Statistics: {statistics}, total: {sum([len(bucket) for bucket in local_aspect_ratio_bucket_indices.values()])}"
                 )
-                logger.debug(f"Statistics: {statistics}")
                 processed_file_count += 1
                 # Successfully processed
                 statistics["total_processed"] = processed_file_count
@@ -146,6 +154,7 @@ class MetadataBackend:
             metadata_updates_queue.put(local_metadata_updates)
             # At the end of the _bucket_worker method
             metadata_updates_queue.put(("statistics", statistics))
+        time.sleep(0.001)
         logger.debug(f"Bucket worker completed processing. Returning to main thread.")
 
     def compute_aspect_ratio_bucket_indices(self):
@@ -745,9 +754,7 @@ class MetadataBackend:
         # Update any state or metadata post-processing
         self.save_cache()
 
-    def _recalculate_target_resolution(
-        self, original_aspect_ratio: float
-    ) -> tuple:
+    def _recalculate_target_resolution(self, original_aspect_ratio: float) -> tuple:
         """Given the original resolution, use our backend config to properly recalculate the size."""
         resolution_type = StateTracker.get_data_backend_config(self.id)[
             "resolution_type"
@@ -803,7 +810,9 @@ class MetadataBackend:
         target_resolution = tuple(metadata_target_size)
         recalculated_width, recalculated_height, recalculated_aspect_ratio = (
             self._recalculate_target_resolution(
-                original_aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(original_resolution)
+                original_aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
+                    original_resolution
+                )
             )
         )
         recalculated_target_resolution = (recalculated_width, recalculated_height)
