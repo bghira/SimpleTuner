@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
+from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
@@ -562,6 +563,26 @@ class VAECache:
 
         return latents
 
+    def prepare_sample(
+        self,
+        image: Image.Image,
+        data_backend_id: str,
+        filepath: str,
+    ):
+        training_sample = TrainingSample(
+            image=image,
+            data_backend_id=data_backend_id,
+            image_metadata=self.metadata_backend.get_metadata_attribute_by_filepath(
+                filepath
+            ),
+        )
+        prepared_sample = training_sample.prepare()
+        return (
+            prepared_sample.image,
+            prepared_sample.crop_coordinates,
+            prepared_sample.aspect_ratio,
+        )
+
     def _process_images_in_batch(
         self,
         image_paths: list = None,
@@ -618,9 +639,10 @@ class VAECache:
             with ProcessPoolExecutor() as executor:
                 futures = [
                     executor.submit(
-                        MultiaspectImage.prepare_sample,
+                        self.prepare_sample,
                         image=data[1],
                         data_backend_id=self.id,
+                        filepath=data[0],
                     )
                     for data in initial_data
                 ]
