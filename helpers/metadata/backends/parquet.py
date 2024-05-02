@@ -377,7 +377,7 @@ class ParquetMetadataBackend(MetadataBackend):
             else:
                 image_metadata["luminance"] = 0
             logger.debug(
-                f"Image {image_path_str} has aspect ratio {aspect_ratio} and size {image_metadata['target_size']}."
+                f"Image {image_path_str} has aspect ratio {new_aspect_ratio} and size {image_metadata['target_size']}."
             )
 
             # Create a new bucket if it doesn't exist
