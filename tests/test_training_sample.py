@@ -39,9 +39,7 @@ class TestTrainingSample(unittest.TestCase):
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
-        print(f"Before size: {sample.image.size}")
         sample.prepare()
-        print(f"After size: {sample.image.size}")
         self.assertLessEqual(
             sample.image.size[0], 512
         )  # Assuming downsample before crop applies
