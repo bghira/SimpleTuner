@@ -9,6 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
 torch = {version = "^2.3", source = "pytorch-rocm"}
+torchaudio = {version = "*", source = "pytorch-rocm"}
 torchmetrics = {version = "^1", source = "pytorch-rocm"}
 torchvision = {version = "*", source = "pytorch-rocm"}
 triton = {version = "*", source = "pytorch-rocm"}
@@ -31,13 +32,13 @@ pandas = "^2"
 peft = "^0.9"
 pillow = "^10"
 prodigyopt = "^1"
-regex = "^2023.12.25"
 requests = "^2"
 safetensors = "^0.4"
 scipy = "^1"
 tensorboard = "^2"
 torchsde = "^0.2"
 transformers = "^4"
+# triton-library = "^1.0.0rc2"
 urllib3 = "<1.27"
 wandb = "^0.16"
 
