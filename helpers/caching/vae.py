@@ -20,6 +20,21 @@ logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
+def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
+    metadata = StateTracker.get_metadata_by_filepath(filepath)
+    training_sample = TrainingSample(
+        image=image,
+        data_backend_id=data_backend_id,
+        image_metadata=metadata,
+    )
+    prepared_sample = training_sample.prepare()
+    return (
+        prepared_sample.image,
+        prepared_sample.crop_coordinates,
+        prepared_sample.aspect_ratio,
+    )
+
+
 class VAECache:
     read_queue = Queue()
     process_queue = Queue()
@@ -563,26 +578,6 @@ class VAECache:
 
         return latents
 
-    def prepare_sample(
-        self,
-        image: Image.Image,
-        data_backend_id: str,
-        filepath: str,
-    ):
-        training_sample = TrainingSample(
-            image=image,
-            data_backend_id=data_backend_id,
-            image_metadata=self.metadata_backend.get_metadata_attribute_by_filepath(
-                filepath
-            ),
-        )
-        prepared_sample = training_sample.prepare()
-        return (
-            prepared_sample.image,
-            prepared_sample.crop_coordinates,
-            prepared_sample.aspect_ratio,
-        )
-
     def _process_images_in_batch(
         self,
         image_paths: list = None,
@@ -639,7 +634,7 @@ class VAECache:
             with ProcessPoolExecutor() as executor:
                 futures = [
                     executor.submit(
-                        self.prepare_sample,
+                        prepare_sample,
                         image=data[1],
                         data_backend_id=self.id,
                         filepath=data[0],
@@ -653,12 +648,7 @@ class VAECache:
                             future.result()
                         )  # Returns (image, crop_coordinates, new_aspect_ratio)
                         if result:  # Ensure result is not None or invalid
-                            sample_info = (
-                                result.image,
-                                result.crop_coordinates,
-                                result.aspect_ratio,
-                            )
-                            processed_images.append(sample_info)
+                            processed_images.append(result)
                             if first_aspect_ratio is None:
                                 first_aspect_ratio = result[2]
                             elif aspect_bucket != first_aspect_ratio:

@@ -81,9 +81,6 @@ def fetch_pixel_values(fp, data_backend_id: str):
     training_sample = TrainingSample(
         image=image,
         data_backend_id=data_backend_id,
-        image_metadata=StateTracker.get_data_backend(data_backend_id)[
-            "metadata_backend"
-        ].get_metadata_by_filepath(fp),
     )
     return training_sample.prepare(return_tensor=True).image
 

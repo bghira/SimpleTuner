@@ -395,6 +395,8 @@ class StateTracker:
     @classmethod
     def get_metadata_by_filepath(cls, filepath):
         for _, data_backend in cls.get_data_backends().items():
+            if "metadata_backend" not in data_backend:
+                continue
             metadata = data_backend["metadata_backend"].get_metadata_by_filepath(
                 filepath
             )

@@ -171,7 +171,7 @@ class MultiaspectImage:
         # Special case for 512px (0.5mp) images
         if aspect_ratio == 1.0 and megapixels == 0.25:
             return 512, 512, 1.0
-        total_pixels = max(megapixels * 1e6, 1e6)
+        total_pixels = max(megapixels * 1e3, 1e6)
         W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
         H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
 
