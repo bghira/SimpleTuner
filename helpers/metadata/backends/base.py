@@ -740,9 +740,7 @@ class MetadataBackend:
                 continue
             if vae_cache_behavior == "sync":
                 # Sync aspect buckets with the cache
-                expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
-                    self._get_aspect_ratio_from_tensor(cache_content)
-                )
+                expected_bucket = str(self._get_aspect_ratio_from_tensor(cache_content))
                 self._modify_cache_entry_bucket(cache_file, expected_bucket)
             elif vae_cache_behavior == "recreate":
                 # Delete the cache file if it doesn't match the aspect bucket indices
@@ -837,9 +835,7 @@ class MetadataBackend:
             )
 
         actual_aspect_ratio = self._get_aspect_ratio_from_tensor(cache_content)
-        expected_bucket = MultiaspectImage.determine_bucket_for_aspect_ratio(
-            recalculated_aspect_ratio
-        )
+        expected_bucket = str(recalculated_aspect_ratio)
         logger.debug(
             f"Expected bucket for {cache_file}: {expected_bucket} vs actual {actual_aspect_ratio}"
         )
