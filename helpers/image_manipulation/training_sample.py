@@ -27,7 +27,7 @@ class TrainingSample:
             self.original_size = self.image.size
         elif image_metadata is not None:
             self.original_size = image_metadata.get("original_size")
-            print(
+            logger.debug(
                 f"Metadata for training sample given instead of image? {image_metadata}"
             )
 
@@ -43,7 +43,7 @@ class TrainingSample:
         self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
         self.crop_enabled = self.data_backend_config.get("crop", False)
         self.crop_style = self.data_backend_config.get("crop_style", "random")
-        self.crop_aspect = self.data_backend_config.get("crop_aspect", "random")
+        self.crop_aspect = self.data_backend_config.get("crop_aspect", "square")
         self.crop_coordinates = (0, 0)
         crop_handler_cls = crop_handlers.get(self.crop_style)
         if not crop_handler_cls:
@@ -146,10 +146,18 @@ class TrainingSample:
         """
         if self.image and self.should_downsample_before_crop():
             width, height, _ = self.calculate_target_size(downsample_before_crop=True)
-            self.image = self.resize((width, height))
+            logger.debug(
+                f"Downsampling image from {self.image.size} to {width}x{height} before cropping."
+            )
+            self.resize((width, height))
         return self
 
     def calculate_target_size(self, downsample_before_crop: bool = False):
+        # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
+        if self.crop_aspect == "square" and not downsample_before_crop:
+            self.aspect_ratio = 1.0
+            self.target_size = (self.pixel_resolution, self.pixel_resolution)
+            return self.target_size[0], self.target_size[1], self.aspect_ratio
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size
         )
@@ -187,13 +195,22 @@ class TrainingSample:
         """
         if not self.crop_enabled:
             return self
+        logger.debug(
+            f"Cropping image with {self.crop_style} style and {self.crop_aspect}."
+        )
 
         # Too-big of an image, resize before we crop.
         self.downsample_before_crop()
         width, height, aspect_ratio = self.calculate_target_size(
             downsample_before_crop=False
         )
+        logger.debug(
+            f"Pre-crop size: {self.image.size if hasattr(self.image, 'size') else 'Unknown'}."
+        )
         self.image, self.crop_coordinates = self.cropper.crop(width, height)
+        logger.debug(
+            f"Post-crop size: {self.image.size if hasattr(self.image, 'size') else 'Unknown'}."
+        )
         return self
 
     def resize(self, target_size: tuple = None):
@@ -207,7 +224,7 @@ class TrainingSample:
             target_width, target_height, aspect_ratio = self.calculate_target_size()
             target_size = (target_width, target_height)
         if self.image:
-            self.image = self.image.resize(target_size, Image.LANCZOS)
+            self.image = self.image.resize(target_size, Image.Resampling.LANCZOS)
             self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.image.size
             )
