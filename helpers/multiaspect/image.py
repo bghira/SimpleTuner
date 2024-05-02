@@ -6,9 +6,20 @@ from PIL.ImageOps import exif_transpose
 import logging, os, random
 from math import sqrt
 from helpers.training.state_tracker import StateTracker
+from helpers.image_manipulation.cropping import (
+    CornerCropping,
+    CenterCropping,
+    RandomCropping,
+)
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+crop_handlers = {
+    "corner": CornerCropping,
+    "centre": CenterCropping,
+    "center": CenterCropping,
+    "random": RandomCropping,
+}
 
 
 class MultiaspectImage:
@@ -116,6 +127,10 @@ class MultiaspectImage:
         )
 
         if crop:
+            crop_handler_cls = crop_handlers.get(crop_style)
+            if not crop_handler_cls:
+                raise ValueError(f"Unknown crop style: {crop_style}")
+            crop_handler = crop_handler_cls(image=image, image_metadata=image_metadata)
             if downsample_before_crop:
                 logger.debug(
                     f"Resizing image before crop, as its size is too large. Data backend: {id}, image size: {image.size}, target size: {target_width}x{target_height}"
@@ -154,48 +169,13 @@ class MultiaspectImage:
                 else (target_width, target_height)
             )
 
-            if image:
-                if crop_style == "corner":
-                    image, crop_coordinates = MultiaspectImage._crop_corner(
-                        image, crop_width, crop_height
-                    )
-                elif crop_style in ["centre", "center"]:
-                    image, crop_coordinates = MultiaspectImage._crop_center(
-                        image, crop_width, crop_height
-                    )
-                elif crop_style == "face":
-                    image, crop_coordinates = MultiaspectImage._crop_face(
-                        image, crop_width, crop_height
-                    )
-                elif crop_style == "random":
-                    image, crop_coordinates = MultiaspectImage._crop_random(
-                        image, crop_width, crop_height
-                    )
-                else:
-                    raise ValueError(f"Unknown crop style: {crop_style}")
-            elif image_metadata:
-                if crop_style == "corner":
-                    _, crop_coordinates = MultiaspectImage._crop_corner(
-                        image_metadata=image_metadata,
-                        crop_width=crop_width,
-                        crop_height=crop_height,
-                    )
-                elif crop_style in ["centre", "center"]:
-                    _, crop_coordinates = MultiaspectImage._crop_center(
-                        image_metadata=image_metadata,
-                        crop_width=crop_width,
-                        crop_height=crop_height,
-                    )
-                elif crop_style == "random" or crop_style == "face":
-                    _, crop_coordinates = MultiaspectImage._crop_random(
-                        image_metadata=image_metadata,
-                        crop_width=crop_width,
-                        crop_height=crop_height,
-                    )
-                else:
-                    raise ValueError(f"Unknown crop style: {crop_style}")
+            crop_result = crop_handler.crop(crop_width, crop_height)
 
-            logger.debug(f"After cropping, our image size: {image.size}")
+            if image:
+                image, crop_coordinates = crop_result
+                logger.debug(f"After cropping, our image size: {image.size}")
+            elif image_metadata:
+                _, crop_coordinates = crop_result
         else:
             # Resize unconditionally if cropping is not enabled
             if image:
@@ -208,96 +188,6 @@ class MultiaspectImage:
             return image, crop_coordinates, new_aspect_ratio
         elif image_metadata:
             return (target_width, target_height), crop_coordinates, new_aspect_ratio
-
-    @staticmethod
-    def _crop_corner(
-        image: Image = None,
-        target_width=None,
-        target_height=None,
-        image_metadata: dict = None,
-    ):
-        """Crop the image from the bottom-right corner."""
-        if image:
-            original_width, original_height = image.size
-        elif image_metadata:
-            original_width, original_height = image_metadata["original_size"]
-        left = max(0, original_width - target_width)
-        top = max(0, original_height - target_height)
-        right = original_width
-        bottom = original_height
-        if image:
-            return image.crop((left, top, right, bottom)), (left, top)
-        elif image_metadata:
-            return image_metadata, (left, top)
-
-    @staticmethod
-    def _crop_center(
-        image: Image = None,
-        target_width=None,
-        target_height=None,
-        image_metadata: dict = None,
-    ):
-        """Crop the image from the center."""
-        original_width, original_height = image.size
-        left = (original_width - target_width) / 2
-        top = (original_height - target_height) / 2
-        right = (original_width + target_width) / 2
-        bottom = (original_height + target_height) / 2
-        if image:
-            return image.crop((left, top, right, bottom)), (left, top)
-        elif image_metadata:
-            return image_metadata, (left, top)
-
-    @staticmethod
-    def _crop_random(
-        image: Image = None,
-        target_width=None,
-        target_height=None,
-        image_metadata: dict = None,
-    ):
-        """Crop the image from a random position."""
-        original_width, original_height = image.size
-        left = random.randint(0, max(0, original_width - target_width))
-        top = random.randint(0, max(0, original_height - target_height))
-        right = left + target_width
-        bottom = top + target_height
-        if image:
-            return image.crop((left, top, right, bottom)), (left, top)
-        elif image_metadata:
-            return image_metadata, (left, top)
-
-    @staticmethod
-    def _crop_face(
-        image: Image,
-        target_width: int,
-        target_height: int,
-    ):
-        """Crop the image to include a face, or the most 'interesting' part of the image, without a face."""
-        # Import modules
-        import cv2
-        import numpy as np
-
-        # Detect a face in the image
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        image = image.convert("RGB")
-        image = np.array(image)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-        if len(faces) > 0:
-            # Get the largest face
-            face = max(faces, key=lambda f: f[2] * f[3])
-            x, y, w, h = face
-            left = max(0, x - 0.5 * w)
-            top = max(0, y - 0.5 * h)
-            right = min(image.shape[1], x + 1.5 * w)
-            bottom = min(image.shape[0], y + 1.5 * h)
-            image = Image.fromarray(image)
-            return image.crop((left, top, right, bottom)), (left, top)
-        else:
-            # Crop the image from a random position
-            return MultiaspectImage._crop_random(image, target_width, target_height)
 
     @staticmethod
     def _round_to_nearest_multiple(value):
@@ -439,6 +329,15 @@ class MultiaspectImage:
     def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
+        # Special case for 1024px (1.0) megapixel images
+        if aspect_ratio == 1.0 and megapixels == 1.0:
+            return 1024, 1024, 1.0
+        # Special case for 768px (0.75mp) images
+        if aspect_ratio == 1.0 and megapixels == 0.75:
+            return 768, 768, 1.0
+        # Special case for 512px (0.5mp) images
+        if aspect_ratio == 1.0 and megapixels == 0.5:
+            return 512, 512, 1.0
         total_pixels = max(megapixels * 1e6, 1e6)
         W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
         H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
