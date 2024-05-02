@@ -256,7 +256,7 @@ def process_and_evaluate_image(args, image_path: str, model, processor):
     else:
         image = Image.open(image_path)
 
-    def resize_for_condition_image(input_image: Image, resolution: int):
+    def resize_for_condition_image(input_image: Image.Image, resolution: int):
         if resolution == 0:
             return input_image
         input_image = input_image.convert("RGB")

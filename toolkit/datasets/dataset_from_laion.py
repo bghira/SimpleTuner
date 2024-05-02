@@ -113,7 +113,7 @@ read_timeout = 60
 timeouts = (conn_timeout, read_timeout)
 
 
-def _resize_for_condition_image(input_image: Image, resolution: int):
+def _resize_for_condition_image(input_image: Image.Image, resolution: int):
     input_image = input_image.convert("RGB")
     W, H = input_image.size
     aspect_ratio = round(W / H, 2)

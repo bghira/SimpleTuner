@@ -118,7 +118,7 @@ def parse_args():
 
 
 def eval_image(
-    image: Image,
+    image: Image.Image,
     model,
     tokenizer,
     torch_dtype,
@@ -141,7 +141,7 @@ def eval_image(
         return tokenizer.decode(outputs[0])
 
 
-def eval_image_with_ooba(image: Image, query: str) -> str:
+def eval_image_with_ooba(image: Image.Image, query: str) -> str:
     CONTEXT = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.\n"
 
     img_str = base64.b64encode(image).decode("utf-8")
@@ -192,7 +192,7 @@ def encode_images(accelerator, vae, images, image_transform):
 from math import sqrt
 
 
-def round_to_nearest_multiple(value, multiple):
+def round_to_nearest_multiple(value, multiple: int = 64):
     """Round a value to the nearest multiple."""
     rounded = round(value / multiple) * multiple
     return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
@@ -206,8 +206,8 @@ def calculate_new_size_by_pixel_area(W: int, H: int, megapixels: float = 1.0):
     H_new = int(round(sqrt(total_pixels / aspect_ratio)))
 
     # Ensure they are divisible by 64
-    W_new = round_to_nearest_multiple(W_new, 64)
-    H_new = round_to_nearest_multiple(H_new, 64)
+    W_new = round_to_nearest_multiple(W_new)
+    H_new = round_to_nearest_multiple(H_new)
 
     return W_new, H_new
 

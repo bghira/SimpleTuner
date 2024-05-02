@@ -74,7 +74,7 @@ def shuffle_words_in_filename(filename):
     return "_".join(words) + ext
 
 
-def resize_for_condition_image(input_image: Image, resolution: int):
+def resize_for_condition_image(input_image: Image.Image, resolution: int):
     if resolution == 0:
         return input_image
     input_image = input_image.convert("RGB")
@@ -469,7 +469,7 @@ def list_all_s3_objects(s3_client, bucket_name):
     return existing_files
 
 
-def upload_pil_to_s3(image: Image, filename, args, s3_client):
+def upload_pil_to_s3(image: Image.Image, filename, args, s3_client):
     """Upload a PIL Image directly to S3 bucket"""
     if object_exists_in_s3(s3_client, args.aws_bucket_name, filename):
         return
