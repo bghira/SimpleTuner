@@ -1372,7 +1372,7 @@ def parse_args(input_args=None):
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             logger.warning(
-                f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of{args.aspect_bucket_alignment}px."
+                f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
 
