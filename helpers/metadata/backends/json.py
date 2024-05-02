@@ -2,6 +2,7 @@ from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
+from helpers.image_manipulation.training_sample import TrainingSample
 from pathlib import Path
 import json, logging, os, time, re
 from multiprocessing import Manager
@@ -217,14 +218,10 @@ class JsonMetadataBackend(MetadataBackend):
                     statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
                 image_metadata["original_size"] = image.size
-                image, crop_coordinates, new_aspect_ratio = (
-                    MultiaspectImage.prepare_image(
-                        image=image,
-                        resolution=self.resolution,
-                        resolution_type=self.resolution_type,
-                        id=self.data_backend.id,
-                    )
+                training_sample = TrainingSample(
+                    image=image, data_backend_id=self.id, metadata=image_metadata
                 )
+                image, crop_coordinates, new_aspect_ratio = training_sample.prepare()
                 image_metadata["crop_coordinates"] = crop_coordinates
                 image_metadata["target_size"] = image.size
                 # Round to avoid excessive unique buckets

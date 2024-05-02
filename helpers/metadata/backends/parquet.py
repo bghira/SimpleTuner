@@ -1,6 +1,7 @@
 from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.metadata.backends.base import MetadataBackend
 from tqdm import tqdm
 import json, logging, os, time
@@ -358,13 +359,12 @@ class ParquetMetadataBackend(MetadataBackend):
             aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 image_metadata["original_size"]
             )
-            target_size, crop_coordinates, new_aspect_ratio = (
-                MultiaspectImage.prepare_image(
-                    image_metadata=image_metadata,
-                    resolution=self.resolution,
-                    resolution_type=self.resolution_type,
-                    id=self.data_backend.id,
-                )
+            training_sample = TrainingSample(
+                image=None, data_backend_id=self.id, metadata=image_metadata
+            )
+            target_size, crop_coordinates, new_aspect_ratio = training_sample.prepare()
+            print(
+                f"Prepared training sample: {target_size}, {crop_coordinates}, {new_aspect_ratio}"
             )
             image_metadata["crop_coordinates"] = crop_coordinates
             image_metadata["target_size"] = target_size
