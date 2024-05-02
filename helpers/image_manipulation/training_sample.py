@@ -9,7 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 class TrainingSample:
-    def __init__(self, image: Image.Image, data_backend_id: str, metadata: dict = None):
+    def __init__(
+        self, image: Image.Image, data_backend_id: str, image_metadata: dict = None
+    ):
         """
         Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
 
@@ -20,11 +22,14 @@ class TrainingSample:
         """
         self.image = image
         self.data_backend_id = data_backend_id
-        self.metadata = metadata if metadata else {}
+        self.image_metadata = image_metadata if image_metadata else {}
         if hasattr(image, "size"):
             self.original_size = self.image.size
-        elif metadata is not None:
-            self.original_size = metadata.get("original_size")
+        elif image_metadata is not None:
+            self.original_size = image_metadata.get("original_size")
+            print(
+                f"Metadata for training sample given instead of image? {image_metadata}"
+            )
 
         if not self.original_size:
             raise Exception("Original size not found in metadata.")
@@ -43,7 +48,7 @@ class TrainingSample:
         crop_handler_cls = crop_handlers.get(self.crop_style)
         if not crop_handler_cls:
             raise ValueError(f"Unknown crop style: {self.crop_style}")
-        self.cropper = crop_handler_cls(image=self.image, image_metadata=metadata)
+        self.cropper = crop_handler_cls(image=self.image, image_metadata=image_metadata)
         self.resolution = self.data_backend_config.get("resolution")
         self.resolution_type = self.data_backend_config.get("resolution_type")
         self.target_size_calculator = resize_helpers.get(self.resolution_type)
@@ -88,7 +93,14 @@ class TrainingSample:
         if return_tensor:
             # Return normalised tensor.
             image = self.transforms(image)
-        return image, self.crop_coordinates, self.aspect_ratio
+        return PreparedSample(
+            image=image,
+            original_size=self.original_size,
+            crop_coordinates=self.crop_coordinates,
+            aspect_ratio=self.aspect_ratio,
+            image_metadata=self.image_metadata,
+            target_size=self.target_size,
+        )
 
     def area(self) -> int:
         """
@@ -209,3 +221,28 @@ class TrainingSample:
         Image.Image: The current image.
         """
         return self.image
+
+
+class PreparedSample:
+    def __init__(
+        self,
+        image: Image.Image,
+        image_metadata: dict,
+        original_size: tuple,
+        target_size: tuple,
+        aspect_ratio: float,
+        crop_coordinates: tuple,
+    ):
+        """
+        Initializes a new PreparedSample instance with a provided PIL.Image object and optional metadata.
+
+        Args:
+        image (Image.Image): A PIL Image object.
+        metadata (dict): Optional metadata associated with the image.
+        """
+        self.image = image
+        self.image_metadata = image_metadata if image_metadata else {}
+        self.original_size = original_size
+        self.target_size = target_size
+        self.aspect_ratio = aspect_ratio
+        self.crop_coordinates = crop_coordinates
