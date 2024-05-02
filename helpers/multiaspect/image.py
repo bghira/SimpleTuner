@@ -385,17 +385,3 @@ class MultiaspectImage:
             width, height = image.size
         aspect_ratio = round(width / height, to_round)
         return aspect_ratio
-
-    @staticmethod
-    def determine_bucket_for_aspect_ratio(aspect_ratio):
-        """
-        Determine the correct bucket for a given aspect ratio.
-
-        Args:
-            aspect_ratio (float): The aspect ratio of an image.
-
-        Returns:
-            str: The bucket corresponding to the aspect ratio.
-        """
-        # The logic for determining the bucket can be based on the aspect ratio directly
-        return str(aspect_ratio)
