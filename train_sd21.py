@@ -104,9 +104,8 @@ from transformers.utils import ContextManagers
 
 tokenizer = None
 
-torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.26.0.dev0")
+check_min_version("0.27.0.dev0")
 
 
 SCHEDULER_NAME_MAP = {
@@ -916,7 +915,6 @@ def main():
                 }
             },
         )
-    torch.autograd.set_detect_anomaly(True)
     logger.info("***** Running training *****")
     total_num_batches = sum(
         [
@@ -1033,9 +1031,7 @@ def main():
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["batch_luminance"])
 
-            with accelerator.accumulate(
-                training_models
-            ), torch.autograd.detect_anomaly():
+            with accelerator.accumulate(training_models):
                 training_logger.debug(f"Sending latent batch to GPU")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
