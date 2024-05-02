@@ -6,20 +6,10 @@ from PIL.ImageOps import exif_transpose
 import logging, os, random
 from math import sqrt
 from helpers.training.state_tracker import StateTracker
-from helpers.image_manipulation.cropping import (
-    CornerCropping,
-    CenterCropping,
-    RandomCropping,
-)
+from helpers.image_manipulation.cropping import crop_handlers
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-crop_handlers = {
-    "corner": CornerCropping,
-    "centre": CenterCropping,
-    "center": CenterCropping,
-    "random": RandomCropping,
-}
 
 
 class MultiaspectImage:
@@ -198,7 +188,7 @@ class MultiaspectImage:
 
     @staticmethod
     def _resize_image(
-        input_image: Image,
+        input_image: Image.Image,
         target_width: int,
         target_height: int,
         image_metadata: dict = None,
@@ -385,3 +375,9 @@ class MultiaspectImage:
             width, height = image.size
         aspect_ratio = round(width / height, to_round)
         return aspect_ratio
+
+
+resize_helpers = {
+    "pixel": MultiaspectImage.calculate_new_size_by_pixel_edge,
+    "area": MultiaspectImage.calculate_new_size_by_pixel_area,
+}
