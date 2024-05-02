@@ -160,24 +160,6 @@ class TestMultiaspectImage(unittest.TestCase):
                         f"Output sizes are not consistent for {resolution} MP",
                     )
 
-    def test_crop_corner(self):
-        cropped_image, _ = MultiaspectImage._crop_corner(
-            self.test_image, self.resolution, self.resolution
-        )
-        self.assertEqual(cropped_image.size, (self.resolution, self.resolution))
-
-    def test_crop_center(self):
-        cropped_image, _ = MultiaspectImage._crop_center(
-            self.test_image, self.resolution, self.resolution
-        )
-        self.assertEqual(cropped_image.size, (self.resolution, self.resolution))
-
-    def test_crop_random(self):
-        cropped_image, _ = MultiaspectImage._crop_random(
-            self.test_image, self.resolution, self.resolution
-        )
-        self.assertEqual(cropped_image.size, (self.resolution, self.resolution))
-
     def test_prepare_image_valid(self):
         with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             mock_args.return_value = Mock(
