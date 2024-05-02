@@ -491,7 +491,7 @@ def log_validations(
 
                 validation_resolutions = (
                     get_validation_resolutions()
-                    if "deepfloyd" not in args.model_type
+                    if "deepfloyd-stage2" not in args.model_type
                     else ["base-256"]
                 )
                 logger.debug(f"Resolutions for validation: {validation_resolutions}")
@@ -499,7 +499,7 @@ def log_validations(
                     validation_images[validation_shortname] = []
 
                 for resolution in validation_resolutions:
-                    if "deepfloyd" not in args.model_type:
+                    if "deepfloyd-stage2" not in args.model_type:
                         validation_resolution_width, validation_resolution_height = (
                             resolution
                         )

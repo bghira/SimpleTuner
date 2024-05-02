@@ -1332,7 +1332,7 @@ def parse_args(input_args=None):
             logger.warning(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if args.train_batch_size > 12:
+        if args.train_batch_size > 16:
             logger.error(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
@@ -1345,6 +1345,12 @@ def parse_args(input_args=None):
                 " Use 'gaussian' or 'default' instead."
             )
             sys.exit(1)
+
+    if args.max_train_steps is not None and args.num_train_epochs > 0:
+        logger.error(
+            "When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0."
+        )
+        sys.exit(1)
 
     if (
         args.pretrained_vae_model_name_or_path is not None
@@ -1366,7 +1372,7 @@ def parse_args(input_args=None):
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             logger.warning(
-                f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of{args.aspect_bucket_alignment}px."
+                f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
 

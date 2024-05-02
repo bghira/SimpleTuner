@@ -86,9 +86,8 @@ from diffusers.utils import (
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
-torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.26.0.dev0")
+check_min_version("0.27.0.dev0")
 
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
@@ -984,7 +983,7 @@ def main():
     current_epoch = first_epoch
     StateTracker.set_epoch(current_epoch)
 
-    if current_epoch > args.num_train_epochs:
+    if current_epoch > args.num_train_epochs + 1:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
@@ -1054,10 +1053,10 @@ def main():
     current_epoch_step = None
 
     for epoch in range(first_epoch, args.num_train_epochs + 1):
-        if current_epoch > args.num_train_epochs:
+        if current_epoch > args.num_train_epochs + 1:
             # This might immediately end training, but that's useful for simply exporting the model.
             logger.info(
-                f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs)."
+                f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
             )
             break
         if first_epoch != epoch:
@@ -1130,9 +1129,7 @@ def main():
                 training_luminance_values.append(batch["batch_luminance"])
 
             with accelerator.accumulate(training_models):
-                training_logger.debug(
-                    f"Sending latent batch from pinned memory to device."
-                )
+                training_logger.debug(f"Sending latent batch to GPU.")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
                 )
@@ -1175,7 +1172,7 @@ def main():
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
-                    timesteps_buffer.append((step, timestep))
+                    timesteps_buffer.append((global_step, timestep))
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)

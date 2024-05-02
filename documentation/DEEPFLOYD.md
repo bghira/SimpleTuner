@@ -108,7 +108,6 @@ export LEARNING_RATE_END=4e-6 #@param {type:"number"}
 
 # Where to store your results.
 export BASE_DIR="/training"
-export INSTANCE_DIR="${BASE_DIR}/data"
 export OUTPUT_DIR="${BASE_DIR}/models/deepfloyd"
 export DATALOADER_CONFIG="multidatabackend_deepfloyd.json"
 

@@ -45,10 +45,10 @@ export DEBUG_EXTRA_ARGS="--report_to=wandb"
 export TRACKER_PROJECT_NAME="sdxl-training"
 export TRACKER_RUN_NAME="simpletuner-sdxl"
 
-# Max number of steps OR epochs can be used. But we default to Epochs.
+# Max number of steps OR epochs can be used. Not both.
 export MAX_NUM_STEPS=30000
 # Will likely overtrain, but that's fine.
-export NUM_EPOCHS=25
+export NUM_EPOCHS=0
 
 # A convenient prefix for all of your training paths.
 export BASE_DIR="/notebooks/datasets"

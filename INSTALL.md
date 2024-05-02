@@ -22,7 +22,7 @@ To install the Apple-specific requirements:
 poetry install --no-root -C install/apple
 ```
 
-### Linux
+### Linux + Nvidia/CUDA
 
 The first command you'll run will install most of the dependencies:
 
@@ -58,6 +58,16 @@ If the egg install for Xformers does not work, try including `xformers` on the f
 ```bash
 pip3 install --pre xformers torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
 ```
+
+### Linux + AMD / ROCm
+Due to `xformers` not supporting the ROCm platform, memory requirements for training will likely be higher than otherwise stated.
+
+To install the ROCm-specific requirements:
+
+```bash
+poetry install --no-root -C install/rocm
+```
+
 
 ### All platforms
 

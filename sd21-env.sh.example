@@ -67,19 +67,13 @@ export TRACKER_RUN_NAME
 TRACKER_RUN_NAME="$(date +%s)"
 # Location of training data.
 export BASE_DIR="/notebooks/datasets"
-export INSTANCE_DIR="${BASE_DIR}/training_data"
 export OUTPUT_DIR="${BASE_DIR}/models"
 export DATALOADER_CONFIG="multidatabackend_sd2x.json"
 
-# Some data that we generate will be cached here.
-export STATE_PATH="${BASE_DIR}/training_state.json"
-# Store whether we've seen an image or not, to prevent repeats.
-export SEEN_STATE_PATH="${BASE_DIR}/training_images_seen.json"
-
-# Max number of steps OR epochs can be used. But we default to Epochs.
+# Max number of steps OR epochs can be used. Not both.
 export MAX_NUM_STEPS=30000
 # Will likely overtrain, but that's fine.
-export NUM_EPOCHS=25
+export NUM_EPOCHS=0
 
 # Adjust this for your GPU memory size.
 export TRAIN_BATCH_SIZE=1

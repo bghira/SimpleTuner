@@ -65,7 +65,7 @@ EMA (exponential moving average) weights are a memory-heavy affair, but provide 
 ### GPU vendors
 
 * NVIDIA - pretty much anything 3090 and up is a safe bet. YMMV.
-* AMD - No one has reported anything, we don't know.
+* AMD - SDXL LoRA and UNet are verified working on a 7900 XTX 24GB. Lacking `xformers`, it will likely use more memory than Nvidia equivalents
 * Apple - LoRA and full u-net tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
   * You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
 

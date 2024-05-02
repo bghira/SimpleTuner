@@ -6,6 +6,7 @@ from PIL.ImageOps import exif_transpose
 import logging, os, random
 from math import sqrt
 from helpers.training.state_tracker import StateTracker
+from helpers.image_manipulation.cropping import crop_handlers
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -22,284 +23,6 @@ class MultiaspectImage:
         )
 
     @staticmethod
-    def prepare_image(
-        resolution: float,
-        image: Image = None,
-        image_metadata: dict = None,
-        resolution_type: str = "pixel",
-        id: str = "foo",
-    ):
-        if image:
-            if not hasattr(image, "convert"):
-                raise Exception(
-                    f"Unknown data received instead of PIL.Image object: {type(image)}"
-                )
-            # Strip transparency
-            image = image.convert("RGB")
-            # Rotate, maybe.
-            logger.debug(f"Processing image filename: {image}")
-            logger.debug(f"Image size before EXIF transform: {image.size}")
-            image = exif_transpose(image)
-            logger.debug(f"Image size after EXIF transform: {image.size}")
-            image_size = image.size
-        elif image_metadata:
-            image_size = (
-                image_metadata["original_size"][0],
-                image_metadata["original_size"][1],
-            )
-        original_width, original_height = image_size
-        original_resolution = resolution
-        # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-        if resolution_type == "area":
-            original_resolution = original_resolution * 1e3
-        # Make resolution a multiple of StateTracker.get_args().aspect_bucket_alignment
-        original_resolution = MultiaspectImage._round_to_nearest_multiple(
-            original_resolution
-        )
-
-        # Downsample before we handle, if necessary.
-        downsample_before_crop = False
-        crop = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop", False
-        )
-        maximum_image_size = StateTracker.get_data_backend_config(
-            data_backend_id=id
-        ).get("maximum_image_size", None)
-        target_downsample_size = StateTracker.get_data_backend_config(
-            data_backend_id=id
-        ).get("target_downsample_size", None)
-        logger.debug(
-            f"Dataset: {id}, maximum_image_size: {maximum_image_size}, target_downsample_size: {target_downsample_size}"
-        )
-        if crop and maximum_image_size and target_downsample_size:
-            if MultiaspectImage.is_image_too_large(
-                image_size, maximum_image_size, resolution_type=resolution_type
-            ):
-                # Override the target resolution with the target downsample size
-                logger.debug(
-                    f"Overriding resolution {resolution} with target downsample size: {target_downsample_size}"
-                )
-                resolution = target_downsample_size
-                downsample_before_crop = True
-
-        # Calculate new size
-        original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            (original_width, original_height)
-        )
-        if resolution_type == "pixel":
-            (target_width, target_height, new_aspect_ratio) = (
-                MultiaspectImage.calculate_new_size_by_pixel_edge(
-                    original_aspect_ratio, resolution
-                )
-            )
-        elif resolution_type == "area":
-            (target_width, target_height, new_aspect_ratio) = (
-                MultiaspectImage.calculate_new_size_by_pixel_area(
-                    original_aspect_ratio, resolution
-                )
-            )
-            # Convert 'resolution' from eg. "1 megapixel" to "1024 pixels"
-            resolution = resolution * 1e3
-            # Make resolution a multiple of StateTracker.get_args().aspect_bucket_alignment
-            resolution = MultiaspectImage._round_to_nearest_multiple(resolution)
-            logger.debug(
-                f"After area resize, our image will be {target_width}x{target_height} with an overridden resolution of {resolution} pixels."
-            )
-        else:
-            raise ValueError(f"Unknown resolution type: {resolution_type}")
-
-        crop_style = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop_style", "random"
-        )
-        crop_aspect = StateTracker.get_data_backend_config(data_backend_id=id).get(
-            "crop_aspect", "square"
-        )
-
-        if crop:
-            if downsample_before_crop:
-                logger.debug(
-                    f"Resizing image before crop, as its size is too large. Data backend: {id}, image size: {image.size}, target size: {target_width}x{target_height}"
-                )
-                if image:
-                    image = MultiaspectImage._resize_image(
-                        image, target_width, target_height
-                    )
-                elif image_metadata:
-                    image_metadata = MultiaspectImage._resize_image(
-                        None, target_width, target_height, image_metadata
-                    )
-                if resolution_type == "area":
-                    # Convert original_resolution back from eg. 1024 pixels to 1.0 mp
-                    original_megapixel_resolution = original_resolution / 1e3
-                    (target_width, target_height, new_aspect_ratio) = (
-                        MultiaspectImage.calculate_new_size_by_pixel_area(
-                            original_aspect_ratio,
-                            original_megapixel_resolution,
-                        )
-                    )
-                elif resolution_type == "pixel":
-                    (target_width, target_height, new_aspect_ratio) = (
-                        MultiaspectImage.calculate_new_size_by_pixel_edge(
-                            original_aspect_ratio, original_resolution
-                        )
-                    )
-                logger.debug(
-                    f"Recalculated target_width and target_height {target_width}x{target_height} based on original_resolution: {original_resolution}"
-                )
-
-            logger.debug(f"We are cropping the image. Data backend: {id}")
-            crop_width, crop_height = (
-                (original_resolution, original_resolution)
-                if crop_aspect == "square"
-                else (target_width, target_height)
-            )
-
-            if image:
-                if crop_style == "corner":
-                    image, crop_coordinates = MultiaspectImage._crop_corner(
-                        image, crop_width, crop_height
-                    )
-                elif crop_style in ["centre", "center"]:
-                    image, crop_coordinates = MultiaspectImage._crop_center(
-                        image, crop_width, crop_height
-                    )
-                elif crop_style == "face":
-                    image, crop_coordinates = MultiaspectImage._crop_face(
-                        image, crop_width, crop_height
-                    )
-                elif crop_style == "random":
-                    image, crop_coordinates = MultiaspectImage._crop_random(
-                        image, crop_width, crop_height
-                    )
-                else:
-                    raise ValueError(f"Unknown crop style: {crop_style}")
-            elif image_metadata:
-                if crop_style == "corner":
-                    _, crop_coordinates = MultiaspectImage._crop_corner(
-                        image_metadata=image_metadata,
-                        crop_width=crop_width,
-                        crop_height=crop_height,
-                    )
-                elif crop_style in ["centre", "center"]:
-                    _, crop_coordinates = MultiaspectImage._crop_center(
-                        image_metadata=image_metadata,
-                        crop_width=crop_width,
-                        crop_height=crop_height,
-                    )
-                elif crop_style == "random" or crop_style == "face":
-                    _, crop_coordinates = MultiaspectImage._crop_random(
-                        image_metadata=image_metadata,
-                        crop_width=crop_width,
-                        crop_height=crop_height,
-                    )
-                else:
-                    raise ValueError(f"Unknown crop style: {crop_style}")
-
-            logger.debug(f"After cropping, our image size: {image.size}")
-        else:
-            # Resize unconditionally if cropping is not enabled
-            if image:
-                image = MultiaspectImage._resize_image(
-                    image, target_width, target_height
-                )
-            crop_coordinates = (0, 0)
-
-        if image:
-            return image, crop_coordinates, new_aspect_ratio
-        elif image_metadata:
-            return (target_width, target_height), crop_coordinates, new_aspect_ratio
-
-    @staticmethod
-    def _crop_corner(
-        image: Image = None,
-        target_width=None,
-        target_height=None,
-        image_metadata: dict = None,
-    ):
-        """Crop the image from the bottom-right corner."""
-        if image:
-            original_width, original_height = image.size
-        elif image_metadata:
-            original_width, original_height = image_metadata["original_size"]
-        left = max(0, original_width - target_width)
-        top = max(0, original_height - target_height)
-        right = original_width
-        bottom = original_height
-        if image:
-            return image.crop((left, top, right, bottom)), (left, top)
-        elif image_metadata:
-            return image_metadata, (left, top)
-
-    @staticmethod
-    def _crop_center(
-        image: Image = None,
-        target_width=None,
-        target_height=None,
-        image_metadata: dict = None,
-    ):
-        """Crop the image from the center."""
-        original_width, original_height = image.size
-        left = (original_width - target_width) / 2
-        top = (original_height - target_height) / 2
-        right = (original_width + target_width) / 2
-        bottom = (original_height + target_height) / 2
-        if image:
-            return image.crop((left, top, right, bottom)), (left, top)
-        elif image_metadata:
-            return image_metadata, (left, top)
-
-    @staticmethod
-    def _crop_random(
-        image: Image = None,
-        target_width=None,
-        target_height=None,
-        image_metadata: dict = None,
-    ):
-        """Crop the image from a random position."""
-        original_width, original_height = image.size
-        left = random.randint(0, max(0, original_width - target_width))
-        top = random.randint(0, max(0, original_height - target_height))
-        right = left + target_width
-        bottom = top + target_height
-        if image:
-            return image.crop((left, top, right, bottom)), (left, top)
-        elif image_metadata:
-            return image_metadata, (left, top)
-
-    @staticmethod
-    def _crop_face(
-        image: Image,
-        target_width: int,
-        target_height: int,
-    ):
-        """Crop the image to include a face, or the most 'interesting' part of the image, without a face."""
-        # Import modules
-        import cv2
-        import numpy as np
-
-        # Detect a face in the image
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        image = image.convert("RGB")
-        image = np.array(image)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-        if len(faces) > 0:
-            # Get the largest face
-            face = max(faces, key=lambda f: f[2] * f[3])
-            x, y, w, h = face
-            left = max(0, x - 0.5 * w)
-            top = max(0, y - 0.5 * h)
-            right = min(image.shape[1], x + 1.5 * w)
-            bottom = min(image.shape[0], y + 1.5 * h)
-            image = Image.fromarray(image)
-            return image.crop((left, top, right, bottom)), (left, top)
-        else:
-            # Crop the image from a random position
-            return MultiaspectImage._crop_random(image, target_width, target_height)
-
-    @staticmethod
     def _round_to_nearest_multiple(value):
         """Round a value to the nearest multiple."""
         multiple = StateTracker.get_args().aspect_bucket_alignment
@@ -308,7 +31,7 @@ class MultiaspectImage:
 
     @staticmethod
     def _resize_image(
-        input_image: Image,
+        input_image: Image.Image,
         target_width: int,
         target_height: int,
         image_metadata: dict = None,
@@ -439,6 +162,15 @@ class MultiaspectImage:
     def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
+        # Special case for 1024px (1.0) megapixel images
+        if aspect_ratio == 1.0 and megapixels == 1.0:
+            return 1024, 1024, 1.0
+        # Special case for 768px (0.75mp) images
+        if aspect_ratio == 1.0 and megapixels == 0.75:
+            return 768, 768, 1.0
+        # Special case for 512px (0.5mp) images
+        if aspect_ratio == 1.0 and megapixels == 0.25:
+            return 512, 512, 1.0
         total_pixels = max(megapixels * 1e6, 1e6)
         W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
         H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
@@ -471,29 +203,24 @@ class MultiaspectImage:
             float: The rounded aspect ratio of the image.
         """
         to_round = StateTracker.get_args().aspect_bucket_rounding
-        if not isinstance(image, int):
+        if to_round is None:
             to_round = rounding
         if isinstance(image, Image.Image):
+            # An actual image was passed in.
             width, height = image.size
         elif isinstance(image, tuple):
+            # An image.size or a similar (W, H) tuple was provided.
             width, height = image
         elif isinstance(image, float):
+            # An externally-calculated aspect ratio was given to round.
             return round(image, to_round)
         else:
             width, height = image.size
         aspect_ratio = round(width / height, to_round)
         return aspect_ratio
 
-    @staticmethod
-    def determine_bucket_for_aspect_ratio(aspect_ratio):
-        """
-        Determine the correct bucket for a given aspect ratio.
 
-        Args:
-            aspect_ratio (float): The aspect ratio of an image.
-
-        Returns:
-            str: The bucket corresponding to the aspect ratio.
-        """
-        # The logic for determining the bucket can be based on the aspect ratio directly
-        return str(aspect_ratio)
+resize_helpers = {
+    "pixel": MultiaspectImage.calculate_new_size_by_pixel_edge,
+    "area": MultiaspectImage.calculate_new_size_by_pixel_area,
+}

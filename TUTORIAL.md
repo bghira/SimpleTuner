@@ -225,9 +225,8 @@ Here's a breakdown of what each environment variable does:
 
 #### Data Locations
 
-- `BASE_DIR`, `INSTANCE_DIR`, `OUTPUT_DIR`: Directories for the training data, instance data, and output models.
+- `BASE_DIR`, `OUTPUT_DIR`: Directories for the training data, instance data, and output models.
   - `BASE_DIR` - Used for populating other variables, mostly.
-  - `INSTANCE_DIR` - Where your actual training data is. This can be anywhere, it does not need to be underneath `BASE_DIR`.
   - `OUTPUT_DIR` - Where the model pipeline results are stored during training, and after it completes.
 
 #### Training Parameters
@@ -236,9 +235,9 @@ Here's a breakdown of what each environment variable does:
   - If you use `MAX_NUM_STEPS`, it's recommended to set `NUM_EPOCHS` to `0`.
   - Similarly, if you use `NUM_EPOCHS`, it is recommended to set `MAX_NUM_STEPS` to `0`.
   - This simply signals to the trainer that you explicitly wish to use one or the other.
-  - If you supply `NUM_EPOCHS` and `MAX_NUM_STEPS` together, the training will stop running at whichever happens first.
+  - Don't supply `NUM_EPOCHS` and `MAX_NUM_STEPS` values together, it won't let you begin training, to ensure there is no ambiguity about which you expect to take priority.
 - `LR_SCHEDULE`, `LR_WARMUP_STEPS`: Learning rate schedule and warmup steps.
-  - `LR_SCHEDULE` - stick to `constant`, as it is most likely to be stable and less chaotic. However, `polynomial` and `constant_with_warmup` have potential of moving the model's local minima before settling in and reducing the loss. Experimentation can pay off here.
+  - `LR_SCHEDULE` - stick to `constant`, as it is most likely to be stable and less chaotic. However, `polynomial` and `constant_with_warmup` have potential of moving the model's local minima before settling in and reducing the loss. Experimentation can pay off here, especially using the `cosine` and `sine` schedulers, which offer a unique approach to learning rate scheduling.
 - `TRAIN_BATCH_SIZE`: Batch size for training. You want this **as high as you can get it** without running out of VRAM or making your training unnecessarily **slow** (eg. 300-400% increase in training runtime - yikes! 💸)
 
 ## Additional Notes
