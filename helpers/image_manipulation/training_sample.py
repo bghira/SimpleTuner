@@ -39,15 +39,16 @@ class TrainingSample:
         self.crop_enabled = self.data_backend_config.get("crop", False)
         self.crop_style = self.data_backend_config.get("crop_style", "random")
         self.crop_aspect = self.data_backend_config.get("crop_aspect", "random")
+        self.crop_coordinates = (0, 0)
         crop_handler_cls = crop_handlers.get(self.crop_style)
         if not crop_handler_cls:
             raise ValueError(f"Unknown crop style: {self.crop_style}")
         self.cropper = crop_handler_cls(image=self.image, image_metadata=metadata)
+        self.resolution = self.data_backend_config.get("resolution")
+        self.resolution_type = self.data_backend_config.get("resolution_type")
         self.target_size_calculator = resize_helpers.get(self.resolution_type)
         if self.target_size_calculator is None:
             raise ValueError(f"Unknown resolution type: {self.resolution_type}")
-        self.resolution = self.data_backend_config.get("resolution")
-        self.resolution_type = self.data_backend_config.get("resolution_type")
         if self.resolution_type == "pixel":
             self.target_area = self.resolution
             # Store the pixel value, eg. 1024
@@ -132,19 +133,25 @@ class TrainingSample:
         Downsample the image before cropping, to preserve scene details.
         """
         if self.image and self.should_downsample_before_crop():
-            width, height, _ = self.calculate_target_size(
-                self.image, downsample_before_crop=True
-            )
+            width, height, _ = self.calculate_target_size(downsample_before_crop=True)
             self.image = self.resize((width, height))
         return self
 
     def calculate_target_size(self, downsample_before_crop: bool = False):
+        self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            self.original_size
+        )
         if downsample_before_crop and self.target_downsample_size is not None:
-            self.target_size = self.target_size_calculator(
-                self.image, self.target_downsample_size
+            target_width, target_height, self.aspect_ratio = (
+                self.target_size_calculator(
+                    self.aspect_ratio, self.target_downsample_size
+                )
             )
         else:
-            self.target_size = self.target_size_calculator(self.image, self.resolution)
+            target_width, target_height, self.aspect_ratio = (
+                self.target_size_calculator(self.aspect_ratio, self.resolution)
+            )
+        self.target_size = (target_width, target_height)
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
         )
