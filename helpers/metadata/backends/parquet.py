@@ -1,6 +1,7 @@
 from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
+from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.metadata.backends.base import MetadataBackend
 from tqdm import tqdm
 import json, logging, os, time
@@ -358,17 +359,16 @@ class ParquetMetadataBackend(MetadataBackend):
             aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 image_metadata["original_size"]
             )
-            target_size, crop_coordinates, new_aspect_ratio = (
-                MultiaspectImage.prepare_image(
-                    image_metadata=image_metadata,
-                    resolution=self.resolution,
-                    resolution_type=self.resolution_type,
-                    id=self.data_backend.id,
-                )
+            training_sample = TrainingSample(
+                image=None, data_backend_id=self.id, image_metadata=image_metadata
             )
-            image_metadata["crop_coordinates"] = crop_coordinates
-            image_metadata["target_size"] = target_size
-            image_metadata["aspect_ratio"] = new_aspect_ratio
+            prepared_sample = training_sample.prepare()
+            print(
+                f"Prepared training sample: {prepared_sample.target_size}, {prepared_sample.crop_coordinates}, {prepared_sample.aspect_ratio}"
+            )
+            image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
+            image_metadata["target_size"] = prepared_sample.target_size
+            image_metadata["aspect_ratio"] = prepared_sample.aspect_ratio
             luminance_column = self.parquet_config.get("luminance_column", None)
             if luminance_column:
                 image_metadata["luminance"] = database_image_metadata[
@@ -377,13 +377,15 @@ class ParquetMetadataBackend(MetadataBackend):
             else:
                 image_metadata["luminance"] = 0
             logger.debug(
-                f"Image {image_path_str} has aspect ratio {new_aspect_ratio} and size {image_metadata['target_size']}."
+                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio} and size {image_metadata['target_size']}."
             )
 
             # Create a new bucket if it doesn't exist
-            if str(new_aspect_ratio) not in aspect_ratio_bucket_indices:
-                aspect_ratio_bucket_indices[str(new_aspect_ratio)] = []
-            aspect_ratio_bucket_indices[str(new_aspect_ratio)].append(image_path_str)
+            if str(prepared_sample.aspect_ratio) not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)] = []
+            aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)].append(
+                image_path_str
+            )
             # Instead of directly updating, just fill the provided dictionary
             if metadata_updates is not None:
                 metadata_updates[image_path_str] = image_metadata

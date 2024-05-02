@@ -114,7 +114,7 @@ def load_filter_list(filter_list_path):
 
 
 def eval_image(
-    image: Image,
+    image: Image.Image,
     model,
     tokenizer,
     torch_dtype,

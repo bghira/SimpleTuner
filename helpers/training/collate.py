@@ -1,10 +1,10 @@
 import torch, logging, concurrent.futures, numpy as np
+from PIL import Image
 from os import environ
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info
+from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.multiaspect.image import MultiaspectImage
-from helpers.image_manipulation.brightness import calculate_batch_luminance
-from accelerate.logging import get_logger
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("collate_fn")
@@ -75,30 +75,17 @@ def fetch_pixel_values(fp, data_backend_id: str):
     debug_log(
         f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}"
     )
-    pixels = StateTracker.get_data_backend(data_backend_id)["data_backend"].read_image(
+    image = StateTracker.get_data_backend(data_backend_id)["data_backend"].read_image(
         fp
     )
-    """
-        def prepare_image(
-        resolution: float,
-        image: Image = None,
-        image_metadata: dict = None,
-        resolution_type: str = "pixel",
-        id: str = "foo",
-    ):
-
-    """
-    backend_config = StateTracker.get_data_backend_config(data_backend_id)
-    reformed_image, _, _ = MultiaspectImage.prepare_image(
-        resolution=backend_config["resolution"],
-        image=pixels,
-        image_metadata=None,
-        resolution_type=backend_config["resolution_type"],
-        id=data_backend_id,
+    training_sample = TrainingSample(
+        image=image,
+        data_backend_id=data_backend_id,
+        image_metadata=StateTracker.get_data_backend(data_backend_id)[
+            "metadata_backend"
+        ].get_metadata_by_filepath(fp),
     )
-    image_transform = MultiaspectImage.get_image_transforms()(reformed_image)
-
-    return image_transform
+    return training_sample.prepare(return_tensor=True).image
 
 
 def fetch_latent(fp, data_backend_id: str):

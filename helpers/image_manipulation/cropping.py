@@ -57,7 +57,7 @@ class RandomCropping(BaseCropping):
 class FaceCropping(RandomCropping):
     def crop(
         self,
-        image: Image,
+        image: Image.Image,
         target_width: int,
         target_height: int,
     ):
@@ -86,3 +86,11 @@ class FaceCropping(RandomCropping):
         else:
             # Crop the image from a random position
             return super.crop(image, target_width, target_height)
+
+
+crop_handlers = {
+    "corner": CornerCropping,
+    "centre": CenterCropping,
+    "center": CenterCropping,
+    "random": RandomCropping,
+}

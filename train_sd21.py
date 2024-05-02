@@ -104,9 +104,8 @@ from transformers.utils import ContextManagers
 
 tokenizer = None
 
-torch.autograd.set_detect_anomaly(True)
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.26.0.dev0")
+check_min_version("0.27.0.dev0")
 
 
 SCHEDULER_NAME_MAP = {
@@ -916,7 +915,6 @@ def main():
                 }
             },
         )
-    torch.autograd.set_detect_anomaly(True)
     logger.info("***** Running training *****")
     total_num_batches = sum(
         [
@@ -1033,12 +1031,8 @@ def main():
                 # Add the current batch of training data's avg luminance to a list.
                 training_luminance_values.append(batch["batch_luminance"])
 
-            with accelerator.accumulate(
-                training_models
-            ), torch.autograd.detect_anomaly():
-                training_logger.debug(
-                    f"Sending latent batch from pinned memory to device"
-                )
+            with accelerator.accumulate(training_models):
+                training_logger.debug(f"Sending latent batch to GPU")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
                 )
@@ -1121,10 +1115,10 @@ def main():
                     f"\n -> Noise device: {noise.device}"
                     f"\n -> Timesteps device: {timesteps.device}"
                     f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
-                    f"\n -> Latents dtype: {latents.dtype}"
-                    f"\n -> Noise dtype: {noise.dtype}"
+                    f"\n -> Latents dtype: {latents.dtype}, shape: {latents.shape if hasattr(latents, 'shape') else 'None'}"
+                    f"\n -> Noise dtype: {noise.dtype}, shape: {noise.shape if hasattr(noise, 'shape') else 'None'}"
                     f"\n -> Timesteps dtype: {timesteps.dtype}"
-                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
+                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}, shape: {encoder_hidden_states.shape if hasattr(encoder_hidden_states, 'shape') else 'None'}"
                 )
                 if unwrap_model(accelerator, unet).config.in_channels == channels * 2:
                     # deepfloyd stage ii requires the inputs to be doubled. note that we're working in pixels, not latents.
