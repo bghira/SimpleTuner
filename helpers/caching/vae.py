@@ -618,11 +618,9 @@ class VAECache:
             with ProcessPoolExecutor() as executor:
                 futures = [
                     executor.submit(
-                        MultiaspectImage.prepare_image,
+                        MultiaspectImage.prepare_sample,
                         image=data[1],
-                        resolution=self.resolution,
-                        resolution_type=self.resolution_type,
-                        id=self.id,
+                        data_backend_id=self.id,
                     )
                     for data in initial_data
                 ]
@@ -633,7 +631,12 @@ class VAECache:
                             future.result()
                         )  # Returns (image, crop_coordinates, new_aspect_ratio)
                         if result:  # Ensure result is not None or invalid
-                            processed_images.append(result)
+                            sample_info = (
+                                result.image,
+                                result.crop_coordinates,
+                                result.aspect_ratio,
+                            )
+                            processed_images.append(sample_info)
                             if first_aspect_ratio is None:
                                 first_aspect_ratio = result[2]
                             elif aspect_bucket != first_aspect_ratio:
