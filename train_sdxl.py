@@ -1130,9 +1130,7 @@ def main():
                 training_luminance_values.append(batch["batch_luminance"])
 
             with accelerator.accumulate(training_models):
-                training_logger.debug(
-                    f"Sending latent batch from pinned memory to device."
-                )
+                training_logger.debug(f"Sending latent batch to GPU.")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
                 )

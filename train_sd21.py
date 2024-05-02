@@ -1036,9 +1036,7 @@ def main():
             with accelerator.accumulate(
                 training_models
             ), torch.autograd.detect_anomaly():
-                training_logger.debug(
-                    f"Sending latent batch from pinned memory to device"
-                )
+                training_logger.debug(f"Sending latent batch to GPU")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
                 )
@@ -1121,10 +1119,10 @@ def main():
                     f"\n -> Noise device: {noise.device}"
                     f"\n -> Timesteps device: {timesteps.device}"
                     f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
-                    f"\n -> Latents dtype: {latents.dtype}"
-                    f"\n -> Noise dtype: {noise.dtype}"
+                    f"\n -> Latents dtype: {latents.dtype}, shape: {latents.shape if hasattr(latents, 'shape') else 'None'}"
+                    f"\n -> Noise dtype: {noise.dtype}, shape: {noise.shape if hasattr(noise, 'shape') else 'None'}"
                     f"\n -> Timesteps dtype: {timesteps.dtype}"
-                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
+                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}, shape: {encoder_hidden_states.shape if hasattr(encoder_hidden_states, 'shape') else 'None'}"
                 )
                 if unwrap_model(accelerator, unet).config.in_channels == channels * 2:
                     # deepfloyd stage ii requires the inputs to be doubled. note that we're working in pixels, not latents.
