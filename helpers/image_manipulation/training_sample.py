@@ -59,11 +59,13 @@ class TrainingSample:
             # Store the pixel value, eg. 1024
             self.pixel_resolution = self.resolution
             # Store the megapixel value, eg. 1.0
-            self.megapixel_resolution = self.resolution / 1e6
+            self.megapixel_resolution = self.resolution / 1e3
         elif self.resolution_type == "area":
             self.target_area = self.resolution * 1e6  # Convert megapixels to pixels
             # Store the pixel value, eg. 1024
-            self.pixel_resolution = self.resolution * 1e6
+            self.pixel_resolution = MultiaspectImage._round_to_nearest_multiple(
+                self.resolution * 1e3
+            )
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution
         else:
