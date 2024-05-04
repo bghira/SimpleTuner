@@ -177,6 +177,8 @@ class TrainingSample:
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
         )
+        if self.aspect_ratio == 1.0:
+            self.target_size = (self.pixel_resolution, self.pixel_resolution)
 
         return self.target_size[0], self.target_size[1], self.aspect_ratio
 
