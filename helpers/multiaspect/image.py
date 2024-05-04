@@ -189,7 +189,8 @@ class MultiaspectImage:
         # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
         W_diff = W_adjusted - W_initial
         H_diff = H_adjusted - H_initial
-        if W_diff > 0 and W_diff > H_diff:
+        logger.debug(f"Differences: {W_diff}, {H_diff}")
+        if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
             logger.debug(
                 f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
             )

@@ -363,9 +363,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 image=None, data_backend_id=self.id, image_metadata=image_metadata
             )
             prepared_sample = training_sample.prepare()
-            print(
-                f"Prepared training sample: {prepared_sample.target_size}, {prepared_sample.crop_coordinates}, {prepared_sample.aspect_ratio}"
-            )
+            image_metadata["intermediary_size"] = prepared_sample.intermediary_size
             image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
             image_metadata["target_size"] = prepared_sample.target_size
             image_metadata["aspect_ratio"] = prepared_sample.aspect_ratio
@@ -377,7 +375,7 @@ class ParquetMetadataBackend(MetadataBackend):
             else:
                 image_metadata["luminance"] = 0
             logger.debug(
-                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio} and size {image_metadata['target_size']}."
+                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
             )
 
             # Create a new bucket if it doesn't exist

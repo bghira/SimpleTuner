@@ -107,6 +107,7 @@ class TrainingSample:
             aspect_ratio=self.aspect_ratio,
             image_metadata=self.image_metadata,
             target_size=self.target_size,
+            intermediary_size=self.intermediary_size,
         )
 
     def area(self) -> int:
@@ -167,9 +168,29 @@ class TrainingSample:
             self.resize(self.intermediary_size)
         return self
 
+    def correct_intermediary_square_size(self):
+        """
+        When an intermediary size is calculated, we don't adjust it to be divisible by 8 or 64.
+
+        However, the aspect ratio 1.0 needs special consideration for our base resolutions 512, 768, and 1024, because they typically result in 500x500, 750x750, and 1000x1000 images.
+        """
+        if (
+            self.aspect_ratio == 1.0
+            and self.intermediary_size[0] < self.pixel_resolution
+        ):
+            self.intermediary_size = (
+                self.pixel_resolution,
+                self.pixel_resolution,
+            )
+        return self
+
     def calculate_target_size(self, downsample_before_crop: bool = False):
         # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
-        if self.crop_aspect == "square" and not downsample_before_crop:
+        if (
+            self.crop_enabled
+            and self.crop_aspect == "square"
+            and not downsample_before_crop
+        ):
             self.aspect_ratio = 1.0
             self.target_size = (self.pixel_resolution, self.pixel_resolution)
             self.intermediary_size = (self.pixel_resolution, self.pixel_resolution)
@@ -193,6 +214,7 @@ class TrainingSample:
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
         )
+        self.correct_intermediary_square_size()
         if self.aspect_ratio == 1.0:
             self.target_size = (self.pixel_resolution, self.pixel_resolution)
         logger.debug(
@@ -234,6 +256,7 @@ class TrainingSample:
         logger.debug(
             f"Pre-crop size: {self.image.size if hasattr(self.image, 'size') else 'Unknown'}."
         )
+        self.cropper.set_image(self.image)
         self.image, self.crop_coordinates = self.cropper.crop(
             self.target_size[0], self.target_size[1]
         )
@@ -249,6 +272,7 @@ class TrainingSample:
         Args:
         target_size (tuple): The target size as (width, height).
         """
+        current_size = self.image.size if self.image is not None else self.original_size
         if size is None:
             target_size, intermediary_size, target_aspect_ratio = (
                 self.calculate_target_size()
@@ -258,11 +282,11 @@ class TrainingSample:
                 # When the target size is a mismatch against the intermediary size, this means we had to adjust the resulting resolution by 8 or 64px to be trainable.
                 # We'll make sure the intermediary size is greater than the image size itself, to avoid upscaling images.
                 if (
-                    intermediary_size[0] > self.image.size[0]
-                    or intermediary_size[1] > self.image.size[1]
+                    intermediary_size[0] > current_size[0]
+                    or intermediary_size[1] > current_size[1]
                 ):
                     raise ValueError(
-                        f"Intermediary size is larger than the original image size: {intermediary_size} > {self.image.size}. We do not want to upscale images during training. Please adjust the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
+                        f"Intermediary size is larger than the original image size: {intermediary_size} > {current_size}. We do not want to upscale images during training. Please adjust the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
                     )
                 # We'll also make sure the target size is greater than the intermediary size, to avoid upscaling images.
                 if (
@@ -273,29 +297,41 @@ class TrainingSample:
                         f"Intermediary size is smaller than the target size: {intermediary_size} < {target_size}. You can avoid this error by adjusting the dataloader parameters 'resolution' to a higher value, or 'minimum_image_size' to exclude this image from processing."
                     )
                 # Now we can resize the image to the intermediary size.
-                self.image = self.image.resize(
-                    intermediary_size, Image.Resampling.LANCZOS
+                logger.debug(
+                    f"Before resizing to {intermediary_size}, our image is {current_size} resolution."
                 )
+                if self.image is not None:
+                    self.image = self.image.resize(
+                        intermediary_size, Image.Resampling.LANCZOS
+                    )
+                    logger.debug(f"After resize, we are at {self.image.size}")
                 # Crop the image to its target size, so that we do not squish or stretch the image.
                 original_crop_coordinates = self.crop_coordinates
-                self.image, new_crop_coordinates = self.cropper.crop(target_size[0])
+                if self.image is not None:
+                    self.cropper.set_image(self.image)
+                else:
+                    self.image_metadata["current_size"] = intermediary_size
+                    self.cropper.set_image_metadata(self.image_metadata)
+                self.image, new_crop_coordinates = self.cropper.crop(
+                    target_size[0], target_size[1]
+                )
                 # Adjust self.crop_coordinates to adjust the crop to the new size.
                 self.crop_coordinates = (
                     self.crop_coordinates[0] + new_crop_coordinates[0],
                     self.crop_coordinates[1] + new_crop_coordinates[1],
                 )
                 logger.debug(
-                    f"After crop-adjusting pixel alignment, our image is now {self.image.size} resolution and its crop coordinates are now {self.crop_coordinates} adjusted from {original_crop_coordinates}"
+                    f"After crop-adjusting pixel alignment, our image is now {self.image_metadata['current_size'] if 'current_size' in self.image_metadata else self.image.size} resolution and its crop coordinates are now {self.crop_coordinates} adjusted from {original_crop_coordinates}"
                 )
 
             logger.debug(
-                f"Resizing image from {self.image.size} to final target size: {size}"
+                f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else intermediary_size} to final target size: {size}"
             )
         else:
             logger.debug(
-                f"Resizing image from {self.image.size} to custom-provided size: {size}"
+                f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else intermediary_size} to custom-provided size: {size}"
             )
-        if self.image:
+        if self.image and hasattr(self.image, "resize"):
             self.image = self.image.resize(size, Image.Resampling.LANCZOS)
             self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.image.size
@@ -318,6 +354,7 @@ class PreparedSample:
         image: Image.Image,
         image_metadata: dict,
         original_size: tuple,
+        intermediary_size: tuple,
         target_size: tuple,
         aspect_ratio: float,
         crop_coordinates: tuple,
@@ -332,6 +369,7 @@ class PreparedSample:
         self.image = image
         self.image_metadata = image_metadata if image_metadata else {}
         self.original_size = original_size
+        self.intermediary_size = intermediary_size
         self.target_size = target_size
         self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
