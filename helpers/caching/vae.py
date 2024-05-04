@@ -498,7 +498,9 @@ class VAECache:
         latents = []
         if load_from_cache:
             # If all images are cached, simply load them
-            logger.debug(f"Attempting to read latents from storage: {full_filenames}")
+            logger.debug(
+                f"Attempting to read latents from {self.cache_dir}: {full_filenames}"
+            )
             latents = [
                 self._read_from_storage(
                     filename, hide_errors=not self.vae_cache_preprocess
@@ -1057,5 +1059,6 @@ class VAECache:
             except FileNotFoundError:
                 yield (None, None)
         except Exception as e:
-            logger.error(f"Error in scan_cache_contents: {e}")
-            self.debug_log(f"Error traceback: {traceback.format_exc()}")
+            if "is not iterable" not in str(e):
+                logger.error(f"Error in scan_cache_contents: {e}")
+                self.debug_log(f"Error traceback: {traceback.format_exc()}")
