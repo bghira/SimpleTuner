@@ -73,13 +73,14 @@ class TestMultiaspectImage(unittest.TestCase):
                     original_aspect_ratio = original_width / original_height
 
                     # Calculate new size
-                    new_width, new_height, new_aspect_ratio = (
+                    reformed_size, intermediary_size, new_aspect_ratio = (
                         MultiaspectImage.calculate_new_size_by_pixel_area(
                             original_aspect_ratio, mp
                         )
                     )
 
                     # Calculate the resulting megapixels
+                    new_width, new_height = reformed_size
                     resulting_mp = (new_width * new_height) / 1e6
 
                     # Check that the resulting image size is not below the specified megapixels
@@ -121,11 +122,12 @@ class TestMultiaspectImage(unittest.TestCase):
                 aspect_bucket_alignment=64,
             )
             for W, H, megapixels in test_cases:
-                W_final, H_final, new_aspect_ratio = (
+                final_size, intermediary_size, new_aspect_ratio = (
                     MultiaspectImage.calculate_new_size_by_pixel_area(
                         MultiaspectImage.calculate_image_aspect_ratio(W / H), megapixels
                     )
                 )
+                W_final, H_final = final_size
                 self.assertEqual(
                     (W_final, H_final),
                     expected_size,
@@ -165,9 +167,13 @@ class TestMultiaspectImage(unittest.TestCase):
             )
 
             for W, H, megapixels in test_cases:
-                W_final, H_final, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
-                    MultiaspectImage.calculate_image_aspect_ratio((W, H)), megapixels
+                final_size, intermediary_size, _ = (
+                    MultiaspectImage.calculate_new_size_by_pixel_area(
+                        MultiaspectImage.calculate_image_aspect_ratio((W, H)),
+                        megapixels,
+                    )
                 )
+                W_final, H_final = final_size
                 self.assertEqual(
                     (W_final, H_final),
                     expected_size,

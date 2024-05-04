@@ -224,6 +224,7 @@ class JsonMetadataBackend(MetadataBackend):
                 prepared_sample = training_sample.prepare()
                 image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
                 image_metadata["target_size"] = image.size
+                image_metadata["intermediary_size"] = prepared_sample.intermediary_size
                 # Round to avoid excessive unique buckets
                 image_metadata["aspect_ratio"] = prepared_sample.aspect_ratio
                 image_metadata["luminance"] = calculate_luminance(image)

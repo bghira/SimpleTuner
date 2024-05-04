@@ -25,7 +25,7 @@ class TestTrainingSample(unittest.TestCase):
                 "crop_aspect": "square",
                 "resolution": 512,
                 "resolution_type": "pixel",
-                "target_downsample_size": 256,
+                "target_downsample_size": 768,
                 "maximum_image_size": 1024,
                 "aspect_bucket_alignment": 8,
             }

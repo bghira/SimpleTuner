@@ -637,13 +637,19 @@ def configure_multi_databackend(
                 resolution=backend.get("resolution", args.resolution),
                 resolution_type=backend.get("resolution_type", args.resolution_type),
                 maximum_image_size=backend.get(
-                    "maximum_image_size", args.maximum_image_size
+                    "maximum_image_size",
+                    args.maximum_image_size
+                    or backend.get("resolution", args.resolution) * 1.5,
                 ),
                 target_downsample_size=backend.get(
-                    "target_downsample_size", args.target_downsample_size
+                    "target_downsample_size",
+                    args.target_downsample_size
+                    or backend.get("resolution", args.resolution) * 1.5,
                 ),
                 minimum_image_size=backend.get(
-                    "minimum_image_size", args.minimum_image_size
+                    "minimum_image_size",
+                    args.minimum_image_size
+                    or backend.get("resolution", args.resolution),
                 ),
                 vae_batch_size=args.vae_batch_size,
                 write_batch_size=args.write_batch_size,

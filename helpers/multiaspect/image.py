@@ -133,11 +133,11 @@ class MultiaspectImage:
         if type(resolution) != int and type(resolution) != float:
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
         if aspect_ratio > 1:
-            W_initial = resolution * aspect_ratio
+            W_initial = int(resolution * aspect_ratio)
             H_initial = resolution
         elif aspect_ratio < 1:
             W_initial = resolution
-            H_initial = resolution / aspect_ratio
+            H_initial = int(resolution / aspect_ratio)
         else:
             W_initial = resolution
             H_initial = resolution
@@ -153,8 +153,8 @@ class MultiaspectImage:
             )
 
         return (
-            W_adjusted,
-            H_adjusted,
+            (W_adjusted, H_adjusted),
+            (W_initial, H_initial),
             MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
         )
 
@@ -162,32 +162,50 @@ class MultiaspectImage:
     def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
+        pixels = megapixels * 1e6  # Convert megapixels to pixels
+        logger.debug(f"Converted {megapixels} megapixels to {pixels} pixels.")
+        W_initial = int(round((pixels * aspect_ratio) ** 0.5))
+        H_initial = int(round((pixels / aspect_ratio) ** 0.5))
         # Special case for 1024px (1.0) megapixel images
         if aspect_ratio == 1.0 and megapixels == 1.0:
-            return 1024, 1024, 1.0
+            return ((1024, 1024), (W_initial, H_initial), 1.0)
         # Special case for 768px (0.75mp) images
         if aspect_ratio == 1.0 and megapixels == 0.75:
-            return 768, 768, 1.0
+            return ((768, 768), (W_initial, H_initial), 1.0)
         # Special case for 512px (0.5mp) images
         if aspect_ratio == 1.0 and megapixels == 0.25:
-            return 512, 512, 1.0
-        total_pixels = max(megapixels * 1e3, 1e6)
-        W_initial = int(round((total_pixels * aspect_ratio) ** 0.5))
-        H_initial = int(round((total_pixels / aspect_ratio) ** 0.5))
+            return ((512, 512), (W_initial, H_initial), 1.0)
 
         W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
         H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
 
         # Ensure the adjusted dimensions meet the megapixel requirement
-        while W_adjusted * H_adjusted < total_pixels:
+        while W_adjusted * H_adjusted < pixels:
             W_adjusted += StateTracker.get_args().aspect_bucket_alignment
             H_adjusted = MultiaspectImage._round_to_nearest_multiple(
                 int(round(W_adjusted / aspect_ratio))
             )
 
+        # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
+        W_diff = W_adjusted - W_initial
+        H_diff = H_adjusted - H_initial
+        logger.debug(f"Differences: {W_diff}, {H_diff}")
+        if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
+            logger.debug(
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+            )
+            H_initial += W_diff
+            W_initial += W_diff
+        elif H_diff > 0 and H_diff > W_diff:
+            logger.debug(
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+            )
+            W_initial += H_diff
+            H_initial += H_diff
+
         return (
-            W_adjusted,
-            H_adjusted,
+            (W_adjusted, H_adjusted),
+            (W_initial, H_initial),
             MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
         )
 
