@@ -301,20 +301,16 @@ def configure_multi_databackend(
             StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
             logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
             # We will compute the null embedding for caption dropout here.
-            if (
-                args.caption_dropout_probability is not None
-                and args.caption_dropout_probability > 0
-            ):
-                logger.info("Pre-computing null embedding for caption dropout")
-                with accelerator.main_process_first():
-                    init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [""], return_concat=False, load_from_cache=False
-                    )
-                accelerator.wait_for_everyone()
-            else:
-                logger.warning(
-                    f"Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+            logger.info("Pre-computing null embedding")
+            with accelerator.main_process_first():
+                init_backend["text_embed_cache"].compute_embeddings_for_prompts(
+                    [""], return_concat=False, load_from_cache=False
                 )
+            accelerator.wait_for_everyone()
+        if args.caption_dropout_probability == 0.0:
+            logger.warning(
+                f"Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+            )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
         text_embed_backends[init_backend["id"]] = init_backend
