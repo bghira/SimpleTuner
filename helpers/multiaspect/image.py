@@ -131,6 +131,8 @@ class MultiaspectImage:
         if W_initial < resolution or H_initial < resolution:
             raise ValueError(
                 "Sample will not be upscaled. Image is too small to train on. Reduce your training resolution, or update the value of minimum_image_size."
+                "\nDebug details:"
+                f"\nResolution: {resolution}, size: {original_size}"
             )
         if (W_initial < H_initial and W_initial == resolution) or (
             H_initial < W_initial and H_initial == resolution
@@ -148,6 +150,29 @@ class MultiaspectImage:
         # Adjust to nearest desired interval
         W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
         H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
+
+        # If W_adjusted or H_adjusted are greater than original_size, subtract bucket alignment longer edge.
+        if W_adjusted < H_adjusted and H_adjusted > original_size[1]:
+            H_adjusted -= StateTracker.get_args().aspect_bucket_alignment
+        if H_adjusted < W_adjusted and W_adjusted > original_size[0]:
+            W_adjusted -= StateTracker.get_args().aspect_bucket_alignment
+
+        # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
+        W_diff = W_adjusted - W_initial
+        H_diff = H_adjusted - H_initial
+        logger.debug(f"Differences: {W_diff}, {H_diff}")
+        if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
+            logger.debug(
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+            )
+            H_initial += W_diff
+            W_initial += W_diff
+        elif H_diff > 0 and H_diff > W_diff:
+            logger.debug(
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+            )
+            W_initial += H_diff
+            H_initial += H_diff
 
         # Calculate adjusted sizes to align with the pixel intervals
         adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(

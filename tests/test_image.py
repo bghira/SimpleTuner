@@ -51,6 +51,59 @@ class TestMultiaspectImage(unittest.TestCase):
         with self.assertRaises(Exception):
             MultiaspectImage._resize_image(None, self.resolution)
 
+    def test_calculate_new_size_by_pixel_edge(self):
+        # Define test cases for 1.0 and 0.5 megapixels
+        test_edge_lengths = [1024, 512, 256, 64]
+        # Number of random tests to perform
+        num_random_tests = 100000
+        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+            for edge_length in test_edge_lengths:
+                mock_args.return_value = Mock(
+                    resolution_type="pixel",
+                    resolution=self.resolution,
+                    crop_style="random",
+                    aspect_bucket_rounding=2,
+                    aspect_bucket_alignment=64 if edge_length > 256 else 8,
+                )
+                for _ in range(num_random_tests):
+                    # Generate a random original width and height
+                    original_width = random.randint(edge_length, edge_length * 22)
+                    original_height = random.randint(edge_length, edge_length * 22)
+                    original_aspect_ratio = original_width / original_height
+
+                    # Calculate new size
+                    reformed_size, intermediary_size, new_aspect_ratio = (
+                        MultiaspectImage.calculate_new_size_by_pixel_edge(
+                            original_aspect_ratio,
+                            edge_length,
+                            (original_width, original_height),
+                        )
+                    )
+
+                    # Calculate the resulting megapixels
+                    new_width, new_height = reformed_size
+                    # Check that the resulting image size is not below the specified minimum edge length.
+                    self.assertTrue(
+                        min(new_width, new_height) >= edge_length,
+                        f"Final target size {new_width}x{new_height} = {min(new_width, new_height)} px is below the specified {edge_length} px from original size {original_width}x{original_height}",
+                    )
+                    # Check that the resulting image size is not below the specified minimum edge length.
+                    new_width, new_height = intermediary_size
+                    self.assertTrue(
+                        min(new_width, new_height) >= edge_length,
+                        f"Intermediary size {new_width}x{new_height} = {min(new_width, new_height)} px is below the specified {edge_length} px from original size {original_width}x{original_height}",
+                    )
+                    # Check that the intermediary size is larger than the target size.
+                    self.assertTrue(
+                        intermediary_size >= reformed_size,
+                        f"Intermediary size is less than reformed size: {intermediary_size} < {reformed_size}",
+                    )
+                    # Check that the target size is equal or smaller than the original size
+                    self.assertTrue(
+                        reformed_size <= (original_width, original_height),
+                        f"Reformed size is bigger than original size: {reformed_size} > {(original_width, original_height)}",
+                    )
+
     def test_calculate_new_size_by_pixel_area(self):
         # Define test cases for 1.0 and 0.5 megapixels
         test_megapixels = [1.0, 0.5]
