@@ -281,23 +281,6 @@ class TrainingSample:
             )
             size = target_size
             if target_size != intermediary_size:
-                # When the target size is a mismatch against the intermediary size, this means we had to adjust the resulting resolution by 8 or 64px to be trainable.
-                # We'll make sure the intermediary size is greater than the image size itself, to avoid upscaling images.
-                if (
-                    intermediary_size[0] > current_size[0]
-                    or intermediary_size[1] > current_size[1]
-                ):
-                    raise ValueError(
-                        f"Intermediary size is larger than the original image size: {intermediary_size} > {current_size}. We do not want to upscale images during training. Please adjust the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
-                    )
-                # We'll also make sure the target size is greater than the intermediary size, to avoid upscaling images.
-                if (
-                    intermediary_size[0] < target_size[0]
-                    or intermediary_size[1] < target_size[1]
-                ):
-                    raise ValueError(
-                        f"Intermediary size is smaller than the target size: {intermediary_size} < {target_size}. You can avoid this error by adjusting the dataloader parameters 'resolution' to a higher value, or 'minimum_image_size' to exclude this image from processing."
-                    )
                 # Now we can resize the image to the intermediary size.
                 logger.debug(
                     f"Before resizing to {intermediary_size}, our image is {current_size} resolution."
