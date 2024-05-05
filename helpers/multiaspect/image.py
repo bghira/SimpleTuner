@@ -4,7 +4,7 @@ from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 import logging, os, random
-from math import sqrt
+from math import sqrt, floor
 from helpers.training.state_tracker import StateTracker
 from helpers.image_manipulation.cropping import crop_handlers
 
@@ -126,62 +126,42 @@ class MultiaspectImage:
         if type(resolution) != int:
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
 
-        # Reduce original_size down to W_initial and H_initial, where the shorter edge is {resolution}
-        W_initial, H_initial = original_size
-        if W_initial < resolution or H_initial < resolution:
-            raise ValueError(
-                "Sample will not be upscaled. Image is too small to train on. Reduce your training resolution, or update the value of minimum_image_size."
-                "\nDebug details:"
-                f"\nResolution: {resolution}, size: {original_size}"
-            )
-        if (W_initial < H_initial and W_initial == resolution) or (
-            H_initial < W_initial and H_initial == resolution
-        ):
-            # If we have alignment to the target size already, we'll keep the values.
-            # But, we can't return yet, because we need to make the adjusted size as well.
-            pass
-        elif W_initial < H_initial:
-            W_initial = resolution
-            H_initial = int(round(W_initial / aspect_ratio))
-        else:
-            H_initial = resolution
-            W_initial = int(round(H_initial * aspect_ratio))
+        W_original, H_original = original_size
 
-        # Adjust to nearest desired interval
+        # Start by determining the potential initial sizes
+        if W_original < H_original:  # Portrait or square orientation
+            W_initial = resolution
+            H_initial = int(W_initial / aspect_ratio)
+        else:  # Landscape orientation
+            H_initial = resolution
+            W_initial = int(H_initial * aspect_ratio)
+
+        # Round down to ensure we do not exceed original dimensions
         W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
         H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
 
-        # If W_adjusted or H_adjusted are greater than original_size, subtract bucket alignment longer edge.
-        if W_adjusted < H_adjusted and H_adjusted > original_size[1]:
-            H_adjusted -= StateTracker.get_args().aspect_bucket_alignment
-        if H_adjusted < W_adjusted and W_adjusted > original_size[0]:
-            W_adjusted -= StateTracker.get_args().aspect_bucket_alignment
-
-        # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
-        W_diff = W_adjusted - W_initial
-        H_diff = H_adjusted - H_initial
-        logger.debug(f"Differences: {W_diff}, {H_diff}")
-        if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
+        # Intermediary size might be less than the reformed size.
+        # This situation is difficult.
+        # If the original image is roughly the size of the reformed image, and the intermediary is too small,
+        #  we can't really just boost the size of the reformed image willy-nilly. The intermediary size needs to be larger.
+        # We can't increase the intermediary size larger than the original size.
+        if W_initial < W_adjusted or H_initial < H_adjusted:
             logger.debug(
-                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} (original size: {original_size})."
             )
-            H_initial += W_diff
-            W_initial += W_diff
-        elif H_diff > 0 and H_diff > W_diff:
+            # How much leeway to we have between the intermediary size and the reformed size?
+            reformed_W_diff = W_adjusted - W_initial
+            reformed_H_diff = H_adjusted - H_initial
+            bigger_difference = max(reformed_W_diff, reformed_H_diff)
             logger.debug(
-                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+                f"We have {reformed_W_diff}x{reformed_H_diff} leeway to the reformed image {W_adjusted}x{H_adjusted} from {W_initial}x{H_initial}, adjusting by {bigger_difference}px to both sides: {W_initial + bigger_difference}x{H_initial + bigger_difference}."
             )
-            W_initial += H_diff
-            H_initial += H_diff
+            W_initial += bigger_difference
+            H_initial += bigger_difference
 
-        # Calculate adjusted sizes to align with the pixel intervals
         adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             (W_adjusted, H_adjusted)
         )
-
-        logger.debug(f"Initial size: {W_initial}x{H_initial}")
-        logger.debug(f"Adjusted size for cropping: {W_adjusted}x{H_adjusted}")
-        logger.debug(f"Aspect ratio for bucketing: {adjusted_aspect_ratio}")
 
         return (W_adjusted, H_adjusted), (W_initial, H_initial), adjusted_aspect_ratio
 

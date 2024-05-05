@@ -156,11 +156,11 @@ class TrainingSample:
             self.calculate_target_size(downsample_before_crop=True)
             # Is the image smaller than the target size? We don't want to upscale images.
             if (
-                self.image.size[0] < self.intermediary_size[0]
-                or self.image.size[1] < self.intermediary_size[1]
+                self.image.size[0] * 1.25 < self.intermediary_size[0]
+                or self.image.size[1] * 1.25 < self.intermediary_size[1]
             ):
                 raise ValueError(
-                    f"Image is smaller than the intermediary size: {self.image.size} < {self.intermediary_size}. You can avoid this error by adjusting the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
+                    f"Image is much smaller than the intermediary size: {self.image.size} < {self.intermediary_size}. You can avoid this error by adjusting the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
                 )
             logger.debug(
                 f"Downsampling image from {self.image.size} to {self.intermediary_size} before cropping."
