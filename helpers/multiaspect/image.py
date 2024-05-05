@@ -126,15 +126,24 @@ class MultiaspectImage:
         if type(resolution) != int:
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
 
-        if aspect_ratio > 1:
-            W_initial = int(resolution * aspect_ratio)
-            H_initial = resolution
-        elif aspect_ratio < 1:
+        # Reduce original_size down to W_initial and H_initial, where the shorter edge is {resolution}
+        W_initial, H_initial = original_size
+        if W_initial < resolution or H_initial < resolution:
+            raise ValueError(
+                "Sample will not be upscaled. Image is too small to train on. Reduce your training resolution, or update the value of minimum_image_size."
+            )
+        if (W_initial < H_initial and W_initial == resolution) or (
+            H_initial < W_initial and H_initial == resolution
+        ):
+            # If we have alignment to the target size already, we'll keep the values.
+            # But, we can't return yet, because we need to make the adjusted size as well.
+            pass
+        elif W_initial < H_initial:
             W_initial = resolution
-            H_initial = int(resolution / aspect_ratio)
+            H_initial = int(round(W_initial / aspect_ratio))
         else:
-            W_initial = resolution
             H_initial = resolution
+            W_initial = int(round(H_initial * aspect_ratio))
 
         # Adjust to nearest desired interval
         W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
