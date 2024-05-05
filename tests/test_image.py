@@ -67,8 +67,8 @@ class TestMultiaspectImage(unittest.TestCase):
                 )
                 for _ in range(num_random_tests):
                     # Generate a random original width and height
-                    original_width = random.randint(edge_length, edge_length * 22)
-                    original_height = random.randint(edge_length, edge_length * 22)
+                    original_width = random.randint(edge_length, edge_length * 50)
+                    original_height = random.randint(edge_length, edge_length * 50)
                     original_aspect_ratio = original_width / original_height
 
                     # Calculate new size
@@ -103,6 +103,59 @@ class TestMultiaspectImage(unittest.TestCase):
                         reformed_size <= (original_width, original_height),
                         f"Reformed size is bigger than original size: {reformed_size} > {(original_width, original_height)}",
                     )
+
+    def test_calculate_batch_size_by_pixel_edge(self):
+        test_edge_lengths = [1024, 512, 256, 64]
+        num_images_per_batch = 100
+        fixed_aspect_ratio = 1.5  # Example fixed aspect ratio for all test cases
+
+        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+            for edge_length in test_edge_lengths:
+                mock_args.return_value = Mock(
+                    resolution_type="pixel",
+                    resolution=edge_length,
+                    crop_style="random",
+                    aspect_bucket_rounding=2,
+                    aspect_bucket_alignment=64 if edge_length > 256 else 8,
+                )
+
+                # Generate a batch of original sizes correctly adhering to the fixed aspect ratio
+                original_sizes = []
+                for _ in range(num_images_per_batch):
+                    # Generate a random height and calculate the corresponding width
+                    height = random.randint(edge_length, edge_length * 50)
+                    width = int(height * fixed_aspect_ratio)
+                    original_sizes.append((width, height))
+                # print(f"Original sizes: {original_sizes}")
+                # print(f"Aspect ratios: {[w/h for w, h in original_sizes]}")
+
+                # Ensure aspect ratios are correctly calculated
+                for width, height in original_sizes:
+                    calculated_aspect_ratio = width / height
+                    self.assertAlmostEqual(
+                        calculated_aspect_ratio,
+                        fixed_aspect_ratio,
+                        msg=f"Generated size {width}x{height} has aspect ratio {calculated_aspect_ratio}, expected {fixed_aspect_ratio}",
+                        places=1,  # Allow some small tolerance for floating-point precision
+                    )
+
+                first_aspect_ratio = None
+                first_reformed_size = None
+                for original_width, original_height in original_sizes:
+                    reformed_size, intermediary_size, new_aspect_ratio = (
+                        MultiaspectImage.calculate_new_size_by_pixel_edge(
+                            fixed_aspect_ratio,
+                            edge_length,
+                            (original_width, original_height),
+                        )
+                    )
+                    if first_reformed_size is None:
+                        first_reformed_size = reformed_size
+                    if first_aspect_ratio is None:
+                        first_aspect_ratio = new_aspect_ratio
+                    self.assertEqual(new_aspect_ratio, fixed_aspect_ratio)
+                    self.assertEqual(first_reformed_size, reformed_size)
+                    self.assertEqual(first_aspect_ratio, new_aspect_ratio)
 
     def test_calculate_new_size_by_pixel_area(self):
         # Define test cases for 1.0 and 0.5 megapixels
