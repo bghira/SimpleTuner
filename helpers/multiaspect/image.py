@@ -118,20 +118,14 @@ class MultiaspectImage:
             raise ValueError(f"Unknown resolution type: {resolution_type}")
 
     @staticmethod
-    def calculate_new_size_by_pixel_edge(aspect_ratio: float, resolution: int):
-        """
-        Calculate the width, height, and new AR of a pixel-aligned size, where resolution is the smaller edge length.
-
-        Args:
-            aspect_ratio (float): The aspect ratio of the image.
-            resolution (int): The resolution of the smaller edge of the image.
-
-        return int(W), int(H), new_aspect_ratio
-        """
+    def calculate_new_size_by_pixel_edge(
+        aspect_ratio: float, resolution: int, original_size: tuple
+    ):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
-        if type(resolution) != int and type(resolution) != float:
+        if type(resolution) != int:
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
+
         if aspect_ratio > 1:
             W_initial = int(resolution * aspect_ratio)
             H_initial = resolution
@@ -142,24 +136,25 @@ class MultiaspectImage:
             W_initial = resolution
             H_initial = resolution
 
+        # Adjust to nearest desired interval
         W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
         H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
 
-        # Ensure the adjusted dimensions meet the resolution requirement
-        while min(W_adjusted, H_adjusted) < resolution:
-            W_adjusted += StateTracker.get_args().aspect_bucket_alignment
-            H_adjusted = MultiaspectImage._round_to_nearest_multiple(
-                int(round(W_adjusted * aspect_ratio))
-            )
-
-        return (
-            (W_adjusted, H_adjusted),
-            (W_initial, H_initial),
-            MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
+        # Calculate adjusted sizes to align with the pixel intervals
+        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            (W_adjusted, H_adjusted)
         )
 
+        logger.debug(f"Initial size: {W_initial}x{H_initial}")
+        logger.debug(f"Adjusted size for cropping: {W_adjusted}x{H_adjusted}")
+        logger.debug(f"Aspect ratio for bucketing: {adjusted_aspect_ratio}")
+
+        return (W_adjusted, H_adjusted), (W_initial, H_initial), adjusted_aspect_ratio
+
     @staticmethod
-    def calculate_new_size_by_pixel_area(aspect_ratio: float, megapixels: float):
+    def calculate_new_size_by_pixel_area(
+        aspect_ratio: float, megapixels: float, original_size: tuple
+    ):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
         pixels = megapixels * 1e6  # Convert megapixels to pixels

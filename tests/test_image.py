@@ -75,7 +75,7 @@ class TestMultiaspectImage(unittest.TestCase):
                     # Calculate new size
                     reformed_size, intermediary_size, new_aspect_ratio = (
                         MultiaspectImage.calculate_new_size_by_pixel_area(
-                            original_aspect_ratio, mp
+                            original_aspect_ratio, mp, (original_width, original_height)
                         )
                     )
 
@@ -124,7 +124,9 @@ class TestMultiaspectImage(unittest.TestCase):
             for W, H, megapixels in test_cases:
                 final_size, intermediary_size, new_aspect_ratio = (
                     MultiaspectImage.calculate_new_size_by_pixel_area(
-                        MultiaspectImage.calculate_image_aspect_ratio(W / H), megapixels
+                        MultiaspectImage.calculate_image_aspect_ratio(W / H),
+                        megapixels,
+                        (W, H),
                     )
                 )
                 W_final, H_final = final_size
@@ -171,6 +173,7 @@ class TestMultiaspectImage(unittest.TestCase):
                     MultiaspectImage.calculate_new_size_by_pixel_area(
                         MultiaspectImage.calculate_image_aspect_ratio((W, H)),
                         megapixels,
+                        (W, H),
                     )
                 )
                 W_final, H_final = final_size

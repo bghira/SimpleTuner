@@ -201,7 +201,7 @@ class TrainingSample:
         if downsample_before_crop and self.target_downsample_size is not None:
             self.target_size, self.intermediary_size, self.aspect_ratio = (
                 self.target_size_calculator(
-                    self.aspect_ratio, self.target_downsample_size
+                    self.aspect_ratio, self.target_downsample_size, self.original_size
                 )
             )
             logger.debug(
@@ -209,7 +209,9 @@ class TrainingSample:
             )
         else:
             self.target_size, self.intermediary_size, self.aspect_ratio = (
-                self.target_size_calculator(self.aspect_ratio, self.resolution)
+                self.target_size_calculator(
+                    self.aspect_ratio, self.resolution, self.original_size
+                )
             )
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
