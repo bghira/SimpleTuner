@@ -167,6 +167,10 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     filename_column = parquet_config.get(
         "filename_column", args.parquet_filename_column or "id"
     )
+    identifier_includes_extension = parquet_config.get(
+        "identifier_includes_extension", False
+    )
+
     # Check the columns exist
     if caption_column not in df.columns:
         raise ValueError(
@@ -196,7 +200,14 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
         )
     # Store the database in StateTracker
     StateTracker.set_parquet_database(
-        backend["id"], (df, filename_column, caption_column, fallback_caption_column)
+        backend["id"],
+        (
+            df,
+            filename_column,
+            caption_column,
+            fallback_caption_column,
+            identifier_includes_extension,
+        ),
     )
     logger.info(
         f"Configured parquet database for backend {backend['id']}. Caption column: {caption_column}. Filename column: {filename_column}."
@@ -301,20 +312,16 @@ def configure_multi_databackend(
             StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
             logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
             # We will compute the null embedding for caption dropout here.
-            if (
-                args.caption_dropout_probability is not None
-                and args.caption_dropout_probability > 0
-            ):
-                logger.info("Pre-computing null embedding for caption dropout")
-                with accelerator.main_process_first():
-                    init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [""], return_concat=False, load_from_cache=False
-                    )
-                accelerator.wait_for_everyone()
-            else:
-                logger.warning(
-                    f"Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+            logger.info("Pre-computing null embedding")
+            with accelerator.main_process_first():
+                init_backend["text_embed_cache"].compute_embeddings_for_prompts(
+                    [""], return_concat=False, load_from_cache=False
                 )
+            accelerator.wait_for_everyone()
+        if args.caption_dropout_probability == 0.0:
+            logger.warning(
+                f"Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+            )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
         text_embed_backends[init_backend["id"]] = init_backend
@@ -637,13 +644,19 @@ def configure_multi_databackend(
                 resolution=backend.get("resolution", args.resolution),
                 resolution_type=backend.get("resolution_type", args.resolution_type),
                 maximum_image_size=backend.get(
-                    "maximum_image_size", args.maximum_image_size
+                    "maximum_image_size",
+                    args.maximum_image_size
+                    or backend.get("resolution", args.resolution) * 1.5,
                 ),
                 target_downsample_size=backend.get(
-                    "target_downsample_size", args.target_downsample_size
+                    "target_downsample_size",
+                    args.target_downsample_size
+                    or backend.get("resolution", args.resolution) * 1.5,
                 ),
                 minimum_image_size=backend.get(
-                    "minimum_image_size", args.minimum_image_size
+                    "minimum_image_size",
+                    args.minimum_image_size
+                    or backend.get("resolution", args.resolution),
                 ),
                 vae_batch_size=args.vae_batch_size,
                 write_batch_size=args.write_batch_size,

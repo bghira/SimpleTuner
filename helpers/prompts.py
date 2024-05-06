@@ -244,7 +244,10 @@ class PromptHandler:
             filename_column,
             caption_column,
             fallback_caption_column,
+            identifier_includes_extension,
         ) = StateTracker.get_parquet_database(sampler_backend_id)
+        if identifier_includes_extension:
+            image_filename_stem = image_path
         # parquet_db is a dataframe. let's find the row that matches the image filename.
         if parquet_db is None:
             raise ValueError(

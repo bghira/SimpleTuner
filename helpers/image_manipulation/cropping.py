@@ -1,4 +1,8 @@
 from PIL import Image
+import logging, os
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class BaseCropping:
@@ -11,9 +15,35 @@ class BaseCropping:
             self.original_width, self.original_height = self.image_metadata[
                 "original_size"
             ]
+        logger.debug(
+            "Cropper intialized with image size: %s x %s",
+            self.original_width,
+            self.original_height,
+        )
 
     def crop(self, target_width, target_height):
         raise NotImplementedError("Subclasses must implement this method")
+
+    def set_image(self, image: Image = None, image_metadata: dict = None):
+        logger.debug(
+            f"Cropper image being refreshed. Before size: {self.original_width} x {self.original_height}"
+        )
+        if image is not None:
+            self.image = image
+            self.original_width, self.original_height = self.image.size
+        if image_metadata:
+            self.original_width, self.original_height = image_metadata["original_size"]
+
+    def set_image_metadata(self, image_metadata: dict):
+        logger.debug(
+            f"Cropper image metadata being refreshed. Before size: {self.original_width} x {self.original_height}"
+        )
+        self.image_metadata = image_metadata
+        self.original_width, self.original_height = self.image_metadata["original_size"]
+        if "current_size" in self.image_metadata:
+            self.original_width, self.original_height = self.image_metadata[
+                "current_size"
+            ]
 
 
 class CornerCropping(BaseCropping):
@@ -23,9 +53,9 @@ class CornerCropping(BaseCropping):
         right = self.original_width
         bottom = self.original_height
         if self.image:
-            return self.image.crop((left, top, right, bottom)), (left, top)
+            return self.image.crop((left, top, right, bottom)), (top, left)
         elif self.image_metadata:
-            return self.image_metadata, (left, top)
+            return self.image_metadata, (top, left)
 
 
 class CenterCropping(BaseCropping):
@@ -35,9 +65,9 @@ class CenterCropping(BaseCropping):
         right = (self.original_width + target_width) / 2
         bottom = (self.original_height + target_height) / 2
         if self.image:
-            return self.image.crop((left, top, right, bottom)), (left, top)
+            return self.image.crop((left, top, right, bottom)), (top, left)
         elif self.image_metadata:
-            return self.image_metadata, (left, top)
+            return self.image_metadata, (top, left)
 
 
 class RandomCropping(BaseCropping):
@@ -46,12 +76,15 @@ class RandomCropping(BaseCropping):
 
         left = random.randint(0, max(0, self.original_width - target_width))
         top = random.randint(0, max(0, self.original_height - target_height))
+        logger.debug(
+            f"Random cropping from {left}, {top} - {self.original_width}x{self.original_height} to {target_width}x{target_height}"
+        )
         right = left + target_width
         bottom = top + target_height
         if self.image:
-            return self.image.crop((left, top, right, bottom)), (left, top)
+            return self.image.crop((left, top, right, bottom)), (top, left)
         elif self.image_metadata:
-            return self.image_metadata, (left, top)
+            return self.image_metadata, (top, left)
 
 
 class FaceCropping(RandomCropping):
@@ -82,7 +115,7 @@ class FaceCropping(RandomCropping):
             right = min(image.shape[1], x + 1.5 * w)
             bottom = min(image.shape[0], y + 1.5 * h)
             image = Image.fromarray(image)
-            return image.crop((left, top, right, bottom)), (left, top)
+            return image.crop((left, top, right, bottom)), (top, left)
         else:
             # Crop the image from a random position
             return super.crop(image, target_width, target_height)

@@ -59,7 +59,9 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_output import (
 
 
 if is_invisible_watermark_available():
-    from .watermark import StableDiffusionXLWatermarker
+    from diffusers.pipelines.stable_diffusion_xl.watermark import (
+        StableDiffusionXLWatermarker,
+    )
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm

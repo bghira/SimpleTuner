@@ -242,9 +242,13 @@ def log_validations(
                 or args.num_validation_images <= 0
             ):
                 return
-            logger.debug(
-                f"We have valid prompts to process, this is looking better for our decision tree.."
-            )
+            logger.debug(f"We have valid prompts to process.")
+            if StateTracker.get_webhook_handler() is not None:
+                StateTracker.get_webhook_handler().send(
+                    message=f"Validations are generating.. this might take a minute! 🖼️",
+                    message_level="info",
+                )
+
             # create pipeline
             if validation_type == "validation" and args.use_ema:
                 # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
@@ -477,7 +481,7 @@ def log_validations(
 
                 if validation_sample is not None:
                     # Resize the input sample so that we can validate the model's upscaling performance.
-                    width, height, _ = (
+                    target_size, intermediary_size, aspect_ratio = (
                         MultiaspectImage.calculate_new_size_by_pixel_edge(
                             MultiaspectImage.calculate_image_aspect_ratio(
                                 validation_sample.size[0] / validation_sample.size[1]
@@ -486,7 +490,7 @@ def log_validations(
                         )
                     )
                     extra_validation_kwargs["image"] = validation_sample.resize(
-                        (width, height)
+                        target_size
                     )
 
                 validation_resolutions = (
@@ -533,6 +537,12 @@ def log_validations(
                             val_save_dir,
                             f"step_{global_step}_{validation_shortname}_{str(validation_resolutions[validation_img_idx])}.png",
                         )
+                    )
+                if StateTracker.get_webhook_handler() is not None:
+                    StateTracker.get_webhook_handler().send(
+                        f"Validation image for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
+                        f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`",
+                        images=validation_images[validation_shortname],
                     )
 
                 logger.debug(f"Completed generating image: {validation_prompt}")

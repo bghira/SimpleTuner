@@ -735,19 +735,27 @@ class MetadataBackend:
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
         logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")
-        for cache_file, cache_content in vae_cache.scan_cache_contents():
-            if cache_content is None:
-                continue
-            if vae_cache_behavior == "sync":
-                # Sync aspect buckets with the cache
-                expected_bucket = str(self._get_aspect_ratio_from_tensor(cache_content))
-                self._modify_cache_entry_bucket(cache_file, expected_bucket)
-            elif vae_cache_behavior == "recreate":
-                # Delete the cache file if it doesn't match the aspect bucket indices
-                if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
-                    threading.Thread(
-                        target=self.data_backend.delete, args=(cache_file,), daemon=True
-                    ).start()
+        try:
+            for cache_file, cache_content in vae_cache.scan_cache_contents():
+                if cache_content is None:
+                    continue
+                if vae_cache_behavior == "sync":
+                    # Sync aspect buckets with the cache
+                    expected_bucket = str(
+                        self._get_aspect_ratio_from_tensor(cache_content)
+                    )
+                    self._modify_cache_entry_bucket(cache_file, expected_bucket)
+                elif vae_cache_behavior == "recreate":
+                    # Delete the cache file if it doesn't match the aspect bucket indices
+                    if self.is_cache_inconsistent(vae_cache, cache_file, cache_content):
+                        threading.Thread(
+                            target=self.data_backend.delete,
+                            args=(cache_file,),
+                            daemon=True,
+                        ).start()
+        except Exception as e:
+            logger.debug(f"Error running VAE cache scan: {e}")
+            return
 
         # Update any state or metadata post-processing
         self.save_cache()
@@ -806,14 +814,13 @@ class MetadataBackend:
             )
             return True
         target_resolution = tuple(metadata_target_size)
-        recalculated_width, recalculated_height, recalculated_aspect_ratio = (
+        recalculated_target_resolution, intermediary_size, recalculated_aspect_ratio = (
             self._recalculate_target_resolution(
                 original_aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
                     original_resolution
                 )
             )
         )
-        recalculated_target_resolution = (recalculated_width, recalculated_height)
         logger.debug(
             f"Original resolution: {original_resolution}, Target resolution: {target_resolution}, Recalculated target resolution: {recalculated_target_resolution}"
         )

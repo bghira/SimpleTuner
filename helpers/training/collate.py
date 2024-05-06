@@ -21,19 +21,19 @@ def debug_log(msg: str):
 
 
 def compute_time_ids(
-    original_size: tuple,
+    intermediary_size: tuple,
     target_size: tuple,
     weight_dtype,
     vae_downscale_factor: int = 8,
     crop_coordinates: list = None,
 ):
-    if original_size is None or target_size is None:
+    if intermediary_size is None or target_size is None:
         raise Exception(
-            f"Cannot continue, the original_size or target_size were not provided: {original_size}, {target_size}"
+            f"Cannot continue, the intermediary_size or target_size were not provided: {intermediary_size}, {target_size}"
         )
     logger.debug(
         f"Computing time ids for:"
-        f"\n-> original_size = {original_size}"
+        f"\n-> intermediary_size = {intermediary_size}"
         f"\n-> target_size = {target_size}"
     )
     # The dimensions of tensors are "transposed", as:
@@ -42,8 +42,8 @@ def compute_time_ids(
     # (width, height)
     # SDXL conditions are:
     # [h, w, h, w, h, w]
-    original_width = original_size[0]
-    original_height = original_size[1]
+    original_width = intermediary_size[0]
+    original_height = intermediary_size[1]
     target_width = int(target_size[2] * vae_downscale_factor)
     target_height = int(target_size[1] * vae_downscale_factor)
     final_target_size = (target_height, target_width)
@@ -215,8 +215,12 @@ def gather_conditional_size_features(examples, latents, weight_dtype):
 
     for idx, example in enumerate(examples):
         # Compute time IDs for all examples
+        # - We use the intermediary size as the original size for SDXL.
+        # - This is because we first resize to intermediary_size before cropping.
         time_ids = compute_time_ids(
-            original_size=tuple(example["original_size"]),
+            intermediary_size=tuple(
+                example.get("intermediary_size", example.get("original_size"))
+            ),
             target_size=latents[idx].shape,
             crop_coordinates=example["crop_coordinates"],
             weight_dtype=weight_dtype,

@@ -160,6 +160,19 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
     StateTracker.set_accelerator(accelerator)
+    if args.webhook_config is not None:
+        from helpers.webhooks.handler import WebhookHandler
+
+        webhook_handler = WebhookHandler(
+            args.webhook_config,
+            accelerator,
+            f"{args.tracker_project_name} {args.tracker_run_name}",
+        )
+        StateTracker.set_webhook_handler(webhook_handler)
+        webhook_handler.send(
+            message="SimpleTuner has launched. Hold onto your butts!",
+            store_response=True,
+        )
 
     # Make one log on every process with the configuration for debugging.
     # logger.info(accelerator.state, main_process_only=True)
@@ -326,6 +339,10 @@ def main():
     text_encoder_1.requires_grad_(False)
     text_encoder_2.requires_grad_(False)
     logger.info("Creating the U-net..")
+    if webhook_handler is not None:
+        webhook_handler.send(
+            message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
+        )
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
@@ -341,6 +358,11 @@ def main():
                 logger.warn(
                     "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
                 )
+                if webhook_handler is not None:
+                    webhook_handler.send(
+                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
+                        message_level="warning",
+                    )
             unet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError(
@@ -349,6 +371,8 @@ def main():
 
     if "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
+        if webhook_handler is not None:
+            webhook_handler.send(message="Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
@@ -424,6 +448,10 @@ def main():
         )
 
     try:
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message="Configuring data backends... (this may take a while!)"
+            )
         configure_multi_databackend(
             args,
             accelerator=accelerator,
@@ -435,6 +463,10 @@ def main():
         import traceback
 
         logger.error(f"{e}, traceback: {traceback.format_exc()}")
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message=f"Failed to load data backends: {e}", message_level="critical"
+            )
 
         sys.exit(0)
 
@@ -493,6 +525,10 @@ def main():
     logger.info(
         f"Collected the following data backends: {list(StateTracker.get_data_backends().keys())}"
     )
+    if webhook_handler is not None:
+        webhook_handler.send(
+            message=f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
+        )
     total_num_batches = sum(
         [
             len(backend["metadata_backend"] if "metadata_backend" in backend else [])
@@ -833,6 +869,8 @@ def main():
         logger.info(f"Loading our accelerator...")
         if torch.backends.mps.is_available():
             accelerator.native_amp = False
+        if webhook_handler is not None:
+            webhook_handler.send(message="Moving weights to GPU...")
         results = accelerator.prepare(
             unet, lr_scheduler, optimizer, train_dataloaders[0]
         )
@@ -1010,27 +1048,30 @@ def main():
                 }
             },
         )
-    logger.info("***** Running training *****")
+    initial_msg = "\n***** Running training *****"
     total_num_batches = sum(
         [
             len(backend["train_dataset"] if "train_dataset" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    logger.info(f" -> Num batches = {total_num_batches}")
-    logger.info(f" -> Num Epochs = {args.num_train_epochs}")
-    logger.info(f" -> Current Epoch = {first_epoch}")
-    logger.info(f" -> Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(f" -> Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(
-        f"   -> Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    initial_msg += f"\n-  Num batches = {total_num_batches}, unet dtype: `{unet.dtype}`"
+
+    initial_msg += f"\n-  Num Epochs = {args.num_train_epochs}"
+    initial_msg += f"\n-  Current Epoch = {first_epoch}"
+    initial_msg += f"\n-  Instantaneous batch size per device = {args.train_batch_size}"
+    initial_msg += (
+        f"\n-  Gradient Accumulation steps = {args.gradient_accumulation_steps}"
     )
-    logger.info(f" -> Total optimization steps = {args.max_train_steps}")
+    initial_msg += f"\n-  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    initial_msg += f"\n-  Total optimization steps = {args.max_train_steps}"
     if global_step > 1:
-        logger.info(f" -> Steps completed: {global_step}")
-    logger.info(
-        f" -> Total optimization steps remaining = {total_steps_remaining_at_start}"
+        initial_msg += f"\n  - Steps completed: {global_step}"
+    initial_msg += (
+        f"\n-  Total optimization steps remaining = {total_steps_remaining_at_start}"
     )
+    logger.info(initial_msg)
+    webhook_handler.send(message=initial_msg)
 
     # Only show the progress bar once on each machine.
     show_progress_bar = True
@@ -1381,11 +1422,19 @@ def main():
                     logs,
                     step=global_step,
                 )
+                if webhook_handler is not None:
+                    webhook_pending_msg = f"Step {global_step} of {args.max_train_steps}: loss {round(loss.item(), 2)}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(train_loss, 2)}"
+
                 # Reset some values for the next go.
                 training_luminance_values = []
                 train_loss = 0.0
 
                 if global_step % args.checkpointing_steps == 0:
+                    if webhook_handler is not None:
+                        webhook_handler.send(
+                            message=f"Checkpoint: `{webhook_pending_msg}`",
+                            message_level="info",
+                        )
                     if accelerator.is_main_process:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
@@ -1507,6 +1556,9 @@ def main():
             ema_unet.copy_to(unet.parameters())
 
         if StateTracker.get_vae() is None:
+            if webhook_handler is not None:
+                webhook_handler.send(message="Loading VAE..")
+
             StateTracker.set_vae(
                 AutoencoderKL.from_pretrained(
                     vae_path,
@@ -1627,4 +1679,11 @@ if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.set_start_method("fork")
-    main()
+    try:
+        main()
+    except Exception as e:
+        if StateTracker.get_webhook_handler() is not None:
+            StateTracker.get_webhook_handler().send(
+                message=f"Training has failed. Please check the logs for more information: {e}"
+            )
+        logger.error(e)
