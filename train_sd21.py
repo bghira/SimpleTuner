@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from helpers import log_format
-
 import shutil, hashlib, random, itertools, logging, math, os, json, copy, sys
 
 # Quiet down, you.
@@ -132,6 +131,7 @@ def main():
     StateTracker.set_model_type("legacy")
     args = parse_args()
     StateTracker.set_args(args)
+
     if not args.preserve_data_backend_cache:
         StateTracker.delete_cache_files(
             preserve_data_backend_cache=args.preserve_data_backend_cache
@@ -156,6 +156,19 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
     StateTracker.set_accelerator(accelerator)
+    if args.webhook_config is not None:
+        from helpers.webhooks.handler import WebhookHandler
+
+        webhook_handler = WebhookHandler(
+            args.webhook_config,
+            accelerator,
+            f"{args.tracker_project_name} {args.tracker_run_name}",
+        )
+        StateTracker.set_webhook_handler(webhook_handler)
+        webhook_handler.send(
+            message="SimpleTuner has launched. Hold onto your butts!",
+            store_response=True,
+        )
 
     # Make one log on every process with the configuration for debugging.
     logger.info(accelerator.state, main_process_only=False)
@@ -301,6 +314,11 @@ def main():
             vae.requires_grad_(False)
         else:
             vae = None
+    if webhook_handler is not None:
+        webhook_handler.send(
+            message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
+        )
+
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     ).to(weight_dtype)
@@ -322,10 +340,18 @@ def main():
                 logger.warn(
                     "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
                 )
+                if webhook_handler is not None:
+                    webhook_handler.send(
+                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
+                        message_level="warning",
+                    )
+
             unet.enable_xformers_memory_efficient_attention()
 
     if "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
+        if webhook_handler is not None:
+            webhook_handler.send(message="Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
         unet.requires_grad_(False)
@@ -594,6 +620,10 @@ def main():
         )
 
     try:
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message="Configuring data backends... (this may take a while!)"
+            )
         configure_multi_databackend(
             args,
             accelerator,
@@ -605,6 +635,10 @@ def main():
         import traceback
 
         logging.error(f"{e}, traceback: {traceback.format_exc()}")
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message=f"Failed to load data backends: {e}", message_level="critical"
+            )
         sys.exit(0)
 
     with accelerator.main_process_first():
@@ -628,6 +662,11 @@ def main():
     logger.info(
         f"Collected the following data backends: {StateTracker.get_data_backends()}"
     )
+    if webhook_handler is not None:
+        webhook_handler.send(
+            message=f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
+        )
+
     total_num_batches = sum(
         [
             len(backend["metadata_backend"] if "metadata_backend" in backend else [])
@@ -736,6 +775,8 @@ def main():
     ema_unet = None
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
+        if accelerator.is_main_process and webhook_handler is not None:
+            webhook_handler.send(message="Creating EMA model.")
         ema_unet = EMAModel(
             unet.parameters(),
             model_cls=UNet2DConditionModel,
@@ -763,6 +804,8 @@ def main():
     # Base components to prepare
     if torch.backends.mps.is_available():
         accelerator.native_amp = False
+    if webhook_handler is not None:
+        webhook_handler.send(message="Moving weights to GPU...")
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
     if torch.backends.mps.is_available() or args.unet_attention_slice:
@@ -915,28 +958,31 @@ def main():
                 }
             },
         )
-    logger.info("***** Running training *****")
+
+    initial_msg = "\n***** Running training *****"
     total_num_batches = sum(
         [
             len(backend["train_dataset"] if "train_dataset" in backend else [])
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    logger.info(f"  Num batches = {total_num_batches}, unet dtype: {unet.dtype}")
-    logger.info(f"  Num Epochs = {args.num_train_epochs}")
-    logger.info(f"  Current Epoch = {first_epoch}")
-    logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(
-        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
-    )
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
-    if global_step > 1:
-        logger.info(f" -> Steps completed: {global_step}")
-    logger.info(
-        f"  Total optimization steps remaining = {total_steps_remaining_at_start}"
-    )
+    initial_msg += f"\n-  Num batches = {total_num_batches}, unet dtype: `{unet.dtype}`"
 
+    initial_msg += f"\n-  Num Epochs = {args.num_train_epochs}"
+    initial_msg += f"\n-  Current Epoch = {first_epoch}"
+    initial_msg += f"\n-  Instantaneous batch size per device = {args.train_batch_size}"
+    initial_msg += (
+        f"\n-  Gradient Accumulation steps = {args.gradient_accumulation_steps}"
+    )
+    initial_msg += f"\n-  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
+    initial_msg += f"\n-  Total optimization steps = {args.max_train_steps}"
+    if global_step > 1:
+        initial_msg += f"\n  - Steps completed: {global_step}"
+    initial_msg += (
+        f"\n-  Total optimization steps remaining = {total_steps_remaining_at_start}"
+    )
+    logger.info(initial_msg)
+    webhook_handler.send(message=initial_msg)
     # Only show the progress bar once on each machine.
     show_progress_bar = True
     if not accelerator.is_local_main_process:
@@ -1292,6 +1338,8 @@ def main():
                     logs,
                     step=global_step,
                 )
+                if webhook_handler is not None:
+                    webhook_pending_msg = f"Step {global_step} of {args.max_train_steps}: loss {round(loss.item(), 2)}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(train_loss, 2)}"
                 # Reset some values for the next go.
                 training_luminance_values = []
                 train_loss = 0.0
@@ -1311,6 +1359,11 @@ def main():
 
                 if global_step % args.checkpointing_steps == 0:
                     if accelerator.is_main_process:
+                        if webhook_handler is not None:
+                            webhook_handler.send(
+                                message=f"Checkpoint: `{webhook_pending_msg}`",
+                                message_level="info",
+                            )
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
                             checkpoints = os.listdir(args.output_dir)
@@ -1420,7 +1473,6 @@ def main():
                 text_encoder_lora_layers=text_encoder_lora_layers,
             )
 
-            del unet
             del text_encoder_lora_layers
             torch.cuda.empty_cache()
 
@@ -1428,6 +1480,8 @@ def main():
             ema_unet.copy_to(unet.parameters())
 
         if StateTracker.get_vae() is None and "deepfloyd" not in args.model_type:
+            if webhook_handler is not None:
+                webhook_handler.send(message="Loading VAE..")
             StateTracker.set_vae(
                 AutoencoderKL.from_pretrained(
                     args.pretrained_vae_model_name_or_path,
@@ -1448,6 +1502,8 @@ def main():
                 text_encoder=text_encoder,
                 unet=unet,
                 revision=args.revision,
+                safety_checker=None,
+                watermarker=None,
             )
         else:
             pipeline = StableDiffusionPipeline.from_pretrained(
@@ -1456,25 +1512,26 @@ def main():
                 vae=StateTracker.get_vae(),
                 unet=unet,
                 revision=args.revision,
+                safety_checker=None,
+            )
+            pipeline.scheduler = SCHEDULER_NAME_MAP[
+                args.validation_noise_scheduler
+            ].from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="scheduler",
+                prediction_type=args.prediction_type,
+                timestep_spacing="trailing",
+                rescale_betas_zero_snr=True,
             )
 
         pipeline.set_progress_bar_config(disable=True)
-        pipeline.scheduler = SCHEDULER_NAME_MAP[
-            args.validation_noise_scheduler
-        ].from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            prediction_type=args.prediction_type,
-            timestep_spacing="trailing",
-            rescale_betas_zero_snr=True,
-        )
         if "full" in args.model_type:
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
                 safe_serialization=True,
             )
-        elif "lora" in args.model_type:
-            pipeline.save_lora_weights(args.output_dir)
+        # elif "lora" in args.model_type:
+        #     pipeline.load_lora_weights(args.output_dir)
 
         if args.push_to_hub:
             repo_id = create_repo(
@@ -1502,6 +1559,10 @@ def main():
             )
 
         if validation_prompts:
+            if webhook_handler is not None:
+                webhook_handler.send(
+                    message=f"Training has completed after {current_epoch} epochs and {global_step} steps. Generating validation images.."
+                )
             validation_images = []
             pipeline = pipeline.to(
                 accelerator.device,
@@ -1513,24 +1574,20 @@ def main():
             )
             if "vae" in pipeline.components:
                 pipeline.components["vae"].to(vae_dtype)
-            pipeline.scheduler = SCHEDULER_NAME_MAP[
-                args.validation_noise_scheduler
-            ].from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="scheduler",
-                prediction_type=args.prediction_type,
-                timestep_spacing="trailing",
-                rescale_betas_zero_snr=True,
-            )
 
             autocast_ctx = accelerator.autocast()
+            extra_pipeline_kwargs = {}
+            if "deepfloyd" not in args.model_type:
+                extra_pipeline_kwargs["guidance_rescale"] = (
+                    args.validation_guidance_rescale
+                )
 
             with autocast_ctx:
                 validation_generator = torch.Generator(
                     device=accelerator.device
                 ).manual_seed(args.seed or 0)
-                for validation_prompt in tqdm(
-                    validation_prompts, desc="Generating validation images"
+                for validation_prompt_idx, validation_prompt in tqdm(
+                    enumerate(validation_prompts), desc="Generating validation images"
                 ):
                     # Each validation prompt needs its own embed.
                     current_validation_prompt_embeds = StateTracker.get_default_text_embed_cache().compute_embeddings_for_prompts(
@@ -1538,6 +1595,7 @@ def main():
                     )[
                         0
                     ]
+                    validation_shortname = validation_shortnames[validation_prompt_idx]
                     validation_images.extend(
                         pipeline(
                             prompt_embeds=current_validation_prompt_embeds,
@@ -1545,12 +1603,18 @@ def main():
                             num_images_per_prompt=1,
                             num_inference_steps=args.validation_num_inference_steps,
                             guidance_scale=args.validation_guidance,
-                            guidance_rescale=args.validation_guidance_rescale,
                             generator=validation_generator,
-                            height=int(args.validation_resolution),
-                            width=int(args.validation_resolution),
+                            height=int(args.resolution),
+                            width=int(args.resolution),
+                            **extra_pipeline_kwargs,
                         ).images
                     )
+                    if StateTracker.get_webhook_handler() is not None:
+                        StateTracker.get_webhook_handler().send(
+                            f"Validation image for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
+                            f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`",
+                            images=validation_images[validation_prompt_idx],
+                        )
 
                 from helpers.image_manipulation.brightness import calculate_luminance
 
@@ -1576,6 +1640,11 @@ def main():
                         )
                         del validation_luminance
                         tracker.log(validation_document, step=global_step)
+        else:
+            if webhook_handler is not None:
+                webhook_handler.send(
+                    message=f"\n# Training has completed after {current_epoch} epochs and {global_step} steps."
+                )
 
     accelerator.end_training()
 

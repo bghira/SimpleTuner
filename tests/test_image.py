@@ -66,7 +66,7 @@ class TestMultiaspectImage(unittest.TestCase):
                     resolution=self.resolution,
                     crop_style="random",
                     aspect_bucket_rounding=2,
-                    aspect_bucket_alignment=64 if edge_length > 256 else 8,
+                    aspect_bucket_alignment=64 if edge_length > 64 else 8,
                 )
                 for _ in range(num_random_tests):
                     # Generate a random original width and height

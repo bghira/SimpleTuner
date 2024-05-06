@@ -24,12 +24,15 @@ class BaseCropping:
     def crop(self, target_width, target_height):
         raise NotImplementedError("Subclasses must implement this method")
 
-    def set_image(self, image: Image):
+    def set_image(self, image: Image = None, image_metadata: dict = None):
         logger.debug(
             f"Cropper image being refreshed. Before size: {self.original_width} x {self.original_height}"
         )
-        self.image = image
-        self.original_width, self.original_height = self.image.size
+        if image is not None:
+            self.image = image
+            self.original_width, self.original_height = self.image.size
+        if image_metadata:
+            self.original_width, self.original_height = image_metadata["original_size"]
 
     def set_image_metadata(self, image_metadata: dict):
         logger.debug(

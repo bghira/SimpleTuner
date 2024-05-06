@@ -851,6 +851,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--webhook_config",
+        type=str,
+        default=None,
+        help=(
+            "The path to the webhook configuration file. This file should be a JSON file with the following format:"
+            ' {"url": "https://your.webhook.url", "webhook_type": "discord"}}'
+        ),
+    )
+    parser.add_argument(
         "--report_to",
         type=str,
         default="wandb",

@@ -44,6 +44,8 @@ class StateTracker:
     weight_dtype = None
     args = None
 
+    webhook_handler = None
+
     @classmethod
     def delete_cache_files(
         cls, data_backend_id: str = None, preserve_data_backend_cache=False
@@ -343,6 +345,14 @@ class StateTracker:
     @classmethod
     def get_accelerator(cls):
         return cls.accelerator
+
+    @classmethod
+    def get_webhook_handler(cls):
+        return cls.webhook_handler
+
+    @classmethod
+    def set_webhook_handler(cls, webhook_handler):
+        cls.webhook_handler = webhook_handler
 
     @classmethod
     def set_vae(cls, vae):
