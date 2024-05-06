@@ -57,3 +57,4 @@ cache/
 vae_cache/
 vendor/
 inference/
+webhooks.json
