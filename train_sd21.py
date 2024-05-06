@@ -1653,4 +1653,10 @@ if __name__ == "__main__":
     import multiprocessing
 
     multiprocessing.set_start_method("fork")
-    main()
+    try:
+        main()
+    except Exception as e:
+        if StateTracker.get_webhook_handler() is not None:
+            StateTracker.get_webhook_handler().send(
+                message=f"Training has failed. Please check the logs for more information: {e}"
+            )
