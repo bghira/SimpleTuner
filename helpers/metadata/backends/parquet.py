@@ -304,7 +304,11 @@ class ParquetMetadataBackend(MetadataBackend):
         statistics: dict = {},
     ):
         try:
-            image_path_filtered = os.path.splitext(os.path.split(image_path_str)[-1])[0]
+            image_path_filtered = image_path_str
+            if not self.parquet_config.get("identifier_includes_extension", False):
+                image_path_filtered = os.path.splitext(
+                    os.path.split(image_path_str)[-1]
+                )[0]
             if image_path_filtered.isdigit():
                 image_path_filtered = int(image_path_filtered)
             logger.debug(

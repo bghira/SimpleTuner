@@ -167,6 +167,10 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     filename_column = parquet_config.get(
         "filename_column", args.parquet_filename_column or "id"
     )
+    identifier_includes_extension = parquet_config.get(
+        "identifier_includes_extension", False
+    )
+
     # Check the columns exist
     if caption_column not in df.columns:
         raise ValueError(
@@ -196,7 +200,14 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
         )
     # Store the database in StateTracker
     StateTracker.set_parquet_database(
-        backend["id"], (df, filename_column, caption_column, fallback_caption_column)
+        backend["id"],
+        (
+            df,
+            filename_column,
+            caption_column,
+            fallback_caption_column,
+            identifier_includes_extension,
+        ),
     )
     logger.info(
         f"Configured parquet database for backend {backend['id']}. Caption column: {caption_column}. Filename column: {filename_column}."

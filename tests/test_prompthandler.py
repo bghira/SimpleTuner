@@ -46,6 +46,7 @@ class TestPromptHandler(unittest.TestCase):
             filename_column,
             caption_column,
             fallback_caption_column,
+            False,
         )
 
         # Execute
