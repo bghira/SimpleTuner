@@ -1686,3 +1686,4 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
+        logger.error(e)
