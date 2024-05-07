@@ -293,7 +293,7 @@ class TrainingSample:
                 # Crop the image to its target size, so that we do not squish or stretch the image.
                 original_crop_coordinates = self.crop_coordinates
                 if self.image is not None:
-                    self.cropper.set_image(self.image)
+                    self.cropper.set_image(self.image, self.image_metadata)
                 else:
                     self.image_metadata["current_size"] = intermediary_size
                     self.cropper.set_image_metadata(self.image_metadata)
