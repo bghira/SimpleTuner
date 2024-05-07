@@ -568,9 +568,9 @@ class TextEmbeddingCache:
 
                     self.save_to_cache(filename, prompt_embeds)
 
-                    if not return_concat:
-                        del prompt_embeds
-                        prompt_embeds = None
+                if not return_concat:
+                    del prompt_embeds
+                    prompt_embeds = None
 
                 if return_concat:
                     prompt_embeds_all.append(prompt_embeds)
