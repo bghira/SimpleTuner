@@ -132,6 +132,42 @@ For users who are more familiar with model training and wish to tweak settings e
 
 If `--report_to=wandb` is passed to the trainer (the default), it will ask on startup whether you wish to register on Weights & Biases to monitor your training run there. While you can always select option **3** or remove `--report_to=...` and disable reporting, it's encouraged to give it a try and watch your loss value drop as your training runs!
 
+### Discord webhook monitoring
+
+SimpleTuner can submit messages to a Discord webhook:
+
+- Startup/training summary
+- Periodic status lines indicating the current epoch, step, loss, and EMA decay
+- Validations images, as they generate, grouped by prompt (ten at a time)
+- Most fatal errors
+
+To configure a Discord webhook, add `--webhook_config=webhook.json` to your env file:
+
+```bash
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --webhook_config=webhook.json"
+```
+
+In the SimpleTuner root directory, create the file `webhook.json`:
+
+```json
+{
+  "webhook_url": "https://path/to/discord/webhook",
+  "webhook_type": "discord",
+  "message_prefix": "system-name-example",
+  "log_level": "critical"
+}
+```
+
+- `webhook_url`
+  - The value obtained from your Discord "Integrations" server settings.
+- `webhook_type`
+  - Currently, only discord is supported.
+- `message_prefix`
+  - This will be appended to the front of every message. If unset, it will default to the tracker project and run name.
+- `log_level`
+  - Values (decreasing level of spamminess, left-to-right): `debug`, `info`, `warning`, `error`, `critical`
+  - `debug` is the most information, and `critical` will be limited to important updates.
+
 ### Post-Training Steps
 
 #### How do I end training early?

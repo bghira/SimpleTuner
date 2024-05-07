@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 from numpy import str_ as numpy_str
 from helpers.multiaspect.image import MultiaspectImage
-from helpers.image_manipulation.training_sample import TrainingSample
+from helpers.image_manipulation.training_sample import TrainingSample, PreparedSample
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.training.state_tracker import StateTracker
@@ -653,10 +653,25 @@ class VAECache:
                             processed_images.append(result)
                             if first_aspect_ratio is None:
                                 first_aspect_ratio = result[2]
-                            elif aspect_bucket != first_aspect_ratio:
+                            elif (
+                                type(result) is PreparedSample
+                                and result.aspect_ratio is not None
+                                and first_aspect_ratio is not None
+                                and result.aspect_ratio != first_aspect_ratio
+                            ):
                                 raise ValueError(
-                                    f"Image {filepath} has a different aspect ratio ({aspect_bucket}) than the first image in the batch ({first_aspect_ratio})."
+                                    f"Image {filepath} has a different aspect ratio ({result.aspect_ratio}) than the first image in the batch ({first_aspect_ratio})."
                                 )
+                            elif (
+                                type(result) is tuple
+                                and result[2]
+                                and first_aspect_ratio is not None
+                                and result.aspect_ratio != first_aspect_ratio
+                            ):
+                                raise ValueError(
+                                    f"Image {filepath} has a different aspect ratio ({result.aspect_ratio}) than the first image in the batch ({first_aspect_ratio})."
+                                )
+
                     except Exception as e:
                         self.debug_log(
                             f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
