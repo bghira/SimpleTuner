@@ -1,4 +1,4 @@
-import os, torch, hashlib, logging, time
+import os, torch, hashlib, logging, time, gc
 from tqdm import tqdm
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
@@ -565,9 +565,15 @@ class TextEmbeddingCache:
                         )
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
+
                     self.save_to_cache(filename, prompt_embeds)
 
-                prompt_embeds_all.append(prompt_embeds)
+                    if not return_concat:
+                        del prompt_embeds
+                        prompt_embeds = None
+
+                if return_concat:
+                    prompt_embeds_all.append(prompt_embeds)
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
@@ -581,6 +587,7 @@ class TextEmbeddingCache:
                     "Not returning embeds, since we just concatenated a whackload of them."
                 )
                 del prompt_embeds_all
+                gc.collect()
                 return
 
         logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
