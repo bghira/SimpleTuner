@@ -260,6 +260,12 @@ case $OPTIMIZER in
         ;;
 esac
 
+# if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.
+# they can use huggingface-cli login to generate the token.
+if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_to_hub --hub_model_id=${HUB_MODEL_NAME}"
+fi
+
 export DORA_ARGS=""
 if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_DORA" != "false" ]]; then
     echo "Cannot use DoRA with a full u-net training task. Disabling DoRA."

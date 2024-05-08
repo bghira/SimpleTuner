@@ -73,7 +73,6 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
-from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
@@ -223,11 +222,9 @@ def main():
             os.makedirs(args.output_dir, exist_ok=True)
 
         if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name,
-                exist_ok=True,
-                token=args.hub_token,
-            ).repo_id
+            from helpers.publishing.huggingface import HubManager
+
+            hub_manager = HubManager(config=args)
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -660,7 +657,7 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     logger.info(
-        f"Collected the following data backends: {StateTracker.get_data_backends()}"
+        f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
     )
     if webhook_handler is not None:
         webhook_handler.send(
@@ -880,7 +877,7 @@ def main():
     )
 
     global_step = 0
-    resume_global_step = 0
+    global_resume_step = 0
     first_epoch = 0
     current_percent_completion = 0
     scheduler_kwargs = {}
@@ -919,12 +916,12 @@ def main():
                     for _, backend in StateTracker.get_data_backends().items()
                 ]
             )
-            resume_global_step = global_step = int(path.split("-")[1])
+            global_resume_step = global_step = int(path.split("-")[1])
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     if first_epoch > 1:
         total_steps_remaining_at_start = (
-            total_steps_remaining_at_start - resume_global_step
+            total_steps_remaining_at_start - global_resume_step
         )
         logger.debug(
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
@@ -969,7 +966,7 @@ def main():
     initial_msg += f"\n-  Num batches = {total_num_batches}, unet dtype: `{unet.dtype}`"
 
     initial_msg += f"\n-  Num Epochs = {args.num_train_epochs}"
-    initial_msg += f"\n-  Current Epoch = {first_epoch}"
+    initial_msg += f"\n  - Current Epoch = {first_epoch}"
     initial_msg += f"\n-  Instantaneous batch size per device = {args.train_batch_size}"
     initial_msg += (
         f"\n-  Gradient Accumulation steps = {args.gradient_accumulation_steps}"
@@ -979,7 +976,7 @@ def main():
     if global_step > 1:
         initial_msg += f"\n  - Steps completed: {global_step}"
     initial_msg += (
-        f"\n-  Total optimization steps remaining = {total_steps_remaining_at_start}"
+        f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
     )
     logger.info(initial_msg)
     webhook_handler.send(message=initial_msg)
@@ -1339,7 +1336,7 @@ def main():
                     step=global_step,
                 )
                 if webhook_handler is not None:
-                    webhook_pending_msg = f"Step {global_step} of {args.max_train_steps}: loss {round(loss.item(), 2)}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(train_loss, 2)}"
+                    webhook_pending_msg = f"Step {global_step} of {args.max_train_steps}: loss {round(loss.item(), 4)}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(train_loss, 4)}"
                 # Reset some values for the next go.
                 training_luminance_values = []
                 train_loss = 0.0
@@ -1421,8 +1418,6 @@ def main():
                 args,
                 validation_prompts,
                 validation_shortnames,
-                global_step,
-                resume_global_step,
                 step,
                 text_encoder,
                 tokenizer,
@@ -1533,31 +1528,6 @@ def main():
         # elif "lora" in args.model_type:
         #     pipeline.load_lora_weights(args.output_dir)
 
-        if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name,
-                exist_ok=True,
-                token=args.hub_token,
-            ).repo_id
-            save_model_card(
-                repo_id,
-                images=None,
-                base_model=args.pretrained_model_name_or_path,
-                train_text_encoder=args.train_text_encoder,
-                prompt=args.instance_prompt,
-                repo_folder=args.output_dir,
-            )
-            upload_folder(
-                repo_id=repo_id,
-                folder_path=(
-                    os.path.join(args.output_dir, "pipeline")
-                    if args.model_type == "full"
-                    else args.output_dir
-                ),
-                commit_message="End of training",
-                ignore_patterns=["step_*", "epoch_*"],
-            )
-
         if validation_prompts:
             if webhook_handler is not None:
                 webhook_handler.send(
@@ -1640,6 +1610,9 @@ def main():
                         )
                         del validation_luminance
                         tracker.log(validation_document, step=global_step)
+            if args.push_to_hub:
+                hub_manager.upload_model(validation_images, webhook_handler)
+
         else:
             if webhook_handler is not None:
                 webhook_handler.send(
@@ -1655,9 +1628,16 @@ if __name__ == "__main__":
     multiprocessing.set_start_method("fork")
     try:
         main()
+    except KeyboardInterrupt as e:
+        if StateTracker.get_webhook_handler() is not None:
+            StateTracker.get_webhook_handler().send(
+                message="Training has been interrupted by user action (lost terminal, or ctrl+C)."
+            )
     except Exception as e:
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
-        logger.error(e)
+        import traceback
+
+        logger.error(f"Epic fail: {e}, traceback: {traceback.format_exc()}")
