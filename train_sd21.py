@@ -976,7 +976,7 @@ def main():
     if global_step > 1:
         initial_msg += f"\n  - Steps completed: {global_step}"
     initial_msg += (
-        f"\n-  Total optimization steps remaining = {total_steps_remaining_at_start}"
+        f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
     )
     logger.info(initial_msg)
     webhook_handler.send(message=initial_msg)

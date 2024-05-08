@@ -292,22 +292,37 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Removing from bucket list. {len(self.buckets)} remain."
         )
 
-    def log_state(self):
+    def log_state(self, show_rank: bool = True, alt_stats: bool = False):
         self.debug_log(
             f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
         )
         self.debug_log(
             f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
         )
-        self.logger.info(
-            f"{self.rank_info}Multi-aspect sampler statistics:\n"
-            f"{self.rank_info}    -> Batch size: {self.batch_size}\n"
-            f"{self.rank_info}    -> Seen images: {len(self.metadata_backend.seen_images)}\n"
-            f"{self.rank_info}    -> Unseen images: {len(self._get_unseen_images())}\n"
-            f"{self.rank_info}    -> Current Bucket: {self.current_bucket}\n"
-            f"{self.rank_info}    -> {len(self.buckets)} Buckets: {self.buckets}\n"
-            f"{self.rank_info}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}\n"
-        )
+        if alt_stats:
+            # Return an overview instead of a snapshot.
+            # Eg. return totals, and not "as it is now"
+            printed_state = (
+                f"- Repeats: {StateTracker.get_data_backend_config(self.id).get('repeats', 0)}\n"
+                f"- Total number of images: {len(self.metadata_backend.aspect_ratio_bucket_indices)}\n"
+                f"- Total number of aspect buckets: {len(self.buckets)}\n"
+                f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}\n"
+                f"- Cropped: {StateTracker.get_data_backend_config(self.id).get('crop')}\n"
+                f"- Crop style: {'None' if not StateTracker.get_data_backend_config(self.id).get('crop') else StateTracker.get_data_backend_config(self.id).get('crop_style')}\n"
+                f"- Crop aspect: {'None' if not StateTracker.get_data_backend_config(self.id).get('crop') else StateTracker.get_data_backend_config(self.id).get('crop_aspect')}\n"
+            )
+        else:
+            # Return a snapshot of the current state during training.
+            printed_state = (
+                f"{self.rank_info if show_rank else ''}    -> Number of seen images: {len(self.metadata_backend.seen_images)}\n"
+                f"{self.rank_info if show_rank else ''}    -> Number of unseen images: {len(self._get_unseen_images())}\n"
+                f"{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}\n"
+                f"{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}\n"
+                f"{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}\n"
+            )
+        self.logger.info(printed_state)
+
+        return printed_state
 
     def _validate_and_yield_images_from_samples(self, samples, bucket):
         """

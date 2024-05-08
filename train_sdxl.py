@@ -1068,7 +1068,7 @@ def main():
     if global_step > 1:
         initial_msg += f"\n  - Steps completed: {global_step}"
     initial_msg += (
-        f"\n-  Total optimization steps remaining = {total_steps_remaining_at_start}"
+        f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
     )
     logger.info(initial_msg)
     webhook_handler.send(message=initial_msg)
@@ -1652,6 +1652,7 @@ def main():
                 pipeline=pipeline,
             )
         if args.push_to_hub:
+            hub_manager.set_validation_prompts(validation_prompts)
             hub_manager.upload_model(validation_images, webhook_handler)
     accelerator.end_training()
     # List any running child threads remaining:
