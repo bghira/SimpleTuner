@@ -68,6 +68,10 @@ TRACKER_RUN_NAME="$(date +%s)"
 # Location of training data.
 export BASE_DIR="/notebooks/datasets"
 export OUTPUT_DIR="${BASE_DIR}/models"
+# Set this to "true" to push your model to Hugging Face Hub.
+export PUSH_TO_HUB="false"
+# This will be the model name for your final hub upload, eg. "yourusername/yourmodelname"
+# It defaults to the wandb project name, but you can override this here.
 export DATALOADER_CONFIG="multidatabackend_sd2x.json"
 
 # Max number of steps OR epochs can be used. Not both.

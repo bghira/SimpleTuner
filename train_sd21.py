@@ -73,7 +73,6 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
-from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
@@ -223,11 +222,9 @@ def main():
             os.makedirs(args.output_dir, exist_ok=True)
 
         if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name,
-                exist_ok=True,
-                token=args.hub_token,
-            ).repo_id
+            from helpers.publishing.huggingface import HubManager
+
+            hub_manager = HubManager(config=args)
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -660,7 +657,7 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     logger.info(
-        f"Collected the following data backends: {StateTracker.get_data_backends()}"
+        f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
     )
     if webhook_handler is not None:
         webhook_handler.send(
@@ -1531,31 +1528,6 @@ def main():
         # elif "lora" in args.model_type:
         #     pipeline.load_lora_weights(args.output_dir)
 
-        if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name,
-                exist_ok=True,
-                token=args.hub_token,
-            ).repo_id
-            save_model_card(
-                repo_id,
-                images=None,
-                base_model=args.pretrained_model_name_or_path,
-                train_text_encoder=args.train_text_encoder,
-                prompt=args.instance_prompt,
-                repo_folder=args.output_dir,
-            )
-            upload_folder(
-                repo_id=repo_id,
-                folder_path=(
-                    os.path.join(args.output_dir, "pipeline")
-                    if args.model_type == "full"
-                    else args.output_dir
-                ),
-                commit_message="End of training",
-                ignore_patterns=["step_*", "epoch_*"],
-            )
-
         if validation_prompts:
             if webhook_handler is not None:
                 webhook_handler.send(
@@ -1638,6 +1610,9 @@ def main():
                         )
                         del validation_luminance
                         tracker.log(validation_document, step=global_step)
+            if args.push_to_hub:
+                hub_manager.upload_model(validation_images, webhook_handler)
+
         else:
             if webhook_handler is not None:
                 webhook_handler.send(
@@ -1663,4 +1638,6 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
-        logger.error(e)
+        import traceback
+
+        logger.error(f"Epic fail: {e}, traceback: {traceback.format_exc()}")

@@ -10,9 +10,10 @@ def save_model_card(
     repo_folder=None,
 ):
     img_str = ""
+    os.makedirs(os.path.join(repo_folder, "assets"), exist_ok=True)
     for i, image in enumerate(images):
-        image.save(os.path.join(repo_folder, f"image_{i}.png"))
-        img_str += f"![img_{i}](./image_{i}.png)\n"
+        image.save(os.path.join(repo_folder, "assets", f"image_{i}.png"), format="PNG")
+        img_str += f"![img_{i}](./assets/image_{i}.png)\n"
 
     yaml = f"""
 ---

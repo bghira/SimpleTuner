@@ -275,6 +275,12 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
     echo "Cannot use BitFit with a full u-net training task. Disabling DoRA."
 fi
 
+# if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.
+# they can use huggingface-cli login to generate the token.
+if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_to_hub --hub_model_id=${HUB_MODEL_NAME}"
+fi
+
 export ASPECT_BUCKET_ROUNDING_ARGS=""
 if [ -n "$ASPECT_BUCKET_ROUNDING" ]; then
     export ASPECT_BUCKET_ROUNDING_ARGS="--aspect_bucket_rounding=${ASPECT_BUCKET_ROUNDING}"

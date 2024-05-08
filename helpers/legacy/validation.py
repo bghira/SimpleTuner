@@ -597,3 +597,5 @@ def log_validations(
             del pipeline
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+
+            return validation_images
