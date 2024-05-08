@@ -331,12 +331,18 @@ class ParquetMetadataBackend(MetadataBackend):
                 raise ValueError(
                     "ParquetMetadataBackend requires width and height columns to be defined."
                 )
-            image_metadata = {
-                "original_size": (
-                    int(database_image_metadata[width_column]),
-                    int(database_image_metadata[height_column]),
-                )
-            }
+            training_sample = TrainingSample(
+                image=None,
+                data_backend_id=self.id,
+                image_metadata={
+                    "original_size": (
+                        int(database_image_metadata[width_column]),
+                        int(database_image_metadata[height_column]),
+                    )
+                },
+            )
+            prepared_sample = training_sample.prepare()
+            image_metadata = {"original_size": training_sample.original_size}
             if (
                 image_metadata["original_size"][0] == 0
                 or image_metadata["original_size"][1] == 0
@@ -356,17 +362,10 @@ class ParquetMetadataBackend(MetadataBackend):
             if aspect_ratio_column:
                 aspect_ratio = database_image_metadata[aspect_ratio_column]
             else:
-                aspect_ratio = (
-                    image_metadata["original_size"][0]
-                    / image_metadata["original_size"][1]
-                )
+                aspect_ratio = training_sample.aspect_ratio
             aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                image_metadata["original_size"]
+                float(aspect_ratio)
             )
-            training_sample = TrainingSample(
-                image=None, data_backend_id=self.id, image_metadata=image_metadata
-            )
-            prepared_sample = training_sample.prepare()
             image_metadata["intermediary_size"] = prepared_sample.intermediary_size
             image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
             image_metadata["target_size"] = prepared_sample.target_size

@@ -293,8 +293,14 @@ class TrainingSample:
                 # Crop the image to its target size, so that we do not squish or stretch the image.
                 original_crop_coordinates = self.crop_coordinates
                 if self.image is not None:
-                    self.cropper.set_image(self.image)
+                    logger.debug(
+                        f"It's our lucky day, the cropper has an actual image to adjust: {self.image_metadata}"
+                    )
+                    self.cropper.set_image(self.image, self.image_metadata)
                 else:
+                    logger.debug(
+                        "We are adjusting based on a dream of the image metadata, we do not have a real image."
+                    )
                     self.image_metadata["current_size"] = intermediary_size
                     self.cropper.set_image_metadata(self.image_metadata)
                 self.image, new_crop_coordinates = self.cropper.crop(
