@@ -880,7 +880,7 @@ def main():
     )
 
     global_step = 0
-    resume_global_step = 0
+    global_resume_step = 0
     first_epoch = 0
     current_percent_completion = 0
     scheduler_kwargs = {}
@@ -919,12 +919,12 @@ def main():
                     for _, backend in StateTracker.get_data_backends().items()
                 ]
             )
-            resume_global_step = global_step = int(path.split("-")[1])
+            global_resume_step = global_step = int(path.split("-")[1])
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     if first_epoch > 1:
         total_steps_remaining_at_start = (
-            total_steps_remaining_at_start - resume_global_step
+            total_steps_remaining_at_start - global_resume_step
         )
         logger.debug(
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
@@ -969,7 +969,7 @@ def main():
     initial_msg += f"\n-  Num batches = {total_num_batches}, unet dtype: `{unet.dtype}`"
 
     initial_msg += f"\n-  Num Epochs = {args.num_train_epochs}"
-    initial_msg += f"\n-  Current Epoch = {first_epoch}"
+    initial_msg += f"\n  - Current Epoch = {first_epoch}"
     initial_msg += f"\n-  Instantaneous batch size per device = {args.train_batch_size}"
     initial_msg += (
         f"\n-  Gradient Accumulation steps = {args.gradient_accumulation_steps}"
@@ -1339,7 +1339,7 @@ def main():
                     step=global_step,
                 )
                 if webhook_handler is not None:
-                    webhook_pending_msg = f"Step {global_step} of {args.max_train_steps}: loss {round(loss.item(), 2)}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(train_loss, 2)}"
+                    webhook_pending_msg = f"Step {global_step} of {args.max_train_steps}: loss {round(loss.item(), 4)}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(train_loss, 4)}"
                 # Reset some values for the next go.
                 training_luminance_values = []
                 train_loss = 0.0
@@ -1421,8 +1421,6 @@ def main():
                 args,
                 validation_prompts,
                 validation_shortnames,
-                global_step,
-                resume_global_step,
                 step,
                 text_encoder,
                 tokenizer,
@@ -1655,6 +1653,11 @@ if __name__ == "__main__":
     multiprocessing.set_start_method("fork")
     try:
         main()
+    except KeyboardInterrupt as e:
+        if StateTracker.get_webhook_handler() is not None:
+            StateTracker.get_webhook_handler().send(
+                message="Training has been interrupted by user action (lost terminal, or ctrl+C)."
+            )
     except Exception as e:
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(

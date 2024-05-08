@@ -19,6 +19,7 @@ class StateTracker:
 
     ## Training state
     global_step = 0
+    global_resume_step = None
     epoch_step = 0
     epoch = 1
 
@@ -129,6 +130,14 @@ class StateTracker:
                 "all_image_files_{}".format(data_backend_id)
             )
         return cls.all_image_files[data_backend_id]
+
+    @classmethod
+    def get_global_resume_step(cls):
+        return cls.global_resume_step
+
+    @classmethod
+    def set_global_resume_step(cls, global_resume_step: int):
+        cls.global_resume_step = global_resume_step
 
     @classmethod
     def get_global_step(cls):

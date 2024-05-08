@@ -210,8 +210,6 @@ def log_validations(
     args,
     validation_prompts,
     validation_shortnames,
-    global_step,
-    resume_global_step,
     step,
     text_encoder_1,
     tokenizer,
@@ -228,19 +226,25 @@ def log_validations(
     validation_type: str = "training",
     pipeline: DiffusionPipeline = None,
 ):
+    global_step = StateTracker.get_global_step()
+    global_resume_step = StateTracker.get_global_resume_step() or global_step
+    should_do_intermediary_validation = (
+        validation_prompts
+        and global_step % args.validation_steps == 0
+        and step % args.gradient_accumulation_steps == 0
+        and global_step > global_resume_step
+    )
     if accelerator.is_main_process:
-        if validation_type == "finish" or (
-            validation_prompts
-            and global_step % args.validation_steps == 0
-            and step % args.gradient_accumulation_steps == 0
-            and StateTracker.get_global_step() > resume_global_step
-        ):
+        if validation_type == "finish" or should_do_intermediary_validation:
             if (
                 validation_prompts is None
                 or validation_prompts == []
                 or args.num_validation_images is None
                 or args.num_validation_images <= 0
             ):
+                return
+            if validation_type == "finish" and should_do_intermediary_validation:
+                # 382 - don't run final validation when we'd also have run the intermediary validation.
                 return
             logger.debug(f"We have valid prompts to process.")
             if StateTracker.get_webhook_handler() is not None:
