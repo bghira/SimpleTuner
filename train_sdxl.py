@@ -23,6 +23,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
+from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
@@ -478,6 +479,25 @@ def main():
             args=args, embed_cache=StateTracker.get_default_text_embed_cache()
         )
     accelerator.wait_for_everyone()
+    # validation = Validation(
+    #     accelerator=accelerator,
+    #     prompt_handler=prompt_handler,
+    #     unet=unet,
+    #     args=args,
+    #     validation_prompts=validation_prompts,
+    #     validation_shortnames=validation_shortnames,
+    #     text_encoder_1=text_encoder_1,
+    #     tokenizer=tokenizer_1,
+    #     vae_path=vae_path,
+    #     weight_dtype=weight_dtype,
+    #     embed_cache=StateTracker.get_default_text_embed_cache(),
+    #     validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+    #     validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+    #     text_encoder_2=text_encoder_2,
+    #     tokenizer_2=tokenizer_2,
+    #     ema_unet=ema_unet,
+    #     vae=vae
+    # )
     # Grab GPU memory used:
     import gc
 
@@ -550,6 +570,12 @@ def main():
     logger.info(
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
+    if args.freeze_unet_strategy == "bitfit":
+        from helpers.training.model_freeze import apply_bitfit_freezing
+
+        logger.info(f"Applying BitFit freezing strategy to the U-net.")
+        unet = apply_bitfit_freezing(unet, args)
+
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
@@ -813,7 +839,7 @@ def main():
             num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.lr_end,
             power=args.lr_power,
-            last_epoch=-1,
+            last_epoch=StateTracker.get_epoch() - 1,
         )
     else:
         logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
