@@ -100,6 +100,13 @@ class TrainingSample:
         if return_tensor:
             # Return normalised tensor.
             image = self.transforms(image)
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler:
+            webhook_handler.send(
+                message=f"Debug info for prepared sample, {self}",
+                images=[self.image] if self.image else None,
+                message_level="debug",
+            )
         return PreparedSample(
             image=image,
             original_size=self.original_size,
@@ -293,7 +300,11 @@ class TrainingSample:
                         self.intermediary_size, Image.Resampling.LANCZOS
                     )
                     logger.debug(f"After resize, we are at {self.image.size}")
-                self.cropper.set_image(self.image)
+                logger.debug(
+                    f"TrainingSample is updating Cropper with the latest image and intermediary size: {self.image} and {self.intermediary_size}"
+                )
+                if self.image is not None and self.cropper:
+                    self.cropper.set_image(self.image)
                 self.cropper.set_intermediary_size(
                     self.intermediary_size[0], self.intermediary_size[1]
                 )
@@ -304,7 +315,10 @@ class TrainingSample:
                     self.target_size[0], self.target_size[1]
                 )
                 logger.debug(
-                    f"After crop-adjusting pixel alignment, our image is now {self.image_metadata['current_size'] if 'current_size' in self.image_metadata else self.image.size} resolution and its crop coordinates are now {self.crop_coordinates}"
+                    f"Cropper returned image {self.image} and coords {self.crop_coordinates}"
+                )
+                logger.debug(
+                    f"After crop-adjusting pixel alignment, our image is now {self.image.size if hasattr(self.image, 'size') else size} resolution and its crop coordinates are now {self.crop_coordinates}"
                 )
 
             logger.debug(

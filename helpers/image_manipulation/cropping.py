@@ -30,7 +30,11 @@ class BaseCropping:
     def crop(self, target_width, target_height):
         raise NotImplementedError("Subclasses must implement this method")
 
-    def set_image(self, image):
+    def set_image(self, image: Image.Image):
+        if type(image) is not Image.Image:
+            raise TypeError("Image must be a PIL Image object")
+        else:
+            logger.debug(f"Cropper received updated image contents: {image}")
         self.image = image
 
         return self
@@ -51,7 +55,7 @@ class CornerCropping(BaseCropping):
         if self.image:
             return self.image.crop((left, top, right, bottom)), (top, left)
         elif self.image_metadata:
-            return self.image_metadata, (top, left)
+            return None, (top, left)
 
 
 class CenterCropping(BaseCropping):
@@ -63,7 +67,7 @@ class CenterCropping(BaseCropping):
         if self.image:
             return self.image.crop((left, top, right, bottom)), (top, left)
         elif self.image_metadata:
-            return self.image_metadata, (top, left)
+            return None, (top, left)
 
 
 class RandomCropping(BaseCropping):
@@ -80,7 +84,7 @@ class RandomCropping(BaseCropping):
         if self.image:
             return self.image.crop((left, top, right, bottom)), (top, left)
         elif self.image_metadata:
-            return self.image_metadata, (top, left)
+            return None, (top, left)
 
 
 class FaceCropping(RandomCropping):
