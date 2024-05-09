@@ -4,9 +4,19 @@ logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
-def apply_bitfit_freezing(model):
+def apply_bitfit_freezing(model, args):
+    model_type = args.model_type
+    if "lora" in model_type:
+        # LoRAs don't have bias and arrive pre-frozen on the bottom.
+        return model
+
     logger.debug("Applying BitFit freezing strategy for u-net tuning.")
     for name, param in model.named_parameters():
+        if not hasattr(param, "requires_grad"):
+            logger.debug(
+                f"Skipping {name} as it does not have 'requires_grad' attribute."
+            )
+            continue
         # Freeze everything that's not a bias
         if "bias" not in name:
             param.requires_grad = False
@@ -26,8 +36,13 @@ def freeze_entire_component(component):
 def freeze_text_encoder(args, component):
     from transformers import T5EncoderModel
 
-    if not args.freeze_encoder or type(component) is T5EncoderModel:
-        logger.info(f"Not freezing text encoder. Live dangerously and prosper!")
+    if (
+        not args.train_text_encoder
+        or not args.freeze_encoder
+        or type(component) is T5EncoderModel
+    ):
+        if args.train_text_encoder:
+            logger.info(f"Not freezing text encoder. Live dangerously and prosper!")
         return component
     method = args.freeze_encoder_strategy
     first_layer = args.freeze_encoder_before
