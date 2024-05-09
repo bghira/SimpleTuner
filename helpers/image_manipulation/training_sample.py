@@ -266,7 +266,8 @@ class TrainingSample:
         logger.debug(
             f"Pre-crop size: {self.image.size if hasattr(self.image, 'size') else self.target_size}."
         )
-        self.cropper.set_image(self.image)
+        if self.image is not None:
+            self.cropper.set_image(self.image)
         self.cropper.set_intermediary_size(
             self.intermediary_size[0], self.intermediary_size[1]
         )
