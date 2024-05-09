@@ -16,7 +16,7 @@ class WebhookHandler:
             if self.config.message_prefix is not None
             else f"`({project_name})` "
         )
-        self.log_level = log_levels.get(self.config.log_level or "info", "info")
+        self.log_level = log_levels.get(self.config.log_level or "info", log_levels["info"])
         self.stored_response = None
 
     def _check_level(self, level: str) -> bool:
