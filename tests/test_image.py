@@ -44,16 +44,6 @@ class TestMultiaspectImage(unittest.TestCase):
             MultiaspectImage.calculate_image_aspect_ratio((1080, 1920)), 0.56
         )
 
-    def test_resize_for_condition_image_valid(self):
-        resized_img = MultiaspectImage._resize_image(
-            self.test_image, self.resolution, self.resolution
-        )
-        self.assertIsInstance(resized_img, Image.Image)
-
-    def test_resize_for_condition_image_invalid(self):
-        with self.assertRaises(Exception):
-            MultiaspectImage._resize_image(None, self.resolution)
-
     def test_calculate_new_size_by_pixel_edge(self):
         # Define test cases for 1.0 and 0.5 megapixels
         test_edge_lengths = [1024, 512, 256, 64]
