@@ -839,7 +839,7 @@ def main():
             num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.lr_end,
             power=args.lr_power,
-            last_epoch=StateTracker.get_epoch() - 1,
+            last_epoch=StateTracker.get_global_resume_step() - 2,
         )
     else:
         logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")

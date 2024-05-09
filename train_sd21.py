@@ -292,14 +292,15 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        text_encoder = freeze_text_encoder(
-            args,
-            text_encoder_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="text_encoder",
-                revision=args.revision,
-            ),
-        )
+        if args.train_text_encoder and "deepfloyd" not in args.model_type:
+            text_encoder = freeze_text_encoder(
+                args,
+                text_encoder_cls.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    subfolder="text_encoder",
+                    revision=args.revision,
+                ),
+            )
         from transformers import T5EncoderModel
 
         if "deepfloyd" not in args.model_type:
@@ -319,13 +320,9 @@ def main():
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     ).to(weight_dtype)
-    if args.freeze_unet_strategy == "bitfit":
-        from helpers.training.model_freeze import apply_bitfit_freezing
-
-        logger.info(f"Applying BitFit freezing strategy to the U-net.")
-        unet = apply_bitfit_freezing(unet)
 
     if not args.train_text_encoder:
+        logger.info("Text encoder will remain frozen.")
         text_encoder.requires_grad_(False)
 
     if args.enable_xformers_memory_efficient_attention:
@@ -373,6 +370,12 @@ def main():
 
         logger.info("Adding LoRA adapter to the unet model..")
         unet.add_adapter(unet_lora_config)
+
+    if args.freeze_unet_strategy == "bitfit":
+        from helpers.training.model_freeze import apply_bitfit_freezing
+
+        logger.info(f"Applying BitFit freezing strategy to the U-net.")
+        unet = apply_bitfit_freezing(unet, args)
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
@@ -753,7 +756,7 @@ def main():
             num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.lr_end,
             power=args.lr_power,
-            last_epoch=-1,
+            last_epoch=StateTracker.get_global_resume_step() - 2,
         )
     else:
         logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
