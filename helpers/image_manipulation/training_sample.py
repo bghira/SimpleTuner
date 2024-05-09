@@ -330,10 +330,12 @@ class TrainingSample:
                 f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else self.intermediary_size} to custom-provided size: {size}"
             )
         if self.image and hasattr(self.image, "resize"):
+            logger.debug("Actually resizing image.")
             self.image = self.image.resize(size, Image.Resampling.LANCZOS)
             self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.image.size
             )
+        logger.debug("Completed resize operation.")
         return self
 
     def get_image(self):
