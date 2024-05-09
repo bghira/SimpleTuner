@@ -227,7 +227,7 @@ def log_validations(
     pipeline: DiffusionPipeline = None,
 ):
     global_step = StateTracker.get_global_step()
-    global_resume_step = StateTracker.get_global_resume_step() or global_step
+    global_resume_step = StateTracker.get_global_resume_step() or 1
     should_do_intermediary_validation = (
         validation_prompts
         and global_step % args.validation_steps == 0
@@ -523,7 +523,7 @@ def log_validations(
                         validation_resolution_width, validation_resolution_height = (
                             val * 4 for val in extra_validation_kwargs["image"].size
                         )
-                    logger.info(
+                    logger.debug(
                         f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}"
                     )
                     validation_images[validation_shortname].extend(

@@ -917,6 +917,7 @@ def main():
                 ]
             )
             global_resume_step = global_step = int(path.split("-")[1])
+            StateTracker.set_global_resume_step(global_resume_step)
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     if first_epoch > 1:
@@ -975,9 +976,7 @@ def main():
     initial_msg += f"\n-  Total optimization steps = {args.max_train_steps}"
     if global_step > 1:
         initial_msg += f"\n  - Steps completed: {global_step}"
-    initial_msg += (
-        f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
-    )
+    initial_msg += f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
     logger.info(initial_msg)
     webhook_handler.send(message=initial_msg)
     # Only show the progress bar once on each machine.

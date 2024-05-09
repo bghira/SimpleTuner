@@ -988,6 +988,7 @@ def main():
                         ),
                     )
             global_resume_step = global_step = StateTracker.get_global_step()
+            StateTracker.set_global_resume_step(global_resume_step)
             logger.debug(
                 f"Training state inside checkpoint: {StateTracker.get_training_state()}"
             )
@@ -1067,9 +1068,7 @@ def main():
     initial_msg += f"\n-  Total optimization steps = {args.max_train_steps}"
     if global_step > 1:
         initial_msg += f"\n  - Steps completed: {global_step}"
-    initial_msg += (
-        f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
-    )
+    initial_msg += f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
     logger.info(initial_msg)
     webhook_handler.send(message=initial_msg)
 
