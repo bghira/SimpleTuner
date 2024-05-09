@@ -85,6 +85,10 @@ class HubManager:
                     webhook_handler.send(
                         message=f"(attempt {attempt}/3) Error uploading model to Hugging Face Hub: {e}. Retrying..."
                     )
+        if webhook_handler:
+            webhook_handler.send(
+                message=f"Model is now available [on Hugging Face Hub](https://huggingface.co/{self._repo_id})."
+            )
 
     def upload_full_model(self):
         folder_path = os.path.join(self.config.output_dir, "pipeline")

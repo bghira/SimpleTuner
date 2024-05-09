@@ -88,7 +88,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 {'Xformers was used to train this model. As such, bf16 or fp32 inference may be required. Your mileage may vary.' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'This model was not trained with Xformers.'}
 {StateTracker.get_args().mixed_precision} precision was used during training.
 
-- Training epochs: {StateTracker.get_epoch()}
+- Training epochs: {StateTracker.get_epoch() - 1}
 - Training steps: {StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
 - Effective batch size: {StateTracker.get_args().train_batch_size * StateTracker.get_args().gradient_accumulation_steps}
