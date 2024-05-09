@@ -33,6 +33,12 @@ class TestWebhookHandler(unittest.TestCase):
         mock_post.assert_called_once()
 
     @patch("requests.post")
+    def test_debug_message_wont_send(self, mock_post):
+        # Test that debug logs don't send when the log level is info
+        self.handler.send("Test message", message_level="debug")
+        mock_post.assert_not_called()
+
+    @patch("requests.post")
     def test_do_not_send_lower_than_configured_level(self, mock_post):
         # Set a higher log level and test
         self.handler.log_level = 1  # Error level

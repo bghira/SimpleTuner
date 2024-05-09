@@ -31,7 +31,6 @@ class WebhookHandler:
         self.stored_response = None
 
     def _check_level(self, level: str) -> bool:
-        print(f"Comparing {log_levels.get(level, 'info')} <= {self.log_level}")
         return log_levels.get(level, "info") <= self.log_level
 
     def _send_request(
