@@ -648,7 +648,7 @@ class VAECache:
                     try:
                         result = (
                             future.result()
-                        )  # Returns (image, crop_coordinates, new_aspect_ratio)
+                        )  # Returns PreparedSample or tuple(image, crop_coordinates, aspect_ratio)
                         if result:  # Ensure result is not None or invalid
                             processed_images.append(result)
                             if first_aspect_ratio is None:
@@ -666,10 +666,10 @@ class VAECache:
                                 type(result) is tuple
                                 and result[2]
                                 and first_aspect_ratio is not None
-                                and result.aspect_ratio != first_aspect_ratio
+                                and result[2] != first_aspect_ratio
                             ):
                                 raise ValueError(
-                                    f"Image {filepath} has a different aspect ratio ({result.aspect_ratio}) than the first image in the batch ({first_aspect_ratio})."
+                                    f"Image {filepath} has a different aspect ratio ({result[2]}) than the first image in the batch ({first_aspect_ratio})."
                                 )
 
                     except Exception as e:

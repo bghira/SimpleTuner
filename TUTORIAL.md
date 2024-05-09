@@ -128,6 +128,23 @@ A value of 25% seems to provide some additional benefits such as reducing the nu
 
 For users who are more familiar with model training and wish to tweak settings eg. `MIXED_PRECISION`, enabling offset noise, or setting up zero terminal SNR - detailed explanations can be found in [OPTIONS.md](/OPTIONS.md).
 
+## Publishing checkpoints to Hugging Face Hub
+
+Setting two values inside `sdxl-env.sh` or `sd2x-env.sh` will cause the trainer to automatically push your model up to the Hugging Face Hub upon training completion:
+
+```bash
+export PUSH_TO_HUB="true"
+export HUB_MODEL_NAME="what-you-will-call-this"
+```
+
+Be sure to login before you begin training by executing:
+
+```bash
+huggingface-cli login
+```
+
+A model card will be automatically generated containing a majority of the relevant training session parameters.
+
 ## Monitoring and Logging
 
 If `--report_to=wandb` is passed to the trainer (the default), it will ask on startup whether you wish to register on Weights & Biases to monitor your training run there. While you can always select option **3** or remove `--report_to=...` and disable reporting, it's encouraged to give it a try and watch your loss value drop as your training runs!

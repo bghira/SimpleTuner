@@ -283,8 +283,6 @@ class ParquetMetadataBackend(MetadataBackend):
                 self.save_image_metadata()
                 last_write_time = current_time
 
-            time.sleep(0.001)
-
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
@@ -343,6 +341,7 @@ class ParquetMetadataBackend(MetadataBackend):
             )
             prepared_sample = training_sample.prepare()
             image_metadata = {"original_size": training_sample.original_size}
+            logger.debug("Prepared sample: %s", str(prepared_sample))
             if (
                 image_metadata["original_size"][0] == 0
                 or image_metadata["original_size"][1] == 0
@@ -352,20 +351,24 @@ class ParquetMetadataBackend(MetadataBackend):
                 )
                 return aspect_ratio_bucket_indices
 
+            logger.debug("Checking minimum resolution size vs image size..")
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
                 logger.debug(
                     f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
                 )
                 statistics["skipped"]["too_small"] += 1
                 return aspect_ratio_bucket_indices
+            logger.debug("Collecting aspect ratio data..")
             aspect_ratio_column = self.parquet_config.get("aspect_ratio_column", None)
             if aspect_ratio_column:
                 aspect_ratio = database_image_metadata[aspect_ratio_column]
             else:
                 aspect_ratio = training_sample.aspect_ratio
+            logger.debug("Collected aspect ratio: %s", str(aspect_ratio))
             aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 float(aspect_ratio)
             )
+            logger.debug("Image metadat has been generated and collected.")
             image_metadata["intermediary_size"] = prepared_sample.intermediary_size
             image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
             image_metadata["target_size"] = prepared_sample.target_size
@@ -384,12 +387,16 @@ class ParquetMetadataBackend(MetadataBackend):
             # Create a new bucket if it doesn't exist
             if str(prepared_sample.aspect_ratio) not in aspect_ratio_bucket_indices:
                 aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)] = []
+            logger.debug("Adding to list..")
             aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)].append(
                 image_path_str
             )
+            logger.debug("Added to list.")
             # Instead of directly updating, just fill the provided dictionary
             if metadata_updates is not None:
+                logger.debug("Adding to metadata list..")
                 metadata_updates[image_path_str] = image_metadata
+                logger.debug("Added to metadata list.")
         except Exception as e:
             import traceback
 

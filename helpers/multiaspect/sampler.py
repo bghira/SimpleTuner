@@ -314,11 +314,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         else:
             # Return a snapshot of the current state during training.
             printed_state = (
-                f"{self.rank_info if show_rank else ''}    -> Number of seen images: {len(self.metadata_backend.seen_images)}\n"
-                f"{self.rank_info if show_rank else ''}    -> Number of unseen images: {len(self._get_unseen_images())}\n"
-                f"{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}\n"
-                f"{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}\n"
-                f"{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}\n"
+                f"\n{self.rank_info if show_rank else ''}    -> Number of seen images: {len(self.metadata_backend.seen_images)}"
+                f"\n{self.rank_info if show_rank else ''}    -> Number of unseen images: {len(self._get_unseen_images())}"
+                f"\n{self.rank_info if show_rank else ''}    -> Current Bucket: {self.current_bucket}"
+                f"\n{self.rank_info if show_rank else ''}    -> {len(self.buckets)} Buckets: {self.buckets}"
+                f"\n{self.rank_info if show_rank else ''}    -> {len(self.exhausted_buckets)} Exhausted Buckets: {self.exhausted_buckets}"
             )
         self.logger.info(printed_state)
 

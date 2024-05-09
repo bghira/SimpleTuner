@@ -30,69 +30,6 @@ class MultiaspectImage:
         return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
     @staticmethod
-    def _resize_image(
-        input_image: Image.Image,
-        target_width: int,
-        target_height: int,
-        image_metadata: dict = None,
-    ) -> Image:
-        """Resize the input image to the target width and height in stages, ensuring a higher quality end result."""
-        if input_image:
-            if not hasattr(input_image, "convert"):
-                raise Exception(
-                    f"Unknown data received instead of PIL.Image object: {type(input_image)}"
-                )
-            logger.debug(f"Received image for processing: {input_image}")
-            input_image = input_image.convert("RGB")
-            logger.debug(f"Converted image to RGB for processing: {input_image}")
-            current_width, current_height = input_image.size
-        elif image_metadata:
-            current_width, current_height = image_metadata["original_size"]
-
-        if (target_width, target_height) == (current_width, current_height):
-            if input_image:
-                return input_image
-            elif image_metadata:
-                return image_metadata["original_size"]
-
-        msg = f"Resizing image of size {input_image.size} to its new size: {target_width}x{target_height}."
-        logger.debug(msg)
-
-        # Resize in stages
-        while (
-            current_width > target_width * 1.5 or current_height > target_height * 1.5
-        ):
-            # Calculate intermediate size
-            intermediate_width = int(current_width * 0.75)
-            intermediate_height = int(current_height * 0.75)
-
-            # Ensure intermediate size is not smaller than the target size
-            intermediate_width = max(intermediate_width, target_width)
-            intermediate_height = max(intermediate_height, target_height)
-
-            new_image_size = (intermediate_width, intermediate_height)
-            if input_image:
-                input_image = input_image.resize(
-                    new_image_size, resample=Image.Resampling.LANCZOS
-                )
-            current_width, current_height = new_image_size
-            logger.debug(
-                f"Resized image to intermediate size: {current_width}x{current_height}."
-            )
-
-        # Final resize to target dimensions
-        if input_image:
-            input_image = input_image.resize(
-                (target_width, target_height), resample=Image.Resampling.LANCZOS
-            )
-            logger.debug(f"Final image size: {input_image.size}.")
-            return input_image
-        elif image_metadata:
-            image_metadata["original_size"] = (target_width, target_height)
-            logger.debug(f"Final image size: {image_metadata['original_size']}.")
-            return image_metadata
-
-    @staticmethod
     def is_image_too_large(image_size: tuple, resolution: float, resolution_type: str):
         """
         Determine if an image is too large to be processed.

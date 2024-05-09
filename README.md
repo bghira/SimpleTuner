@@ -49,6 +49,7 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
 - DeepFloyd stage I and II full u-net or parameter-efficient fine-tuning via LoRA using 22G VRAM
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
+- Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
 ### Stable Diffusion 2.0/2.1
 

@@ -7,20 +7,31 @@ log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
 
 
 class WebhookHandler:
-    def __init__(self, config_path: str, accelerator, project_name: str):
+    def __init__(
+        self,
+        config_path: str,
+        accelerator,
+        project_name: str,
+        mock_webhook_config: WebhookConfig = None,
+    ):
         self.accelerator = accelerator
-        self.config = WebhookConfig(config_path)
+        if mock_webhook_config is not None:
+            self.config = mock_webhook_config
+        else:
+            self.config = WebhookConfig(config_path)
         self.webhook_url = self.config.webhook_url
         self.message_prefix = (
             f"`({self.config.message_prefix})` "
             if self.config.message_prefix is not None
             else f"`({project_name})` "
         )
-        self.log_level = log_levels.get(self.config.log_level or "info", "info")
+        self.log_level = log_levels.get(
+            self.config.log_level or "info", log_levels["info"]
+        )
         self.stored_response = None
 
     def _check_level(self, level: str) -> bool:
-        return log_levels.get(level, "info") >= self.log_level
+        return log_levels.get(level, "info") <= self.log_level
 
     def _send_request(
         self, message: str, images: list = None, store_response: bool = False
@@ -45,7 +56,6 @@ class WebhookHandler:
         post_result = requests.post(self.webhook_url, data=data, files=files)
         if store_response:
             self.stored_response = post_result.headers
-            print(f"Stored result: {self.stored_response}")
 
     def send(
         self,
@@ -56,16 +66,17 @@ class WebhookHandler:
     ):
         if not self.accelerator.is_main_process:
             return
+        if not self._check_level(message_level):
+            return
         if images is not None and not isinstance(images, list):
             images = [images]
         # Send webhook message
-        if self._check_level(message_level):
-            if images and len(images) <= 10:
-                self._send_request(message, images, store_response=store_response)
-            elif images and len(images) > 10:
-                for i in range(0, len(images), 9):
-                    self._send_request(
-                        message, images[i : i + 9], store_response=store_response
-                    )
-            else:
-                self._send_request(message, store_response=store_response)
+        if images and len(images) <= 10:
+            self._send_request(message, images, store_response=store_response)
+        elif images and len(images) > 10:
+            for i in range(0, len(images), 9):
+                self._send_request(
+                    message, images[i : i + 9], store_response=store_response
+                )
+        else:
+            self._send_request(message, store_response=store_response)
