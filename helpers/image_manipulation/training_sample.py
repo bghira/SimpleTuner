@@ -101,13 +101,7 @@ class TrainingSample:
             # Return normalised tensor.
             image = self.transforms(image)
         webhook_handler = StateTracker.get_webhook_handler()
-        if webhook_handler:
-            webhook_handler.send(
-                message=f"Debug info for prepared sample, {self}",
-                images=[self.image] if self.image else None,
-                message_level="debug",
-            )
-        return PreparedSample(
+        prepared_sample = PreparedSample(
             image=image,
             original_size=self.original_size,
             crop_coordinates=self.crop_coordinates,
@@ -116,6 +110,13 @@ class TrainingSample:
             target_size=self.target_size,
             intermediary_size=self.intermediary_size,
         )
+        if webhook_handler:
+            webhook_handler.send(
+                message=f"Debug info for prepared sample, {dict(prepared_sample)}",
+                images=[self.image] if self.image else None,
+                message_level="debug",
+            )
+        return prepared_sample
 
     def area(self) -> int:
         """
