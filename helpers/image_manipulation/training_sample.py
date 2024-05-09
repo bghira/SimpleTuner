@@ -112,7 +112,7 @@ class TrainingSample:
         )
         if webhook_handler:
             webhook_handler.send(
-                message=f"Debug info for prepared sample, {dict(prepared_sample)}",
+                message=f"Debug info for prepared sample, {str(prepared_sample)}",
                 images=[self.image] if self.image else None,
                 message_level="debug",
             )
@@ -371,3 +371,16 @@ class PreparedSample:
         self.target_size = target_size
         self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
+
+    def __str__(self):
+        return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"
+
+    def to_dict(self):
+        return {
+            "image": self.image,
+            "original_size": self.original_size,
+            "intermediary_size": self.intermediary_size,
+            "target_size": self.target_size,
+            "aspect_ratio": self.aspect_ratio,
+            "crop_coordinates": self.crop_coordinates,
+        }

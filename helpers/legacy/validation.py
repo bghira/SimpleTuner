@@ -242,9 +242,17 @@ def log_validations(
                 or args.num_validation_images is None
                 or args.num_validation_images <= 0
             ):
+                logger.debug(
+                    f"Validations are disabled:"
+                    f"\n -> validation_prompts: {validation_prompts}"
+                    f"\n -> num_validation_images: {args.num_validation_images}"
+                )
                 return
             if validation_type == "finish" and should_do_intermediary_validation:
                 # 382 - don't run final validation when we'd also have run the intermediary validation.
+                logger.debug(
+                    "Skipping final validation, because training is completed. Avoiding 2x validation."
+                )
                 return
             logger.debug(f"We have valid prompts to process.")
             if StateTracker.get_webhook_handler() is not None:
