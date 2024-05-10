@@ -161,6 +161,7 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
     StateTracker.set_accelerator(accelerator)
+    webhook_handler = None
     if args.webhook_config is not None:
         from helpers.webhooks.handler import WebhookHandler
 
