@@ -292,14 +292,15 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        text_encoder = text_encoder_cls.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="text_encoder",
+            revision=args.revision,
+        )
         if args.train_text_encoder and "deepfloyd" not in args.model_type:
             text_encoder = freeze_text_encoder(
                 args,
-                text_encoder_cls.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    subfolder="text_encoder",
-                    revision=args.revision,
-                ),
+                text_encoder,
             )
         from transformers import T5EncoderModel
 
