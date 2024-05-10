@@ -149,7 +149,7 @@ class SDXLSaveHook:
             }
             unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
             incompatible_keys = set_peft_model_state_dict(
-                unet_, unet_state_dict, adapter_name="default"
+                unet_ or self.unet, unet_state_dict, adapter_name="default"
             )
             if incompatible_keys is not None:
                 # check only for unexpected keys

@@ -437,6 +437,10 @@ class TextEmbeddingCache:
                         is_validation,
                     )
                     add_text_embeds = pooled_prompt_embeds
+                    # If the prompt is empty, zero out the embeddings
+                    if prompt == "":
+                        prompt_embeds = torch.zeros_like(prompt_embeds)
+                        add_text_embeds = torch.zeros_like(add_text_embeds)
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
                     if current_size >= 2048:
@@ -563,6 +567,9 @@ class TextEmbeddingCache:
                         prompt_embeds = self.encode_legacy_prompt(
                             self.text_encoders[0], self.tokenizers[0], [prompt]
                         )
+                    # If the prompt is empty, zero out the embeds:
+                    if prompt == "":
+                        prompt_embeds = torch.zeros_like(prompt_embeds)
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
 

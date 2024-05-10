@@ -16,6 +16,7 @@ class HubManager:
         self.data_backends = StateTracker.get_data_backends()
         self._create_repo()
         self.validation_prompts = None
+        self.collected_data_backend_str = None
 
     def _create_repo(self):
         self._repo_id = create_repo(
@@ -33,7 +34,7 @@ class HubManager:
     def _commit_message(self):
         return (
             f"Trained for {self.config.num_train_epochs} epochs and {StateTracker.get_global_step()} steps."
-            f"\nTrained with datasets {self.data_backends.keys()}"
+            f"\nTrained with datasets {self.collected_data_backend_str}"
             f"\nLearning rate {self.config.learning_rate}, batch size {self.config.train_batch_size}, and {self.config.gradient_accumulation_steps} gradient accumulation steps."
             f"\nUsed DDPM noise scheduler for training with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
             f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
