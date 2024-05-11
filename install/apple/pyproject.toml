@@ -8,8 +8,8 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
-torch = "^2.4.0.dev20240407"
-torchvision = "^0.19.0.dev20240407"
+torch = { version = "^2.4.0.dev20240511", source = "pytorch-nightly" }
+torchvision = "^0.19.0.dev20240511"
 diffusers = "^0.27.2"
 transformers = "^4.38.2"
 datasets = "^2.14.3"
@@ -44,6 +44,6 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.source]]
-priority = "secondary"
+priority = "supplemental"
 name = "pytorch-nightly"
 url = "https://download.pytorch.org/whl/nightly/cpu"
