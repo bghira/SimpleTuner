@@ -799,6 +799,13 @@ def parse_args(input_args=None):
         help="Whether or not to push the model to the Hub.",
     )
     parser.add_argument(
+        "--push_checkpoints_to_hub",
+        action="store_true",
+        help=(
+            "When set along with --push_to_hub, all intermediary checkpoints will be pushed to the hub as if they were a final checkpoint."
+        ),
+    )
+    parser.add_argument(
         "--hub_token",
         type=str,
         default=None,
@@ -1158,6 +1165,15 @@ def parse_args(input_args=None):
         type=bool,
         default=True,
         help="Whether or not to freeze the text_encoder. The default is true.",
+    )
+    parser.add_argument(
+        "--save_text_encoder",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will save the text_encoder after training."
+            " This is useful if you're using --push_to_hub so that the final pipeline contains all necessary components to run."
+        ),
     )
     parser.add_argument(
         "--text_encoder_limit",

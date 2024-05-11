@@ -110,6 +110,7 @@ class Validation:
         self.vae_path = vae_path
         self.validation_prompts = validation_prompts
         self.validation_shortnames = validation_shortnames
+        self.validation_images = None
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
         self.validation_negative_pooled_embeds = validation_negative_pooled_embeds
@@ -237,21 +238,26 @@ class Validation:
         step: int = 0,
         validation_type="intermediary",
         force_evaluation: bool = False,
+        skip_execution: bool = False,
     ):
-        if StateTracker.get_webhook_handler() is not None:
-            StateTracker.get_webhook_handler().send(
-                message=f"Validations are generating.. this might take a minute! 🖼️",
-                message_level="info",
-            )
         self._update_state()
         should_validate = self.should_perform_validation(
             step, self.validation_prompts, validation_type
         )
         logger.debug(
-            f"Should evaluate: {should_validate}, force evaluation: {force_evaluation}"
+            f"Should evaluate: {should_validate}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
         if not should_validate and not force_evaluation:
-            return
+            return self
+        if should_validate and skip_execution:
+            # If the validation would have fired off, we'll skip it.
+            # This is useful at the end of training so we don't validate 2x.
+            return self
+        if StateTracker.get_webhook_handler() is not None:
+            StateTracker.get_webhook_handler().send(
+                message=f"Validations are generating.. this might take a minute! 🖼️",
+                message_level="info",
+            )
 
         if self.accelerator.is_main_process:
             logger.info("Starting validation process...")
@@ -259,6 +265,8 @@ class Validation:
             self.process_prompts()
             self.finalize_validation(validation_type)
             logger.info("Validation process completed.")
+
+        return self
 
     def should_perform_validation(self, step, validation_prompts, validation_type):
         should_do_intermediary_validation = (
@@ -335,8 +343,8 @@ class Validation:
                     mode=self.args.validation_torch_compile_mode,
                     fullgraph=False,
                 )
-            self.pipeline = self.pipeline.to(self.accelerator.device)
-            self.pipeline.set_progress_bar_config(disable=True)
+        self.pipeline = self.pipeline.to(self.accelerator.device)
+        self.pipeline.set_progress_bar_config(disable=True)
 
     def process_prompts(self):
         """Processes each validation prompt and logs the result."""
@@ -349,6 +357,7 @@ class Validation:
             self._save_images(validation_images, shortname, prompt)
             self._log_validations_to_webhook(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
+        self.validation_images = validation_images
         self._log_validations_to_trackers(validation_images)
 
     def validate_prompt(self, prompt, validation_shortname):
@@ -396,6 +405,13 @@ class Validation:
                     **extra_validation_kwargs,
                 }
                 logger.info(f"Image being generated with parameters: {pipeline_kwargs}")
+                # Print the device attr of any parameters that have one
+                for key, value in pipeline_kwargs.items():
+                    if hasattr(value, "device"):
+                        logger.info(f"Device for {key}: {value.device}")
+                for key, value in self.pipeline.components.items():
+                    if hasattr(value, "device"):
+                        logger.info(f"Device for {key}: {value.device}")
                 validation_images[validation_shortname].extend(
                     self.pipeline(**pipeline_kwargs).images
                 )

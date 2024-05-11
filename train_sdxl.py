@@ -523,6 +523,9 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     collected_data_backend_str = list(StateTracker.get_data_backends().keys())
+    if args.push_to_hub:
+        hub_manager.collected_data_backend_str = collected_data_backend_str
+        hub_manager.set_validation_prompts(validation_prompts)
     logger.info(f"Collected the following data backends: {collected_data_backend_str}")
     if webhook_handler is not None:
         webhook_handler.send(
@@ -1450,6 +1453,15 @@ def main():
             }
             progress_bar.set_postfix(**logs)
             validation.run_validations(validation_type="intermediary", step=global_step)
+            if (
+                args.push_to_hub
+                and args.push_checkpoints_to_hub
+                and global_step % args.checkpointing_steps == 0
+            ):
+                hub_manager.upload_latest_checkpoint(
+                    validation_images=validation.validation_images,
+                    webhook_handler=webhook_handler,
+                )
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
@@ -1466,6 +1478,12 @@ def main():
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        validation_images = validation.run_validations(
+            validation_type="final",
+            step=global_step,
+            force_evaluation=True,
+            skip_execution=True,
+        ).validation_images
         unet = unwrap_model(accelerator, unet)
         if "lora" in args.model_type:
             unet_lora_layers = convert_state_dict_to_diffusers(
@@ -1498,12 +1516,32 @@ def main():
         elif args.use_ema:
             ema_unet.copy_to(unet.parameters())
 
-        if StateTracker.get_vae() is None:
-            if webhook_handler is not None:
-                webhook_handler.send(message="Loading VAE..")
-
-            StateTracker.set_vae(
-                AutoencoderKL.from_pretrained(
+        if args.model_type == "full":
+            # Now we build a full SDXL Pipeline to export the model with.
+            pipeline = StableDiffusionXLPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                text_encoder=(
+                    text_encoder_cls_1.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        subfolder="text_encoder",
+                        revision=args.revision,
+                    )
+                    if args.save_text_encoder
+                    else None
+                ),
+                text_encoder_2=(
+                    text_encoder_cls_2.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        subfolder="text_encoder_2",
+                        revision=args.revision,
+                    )
+                    if args.save_text_encoder
+                    else None
+                ),
+                tokenizer=tokenizer_1,
+                tokenizer_2=tokenizer_2,
+                vae=StateTracker.get_vae()
+                or AutoencoderKL.from_pretrained(
                     vae_path,
                     subfolder=(
                         "vae"
@@ -1512,93 +1550,26 @@ def main():
                     ),
                     revision=args.revision,
                     force_upcast=False,
-                )
-            )
-        if args.model_type == "full":
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                text_encoder=None,
-                text_encoder_2=None,
-                tokenizer=tokenizer_1,
-                tokenizer_2=tokenizer_2,
-                vae=StateTracker.get_vae(),
+                ),
                 unet=unet,
                 revision=args.revision,
                 add_watermarker=args.enable_watermark,
                 torch_dtype=weight_dtype,
             )
-        else:
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
+            pipeline.scheduler = SCHEDULER_NAME_MAP[
+                args.validation_noise_scheduler
+            ].from_pretrained(
                 args.pretrained_model_name_or_path,
-                vae=StateTracker.get_vae(),
-                revision=args.revision,
-                add_watermarker=args.enable_watermark,
-                torch_dtype=weight_dtype,
+                subfolder="scheduler",
+                prediction_type=args.prediction_type,
+                timestep_spacing=args.training_scheduler_timestep_spacing,
+                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             )
-        pipeline.set_progress_bar_config(disable=True)
-        pipeline.scheduler = SCHEDULER_NAME_MAP[
-            args.validation_noise_scheduler
-        ].from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            prediction_type=args.prediction_type,
-            timestep_spacing=args.training_scheduler_timestep_spacing,
-            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-        )
-        if args.model_type == "full":
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
-            validation_images = log_validations(
-                accelerator,
-                prompt_handler,
-                unet,
-                args,
-                validation_prompts,
-                validation_shortnames,
-                step,
-                text_encoder_1,
-                tokenizer=None,
-                vae_path=vae_path,
-                weight_dtype=weight_dtype,
-                embed_cache=StateTracker.get_default_text_embed_cache(),
-                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
-                text_encoder_2=text_encoder_2,
-                tokenizer_2=None,
-                vae=vae,
-                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-                validation_type="finish",
-                pipeline=pipeline,
-            )
-        elif "lora" in args.model_type:
-            # load attention processors. They were saved earlier.
-            pipeline.load_lora_weights(args.output_dir)
-            validation_images = log_validations(
-                accelerator,
-                prompt_handler,
-                None,
-                args,
-                validation_prompts,
-                validation_shortnames,
-                step,
-                text_encoder_1,
-                tokenizer=None,
-                vae_path=vae_path,
-                weight_dtype=weight_dtype,
-                embed_cache=StateTracker.get_default_text_embed_cache(),
-                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
-                text_encoder_2=text_encoder_2,
-                tokenizer_2=None,
-                vae=vae,
-                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-                validation_type="finish",
-                pipeline=pipeline,
-            )
+
         if args.push_to_hub:
-            hub_manager.collected_data_backend_str = collected_data_backend_str
-            hub_manager.set_validation_prompts(validation_prompts)
             hub_manager.upload_model(validation_images, webhook_handler)
     accelerator.end_training()
     # List any running child threads remaining:
