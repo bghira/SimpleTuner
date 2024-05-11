@@ -114,7 +114,11 @@ class Validation:
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
         self.validation_negative_pooled_embeds = validation_negative_pooled_embeds
-        self.validation_negative_prompt_embeds = validation_negative_prompt_embeds
+        self.validation_negative_prompt_embeds = (
+            validation_negative_prompt_embeds
+            if type(validation_negative_prompt_embeds) is not list
+            else validation_negative_prompt_embeds[0]
+        )
         self.ema_unet = ema_unet
         self.vae = vae
         self.pipeline = None
@@ -180,7 +184,8 @@ class Validation:
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )[0]
             logger.debug(
-                f"Validations received the prompt embed: positive={current_validation_prompt_embeds.shape}, negative={self.validation_negative_prompt_embeds.shape}"
+                f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
+                f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
             )
             if (
                 self.prompt_handler is not None
@@ -220,7 +225,7 @@ class Validation:
         prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
         # If the prompt is an empty string, zero out all of the embeds:
-        if validation_prompt == "":
+        if validation_prompt == "" and "deepfloyd" not in self.args.model_type:
             prompt_embeds = {
                 key: torch.zeros_like(value).to(self.accelerator.device)
                 for key, value in prompt_embeds.items()
