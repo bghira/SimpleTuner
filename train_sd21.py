@@ -880,7 +880,7 @@ def main():
             StateTracker.set_global_resume_step(global_resume_step)
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
-    if first_epoch > 1:
+    if global_resume_step > 1:
         total_steps_remaining_at_start = (
             total_steps_remaining_at_start - global_resume_step
         )
@@ -1375,11 +1375,22 @@ def main():
             }
             progress_bar.set_postfix(**logs)
             validation.run_validations(validation_type="intermediary", step=global_step)
+            if (
+                args.push_to_hub
+                and args.push_checkpoints_to_hub
+                and global_step % args.checkpointing_steps == 0
+            ):
+                hub_manager.upload_latest_checkpoint(
+                    validation_images=validation.validation_images,
+                    webhook_handler=webhook_handler,
+                )
+
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
                 logger.info(
                     f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
                 )
                 break
+
         if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
             logger.info(
                 f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {global_step}"
