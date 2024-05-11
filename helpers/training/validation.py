@@ -152,7 +152,9 @@ class Validation:
             if self.prompt_handler is not None:
                 for text_encoder in self.prompt_handler.text_encoders:
                     # Can't remember why we move this to the GPU right here..
-                    text_encoder = text_encoder.to(self.accelerator.device)
+                    text_encoder = text_encoder.to(
+                        device=self.accelerator.device, dtype=self.weight_dtype
+                    )
                 [
                     current_validation_prompt_embeds,
                     self.validation_negative_prompt_embeds,
@@ -187,13 +189,18 @@ class Validation:
                 f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
                 f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
             )
+            logger.debug(
+                f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
+            )
             if (
                 self.prompt_handler is not None
                 and "deepfloyd" not in self.args.model_type
             ):
                 for text_encoder in self.prompt_handler.text_encoders:
                     if text_encoder:
-                        text_encoder = text_encoder.to(self.accelerator.device)
+                        text_encoder = text_encoder.to(
+                            self.accelerator.device, dtype=self.weight_dtype
+                        )
                 [
                     current_validation_prompt_embeds,
                     self.validation_negative_prompt_embeds,
@@ -205,7 +212,9 @@ class Validation:
                 )
                 for text_encoder in self.prompt_handler.text_encoders:
                     if text_encoder:
-                        text_encoder = text_encoder.to(self.accelerator.device)
+                        text_encoder = text_encoder.to(
+                            self.accelerator.device, dtype=self.weight_dtype
+                        )
                 current_validation_prompt_embeds = current_validation_prompt_embeds.to(
                     device=self.accelerator.device, dtype=self.weight_dtype
                 )
@@ -227,7 +236,9 @@ class Validation:
         # If the prompt is an empty string, zero out all of the embeds:
         if validation_prompt == "" and "deepfloyd" not in self.args.model_type:
             prompt_embeds = {
-                key: torch.zeros_like(value).to(self.accelerator.device)
+                key: torch.zeros_like(value).to(
+                    device=self.accelerator.device, dtype=self.weight_dtype
+                )
                 for key, value in prompt_embeds.items()
             }
 

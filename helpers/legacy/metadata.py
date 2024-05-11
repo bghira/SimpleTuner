@@ -105,9 +105,6 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 
 ## Training settings
 
-{'Xformers was used to train this model. As such, bf16 or fp32 inference may be required. Your mileage may vary.' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'This model was not trained with Xformers.'}
-{StateTracker.get_args().mixed_precision} precision was used during training.
-
 - Training epochs: {StateTracker.get_epoch() - 1}
 - Training steps: {StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
@@ -117,6 +114,8 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Prediction type: {StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
+- Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}
+- Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets
