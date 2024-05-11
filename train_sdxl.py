@@ -22,7 +22,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from pathlib import Path
 from helpers.arguments import parse_args
-from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
+from helpers.legacy.validation import prepare_validation_prompt_list
 from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
