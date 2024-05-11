@@ -2,7 +2,8 @@ import torch, os, wandb, logging
 from pathlib import Path
 from tqdm import tqdm
 from helpers.training.state_tracker import StateTracker
-from diffusers.pipelines import DiffusionPipeline, StableDiffusionXLPipeline
+from helpers.sdxl.pipeline import StableDiffusionXLPipeline
+from helpers.legacy.pipeline import DiffusionPipeline
 from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
