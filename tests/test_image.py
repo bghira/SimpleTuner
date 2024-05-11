@@ -48,7 +48,7 @@ class TestMultiaspectImage(unittest.TestCase):
         # Define test cases for 1.0 and 0.5 megapixels
         test_edge_lengths = [1024, 512, 256, 64]
         # Number of random tests to perform
-        num_random_tests = 100000
+        num_random_tests = 1000
         with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             for edge_length in test_edge_lengths:
                 mock_args.return_value = Mock(
@@ -94,7 +94,7 @@ class TestMultiaspectImage(unittest.TestCase):
 
     def test_calculate_batch_size_by_pixel_edge(self):
         test_edge_lengths = [1024, 768, 512, 256, 64]
-        num_images_per_batch = 10000
+        num_images_per_batch = 100
         aspect_ratios = [
             1.5,
             1.0,

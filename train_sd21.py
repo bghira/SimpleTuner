@@ -21,7 +21,8 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from pathlib import Path
 from helpers.arguments import parse_args
-from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
+from helpers.legacy.validation import prepare_validation_prompt_list
+from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
@@ -661,12 +662,14 @@ def main():
         )
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
-    logger.info(
-        f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
-    )
+    collected_data_backend_str = list(StateTracker.get_data_backends().keys())
+    if args.push_to_hub:
+        hub_manager.collected_data_backend_str = collected_data_backend_str
+        hub_manager.set_validation_prompts(validation_prompts)
+    logger.info(f"Collected the following data backends: {collected_data_backend_str}")
     if webhook_handler is not None:
         webhook_handler.send(
-            message=f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
+            message=f"Collected the following data backends: {collected_data_backend_str}"
         )
 
     total_num_batches = sum(
@@ -693,84 +696,18 @@ def main():
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
 
-    if use_deepspeed_scheduler:
-        logger.info(f"Using DeepSpeed learning rate scheduler")
-        lr_scheduler = accelerate.utils.DummyScheduler(
-            optimizer,
-            total_num_steps=args.max_train_steps,
-            warmup_num_steps=args.lr_warmup_steps,
-        )
-    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
-        # Use the AdafactorScheduler.
-        logger.info(
-            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
-        )
-        lr_scheduler = AdafactorSchedule(
-            optimizer=optimizer, initial_lr=args.learning_rate
-        )
-    elif args.lr_scheduler == "cosine_with_restarts":
-        logger.info(f"Using Cosine with Restarts learning rate scheduler.")
-        logger.warning(
-            f"cosine_with_restarts is currently misbehaving, and may not do what you expect. sine is recommended instead."
-        )
-        from helpers.training.custom_schedule import CosineAnnealingHardRestarts
+    from helpers.training.custom_schedule import get_lr_scheduler
 
-        lr_scheduler = CosineAnnealingHardRestarts(
-            optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
-            T_mult=int(1),
-            eta_min=float(args.lr_end),
-            last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
-        )
-    elif args.lr_scheduler == "sine":
-        logger.info(f"Using Sine learning rate scheduler.")
-        from helpers.training.custom_schedule import Sine
-
-        lr_scheduler = Sine(
-            optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
-            T_mult=int(1),
-            eta_min=float(args.lr_end),
-            last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
-        )
-    elif args.lr_scheduler == "cosine":
-        logger.info(f"Using Cosine learning rate scheduler.")
-        from helpers.training.custom_schedule import Cosine
-
-        lr_scheduler = Cosine(
-            optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
-            T_mult=int(1),
-            eta_min=float(args.lr_end),
-            last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
-        )
-    elif args.lr_scheduler == "polynomial":
-        logger.info(f"Using Polynomial learning rate scheduler.")
-        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps * accelerator.num_processes,
-            lr_end=args.lr_end,
-            power=args.lr_power,
-            last_epoch=StateTracker.get_global_resume_step() - 2,
-        )
-    else:
-        logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
-        lr_scheduler = get_scheduler(
-            name=args.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps * accelerator.num_processes,
-            num_cycles=args.lr_num_cycles,
-            power=args.lr_power,
-        )
-
+    logger.info(
+        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+    )
+    lr_scheduler = get_lr_scheduler(
+        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    )
+    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+    if hasattr(lr_scheduler, "last_step"):
+        lr_scheduler.last_step = global_resume_step
     accelerator.wait_for_everyone()
 
     # Create EMA for the unet.
@@ -886,7 +823,25 @@ def main():
     first_epoch = 0
     current_percent_completion = 0
     scheduler_kwargs = {}
-
+    validation = Validation(
+        accelerator=accelerator,
+        prompt_handler=prompt_handler,
+        unet=unet,
+        args=args,
+        validation_prompts=validation_prompts,
+        validation_shortnames=validation_shortnames,
+        text_encoder_1=text_encoder,
+        tokenizer=tokenizer,
+        vae_path=args.pretrained_model_name_or_path,
+        weight_dtype=weight_dtype,
+        embed_cache=StateTracker.get_default_text_embed_cache(),
+        validation_negative_pooled_embeds=None,
+        validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+        text_encoder_2=None,
+        tokenizer_2=None,
+        ema_unet=ema_unet,
+        vae=vae,
+    )
     # Potentially load in the weights and states from a previous save
     first_epoch = 1
     if args.resume_from_checkpoint:
@@ -937,6 +892,10 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
+
+    lr_scheduler = get_lr_scheduler(
+        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
@@ -1415,28 +1374,7 @@ def main():
                 "lr": lr_scheduler.get_last_lr()[0],
             }
             progress_bar.set_postfix(**logs)
-            log_validations(
-                accelerator,
-                prompt_handler,
-                unet,
-                args,
-                validation_prompts,
-                validation_shortnames,
-                step,
-                text_encoder,
-                tokenizer,
-                vae_path=args.pretrained_model_name_or_path,
-                weight_dtype=accelerator.unwrap_model(unet).dtype,
-                embed_cache=StateTracker.get_default_text_embed_cache(),
-                validation_negative_pooled_embeds=None,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds[0],
-                text_encoder_2=None,
-                tokenizer_2=None,
-                ema_unet=ema_unet,
-                vae=vae,
-                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-            )
-
+            validation.run_validations(validation_type="intermediary", step=global_step)
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
                 logger.info(
                     f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
@@ -1451,6 +1389,12 @@ def main():
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        validation_images = validation.run_validations(
+            validation_type="final",
+            step=global_step,
+            force_evaluation=True,
+            skip_execution=True,
+        ).validation_images
         unet = accelerator.unwrap_model(unet)
         if args.model_type == "full" and args.train_text_encoder:
             text_encoder = accelerator.unwrap_model(text_encoder)
@@ -1522,100 +1466,14 @@ def main():
                 timestep_spacing="trailing",
                 rescale_betas_zero_snr=True,
             )
-
-        pipeline.set_progress_bar_config(disable=True)
         if "full" in args.model_type:
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
                 safe_serialization=True,
             )
-        # elif "lora" in args.model_type:
-        #     pipeline.load_lora_weights(args.output_dir)
 
-        if validation_prompts:
-            if webhook_handler is not None:
-                webhook_handler.send(
-                    message=f"Training has completed after {current_epoch} epochs and {global_step} steps. Generating validation images.."
-                )
-            validation_images = []
-            pipeline = pipeline.to(
-                accelerator.device,
-                dtype=(
-                    torch.bfloat16
-                    if torch.backends.mps.is_available()
-                    else torch.bfloat16 if torch.cuda.is_available() else torch.float32
-                ),
-            )
-            if "vae" in pipeline.components:
-                pipeline.components["vae"].to(vae_dtype)
-
-            autocast_ctx = accelerator.autocast()
-            extra_pipeline_kwargs = {}
-            if "deepfloyd" not in args.model_type:
-                extra_pipeline_kwargs["guidance_rescale"] = (
-                    args.validation_guidance_rescale
-                )
-
-            with autocast_ctx:
-                validation_generator = torch.Generator(
-                    device=accelerator.device
-                ).manual_seed(args.seed or 0)
-                for validation_prompt_idx, validation_prompt in tqdm(
-                    enumerate(validation_prompts), desc="Generating validation images"
-                ):
-                    # Each validation prompt needs its own embed.
-                    current_validation_prompt_embeds = StateTracker.get_default_text_embed_cache().compute_embeddings_for_prompts(
-                        [validation_prompt]
-                    )[
-                        0
-                    ]
-                    validation_shortname = validation_shortnames[validation_prompt_idx]
-                    validation_images.extend(
-                        pipeline(
-                            prompt_embeds=current_validation_prompt_embeds,
-                            negative_prompt_embeds=validation_negative_prompt_embeds[0],
-                            num_images_per_prompt=1,
-                            num_inference_steps=args.validation_num_inference_steps,
-                            guidance_scale=args.validation_guidance,
-                            generator=validation_generator,
-                            height=int(args.resolution),
-                            width=int(args.resolution),
-                            **extra_pipeline_kwargs,
-                        ).images
-                    )
-                    if StateTracker.get_webhook_handler() is not None:
-                        StateTracker.get_webhook_handler().send(
-                            f"Validation image for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
-                            f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`",
-                            images=validation_images[validation_prompt_idx],
-                        )
-
-                from helpers.image_manipulation.brightness import calculate_luminance
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "wandb":
-                        validation_document = {}
-                        validation_luminance = []
-                        for idx, validation_image in enumerate(validation_images):
-                            # Create a WandB entry containing each image.
-                            shortname = f"no_shortname-{idx}"
-                            if idx in validation_shortnames:
-                                shortname = f"{validation_shortnames[idx]}-{idx}"
-                            validation_document[shortname] = wandb.Image(
-                                validation_image
-                            )
-                            validation_luminance.append(
-                                calculate_luminance(validation_image)
-                            )
-                        # Compute the mean luminance across all samples:
-                        validation_luminance = torch.tensor(validation_luminance)
-                        validation_document["validation_luminance"] = (
-                            validation_luminance.mean()
-                        )
-                        del validation_luminance
-                        tracker.log(validation_document, step=global_step)
-            if args.push_to_hub:
-                hub_manager.upload_model(validation_images, webhook_handler)
+        if args.push_to_hub:
+            hub_manager.upload_model(validation_images, webhook_handler)
 
         else:
             if webhook_handler is not None:

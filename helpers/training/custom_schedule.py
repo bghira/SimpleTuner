@@ -1,6 +1,8 @@
 from torch.optim.lr_scheduler import LambdaLR
-import torch, math, warnings
+import torch, math, warnings, accelerate, os
 from torch.optim.lr_scheduler import LRScheduler
+from helpers.training.state_tracker import StateTracker
+from transformers.optimization import AdafactorSchedule
 
 
 def generate_timestep_weights(args, num_timesteps):
@@ -426,3 +428,92 @@ class Sine(LRScheduler):
                     "Epoch {}: adjusting learning rate"
                     " of group {} to {:.8e}.".format(epoch_str, group, lr)
                 )
+
+
+from diffusers.optimization import get_scheduler
+
+
+def get_lr_scheduler(
+    args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+):
+    if use_deepspeed_scheduler:
+        logger.info(f"Using DeepSpeed learning rate scheduler")
+        lr_scheduler = accelerate.utils.DummyScheduler(
+            optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.lr_warmup_steps,
+        )
+    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
+        # Use the AdafactorScheduler.
+        logger.info(
+            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
+        )
+        lr_scheduler = AdafactorSchedule(
+            optimizer=optimizer, initial_lr=args.learning_rate
+        )
+    elif args.lr_scheduler == "cosine_with_restarts":
+        logger.info(f"Using Cosine with Restarts learning rate scheduler.")
+        logger.warning(
+            f"cosine_with_restarts is currently misbehaving, and may not do what you expect. sine is recommended instead."
+        )
+        from helpers.training.custom_schedule import CosineAnnealingHardRestarts
+
+        lr_scheduler = CosineAnnealingHardRestarts(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
+    elif args.lr_scheduler == "sine":
+        logger.info(f"Using Sine learning rate scheduler.")
+        from helpers.training.custom_schedule import Sine
+
+        lr_scheduler = Sine(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
+    elif args.lr_scheduler == "cosine":
+        logger.info(f"Using Cosine learning rate scheduler.")
+        from helpers.training.custom_schedule import Cosine
+
+        lr_scheduler = Cosine(
+            optimizer=optimizer,
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
+            T_mult=int(1),
+            eta_min=float(args.lr_end),
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
+        )
+    elif args.lr_scheduler == "polynomial":
+        logger.info(
+            f"Using Polynomial learning rate scheduler with last epoch {StateTracker.get_global_step() - 2}."
+        )
+        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
+            lr_end=args.lr_end,
+            power=args.lr_power,
+            last_epoch=StateTracker.get_global_step() - 1,
+        )
+    else:
+        logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler,
+            optimizer=optimizer,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
+            num_cycles=args.lr_num_cycles,
+            power=args.lr_power,
+        )
+
+    return lr_scheduler

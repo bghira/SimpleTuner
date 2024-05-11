@@ -260,19 +260,9 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
 fi
 
 export BITFIT_ARGS=""
-if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_BITFIT" != "false" ]]; then
+if [[ "$USE_BITFIT" != "false" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
-elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_BITFIT" != "false" ]]; then
-    echo "Cannot use BitFit with a LoRA training task. Disabling."
-fi
-
-export BITFIT_ARGS=""
-if [[ "$MODEL_TYPE" == "full" ]] && [[ "$USE_DORA" != "false" ]]; then
-    echo "Enabling BitFit."
-    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
-elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
-    echo "Cannot use BitFit with a full u-net training task. Disabling DoRA."
 fi
 
 # if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.
