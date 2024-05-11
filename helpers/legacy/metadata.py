@@ -2,6 +2,17 @@ import os
 from helpers.training.state_tracker import StateTracker
 
 
+def lora_info(args):
+    """Return a string with the LORA information."""
+    if "lora" not in args.model_type:
+        return ""
+    return f"""- LoRA Rank: {args.lora_rank}
+- LoRA Alpha: {args.lora_alpha}
+- LoRA Dropout: {args.lora_dropout}
+- LoRA initialisation style: {args.lora_init_type}
+"""
+
+
 def save_model_card(
     repo_id: str,
     images=None,
@@ -29,8 +40,9 @@ def save_model_card(
         for image_list in images.values() if isinstance(images, dict) else images:
             if not isinstance(image_list, list):
                 image_list = [image_list]
+            sub_idx = 0
             for image in image_list:
-                image_path = os.path.join(assets_folder, f"image_{idx}.png")
+                image_path = os.path.join(assets_folder, f"image_{idx}_{sub_idx}.png")
                 image.save(image_path, format="PNG")
                 validation_prompt = (
                     validation_prompts[shortname_idx]
@@ -43,8 +55,10 @@ def save_model_card(
                 widget_str += f"\n  parameters:"
                 widget_str += f"\n    negative_prompt: {StateTracker.get_args().validation_negative_prompt}"
                 widget_str += f"\n  output:"
-                widget_str += f"\n    url: ./assets/image_{idx}.png"
+                widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.png"
                 idx += 1
+                sub_idx += 1
+
             shortname_idx += 1
     yaml_content = f"""---
 license: creativeml-openrail-m
@@ -63,10 +77,13 @@ inference: true
 """
     model_card_content = f"""# {repo_id}
 
-This is a {StateTracker.get_args().model_type} finetuned model derived from [{base_model}](https://huggingface.co/{base_model}).
+This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full rank'} finetuned model derived from [{base_model}](https://huggingface.co/{base_model}).
 
 {'The main validation prompt used during training was:' if prompt else 'No validation prompt was used during training.'}
+
+```
 {prompt}
+```
 
 ## Validation settings
 - CFG: `{StateTracker.get_args().validation_guidance}`
@@ -74,8 +91,11 @@ This is a {StateTracker.get_args().model_type} finetuned model derived from [{ba
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
 - Sampler: `{StateTracker.get_args().validation_noise_scheduler}`
 - Seed: `{StateTracker.get_args().validation_seed}`
+- Resolution{'s' if ',' in StateTracker.get_args().validation_resolution else ''}: `{StateTracker.get_args().validation_resolution}`
 
-You can find some example images in the following.\n
+Note: The validation settings are not necessarily the same as the [training settings](#training-settings).
+
+{'You can find some example images in the following gallery:' if images is not None else ''}\n
 
 <Gallery />
 
@@ -97,6 +117,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Prediction type: {StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
+{lora_info(args=StateTracker.get_args())}
 
 ## Datasets
 
