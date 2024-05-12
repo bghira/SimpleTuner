@@ -51,6 +51,9 @@ def save_model_card(
                 )
                 if validation_prompt == "":
                     validation_prompt = "unconditional (blank prompt)"
+                else:
+                    # Escape anything that YAML won't like
+                    validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
                 widget_str += f"\n  parameters:"
                 widget_str += f"\n    negative_prompt: {StateTracker.get_args().validation_negative_prompt}"
