@@ -556,7 +556,7 @@ class PromptHandler:
                 caption = caption[0]
             modified_caption = caption
             # Apply each filter to the caption
-            # logger.debug(f"Filtering caption: {modified_caption}")
+            logger.debug(f"Filtering caption: {modified_caption}")
             for filter_item in caption_filter_list:
                 # Check for special replace pattern 's/replace/entry/'
                 if filter_item.startswith("s/") and filter_item.count("/") == 2:
@@ -569,7 +569,8 @@ class PromptHandler:
                         modified_caption = regex_modified_caption
                 else:
                     # Treat as plain string and remove occurrences
-                    modified_caption = modified_caption.replace(filter_item, "")
+                    if modified_caption is not None:
+                        modified_caption = modified_caption.replace(filter_item, "")
                 try:
                     # Assume all filters as regex patterns for flexibility
                     pattern = re.compile(filter_item)
