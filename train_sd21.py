@@ -282,6 +282,7 @@ def main():
         timestep_spacing="trailing",
         rescale_betas_zero_snr=True,
     )
+    args.rescale_betas_zero_snr = True
     args.prediction_type = noise_scheduler.config.prediction_type
     logger.info(f"Using prediction type: {args.prediction_type}")
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
@@ -748,7 +749,7 @@ def main():
     results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
     unet = results[0]
     if torch.backends.mps.is_available() or args.unet_attention_slice:
-        unet.set_attention_slice(1)
+        unet.set_attention_slice("auto")
 
     lr_scheduler = results[1]
     optimizer = results[2]
@@ -963,7 +964,7 @@ def main():
     training_luminance_values = []
     current_epoch_step = None
 
-    for epoch in range(first_epoch, args.num_train_epochs):
+    for epoch in range(first_epoch, args.num_train_epochs + 1):
         if current_epoch >= args.num_train_epochs + 1:
             # This might immediately end training, but that's useful for simply exporting the model.
             logger.info(
