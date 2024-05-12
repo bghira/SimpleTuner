@@ -603,18 +603,18 @@ def configure_multi_databackend(
             )
 
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
-        captions = PromptHandler.get_all_captions(
-            data_backend=init_backend["data_backend"],
-            instance_data_root=init_backend["instance_data_root"],
-            prepend_instance_prompt=prepend_instance_prompt,
-            instance_prompt=instance_prompt,
-            use_captions=use_captions,
-            caption_strategy=backend.get("caption_strategy", args.caption_strategy),
-        )
-
         if "text" not in args.skip_file_discovery and "text" not in backend.get(
             "skip_file_discovery", ""
         ):
+            logger.info(f"(id={init_backend['id']}) Collecting captions.")
+            captions = PromptHandler.get_all_captions(
+                data_backend=init_backend["data_backend"],
+                instance_data_root=init_backend["instance_data_root"],
+                prepend_instance_prompt=prepend_instance_prompt,
+                instance_prompt=instance_prompt,
+                use_captions=use_captions,
+                caption_strategy=backend.get("caption_strategy", args.caption_strategy),
+            )
             logger.debug(
                 f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
             )
@@ -625,9 +625,9 @@ def configure_multi_databackend(
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
-        logger.info(
-            f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
-        )
+            logger.info(
+                f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
+            )
 
         if "deepfloyd" not in StateTracker.get_args().model_type:
             logger.info(f"(id={init_backend['id']}) Creating VAE latent cache.")
