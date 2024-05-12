@@ -822,7 +822,7 @@ def main():
                 logger.warning(
                     "Using attention slicing when training SDXL on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
-            unet.set_attention_slice()
+            unet.set_attention_slice("auto")
         lr_scheduler = results[1]
         optimizer = results[2]
         # The rest of the entries are dataloaders:
