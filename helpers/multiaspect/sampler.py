@@ -304,7 +304,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Eg. return totals, and not "as it is now"
             printed_state = (
                 f"- Repeats: {StateTracker.get_data_backend_config(self.id).get('repeats', 0)}\n"
-                f"- Total number of images: {sum([len(bucket) for bucket in self.metadata_backend.aspect_ratio_bucket_indices])}\n"
+                f"- Total number of images: {len(self.metadata_backend.seen_images) + len(self._get_unseen_images())}\n"
                 f"- Total number of aspect buckets: {len(self.buckets)}\n"
                 f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}\n"
                 f"- Cropped: {StateTracker.get_data_backend_config(self.id).get('crop')}\n"
