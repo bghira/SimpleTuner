@@ -48,7 +48,7 @@ class HubManager:
             with open(token_path, "r") as f:
                 return f.read().strip()
         raise ValueError(
-            "No Hugging Face Hub token found. Please ensure you have logged in with 'huggingface-cli login'."
+            f"No Hugging Face Hub token found ({token_path}). Please ensure you have logged in with 'huggingface-cli login'."
         )
 
     def set_validation_prompts(self, validation_prompts):
