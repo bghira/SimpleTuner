@@ -1185,7 +1185,7 @@ def main():
                         num_timesteps=noise_scheduler.config.num_train_timesteps,
                         bsz=bsz,
                         weights=weights,
-                    )
+                    ).to(accelerator.device)
                 else:
                     timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
