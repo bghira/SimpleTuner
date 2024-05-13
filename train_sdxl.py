@@ -1180,7 +1180,7 @@ def main():
                 ).to(accelerator.device)
                 # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
                 # This enables more broad sampling and potentially more effective training.
-                if bsz > 1:
+                if bsz > 1 and not args.disable_segmented_timestep_sampling:
                     timesteps = segmented_timestep_selection(
                         num_timesteps=noise_scheduler.config.num_train_timesteps,
                         bsz=bsz,

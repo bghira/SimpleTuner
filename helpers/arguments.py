@@ -211,6 +211,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--disable_segmented_timestep_sampling",
+        action="store_true",
+        help=(
+            "By default, the timestep schedule is divided into roughly `train_batch_size` number of segments, and then"
+            " each of those are sampled from separately. This improves the selection distribution, but may not"
+            " be desired in certain training scenarios, eg. when limiting the timestep selection range."
+        ),
+    )
+    parser.add_argument(
         "--rescale_betas_zero_snr",
         action="store_true",
         help=(
