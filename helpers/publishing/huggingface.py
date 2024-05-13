@@ -22,7 +22,6 @@ class HubManager:
         self._repo_id = create_repo(
             repo_id=self.config.hub_model_id or self.config.tracker_project_name,
             exist_ok=True,
-            token=self.config.hub_token,
         ).repo_id
 
     def _vae_string(self):
