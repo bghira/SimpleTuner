@@ -185,6 +185,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--timestep_bias_begin TIMESTEP_BIAS_BEGIN]
                      [--timestep_bias_end TIMESTEP_BIAS_END]
                      [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
+                     [--disable_segmented_timestep_sampling]
                      [--rescale_betas_zero_snr]
                      [--vae_dtype {default,fp16,fp32,bf16}]
                      [--vae_batch_size VAE_BATCH_SIZE]
@@ -209,6 +210,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--resolution RESOLUTION]
                      [--resolution_type {pixel,area}]
                      [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
+                     [--aspect_bucket_alignment {8,64}]
                      [--minimum_image_size MINIMUM_IMAGE_SIZE]
                      [--maximum_image_size MAXIMUM_IMAGE_SIZE]
                      [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
@@ -245,11 +247,12 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--adam_weight_decay ADAM_WEIGHT_DECAY]
                      [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
                      [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
-                     [--hub_token HUB_TOKEN] [--hub_model_id HUB_MODEL_ID]
-                     [--logging_dir LOGGING_DIR]
+                     [--push_checkpoints_to_hub]
+                     [--hub_model_id HUB_MODEL_ID] [--logging_dir LOGGING_DIR]
                      [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                      [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
-                     [--allow_tf32] [--report_to REPORT_TO]
+                     [--allow_tf32] [--webhook_config WEBHOOK_CONFIG]
+                     [--report_to REPORT_TO]
                      [--tracker_run_name TRACKER_RUN_NAME]
                      [--tracker_project_name TRACKER_PROJECT_NAME]
                      [--validation_prompt VALIDATION_PROMPT]
@@ -281,7 +284,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--print_sampler_statistics]
                      [--metadata_update_interval METADATA_UPDATE_INTERVAL]
                      [--debug_aspect_buckets] [--debug_dataset_loader]
-                     [--freeze_encoder FREEZE_ENCODER]
+                     [--freeze_encoder FREEZE_ENCODER] [--save_text_encoder]
                      [--text_encoder_limit TEXT_ENCODER_LIMIT]
                      [--prepend_instance_prompt] [--only_instance_prompt]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
@@ -391,6 +394,13 @@ options:
                         provided for `--timestep_bias_strategy` determines
                         whether the biased portions are in the earlier or
                         later timesteps.
+  --disable_segmented_timestep_sampling
+                        By default, the timestep schedule is divided into
+                        roughly `train_batch_size` number of segments, and
+                        then each of those are sampled from separately. This
+                        improves the selection distribution, but may not be
+                        desired in certain training scenarios, eg. when
+                        limiting the timestep selection range.
   --rescale_betas_zero_snr
                         If set, will rescale the betas to zero terminal SNR.
                         This is recommended for training with v_prediction.
@@ -550,6 +560,16 @@ options:
                         compatible. Higher precision levels result in a
                         greater number of buckets, which may not be a
                         desirable outcome.
+  --aspect_bucket_alignment {8,64}
+                        When training diffusion models, the image sizes
+                        generally must align to a 64 pixel interval. This is
+                        an exception when training models like DeepFloyd that
+                        use a base resolution of 64 pixels, as aligning to 64
+                        pixels would result in a 1:1 or 2:1 aspect ratio,
+                        overly distorting images. For DeepFloyd, this value is
+                        set to 8, but all other training defaults to 64. You
+                        may experiment with this value, but it is not
+                        recommended.
   --minimum_image_size MINIMUM_IMAGE_SIZE
                         The minimum resolution for both sides of input images.
                         If --delete_unwanted_images is set, images smaller
@@ -698,11 +718,10 @@ options:
                         introducing artifacts or making it hard to train
                         artifacts away.
   --push_to_hub         Whether or not to push the model to the Hub.
-  --hub_token HUB_TOKEN
-                        The token to use to push to the Model Hub. Do not use
-                        in combination with --report_to=wandb, as this value
-                        will be exposed in the logs. Instead, use
-                        `huggingface-cli login` on the command line.
+  --push_checkpoints_to_hub
+                        When set along with --push_to_hub, all intermediary
+                        checkpoints will be pushed to the hub as if they were
+                        a final checkpoint.
   --hub_model_id HUB_MODEL_ID
                         The name of the repository to keep in sync with the
                         local `output_dir`.
@@ -725,6 +744,11 @@ options:
                         used to speed up training. For more information, see h
                         ttps://pytorch.org/docs/stable/notes/cuda.html#tensorf
                         loat-32-tf32-on-ampere-devices
+  --webhook_config WEBHOOK_CONFIG
+                        The path to the webhook configuration file. This file
+                        should be a JSON file with the following format:
+                        {"url": "https://your.webhook.url", "webhook_type":
+                        "discord"}}
   --report_to REPORT_TO
                         The integration to report the results and logs to.
                         Supported platforms are `"tensorboard"` (default),
@@ -884,6 +908,10 @@ options:
   --freeze_encoder FREEZE_ENCODER
                         Whether or not to freeze the text_encoder. The default
                         is true.
+  --save_text_encoder   If set, will save the text_encoder after training.
+                        This is useful if you're using --push_to_hub so that
+                        the final pipeline contains all necessary components
+                        to run.
   --text_encoder_limit TEXT_ENCODER_LIMIT
                         When training the text_encoder, we want to limit how
                         long it trains for to avoid catastrophic loss.
@@ -932,4 +960,3 @@ options:
                         must set this flag to continue. This is a safety
                         feature to prevent accidental use of an unsupported
                         optimizer, as weights are stored in bfloat16.
-```
