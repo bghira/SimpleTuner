@@ -5,6 +5,28 @@ from helpers.training.state_tracker import StateTracker
 from transformers.optimization import AdafactorSchedule
 
 
+def segmented_timestep_selection(num_timesteps, bsz, weights):
+    # Segment size
+    segment_size = num_timesteps // bsz
+    selected_timesteps = []
+
+    # Select one timestep from each segment based on the weights
+    for i in range(bsz):
+        start = i * segment_size
+        end = (i + 1) * segment_size if i != bsz - 1 else num_timesteps
+        segment_weights = weights[start:end]
+
+        # Normalize segment weights to ensure they sum to 1
+        segment_weights /= segment_weights.sum()
+
+        # Sample one timestep from the segment
+        segment_timesteps = torch.arange(start, end)
+        selected_timestep = torch.multinomial(segment_weights, 1).item()
+        selected_timesteps.append(segment_timesteps[selected_timestep])
+
+    return torch.tensor(selected_timesteps)
+
+
 def generate_timestep_weights(args, num_timesteps):
     weights = torch.ones(num_timesteps)
 
@@ -31,7 +53,7 @@ def generate_timestep_weights(args, num_timesteps):
     else:  # 'none' or any other string
         return weights
     if args.timestep_bias_multiplier <= 0:
-        return ValueError(
+        raise ValueError(
             "The parameter --timestep_bias_multiplier is not intended to be used to disable the training of specific timesteps."
             " If it was intended to disable timestep bias, use `--timestep_bias_strategy none` instead."
             " A timestep bias multiplier less than or equal to 0 is not allowed."

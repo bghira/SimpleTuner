@@ -32,6 +32,7 @@ from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
+    segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.prompts import PromptHandler
@@ -1177,7 +1178,16 @@ def main():
                 weights = generate_timestep_weights(
                     args, noise_scheduler.config.num_train_timesteps
                 ).to(accelerator.device)
-                timesteps = torch.multinomial(weights, bsz, replacement=True).long()
+                # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
+                # This enables more broad sampling and potentially more effective training.
+                if bsz > 1:
+                    timesteps = segmented_timestep_selection(
+                        num_timesteps=noise_scheduler.config.num_train_timesteps,
+                        bsz=bsz,
+                        weights=weights,
+                    )
+                else:
+                    timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
