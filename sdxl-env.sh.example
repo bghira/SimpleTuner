@@ -56,6 +56,8 @@ export DATALOADER_CONFIG="${BASE_DIR}/multidatabackend.json"
 export OUTPUT_DIR="${BASE_DIR}/models"
 # Set this to "true" to push your model to Hugging Face Hub.
 export PUSH_TO_HUB="false"
+# If PUSH_TO_HUB and PUSH_CHECKPOINTS are both enabled, every saved checkpoint will be pushed to Hugging Face Hub.
+export PUSH_CHECKPOINTS="true"
 # This will be the model name for your final hub upload, eg. "yourusername/yourmodelname"
 # It defaults to the wandb project name, but you can override this here.
 export HUB_MODEL_NAME=$TRACKER_PROJECT_NAME

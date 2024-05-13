@@ -815,15 +815,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--hub_token",
-        type=str,
-        default=None,
-        help=(
-            "The token to use to push to the Model Hub. Do not use in combination with --report_to=wandb,"
-            " as this value will be exposed in the logs. Instead, use `huggingface-cli login` on the command line."
-        ),
-    )
-    parser.add_argument(
         "--hub_model_id",
         type=str,
         default=None,
@@ -1277,12 +1268,6 @@ def parse_args(input_args=None):
         args = parser.parse_args(input_args)
     else:
         args = parser.parse_args()
-
-    if args.report_to == "wandb" and args.hub_token is not None:
-        raise ValueError(
-            "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
-            " Please use `huggingface-cli login` to authenticate with the Hub."
-        )
 
     if args.adam_bfloat16 and args.mixed_precision != "bf16":
         logging.error("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
