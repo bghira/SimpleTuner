@@ -211,6 +211,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--disable_segmented_timestep_sampling",
+        action="store_true",
+        help=(
+            "By default, the timestep schedule is divided into roughly `train_batch_size` number of segments, and then"
+            " each of those are sampled from separately. This improves the selection distribution, but may not"
+            " be desired in certain training scenarios, eg. when limiting the timestep selection range."
+        ),
+    )
+    parser.add_argument(
         "--rescale_betas_zero_snr",
         action="store_true",
         help=(
@@ -799,12 +808,10 @@ def parse_args(input_args=None):
         help="Whether or not to push the model to the Hub.",
     )
     parser.add_argument(
-        "--hub_token",
-        type=str,
-        default=None,
+        "--push_checkpoints_to_hub",
+        action="store_true",
         help=(
-            "The token to use to push to the Model Hub. Do not use in combination with --report_to=wandb,"
-            " as this value will be exposed in the logs. Instead, use `huggingface-cli login` on the command line."
+            "When set along with --push_to_hub, all intermediary checkpoints will be pushed to the hub as if they were a final checkpoint."
         ),
     )
     parser.add_argument(
@@ -1160,6 +1167,15 @@ def parse_args(input_args=None):
         help="Whether or not to freeze the text_encoder. The default is true.",
     )
     parser.add_argument(
+        "--save_text_encoder",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will save the text_encoder after training."
+            " This is useful if you're using --push_to_hub so that the final pipeline contains all necessary components to run."
+        ),
+    )
+    parser.add_argument(
         "--text_encoder_limit",
         type=int,
         default=25,
@@ -1252,12 +1268,6 @@ def parse_args(input_args=None):
         args = parser.parse_args(input_args)
     else:
         args = parser.parse_args()
-
-    if args.report_to == "wandb" and args.hub_token is not None:
-        raise ValueError(
-            "You cannot use both --report_to=wandb and --hub_token due to a security risk of exposing your token."
-            " Please use `huggingface-cli login` to authenticate with the Hub."
-        )
 
     if args.adam_bfloat16 and args.mixed_precision != "bf16":
         logging.error("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")

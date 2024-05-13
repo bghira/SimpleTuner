@@ -22,7 +22,8 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from pathlib import Path
 from helpers.arguments import parse_args
-from helpers.legacy.validation import prepare_validation_prompt_list, log_validations
+from helpers.legacy.validation import prepare_validation_prompt_list
+from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
@@ -31,6 +32,7 @@ from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
+    segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
 from helpers.prompts import PromptHandler
@@ -160,6 +162,7 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
     StateTracker.set_accelerator(accelerator)
+    webhook_handler = None
     if args.webhook_config is not None:
         from helpers.webhooks.handler import WebhookHandler
 
@@ -520,12 +523,14 @@ def main():
         )
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
-    logger.info(
-        f"Collected the following data backends: {list(StateTracker.get_data_backends().keys())}"
-    )
+    collected_data_backend_str = list(StateTracker.get_data_backends().keys())
+    if args.push_to_hub:
+        hub_manager.collected_data_backend_str = collected_data_backend_str
+        hub_manager.set_validation_prompts(validation_prompts)
+    logger.info(f"Collected the following data backends: {collected_data_backend_str}")
     if webhook_handler is not None:
         webhook_handler.send(
-            message=f"Collected the following data backends: {StateTracker.get_data_backends().keys()}"
+            message=f"Collected the following data backends: {collected_data_backend_str}"
         )
     total_num_batches = sum(
         [
@@ -550,6 +555,12 @@ def main():
     logger.info(
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
+    if args.freeze_unet_strategy == "bitfit":
+        from helpers.training.model_freeze import apply_bitfit_freezing
+
+        logger.info(f"Applying BitFit freezing strategy to the U-net.")
+        unet = apply_bitfit_freezing(unet, args)
+
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
@@ -747,84 +758,18 @@ def main():
             params_to_optimize,
             **extra_optimizer_args,
         )
+    from helpers.training.custom_schedule import get_lr_scheduler
 
-    if use_deepspeed_scheduler:
-        logger.info(f"Using DeepSpeed learning rate scheduler")
-        lr_scheduler = accelerate.utils.DummyScheduler(
-            optimizer,
-            total_num_steps=args.max_train_steps,
-            warmup_num_steps=args.lr_warmup_steps,
-        )
-    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
-        # Use the AdafactorScheduler.
-        logger.info(
-            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
-        )
-        lr_scheduler = AdafactorSchedule(
-            optimizer=optimizer, initial_lr=args.learning_rate
-        )
-    elif args.lr_scheduler == "cosine_with_restarts":
-        logger.info(f"Using Cosine with Restarts learning rate scheduler.")
-        logger.warning(
-            f"cosine_with_restarts is currently misbehaving, and may not do what you expect. sine is recommended instead."
-        )
-        from helpers.training.custom_schedule import CosineAnnealingHardRestarts
-
-        lr_scheduler = CosineAnnealingHardRestarts(
-            optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
-            T_mult=int(1),
-            eta_min=float(args.lr_end),
-            last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
-        )
-    elif args.lr_scheduler == "sine":
-        logger.info(f"Using Sine learning rate scheduler.")
-        from helpers.training.custom_schedule import Sine
-
-        lr_scheduler = Sine(
-            optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
-            T_mult=int(1),
-            eta_min=float(args.lr_end),
-            last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
-        )
-    elif args.lr_scheduler == "cosine":
-        logger.info(f"Using Cosine learning rate scheduler.")
-        from helpers.training.custom_schedule import Cosine
-
-        lr_scheduler = Cosine(
-            optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
-            T_mult=int(1),
-            eta_min=float(args.lr_end),
-            last_step=-1,
-            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
-            == "true",
-        )
-    elif args.lr_scheduler == "polynomial":
-        logger.info(f"Using Polynomial learning rate scheduler.")
-        lr_scheduler = get_polynomial_decay_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps * accelerator.num_processes,
-            lr_end=args.lr_end,
-            power=args.lr_power,
-            last_epoch=-1,
-        )
-    else:
-        logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")
-        lr_scheduler = get_scheduler(
-            name=args.lr_scheduler,
-            optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-            num_training_steps=args.max_train_steps * accelerator.num_processes,
-            num_cycles=args.lr_num_cycles,
-            power=args.lr_power,
-        )
+    logger.info(
+        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+    )
+    lr_scheduler = get_lr_scheduler(
+        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    )
+    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+    if hasattr(lr_scheduler, "last_step"):
+        lr_scheduler.last_step = global_resume_step
 
     accelerator.wait_for_everyone()
 
@@ -878,7 +823,7 @@ def main():
                 logger.warning(
                     "Using attention slicing when training SDXL on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
-            unet.set_attention_slice()
+            unet.set_attention_slice("auto")
         lr_scheduler = results[1]
         optimizer = results[2]
         # The rest of the entries are dataloaders:
@@ -960,6 +905,25 @@ def main():
     first_epoch = 1
     scheduler_kwargs = {}
     accelerator.wait_for_everyone()
+    validation = Validation(
+        accelerator=accelerator,
+        prompt_handler=prompt_handler,
+        unet=unet,
+        args=args,
+        validation_prompts=validation_prompts,
+        validation_shortnames=validation_shortnames,
+        text_encoder_1=text_encoder_1,
+        tokenizer=tokenizer_1,
+        vae_path=vae_path,
+        weight_dtype=weight_dtype,
+        embed_cache=StateTracker.get_default_text_embed_cache(),
+        validation_negative_pooled_embeds=validation_negative_pooled_embeds,
+        validation_negative_prompt_embeds=validation_negative_prompt_embeds,
+        text_encoder_2=text_encoder_2,
+        tokenizer_2=tokenizer_2,
+        ema_unet=ema_unet,
+        vae=vae,
+    )
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -1024,6 +988,11 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
+
+    lr_scheduler = get_lr_scheduler(
+        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    )
+
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
@@ -1070,7 +1039,8 @@ def main():
         initial_msg += f"\n  - Steps completed: {global_step}"
     initial_msg += f"\n-  Total optimization steps remaining = {max(0, total_steps_remaining_at_start)}"
     logger.info(initial_msg)
-    webhook_handler.send(message=initial_msg)
+    if webhook_handler is not None:
+        webhook_handler.send(message=initial_msg)
 
     # Only show the progress bar once on each machine.
     show_progress_bar = True
@@ -1208,7 +1178,16 @@ def main():
                 weights = generate_timestep_weights(
                     args, noise_scheduler.config.num_train_timesteps
                 ).to(accelerator.device)
-                timesteps = torch.multinomial(weights, bsz, replacement=True).long()
+                # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
+                # This enables more broad sampling and potentially more effective training.
+                if bsz > 1 and not args.disable_segmented_timestep_sampling:
+                    timesteps = segmented_timestep_selection(
+                        num_timesteps=noise_scheduler.config.num_train_timesteps,
+                        bsz=bsz,
+                        weights=weights,
+                    )
+                else:
+                    timesteps = torch.multinomial(weights, bsz, replacement=True).long()
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
@@ -1484,27 +1463,17 @@ def main():
                 "lr": lr,
             }
             progress_bar.set_postfix(**logs)
-            log_validations(
-                accelerator,
-                prompt_handler,
-                unet,
-                args,
-                validation_prompts,
-                validation_shortnames,
-                step,
-                text_encoder_1,
-                tokenizer=None,
-                vae_path=vae_path,
-                weight_dtype=weight_dtype,
-                embed_cache=StateTracker.get_default_text_embed_cache(),
-                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
-                text_encoder_2=text_encoder_2,
-                tokenizer_2=None,
-                ema_unet=ema_unet,
-                vae=vae,
-                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-            )
+            validation.run_validations(validation_type="intermediary", step=global_step)
+            if (
+                args.push_to_hub
+                and args.push_checkpoints_to_hub
+                and global_step % args.checkpointing_steps == 0
+            ):
+                hub_manager.upload_latest_checkpoint(
+                    validation_images=validation.validation_images,
+                    webhook_handler=webhook_handler,
+                )
+
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
                     f"Training has completed."
@@ -1520,6 +1489,12 @@ def main():
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        validation_images = validation.run_validations(
+            validation_type="final",
+            step=global_step,
+            force_evaluation=True,
+            skip_execution=True,
+        ).validation_images
         unet = unwrap_model(accelerator, unet)
         if "lora" in args.model_type:
             unet_lora_layers = convert_state_dict_to_diffusers(
@@ -1552,12 +1527,32 @@ def main():
         elif args.use_ema:
             ema_unet.copy_to(unet.parameters())
 
-        if StateTracker.get_vae() is None:
-            if webhook_handler is not None:
-                webhook_handler.send(message="Loading VAE..")
-
-            StateTracker.set_vae(
-                AutoencoderKL.from_pretrained(
+        if args.model_type == "full":
+            # Now we build a full SDXL Pipeline to export the model with.
+            pipeline = StableDiffusionXLPipeline.from_pretrained(
+                args.pretrained_model_name_or_path,
+                text_encoder=(
+                    text_encoder_cls_1.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        subfolder="text_encoder",
+                        revision=args.revision,
+                    )
+                    if args.save_text_encoder
+                    else None
+                ),
+                text_encoder_2=(
+                    text_encoder_cls_2.from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        subfolder="text_encoder_2",
+                        revision=args.revision,
+                    )
+                    if args.save_text_encoder
+                    else None
+                ),
+                tokenizer=tokenizer_1,
+                tokenizer_2=tokenizer_2,
+                vae=StateTracker.get_vae()
+                or AutoencoderKL.from_pretrained(
                     vae_path,
                     subfolder=(
                         "vae"
@@ -1566,92 +1561,26 @@ def main():
                     ),
                     revision=args.revision,
                     force_upcast=False,
-                )
-            )
-        if args.model_type == "full":
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                text_encoder=None,
-                text_encoder_2=None,
-                tokenizer=tokenizer_1,
-                tokenizer_2=tokenizer_2,
-                vae=StateTracker.get_vae(),
+                ),
                 unet=unet,
                 revision=args.revision,
                 add_watermarker=args.enable_watermark,
                 torch_dtype=weight_dtype,
             )
-        else:
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
+            pipeline.scheduler = SCHEDULER_NAME_MAP[
+                args.validation_noise_scheduler
+            ].from_pretrained(
                 args.pretrained_model_name_or_path,
-                vae=StateTracker.get_vae(),
-                revision=args.revision,
-                add_watermarker=args.enable_watermark,
-                torch_dtype=weight_dtype,
+                subfolder="scheduler",
+                prediction_type=args.prediction_type,
+                timestep_spacing=args.training_scheduler_timestep_spacing,
+                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             )
-        pipeline.set_progress_bar_config(disable=True)
-        pipeline.scheduler = SCHEDULER_NAME_MAP[
-            args.validation_noise_scheduler
-        ].from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            prediction_type=args.prediction_type,
-            timestep_spacing=args.training_scheduler_timestep_spacing,
-            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-        )
-        if args.model_type == "full":
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
-            validation_images = log_validations(
-                accelerator,
-                prompt_handler,
-                unet,
-                args,
-                validation_prompts,
-                validation_shortnames,
-                step,
-                text_encoder_1,
-                tokenizer=None,
-                vae_path=vae_path,
-                weight_dtype=weight_dtype,
-                embed_cache=StateTracker.get_default_text_embed_cache(),
-                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
-                text_encoder_2=text_encoder_2,
-                tokenizer_2=None,
-                vae=vae,
-                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-                validation_type="finish",
-                pipeline=pipeline,
-            )
-        elif "lora" in args.model_type:
-            # load attention processors. They were saved earlier.
-            pipeline.load_lora_weights(args.output_dir)
-            validation_images = log_validations(
-                accelerator,
-                prompt_handler,
-                None,
-                args,
-                validation_prompts,
-                validation_shortnames,
-                step,
-                text_encoder_1,
-                tokenizer=None,
-                vae_path=vae_path,
-                weight_dtype=weight_dtype,
-                embed_cache=StateTracker.get_default_text_embed_cache(),
-                validation_negative_pooled_embeds=validation_negative_pooled_embeds,
-                validation_negative_prompt_embeds=validation_negative_prompt_embeds,
-                text_encoder_2=text_encoder_2,
-                tokenizer_2=None,
-                vae=vae,
-                SCHEDULER_NAME_MAP=SCHEDULER_NAME_MAP,
-                validation_type="finish",
-                pipeline=pipeline,
-            )
+
         if args.push_to_hub:
-            hub_manager.set_validation_prompts(validation_prompts)
             hub_manager.upload_model(validation_images, webhook_handler)
     accelerator.end_training()
     # List any running child threads remaining:

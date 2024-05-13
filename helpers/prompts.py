@@ -259,6 +259,12 @@ class PromptHandler:
             if image_filename_stem.isdigit():
                 image_filename_stem = int(image_filename_stem)
         item = parquet_db[parquet_db[filename_column] == image_filename_stem]
+        # Did we find the item?
+        if len(item) == 0 and instance_prompt is None:
+            logger.error(
+                f"Could not locate image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries. Using filename as prompt."
+            )
+            return image_filename_stem
         if (
             caption_column in item.columns
             and len(item) != 0
@@ -272,11 +278,15 @@ class PromptHandler:
                 and len(item[fallback_caption_column].values) > 0
             ):
                 image_caption = item[fallback_caption_column].values[0]
-        if fallback_caption_column and not image_caption:
+        if instance_prompt is None and fallback_caption_column and not image_caption:
             raise ValueError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
-        elif not fallback_caption_column and not image_caption:
+        elif (
+            instance_prompt is None
+            and not fallback_caption_column
+            and not image_caption
+        ):
             raise ValueError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
@@ -546,7 +556,7 @@ class PromptHandler:
                 caption = caption[0]
             modified_caption = caption
             # Apply each filter to the caption
-            # logger.debug(f"Filtering caption: {modified_caption}")
+            logger.debug(f"Filtering caption: {modified_caption}")
             for filter_item in caption_filter_list:
                 # Check for special replace pattern 's/replace/entry/'
                 if filter_item.startswith("s/") and filter_item.count("/") == 2:
@@ -559,7 +569,8 @@ class PromptHandler:
                         modified_caption = regex_modified_caption
                 else:
                     # Treat as plain string and remove occurrences
-                    modified_caption = modified_caption.replace(filter_item, "")
+                    if modified_caption is not None:
+                        modified_caption = modified_caption.replace(filter_item, "")
                 try:
                     # Assume all filters as regex patterns for flexibility
                     pattern = re.compile(filter_item)
