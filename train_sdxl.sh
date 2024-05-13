@@ -269,6 +269,9 @@ fi
 # they can use huggingface-cli login to generate the token.
 if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_to_hub --hub_model_id=${HUB_MODEL_NAME}"
+    if [ -n "$PUSH_CHECKPOINTS" ] && [[ "$PUSH_CHECKPOINTS" == "true" ]]; then
+        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_checkpoints_to_hub"
+    fi
 fi
 
 export ASPECT_BUCKET_ROUNDING_ARGS=""

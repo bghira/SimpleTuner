@@ -22,7 +22,6 @@ class HubManager:
         self._repo_id = create_repo(
             repo_id=self.config.hub_model_id or self.config.tracker_project_name,
             exist_ok=True,
-            token=self.config.hub_token,
         ).repo_id
 
     def _vae_string(self):
@@ -48,7 +47,7 @@ class HubManager:
             with open(token_path, "r") as f:
                 return f.read().strip()
         raise ValueError(
-            "No Hugging Face Hub token found. Please ensure you have logged in with 'huggingface-cli login'."
+            f"No Hugging Face Hub token found ({token_path}). Please ensure you have logged in with 'huggingface-cli login'."
         )
 
     def set_validation_prompts(self, validation_prompts):
