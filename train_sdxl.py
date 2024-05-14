@@ -339,12 +339,14 @@ def main():
                 args.pretrained_model_name_or_path,
                 subfolder="text_encoder",
                 revision=args.revision,
+                variant=args.variant,
             )
         logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
         text_encoder_2 = text_encoder_cls_2.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="text_encoder_2",
             revision=args.revision,
+            variant=args.variant,
         )
         logger.info("Load VAE..")
         vae = AutoencoderKL.from_pretrained(
@@ -352,6 +354,7 @@ def main():
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
             revision=args.revision,
             force_upcast=False,
+            variant=args.variant,
         )
 
     logger.info("Moving models to GPU. Almost there.")
@@ -375,7 +378,10 @@ def main():
             message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
         )
     unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+        args.pretrained_model_name_or_path,
+        subfolder="unet",
+        revision=args.revision,
+        variant=args.variant,
     )
     logger.info(f"Moving the U-net to GPU in {weight_dtype} precision.")
     unet.to(accelerator.device, dtype=weight_dtype)
@@ -1570,6 +1576,7 @@ def main():
                         args.pretrained_model_name_or_path,
                         subfolder="text_encoder",
                         revision=args.revision,
+                        variant=args.variant,
                     )
                     if args.save_text_encoder
                     else None
@@ -1579,6 +1586,7 @@ def main():
                         args.pretrained_model_name_or_path,
                         subfolder="text_encoder_2",
                         revision=args.revision,
+                        variant=args.variant,
                     )
                     if args.save_text_encoder
                     else None
@@ -1594,6 +1602,7 @@ def main():
                         else None
                     ),
                     revision=args.revision,
+                    variant=args.variant,
                     force_upcast=False,
                 ),
                 unet=unet,
@@ -1605,6 +1614,7 @@ def main():
                 args.validation_noise_scheduler
             ].from_pretrained(
                 args.pretrained_model_name_or_path,
+                revision=args.revision,
                 subfolder="scheduler",
                 prediction_type=args.prediction_type,
                 timestep_spacing=args.training_scheduler_timestep_spacing,
