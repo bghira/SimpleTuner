@@ -1196,6 +1196,14 @@ def parse_args(input_args=None):
         help="Use the instance prompt instead of the caption from filename.",
     )
     parser.add_argument(
+        "--data_aesthetic_score",
+        type=float,
+        default=7.0,
+        help=(
+            "Since currently we do not calculate aesthetic scores for data, we will statically set it to one value. This is only used by the SDXL Refiner."
+        ),
+    )
+    parser.add_argument(
         "--caption_dropout_probability",
         type=float,
         default=None,

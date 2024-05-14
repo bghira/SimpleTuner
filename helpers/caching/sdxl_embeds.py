@@ -157,7 +157,7 @@ class TextEmbeddingCache:
             padding="max_length",
             max_length=tokenizer.model_max_length,
             return_tensors="pt",
-        ).input_ids.to(text_encoder.device)
+        ).input_ids.to(self.accelerator.device)
         output = text_encoder(input_tokens)[0]
         # self.debug_log(f"Legacy prompt shape: {output.shape}")
         # self.debug_log(f"Legacy prompt encoded: {output}")
@@ -180,6 +180,9 @@ class TextEmbeddingCache:
             return positive_prompt
         try:
             for tokenizer, text_encoder in zip(tokenizers, text_encoders):
+                if tokenizer is None or text_encoder is None:
+                    logger.warning("Skipping disabled tokenizer/text encoder")
+                    continue
                 text_inputs = tokenizer(
                     prompt, padding="max_length", truncation=True, return_tensors="pt"
                 )
@@ -205,7 +208,8 @@ class TextEmbeddingCache:
                         )
 
                 prompt_embeds_output = text_encoder(
-                    text_input_ids.to(text_encoder.device), output_hidden_states=True
+                    text_input_ids.to(self.accelerator.device),
+                    output_hidden_states=True,
                 )
                 # We are always interested in the pooled output of the final text encoder
                 pooled_prompt_embeds = prompt_embeds_output[0]

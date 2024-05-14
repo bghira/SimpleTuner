@@ -53,9 +53,20 @@ def compute_time_ids(
         raise ValueError("Original height must be specified.")
     if crop_coordinates is None:
         raise ValueError("Crop coordinates were not collected during collate.")
-    add_time_ids = list(
-        (original_height, original_width) + tuple(crop_coordinates) + final_target_size
-    )
+    if StateTracker.is_sdxl_refiner():
+        fake_aesthetic_score = StateTracker.get_args().data_aesthetic_score
+        add_time_ids = list(
+            (original_height, original_width)
+            + tuple(crop_coordinates)
+            + (fake_aesthetic_score,)
+        )
+    else:
+        add_time_ids = list(
+            (original_height, original_width)
+            + tuple(crop_coordinates)
+            + final_target_size
+        )
+
     add_time_ids = torch.tensor([add_time_ids], dtype=weight_dtype)
     logger.debug(
         f"compute_time_ids returning {add_time_ids.shape} shaped time ids: {add_time_ids}"
