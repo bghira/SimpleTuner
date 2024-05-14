@@ -1212,6 +1212,8 @@ def main():
                         num_timesteps=noise_scheduler.config.num_train_timesteps,
                         bsz=bsz,
                         weights=weights,
+                        use_refiner_range=StateTracker.is_sdxl_refiner()
+                        and not StateTracker.get_args().sdxl_refiner_uses_full_range,
                     ).to(accelerator.device)
                 else:
                     timesteps = torch.multinomial(weights, bsz, replacement=True).long()
