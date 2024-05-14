@@ -591,9 +591,6 @@ class TextEmbeddingCache:
             self.process_write_batches = False
 
             if not return_concat:
-                logger.info(
-                    "Not returning embeds, since we just concatenated a whackload of them."
-                )
                 del prompt_embeds_all
                 gc.collect()
                 return
