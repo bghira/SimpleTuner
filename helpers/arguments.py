@@ -293,7 +293,17 @@ def parse_args(input_args=None):
         required=False,
         help=(
             "Revision of pretrained model identifier from huggingface.co/models. Trainable model components should be"
-            " float32 precision."
+            " at least bfloat16 precision."
+        ),
+    )
+    parser.add_argument(
+        "--variant",
+        type=str,
+        default=None,
+        required=False,
+        help=(
+            "Variant of pretrained model identifier from huggingface.co/models. Trainable model components should be"
+            " at least bfloat16 precision."
         ),
     )
     parser.add_argument(

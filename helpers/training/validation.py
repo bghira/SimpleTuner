@@ -340,6 +340,7 @@ class Validation:
         ].from_pretrained(
             self.args.pretrained_model_name_or_path,
             subfolder="scheduler",
+            revision=self.args.revision,
             prediction_type=self.args.prediction_type,
             timestep_spacing=self.args.inference_scheduler_timestep_spacing,
             rescale_betas_zero_snr=self.args.rescale_betas_zero_snr,
@@ -371,6 +372,7 @@ class Validation:
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
                 "unet": self.unet,
                 "revision": self.args.revision,
+                "variant": self.args.variant,
                 "torch_dtype": self.weight_dtype,
                 **extra_pipeline_kwargs,
             }

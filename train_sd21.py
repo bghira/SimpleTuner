@@ -266,6 +266,7 @@ def main():
         args.pretrained_model_name_or_path,
         subfolder="tokenizer",
         revision=args.revision,
+        variant=args.variant,
         use_fast=False,
     )
     if not tokenizer:
@@ -279,6 +280,7 @@ def main():
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
+        revision=args.revision,
         subfolder="scheduler",
         timestep_spacing="trailing",
         rescale_betas_zero_snr=True,
@@ -300,6 +302,7 @@ def main():
             args.pretrained_model_name_or_path,
             subfolder="text_encoder",
             revision=args.revision,
+            variant=args.variant,
         )
         if args.train_text_encoder and "deepfloyd" not in args.model_type:
             text_encoder = freeze_text_encoder(
@@ -313,6 +316,7 @@ def main():
                 args.pretrained_model_name_or_path,
                 subfolder="vae",
                 revision=args.revision,
+                variant=args.variant,
             )
             vae.requires_grad_(False)
         else:
@@ -323,7 +327,10 @@ def main():
         )
 
     unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
+        args.pretrained_model_name_or_path,
+        subfolder="unet",
+        revision=args.revision,
+        variant=args.variant,
     ).to(weight_dtype)
 
     if not args.train_text_encoder:
@@ -1457,6 +1464,7 @@ def main():
                         else None
                     ),
                     revision=args.revision,
+                    variant=args.variant,
                     force_upcast=False,
                 )
             )
@@ -1468,6 +1476,7 @@ def main():
                 text_encoder=text_encoder,
                 unet=unet,
                 revision=args.revision,
+                variant=args.variant,
                 safety_checker=None,
                 watermarker=None,
             )
@@ -1478,6 +1487,7 @@ def main():
                 vae=StateTracker.get_vae(),
                 unet=unet,
                 revision=args.revision,
+                variant=args.variant,
                 safety_checker=None,
             )
             pipeline.scheduler = SCHEDULER_NAME_MAP[
@@ -1488,6 +1498,7 @@ def main():
                 prediction_type=args.prediction_type,
                 timestep_spacing="trailing",
                 rescale_betas_zero_snr=True,
+                revision=args.revision,
             )
         if "full" in args.model_type:
             pipeline.save_pretrained(
