@@ -4,6 +4,8 @@ from tqdm import tqdm
 from helpers.training.state_tracker import StateTracker
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.legacy.pipeline import DiffusionPipeline
+from helpers.legacy.validation import retrieve_validation_images
+from diffusers.pipelines import StableDiffusionXLImg2ImgPipeline
 from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
@@ -123,6 +125,7 @@ class Validation:
         self.ema_unet = ema_unet
         self.vae = vae
         self.pipeline = None
+        self._discover_validation_input_samples()
         self.validation_resolutions = (
             get_validation_resolutions()
             if "deepfloyd-stage2" not in args.model_type
@@ -131,9 +134,30 @@ class Validation:
 
         self._update_state()
 
+    def _discover_validation_input_samples(self):
+        """
+        If we have some workflow that requires image inputs for validation, we'll bind those now.
+
+        Returns:
+            Validation object (self)
+        """
+        self.validation_image_inputs = None
+        if (
+            "deepfloyd-stage2" in StateTracker.get_args().model_type
+            or StateTracker.get_args().validation_using_datasets
+        ):
+            self.validation_image_inputs = retrieve_validation_images()
+            # Validation inputs are in the format of a list of tuples:
+            # [(shortname, prompt, image), ...]
+            logger.info(
+                f"Image inputs discovered for validation: {self.validation_image_inputs}"
+            )
+
     def _pipeline_cls(self):
         model_type = StateTracker.get_model_type()
         if model_type == "sdxl":
+            if StateTracker.get_args().validation_using_datasets:
+                return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
         elif model_type == "legacy":
             if "deepfloyd-stage2" in self.args.model_type:
@@ -368,18 +392,33 @@ class Validation:
     def process_prompts(self):
         """Processes each validation prompt and logs the result."""
         validation_images = {}
-        for shortname, prompt in zip(
-            self.validation_shortnames, self.validation_prompts
-        ):
+        _content = zip(self.validation_shortnames, self.validation_prompts)
+        if self.validation_image_inputs:
+            # Override the pipeline inputs to be entirely based upon the validation image inputs.
+            _content = self.validation_image_inputs
+        for content in _content:
+            validation_input_image = None
+            if len(content) == 3:
+                shortname, prompt, validation_input_image = content
+            elif len(content) == 2:
+                shortname, prompt = content
+            else:
+                raise ValueError(
+                    f"Validation content is not in the correct format: {content}"
+                )
             logger.debug(f"Processing validation for prompt: {prompt}")
-            validation_images.update(self.validate_prompt(prompt, shortname))
+            validation_images.update(
+                self.validate_prompt(prompt, shortname, validation_input_image)
+            )
             self._save_images(validation_images, shortname, prompt)
             self._log_validations_to_webhook(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
         self.validation_images = validation_images
         self._log_validations_to_trackers(validation_images)
 
-    def validate_prompt(self, prompt, validation_shortname):
+    def validate_prompt(
+        self, prompt, validation_shortname, validation_input_image=None
+    ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
         logger.info(f"Validating prompt: {prompt}")
@@ -393,15 +432,24 @@ class Validation:
                 logger.info(
                     f"Using a generator? {extra_validation_kwargs['generator']}"
                 )
-            if "deepfloyd-stage2" not in self.args.model_type:
-                validation_resolution_width, validation_resolution_height = resolution
-            else:
+            if validation_input_image is not None:
+                extra_validation_kwargs["image"] = validation_input_image
                 validation_resolution_width, validation_resolution_height = (
                     val * 4 for val in extra_validation_kwargs["image"].size
                 )
+            else:
+                validation_resolution_width, validation_resolution_height = resolution
+
             if "deepfloyd" not in self.args.model_type:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
+                )
+            if StateTracker.get_args().validation_using_datasets:
+                extra_validation_kwargs["strength"] = getattr(
+                    self.args, "validation_strength", 0.2
+                )
+                logger.debug(
+                    f"Set validation image denoise strength to {extra_validation_kwargs['strength']}"
                 )
 
             logger.debug(

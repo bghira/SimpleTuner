@@ -12,7 +12,7 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, io
+import json, os, torch, logging, io, time
 
 logger = logging.getLogger("DataBackendFactory")
 
@@ -233,6 +233,7 @@ def configure_multi_databackend(
         raise FileNotFoundError(
             f"Data backend config file {args.data_backend_config} not found."
         )
+    logger.info(f"Loading data backend config from {args.data_backend_config}")
     with open(args.data_backend_config, "r") as f:
         data_backend_config = json.load(f)
     if len(data_backend_config) == 0:
@@ -317,6 +318,7 @@ def configure_multi_databackend(
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
                 )
+            time.sleep(5)
             accelerator.wait_for_everyone()
         if args.caption_dropout_probability == 0.0:
             logger.warning(

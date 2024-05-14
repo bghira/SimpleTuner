@@ -1,4 +1,4 @@
-import logging, os, torch, numpy as np
+import logging, os, time, torch, numpy as np
 from tqdm import tqdm
 from diffusers.utils import is_wandb_available
 from diffusers.utils.torch_utils import is_compiled_module
@@ -24,7 +24,7 @@ logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
-def deepfloyd_validation_images():
+def retrieve_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
     we select the same images on each startup, unless the dataset changes.
@@ -74,7 +74,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     if "deepfloyd-stage2" in StateTracker.get_args().model_type:
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
-        validation_sample_images = deepfloyd_validation_images()
+        validation_sample_images = retrieve_validation_images()
         if len(validation_sample_images) > 0:
             StateTracker.set_validation_sample_images(validation_sample_images)
             # Collect the prompts for the validation images.
@@ -84,7 +84,10 @@ def prepare_validation_prompt_list(args, embed_cache):
                 desc="Precomputing DeepFloyd stage 2 eval prompt embeds",
             ):
                 _, validation_prompt, _ = _validation_sample
-                embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                embed_cache.compute_embeddings_for_prompts(
+                    [validation_prompt], load_from_cache=False
+                )
+            time.sleep(5)
 
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.

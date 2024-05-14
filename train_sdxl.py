@@ -292,6 +292,11 @@ def main():
         if tokenizer_1 is None:
             logger.info("Seems that we are training an SDXL refiner model.")
             StateTracker.is_sdxl_refiner(True)
+            if args.validation_using_datasets is None:
+                logger.warning(
+                    f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
+                )
+                args.validation_using_datasets = True
     except:
         logger.warning(
             "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
