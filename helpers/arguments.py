@@ -858,6 +858,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_using_datasets",
+        action="store_true",
+        default=None,
+        help=(
+            "When set, validation will use images sampled randomly from each dataset for validation."
+            " Be mindful of privacy issues when publishing training data to the internet."
+        ),
+    )
+    parser.add_argument(
         "--webhook_config",
         type=str,
         default=None,

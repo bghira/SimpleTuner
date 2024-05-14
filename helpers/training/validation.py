@@ -4,7 +4,8 @@ from tqdm import tqdm
 from helpers.training.state_tracker import StateTracker
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.legacy.pipeline import DiffusionPipeline
-from helpers.legacy.validation import deepfloyd_validation_images
+from helpers.legacy.validation import retrieve_validation_images
+from diffusers.pipelines import StableDiffusionXLImg2ImgPipeline
 from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
@@ -141,17 +142,22 @@ class Validation:
             Validation object (self)
         """
         self.validation_image_inputs = None
-        if "deepfloyd-stage2" in StateTracker.get_args().model_type:
-            self.validation_image_inputs = deepfloyd_validation_images()
-            # DeepFloyd stage II validation inputs are in the format of a list of tuples:
+        if (
+            "deepfloyd-stage2" in StateTracker.get_args().model_type
+            or StateTracker.get_args().validation_using_datasets
+        ):
+            self.validation_image_inputs = retrieve_validation_images()
+            # Validation inputs are in the format of a list of tuples:
             # [(shortname, prompt, image), ...]
             logger.info(
-                f"DeepFloyd stage II inputs discovered for Validation: {self.validation_image_inputs}"
+                f"Image inputs discovered for validation: {self.validation_image_inputs}"
             )
 
     def _pipeline_cls(self):
         model_type = StateTracker.get_model_type()
         if model_type == "sdxl":
+            if StateTracker.get_args().validation_using_datasets:
+                return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
         elif model_type == "legacy":
             if "deepfloyd-stage2" in self.args.model_type:
@@ -426,16 +432,24 @@ class Validation:
                 logger.info(
                     f"Using a generator? {extra_validation_kwargs['generator']}"
                 )
-            if "deepfloyd-stage2" not in self.args.model_type:
-                validation_resolution_width, validation_resolution_height = resolution
-            else:
+            if validation_input_image is not None:
                 extra_validation_kwargs["image"] = validation_input_image
                 validation_resolution_width, validation_resolution_height = (
                     val * 4 for val in extra_validation_kwargs["image"].size
                 )
+            else:
+                validation_resolution_width, validation_resolution_height = resolution
+
             if "deepfloyd" not in self.args.model_type:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
+                )
+            if StateTracker.get_args().validation_using_datasets:
+                extra_validation_kwargs["strength"] = getattr(
+                    self.args, "validation_strength", 0.2
+                )
+                logger.debug(
+                    f"Set validation image denoise strength to {extra_validation_kwargs['strength']}"
                 )
 
             logger.debug(
