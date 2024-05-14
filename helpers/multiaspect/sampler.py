@@ -4,6 +4,7 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 from helpers.training.multi_process import rank_info
 from helpers.metadata.backends.base import MetadataBackend
+from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
@@ -141,6 +142,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_path = self._yield_random_image()
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
+            training_sample = TrainingSample(
+                image=image_data, data_backend_id=self.id, image_metadata=image_metadata
+            )
+            training_sample.prepare()
             validation_shortname = f"{self.id}_{img_idx}"
             validation_prompt = PromptHandler.magic_prompt(
                 sampler_backend_id=self.id,
@@ -151,7 +156,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 prepend_instance_prompt=self.prepend_instance_prompt,
                 instance_prompt=self.instance_prompt,
             )
-            results.append((validation_shortname, validation_prompt, image_data))
+            results.append(
+                (validation_shortname, validation_prompt, training_sample.image)
+            )
 
         return results
 

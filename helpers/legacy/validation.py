@@ -1,4 +1,4 @@
-import logging, os, torch, numpy as np
+import logging, os, time, torch, numpy as np
 from tqdm import tqdm
 from diffusers.utils import is_wandb_available
 from diffusers.utils.torch_utils import is_compiled_module
@@ -84,7 +84,10 @@ def prepare_validation_prompt_list(args, embed_cache):
                 desc="Precomputing DeepFloyd stage 2 eval prompt embeds",
             ):
                 _, validation_prompt, _ = _validation_sample
-                embed_cache.compute_embeddings_for_prompts([validation_prompt])
+                embed_cache.compute_embeddings_for_prompts(
+                    [validation_prompt], load_from_cache=False
+                )
+            time.sleep(5)
 
     if args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.

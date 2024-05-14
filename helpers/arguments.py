@@ -1418,6 +1418,7 @@ def parse_args(input_args=None):
             "DeepFloyd Stage II requires a resolution of at least 256. Setting to 256."
         )
         args.resolution = 256
+        args.aspect_bucket_alignment = 64
         args.resolution_type = "pixel"
 
     if (
