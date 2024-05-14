@@ -1204,6 +1204,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--sdxl_refiner_uses_full_range",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, the SDXL Refiner will use the full range of the model, rather than the design value of 20%."
+            " This is useful for training models that will be used for inference from end-to-end of the noise schedule."
+            " You may use this for example, to turn the SDXL refiner into a full text-to-image model."
+        ),
+    )
+    parser.add_argument(
         "--caption_dropout_probability",
         type=float,
         default=None,

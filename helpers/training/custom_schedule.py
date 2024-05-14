@@ -5,14 +5,22 @@ from helpers.training.state_tracker import StateTracker
 from transformers.optimization import AdafactorSchedule
 
 
-def segmented_timestep_selection(num_timesteps, bsz, weights):
+def segmented_timestep_selection(
+    num_timesteps, bsz, weights, use_refiner_range: bool = False
+):
     # Segment size
+    if use_refiner_range:
+        num_timesteps = int(num_timesteps * 0.2)
+    print(
+        f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps and a segment size of {num_timesteps // bsz} timesteps."
+    )
     segment_size = num_timesteps // bsz
     selected_timesteps = []
 
     # Select one timestep from each segment based on the weights
     for i in range(bsz):
         start = i * segment_size
+        print(f"Starting from {start}")
         end = (i + 1) * segment_size if i != bsz - 1 else num_timesteps
         segment_weights = weights[start:end]
 
@@ -24,6 +32,7 @@ def segmented_timestep_selection(num_timesteps, bsz, weights):
         selected_timestep = torch.multinomial(segment_weights, 1).item()
         selected_timesteps.append(segment_timesteps[selected_timestep])
 
+    print(f"Selected timesteps: {selected_timesteps}")
     return torch.tensor(selected_timesteps)
 
 

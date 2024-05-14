@@ -98,11 +98,12 @@ SimpleTuner provides multiple [captioning](/toolkit/captioning/README.md) script
 
 Options:
 
+- BLIP3 is currently the best option, as it follows instruction prompts very well and produces prompts comparable to CogVLM with fewer hallucinations.
 - T5 Flan and BLIP2 produce mediocre captions; it can be very slow and resource hungry.
 - LLaVA produces acceptable captions but misses subtle details.
   - It is better than BLIP, can sometimes read text but invents details and speculates.
   - Follows instruction templates better than CogVLM and BLIP.
-- CogVLM produces the best captions and requires the most time/resources.
+- CogVLM produces sterile but accurate captions and requires the most time/resources.
   - It still speculates, especially when given long instruct queries.
   - It does not follow instruct queries very well.
 
@@ -113,16 +114,17 @@ For a caption to be useful by SimpleTuner:
 
 - It could be the image's filename (the default behaviour)
 - It could be the contents of a .txt file with the same name as the image (if `--caption_strategy=textfile` is provided)
+- (Advanced users) You may compile your dataset metadata into a parquet file and provide it directly to SimpleTuner
 
 Longer captions aren't necessarily better for training. Simpler, concise captions work best!
 
 #### Caption Dropout Parameter: CAPTION_DROPOUT_PROBABILITY
 
-Foundational models like Stable Diffusion are built using 10% caption drop-out, meaning the model is shown an "empty" caption instead of the real one, about 10% of the time. This ends up substantially improving the quality of generations, especially for prompts that involve subject matter that do not exist in your training data.
+Foundational models like Stable Diffusion are built using 10% caption drop-out, meaning the model is shown an "empty" caption instead of the real one, about 10% of the time. This ends up substantially improving the quality of generations when using no negative prompt, especially for prompts that involve subject matter that do not exist in your training data.
 
 Disabling caption dropout can damage the model's ability to generalise to unseen prompts. Conversely, using too much caption dropout will damage the model's ability to adhere to prompts.
 
-A value of 25% seems to provide some additional benefits such as reducing the number of required steps during inference on v-prediction models.
+A value of 25% seems to provide some additional benefits such as reducing the number of required steps during inference on v-prediction models, but the resulting model will be prone to forgetting.
 
 ### Advanced Configuration
 
@@ -144,6 +146,12 @@ huggingface-cli login
 ```
 
 A model card will be automatically generated containing a majority of the relevant training session parameters.
+
+By default, every checkpoint will be uploaded to the Hub. However, if you wish to disable this behaviour to conserve bandwidth or for privacy reasons, you can set the following value in your `sdxl-env.sh`:
+
+```bash
+export PUSH_CHECKPOINTS="false"
+```
 
 ## Monitoring and Logging
 
@@ -201,6 +209,8 @@ If you used `--push_to_hub`, the Huggingface Diffusers SDXL example scripts will
 
 If you require a single 13GiB safetensors file for eg. AUTOMATIC1111's Stable Diffusion WebUI or for uploading to CivitAI, you should make use of the [SDXL checkpoint conversion script](/convert_sdxl_checkpoint.py):
 
+> **Note**: If you're planning to export the resulting pipeline to eg. CivitAI, use the `--save_text_encoder` option to ensure it's copied to the output directory. It's okay if you forget or don't set this option, but it will require manually copying the text encoder.
+
 ```bash
 python3 convert_sdxl_checkpoint.py --model_path="/path/to/SimpleTuner/simpletuner-results/pipeline" --checkpoint_path=/path/to/your/output.safetensors --half --use_safetensors
 ```
@@ -217,23 +227,18 @@ For extra information when running SimpleTuner you can add the following to your
 
 ```bash
 export SIMPLETUNER_LOG_LEVEL=INFO
+export SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=INFO
 ```
 
 This can be placed anywhere in the file on its own line. It will bump the verbosity from the default `WARNING` value up to `INFO`. For even more information (God help us) set the log level to `DEBUG`.
 
-At this point, you may wish to create a log file of your training run:
-
-```bash
-bash train_sdxl.sh > train.log 2>&1
-```
-
-This command will capture the output of your training run into `train.log`, located in the **SimpleTuner** project directory.
+A log file named `debug.log` will be written to the SimpleTuner project root directory, containing all log entries from `ERROR` to `DEBUG`.
 
 ### Seen images, current epoch, etc
 
 In each model checkpoint directory is a `tracker_state.json` file which contains the current epoch that training was on or the images it has seen so far.
 
-Each dataset will have its own tracking state documents in this directory as well.
+Each dataset will have its own tracking state documents in this directory as well. This contains the step count, number of images seen, and other metadata required to resume completely.
 
 
 ### Example Environment File Explained
