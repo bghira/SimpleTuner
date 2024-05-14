@@ -31,6 +31,7 @@ class StateTracker:
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
+    _is_sdxl_refiner = False
     accelerator = None
     data_backends = {}
     parquet_databases = {}
@@ -94,6 +95,12 @@ class StateTracker:
     @classmethod
     def get_model_type(cls):
         return cls.model_type
+
+    @classmethod
+    def is_sdxl_refiner(cls, set_value=None):
+        if set_value is not None:
+            cls._is_sdxl_refiner = set_value
+        return cls._is_sdxl_refiner
 
     @classmethod
     def set_parquet_database(cls, data_backend_id: str, parquet_database: tuple):

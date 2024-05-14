@@ -269,27 +269,46 @@ def main():
 
     # Load scheduler, tokenizer and models.
     logger.info("Load tokenizers")
-    tokenizer_1 = AutoTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="tokenizer",
-        revision=args.revision,
-        use_fast=False,
-    )
-    tokenizer_2 = AutoTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="tokenizer_2",
-        revision=args.revision,
-        use_fast=False,
-    )
-    if not tokenizer_1 or not tokenizer_2:
+    tokenizer_1, tokenizer_2 = None, None
+    text_encoder_1, text_encoder_2 = None, None
+    try:
+        tokenizer_1 = AutoTokenizer.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="tokenizer",
+            revision=args.revision,
+            use_fast=False,
+        )
+    except:
+        logger.warning(
+            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
+        )
+    try:
+        tokenizer_2 = AutoTokenizer.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="tokenizer_2",
+            revision=args.revision,
+            use_fast=False,
+        )
+        if tokenizer_1 is None:
+            logger.info("Seems that we are training an SDXL refiner model.")
+            StateTracker.is_sdxl_refiner(True)
+    except:
+        logger.warning(
+            "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
+        )
+    if not tokenizer_1 and not tokenizer_2:
         raise Exception("Failed to load tokenizer")
 
-    text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-        args.pretrained_model_name_or_path, args.revision
-    )
-    text_encoder_cls_2 = import_model_class_from_model_name_or_path(
-        args.pretrained_model_name_or_path, args.revision, subfolder="text_encoder_2"
-    )
+    if tokenizer_1 is not None:
+        text_encoder_cls_1 = import_model_class_from_model_name_or_path(
+            args.pretrained_model_name_or_path, args.revision
+        )
+    if tokenizer_2 is not None:
+        text_encoder_cls_2 = import_model_class_from_model_name_or_path(
+            args.pretrained_model_name_or_path,
+            args.revision,
+            subfolder="text_encoder_2",
+        )
 
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(
@@ -309,13 +328,14 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        logger.info("Load text encoder 1..")
-        text_encoder_1 = text_encoder_cls_1.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="text_encoder",
-            revision=args.revision,
-        )
-        logger.info("Load text encoder 2..")
+        if tokenizer_1 is not None:
+            logger.info("Load OpenAI CLIP-L/14 text encoder..")
+            text_encoder_1 = text_encoder_cls_1.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="text_encoder",
+                revision=args.revision,
+            )
+        logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
         text_encoder_2 = text_encoder_cls_2.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="text_encoder_2",
@@ -330,15 +350,20 @@ def main():
         )
 
     logger.info("Moving models to GPU. Almost there.")
-    text_encoder_1.to(accelerator.device, dtype=weight_dtype)
-    text_encoder_2.to(accelerator.device, dtype=weight_dtype)
+    if tokenizer_1 is not None:
+        text_encoder_1.to(accelerator.device, dtype=weight_dtype)
+    if tokenizer_2 is not None:
+        text_encoder_2.to(accelerator.device, dtype=weight_dtype)
     tokenizers = [tokenizer_1, tokenizer_2]
     text_encoders = [text_encoder_1, text_encoder_2]
 
     # Freeze vae and text_encoders
-    vae.requires_grad_(False)
-    text_encoder_1.requires_grad_(False)
-    text_encoder_2.requires_grad_(False)
+    if vae is not None:
+        vae.requires_grad_(False)
+    if text_encoder_1 is not None:
+        text_encoder_1.requires_grad_(False)
+    if text_encoder_2 is not None:
+        text_encoder_2.requires_grad_(False)
     logger.info("Creating the U-net..")
     if webhook_handler is not None:
         webhook_handler.send(
@@ -503,8 +528,10 @@ def main():
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         if accelerator.is_main_process:
             logger.info(f"Moving text encoders back to CPU, to save VRAM.")
-        text_encoder_1.to("cpu")
-        text_encoder_2.to("cpu")
+        if text_encoder_1 is not None:
+            text_encoder_1.to("cpu")
+        if text_encoder_2 is not None:
+            text_encoder_2.to("cpu")
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -1601,8 +1628,11 @@ if __name__ == "__main__":
                 message="Training has been interrupted by user action (lost terminal, or ctrl+C)."
             )
     except Exception as e:
+        import traceback
+
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
         logger.error(e)
+        logger.error(traceback.format_exc())

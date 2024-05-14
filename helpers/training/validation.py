@@ -153,9 +153,10 @@ class Validation:
             if self.prompt_handler is not None:
                 for text_encoder in self.prompt_handler.text_encoders:
                     # Can't remember why we move this to the GPU right here..
-                    text_encoder = text_encoder.to(
-                        device=self.accelerator.device, dtype=self.weight_dtype
-                    )
+                    if text_encoder is not None:
+                        text_encoder = text_encoder.to(
+                            device=self.accelerator.device, dtype=self.weight_dtype
+                        )
                 [
                     current_validation_prompt_embeds,
                     self.validation_negative_prompt_embeds,
@@ -167,7 +168,8 @@ class Validation:
                 )
                 for text_encoder in self.prompt_handler.text_encoders:
                     # Or why we move it back...maybe it's a Compel oddity :(
-                    text_encoder = text_encoder.to("cpu")
+                    if text_encoder is not None:
+                        text_encoder = text_encoder.to("cpu")
             current_validation_pooled_embeds = current_validation_pooled_embeds.to(
                 device=self.accelerator.device, dtype=self.weight_dtype
             )
