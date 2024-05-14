@@ -93,7 +93,7 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "type": "local",
         "dataset_type": "text_embeds",
         "default": true,
-        "cache_dir": "/training/text_cache"
+        "cache_dir": "/training/text_cache/sdxl_base"
     }
 ]
 ```
@@ -118,3 +118,38 @@ As mentioned earlier, the original focus of Dreambooth was the selection of rare
 Alternatively, one might use the real name of their subject, or a 'similar enough' celebrity.
 
 After a number of training experiments, it seems as though a 'similar enough' celebrity is the best choice, especially if prompting the model for the person's real name ends up looking dissimilar.
+
+# Refiner tuning
+
+If you're a fan of the SDXL refiner, you may find that it causes your resulting Dreambooth model outputs to diverge from the capabilities you just trained it on.
+
+SimpleTuner supports training the SDXL refiner using LoRA and full rank.
+
+This requires a couple considerations:
+- The images should be purely high-quality
+- The text embeds cannot be shared with the base model's
+- The VAE embeds **can** be shared with the base model
+
+You'll need to update `cache_dir` in your dataloader configuration, `multidatabackend.json`:
+
+```json
+[
+    {
+        "id": "textembeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/training/text_cache/sdxl_refiner"
+    }
+]
+```
+
+If you wish to target a specific aesthetic score with your data, you can add this to `sdxl-env.sh`:
+
+```bash
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --data_aesthetic_score=5.6"
+```
+
+Update **5.6** to the score you would like to target. The default is **7.0**.
+
+> ⚠️ Currently, the validations images generate a complete image using only the refiner model. This is undesirable, but future work plans on extending evaluations for SDXL Refiner models to include a refining process from a ground truth image set.
