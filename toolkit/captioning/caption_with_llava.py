@@ -194,7 +194,7 @@ def load_llava_model(
             model_path,
             quantization_config=bnb_config,
             torch_dtype=torch_dtype,
-            device_map="auto",
+            device_map="mps" if torch.backends.mps.is_available() else "auto",
         )
     else:
         logger.info("Using LLaVA 1.5 model.")

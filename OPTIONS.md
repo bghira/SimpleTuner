@@ -10,13 +10,15 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--model_type`
 
-- **What**: Choices: lora, full. Default: full
+- **What**: Choices: lora, full, deepfloyd, deepfloyd-lora, deepfloyd-stage2, deepfloyd-stage2-lora. Default: lora
 - **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
+
+**Note:** DeepFloyd uses the `train_sd2x.sh`/`train_sd21.py` training script, `sd2x-env.sh` configuration file. See [DEEPFLOYD.md](/documentation/DEEPFLOYD.md) for more information.
 
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
-- **Why**: To specify the base model you'll start training from.
+- **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository.
 
 ### `--hub_model_id`
 
@@ -26,7 +28,7 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--push_to_hub`
 
-- **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes.
+- **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
 
 ## 📂 Data Storage and Management
 
@@ -49,6 +51,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ---
 
 ## 🌈 Image and Text Processing
+
+A lot of settings are instead set through the [dataloader config](/documentation/DATALOADER.md), but these will apply globally.
 
 ### `--resolution`
 
@@ -95,12 +99,12 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--num_train_epochs`
 
-- **What**: Number of training epochs (the number of times that all images are seen)
+- **What**: Number of training epochs (the number of times that all images are seen). Setting this to 0 will allow `--max_train_steps` to take precedence.
 - **Why**: Determines the number of image repeats, which impacts the duration of the training process. More epochs tends to result in overfitting, but might be required to pick up the concepts you wish to train in. A reasonable value might be from 5 to 50.
 
 ### `--max_train_steps`
 
-- **What**: Number of training steps to exit training after.
+- **What**: Number of training steps to exit training after. If set to 0, will allow `--num_train_epochs` to take priority.
 - **Why**: Useful for shortening the length of training.
 
 ### `--train_batch_size`
@@ -114,24 +118,29 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--gradient_accumulation_steps`
 
-- **What**: Number of update steps to accumulate before performing a backward/update pass.
+- **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.
 - **Why**: Useful for handling larger models or datasets.
 
 ### `--learning_rate`
 
 - **What**: Initial learning rate after potential warmup.
-- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value might be as low as `4e-7` and a maximal value would likely be as high as `1e-5`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
+- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value for a `full` tune might be as low as `1e-7` to a max of `1e-6` while for `lora` tuning a minimal value might be `1e-5` with a maximal value as high as `1e-3`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
 
 ### `--lr_scheduler`
 
 - **What**: How to scale the learning rate over time.
-- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, polynomial, linear
-- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low).
+- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, **polynomial** (recommended), linear
+- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low). A polynomial schedule is best paired with a warmup, where it will gradually approach the `learning_rate` value before then slowing down and approaching `--lr_end` by the end.
 
 ### `--snr_gamma`
 
 - **What**: Utilising min-SNR weighted loss factor.
 - **Why**: Minimum SNR gamma weights the loss factor of a timestep by its position in the schedule. Overly noisy timesteps have their contributions reduced, and less-noisy timesteps have it increased. Value recommended by the original paper is **5** but you can use values as low as **1** or as high as **20**, typically seen as the maximum value - beyond a value of 20, the math does not change things much. A value of **1** is the strongest.
+
+### `--use_soft_min_snr`
+
+- **What**: Train a model using a more gradual weighting on the loss landscape.
+- **Why**: When training pixel diffusion models, they will simply degrade without using a specific loss weighting schedule. This is the case with DeepFloyd, where soft-min-snr-gamma was found to essentially be mandatory for good results. You may find success with latent diffusion model training, but in small experiments, it was found to potentially produce blurry results.
 
 ---
 
@@ -960,3 +969,4 @@ options:
                         must set this flag to continue. This is a safety
                         feature to prevent accidental use of an unsupported
                         optimizer, as weights are stored in bfloat16.
+```
