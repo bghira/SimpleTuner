@@ -75,8 +75,14 @@ class StateTracker:
     def _load_from_disk(cls, cache_name):
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         if cache_path.exists():
-            with cache_path.open("r") as f:
-                return json.load(f)
+            try:
+                with cache_path.open("r") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(
+                    f"Invalidating cache: error loading {cache_name} from disk. {e}"
+                )
+                return None
         return None
 
     @classmethod

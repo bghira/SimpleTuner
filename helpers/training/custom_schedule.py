@@ -1,8 +1,11 @@
 from torch.optim.lr_scheduler import LambdaLR
-import torch, math, warnings, accelerate, os
+import torch, math, warnings, accelerate, os, logging
 from torch.optim.lr_scheduler import LRScheduler
 from helpers.training.state_tracker import StateTracker
 from transformers.optimization import AdafactorSchedule
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def segmented_timestep_selection(
@@ -11,7 +14,7 @@ def segmented_timestep_selection(
     # Segment size
     if use_refiner_range:
         num_timesteps = int(num_timesteps * 0.2)
-    print(
+    logger.debug(
         f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps and a segment size of {num_timesteps // bsz} timesteps."
     )
     segment_size = num_timesteps // bsz
@@ -20,7 +23,7 @@ def segmented_timestep_selection(
     # Select one timestep from each segment based on the weights
     for i in range(bsz):
         start = i * segment_size
-        print(f"Starting from {start}")
+        logger.debug(f"Starting from {start}")
         end = (i + 1) * segment_size if i != bsz - 1 else num_timesteps
         segment_weights = weights[start:end]
 
@@ -32,7 +35,7 @@ def segmented_timestep_selection(
         selected_timestep = torch.multinomial(segment_weights, 1).item()
         selected_timesteps.append(segment_timesteps[selected_timestep])
 
-    print(f"Selected timesteps: {selected_timesteps}")
+    logger.debug(f"Selected timesteps: {selected_timesteps}")
     return torch.tensor(selected_timesteps)
 
 
