@@ -832,6 +832,10 @@ class VAECache:
                 logger.error(
                     f"Error reading {path}: {e}, traceback: {traceback.format_exc()}"
                 )
+                # If --delete_problematic_images is supplied, we remove the image now:
+                if self.delete_problematic_images:
+                    self.metadata_backend.remove_image(path)
+                    self.data_backend.delete(path)
                 return path, None
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
