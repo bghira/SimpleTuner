@@ -14,19 +14,26 @@ class TestCollateFn(unittest.TestCase):
         # Set up any common variables or mocks used in multiple tests
         self.mock_batch = [
             {
-                "image_path": "fake_path_1.png",
-                "instance_prompt_text": "caption 1",
-                "luminance": 0.5,
-                "original_size": (100, 100),
-                "image_data": MagicMock(),
-                "crop_coordinates": [0, 0, 100, 100],
-                "data_backend_id": "foo",
-                "aspect_ratio": 1.0,
+                "training_samples": [
+                    {
+                        "image_path": "fake_path_1.png",
+                        "instance_prompt_text": "caption 1",
+                        "luminance": 0.5,
+                        "original_size": (100, 100),
+                        "image_data": MagicMock(),
+                        "crop_coordinates": [0, 0, 100, 100],
+                        "data_backend_id": "foo",
+                        "aspect_ratio": 1.0,
+                    }
+                ],
+                "conditioning_samples": [],
             },
             # Add more examples as needed
         ]
         # Mock StateTracker.get_args() to return a mock object with required attributes
-        StateTracker.set_args(MagicMock(caption_dropout_probability=0.5))
+        StateTracker.set_args(
+            MagicMock(caption_dropout_probability=0.5, controlnet=False)
+        )
         fake_accelerator = MagicMock(device="cpu")
         StateTracker.set_accelerator(fake_accelerator)
 
@@ -53,7 +60,7 @@ class TestCollateFn(unittest.TestCase):
             StateTracker.get_data_backend.return_value = MagicMock(
                 compute_embeddings_for_legacy_prompts=MagicMock()
             )
-            result = collate_fn([self.mock_batch])
+            result = collate_fn(self.mock_batch)
 
         # Assert that the results are as expected
         self.assertIn("latent_batch", result)

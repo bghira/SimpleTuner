@@ -1,6 +1,7 @@
 import torch, os, wandb, logging
 from pathlib import Path
 from tqdm import tqdm
+from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.legacy.pipeline import DiffusionPipeline
@@ -96,10 +97,12 @@ class Validation:
         tokenizer_2,
         ema_unet,
         vae,
+        controlnet=None,
     ):
         self.accelerator = accelerator
         self.prompt_handler = prompt_handler
         self.unet = unet
+        self.controlnet = controlnet
         self.args = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
         if not os.path.exists(self.save_dir):
@@ -143,8 +146,9 @@ class Validation:
         """
         self.validation_image_inputs = None
         if (
-            "deepfloyd-stage2" in StateTracker.get_args().model_type
-            or StateTracker.get_args().validation_using_datasets
+            "deepfloyd-stage2" in self.args.model_type
+            or self.args.validation_using_datasets
+            or self.args.controlnet
         ):
             self.validation_image_inputs = retrieve_validation_images()
             # Validation inputs are in the format of a list of tuples:
@@ -156,7 +160,11 @@ class Validation:
     def _pipeline_cls(self):
         model_type = StateTracker.get_model_type()
         if model_type == "sdxl":
-            if StateTracker.get_args().validation_using_datasets:
+            if self.args.controlnet:
+                from diffusers.pipelines import StableDiffusionXLControlNetPipeline
+
+                return StableDiffusionXLControlNetPipeline
+            if self.args.validation_using_datasets:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
         elif model_type == "legacy":
@@ -368,6 +376,9 @@ class Validation:
                 extra_pipeline_kwargs["text_encoder_2"] = self.text_encoder_2
                 extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
                 extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+            if self.args.controlnet:
+                # ControlNet training has an additional adapter thingy.
+                extra_pipeline_kwargs["controlnet"] = self.controlnet
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
                 "unet": self.unet,
@@ -418,6 +429,21 @@ class Validation:
         self.validation_images = validation_images
         self._log_validations_to_trackers(validation_images)
 
+    def stitch_conditioning_images(self, validation_image_results, conditioning_image):
+        """
+        For each image, make a new canvas and place it side by side with its equivalent from {self.validation_image_inputs}
+        """
+        stitched_validation_images = []
+        for idx, image in enumerate(validation_image_results):
+            new_width = image.size[0] * 2
+            new_height = image.size[1]
+            new_image = Image.new("RGB", (new_width, new_height))
+            new_image.paste(image, (0, 0))
+            new_image.paste(conditioning_image, (image.size[0], 0))
+            stitched_validation_images.append(new_image)
+
+        return stitched_validation_images
+
     def validate_prompt(
         self, prompt, validation_shortname, validation_input_image=None
     ):
@@ -436,9 +462,18 @@ class Validation:
                 )
             if validation_input_image is not None:
                 extra_validation_kwargs["image"] = validation_input_image
-                validation_resolution_width, validation_resolution_height = (
-                    val * 4 for val in extra_validation_kwargs["image"].size
-                )
+                if "deepfloyd-stage2" in self.args.model_type:
+                    validation_resolution_width, validation_resolution_height = (
+                        val * 4 for val in extra_validation_kwargs["image"].size
+                    )
+                elif self.args.controlnet:
+                    validation_resolution_width, validation_resolution_height = (
+                        extra_validation_kwargs["image"].size
+                    )
+                else:
+                    raise ValueError(
+                        "Validation input images are not supported for this model type."
+                    )
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
@@ -481,13 +516,15 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.info(f"Device for {key}: {value.device}")
-                validation_images[validation_shortname].extend(
-                    self.pipeline(**pipeline_kwargs).images
-                )
+                validation_image_results = self.pipeline(**pipeline_kwargs).images
+                if self.args.controlnet:
+                    validation_image_results = self.stitch_conditioning_images(
+                        validation_image_results, extra_validation_kwargs["image"]
+                    )
+                validation_images[validation_shortname].extend(validation_image_results)
             except Exception as e:
                 logger.error(f"Error generating validation image: {e}")
                 continue
-
         return validation_images
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):

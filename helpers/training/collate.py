@@ -250,8 +250,8 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
     # Validate shapes
     test_shape = latents[0].shape
     # Check all "aspect_ratio" values and raise error if any differ, with the two differing values:
-    for example in batch[0]:
-        if example["aspect_ratio"] != batch[0][0]["aspect_ratio"]:
+    for example in batch:
+        if example["aspect_ratio"] != batch[0]["aspect_ratio"]:
             raise ValueError(
                 f"Aspect ratio mismatch: {example['aspect_ratio']} != {batch[0][0]['aspect_ratio']}"
             )
@@ -285,7 +285,17 @@ def collate_fn(batch):
 
     # SDXL Dropout
     dropout_probability = StateTracker.get_args().caption_dropout_probability
-    examples = batch[0]
+    batch = batch[0]
+    examples = batch["training_samples"]
+    conditioning_examples = batch["conditioning_samples"]
+    if StateTracker.get_args().controlnet and len(examples) != len(
+        conditioning_examples
+    ):
+        raise ValueError(
+            "Number of training samples and conditioning samples must match for ControlNet."
+            f"\n-> Training samples: {examples}"
+            f"\n-> Conditioning samples: {conditioning_examples}"
+        )
 
     # Randomly drop captions/conditioning based on dropout_probability
     for example in examples:
@@ -314,7 +324,22 @@ def collate_fn(batch):
     if "deepfloyd" not in StateTracker.get_args().model_type:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(
-            latent_batch, filepaths, data_backend_id, batch
+            latent_batch, filepaths, data_backend_id, examples
+        )
+
+    conditioning_filepaths = []
+    conditioning_latents = None
+    if len(conditioning_examples) > 0:
+        for example in conditioning_examples:
+            # Building the list of conditioning image filepaths.
+            conditioning_filepaths.append(example.image_path(basename_only=False))
+        # Use the poorly-named method to retrieve the image pixel values
+        conditioning_latents = deepfloyd_pixels(conditioning_filepaths, data_backend_id)
+        conditioning_latents = torch.stack(
+            [
+                latent.to(StateTracker.get_accelerator().device)
+                for latent in conditioning_latents
+            ]
         )
 
     # Compute embeddings and handle dropped conditionings
@@ -341,4 +366,5 @@ def collate_fn(batch):
         "add_text_embeds": add_text_embeds_all,
         "batch_time_ids": batch_time_ids,
         "batch_luminance": batch_luminance,
+        "conditioning_pixel_values": conditioning_latents,
     }

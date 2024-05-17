@@ -32,13 +32,22 @@ def retrieve_validation_images():
     Returns:
         dict: A dictionary of shortname to image paths.
     """
-    data_backends = StateTracker.get_data_backends()
-    validation_data_backend_id = StateTracker.get_args().eval_dataset_id
+    args = StateTracker.get_args()
+    data_backends = StateTracker.get_data_backends(
+        _type="conditioning" if args.controlnet else "image"
+    )
+    validation_data_backend_id = args.eval_dataset_id
     validation_set = []
-    logger.info("Collecting DF-II validation images")
+    logger.info("Collecting validation images")
     for _data_backend in data_backends:
         data_backend = StateTracker.get_data_backend(_data_backend)
-        if "id" not in data_backend:
+        logger.info(f"Backend {_data_backend}: {data_backend}")
+        if "id" not in data_backend or (
+            args.controlnet and data_backend.get("dataset_type", None) != "conditioning"
+        ):
+            logger.info(
+                f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}"
+            )
             continue
         logger.info(f"Checking data backend: {data_backend['id']}")
         if (
@@ -50,7 +59,7 @@ def retrieve_validation_images():
         if "sampler" in data_backend:
             validation_set.extend(
                 data_backend["sampler"].retrieve_validation_set(
-                    batch_size=StateTracker.get_args().num_eval_images
+                    batch_size=args.num_eval_images
                 )
             )
         else:
@@ -71,7 +80,7 @@ def prepare_validation_prompt_list(args, embed_cache):
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
-    if "deepfloyd-stage2" in StateTracker.get_args().model_type:
+    if "deepfloyd-stage2" in args.model_type or args.controlnet:
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
         validation_sample_images = retrieve_validation_images()
@@ -81,7 +90,7 @@ def prepare_validation_prompt_list(args, embed_cache):
             for _validation_sample in tqdm(
                 validation_sample_images,
                 ncols=100,
-                desc="Precomputing DeepFloyd stage 2 eval prompt embeds",
+                desc="Precomputing validation image embeds",
             ):
                 _, validation_prompt, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts(

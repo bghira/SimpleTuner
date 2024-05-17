@@ -53,6 +53,7 @@ def register_file_hooks(
     text_encoder_cls,
     use_deepspeed_optimizer,
     ema_unet=None,
+    controlnet=None,
 ):
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
@@ -111,11 +112,15 @@ def register_file_hooks(
                             args.output_dir, removing_checkpoint
                         )
                         shutil.rmtree(removing_checkpoint)
-            sub_dir = (
-                "unet"
-                if isinstance(model, type(unwrap_model(accelerator, unet)))
-                else "text_encoder"
-            )
+            if isinstance(model, type(unwrap_model(accelerator, text_encoder))):
+                sub_dir = "text_encoder"
+            elif isinstance(model, type(unwrap_model(accelerator, controlnet))):
+                sub_dir = "controlnet"
+            elif isinstance(model, type(unwrap_model(accelerator, unet))):
+                sub_dir = "unet"
+            elif not use_deepspeed_optimizer:
+                raise ValueError(f"unexpected save model: {model.__class__}")
+
             model.save_pretrained(os.path.join(output_dir, sub_dir))
 
             # make sure to pop weight so that corresponding model is not saved again
@@ -196,14 +201,20 @@ def register_file_hooks(
                         load_model = text_encoder_cls.from_pretrained(
                             input_dir, subfolder="text_encoder"
                         )
-                        model.config = load_model.config
+                    elif isinstance(model, type(accelerator.unwrap_model(controlnet))):
+                        # load controlnet into model
+                        from diffusers import ControlNetModel
+
+                        load_model = ControlNetModel.from_pretrained(
+                            input_dir, subfolder="controlnet"
+                        )
                     else:
                         # load diffusers style into model
                         load_model = UNet2DConditionModel.from_pretrained(
                             input_dir, subfolder="unet"
                         )
-                        model.register_to_config(**load_model.config)
 
+                    model.register_to_config(**load_model.config)
                     model.load_state_dict(load_model.state_dict())
                     del load_model
                 except Exception as e:

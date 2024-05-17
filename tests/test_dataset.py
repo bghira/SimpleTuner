@@ -66,8 +66,8 @@ class TestMultiAspectDataset(unittest.TestCase):
             )
             examples = self.dataset.__getitem__(target)
         # Grab the size of the first image:
-        example = examples[0]
-        first_size = example["original_size"]
+        examples = examples["training_samples"]
+        first_size = examples[0]["original_size"]
         # Are all sizes the same?
         for example in examples:
             self.assertIsNotNone(example)

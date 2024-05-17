@@ -33,7 +33,18 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             )
 
     # Image backend config
-    output["dataset_type"] = "image"
+    output["dataset_type"] = backend.get("dataset_type", "image")
+    choices = ["image", "conditioning"]
+    if (
+        StateTracker.get_args().controlnet
+        and output["dataset_type"] == "image"
+        and backend.get("conditioning_data", None) is None
+    ):
+        raise ValueError(
+            "Image datasets require a corresponding conditioning_data set configured in your dataloader."
+        )
+    if output["dataset_type"] not in choices:
+        raise ValueError(f"(id={backend['id']}) dataset_type must be one of {choices}.")
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend[
             "vae_cache_clear_each_epoch"
@@ -346,7 +357,9 @@ def configure_multi_databackend(
     all_captions = []
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
-        if dataset_type is not None and dataset_type != "image":
+        if dataset_type is not None and (
+            dataset_type != "image" and dataset_type != "conditioning"
+        ):
             # Skip configuration of text embed backends. It is done earlier.
             continue
         if ("disabled" in backend and backend["disabled"]) or (
@@ -719,6 +732,32 @@ def configure_multi_databackend(
 
     # After configuring all backends, register their captions.
     StateTracker.set_caption_files(all_captions)
+
+    # For each image backend, connect it to its conditioning backend.
+    for backend in data_backend_config:
+        dataset_type = backend.get("dataset_type", "image")
+        if dataset_type is not None and dataset_type != "image":
+            # Skip configuration of conditioning/text data backends. It is done earlier.
+            continue
+        if ("disabled" in backend and backend["disabled"]) or (
+            "disable" in backend and backend["disable"]
+        ):
+            logger.info(
+                f"Skipping disabled data backend {backend['id']} in config file."
+            )
+            continue
+        if backend["conditioning_data"] not in StateTracker.get_data_backends(
+            _type="conditioning"
+        ):
+            raise ValueError(
+                f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends()}."
+            )
+        StateTracker.set_conditioning_dataset(
+            backend["id"], backend["conditioning_data"]
+        )
+        logger.info(
+            f"Successfully configured conditioning image dataset for {backend['id']}"
+        )
 
     if len(StateTracker.get_data_backends()) == 0:
         raise ValueError(
