@@ -88,6 +88,7 @@ from diffusers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
     UniPCMultistepScheduler,
+    ControlNetModel,
 )
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
@@ -337,24 +338,24 @@ def main():
         logger.info("Text encoder will remain frozen.")
         text_encoder.requires_grad_(False)
 
-    if args.enable_xformers_memory_efficient_attention:
-        if is_xformers_available():
-            import xformers
-
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.20"):
-                logger.warn(
-                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
-                )
-                if webhook_handler is not None:
-                    webhook_handler.send(
-                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
-                        message_level="warning",
-                    )
-
-            unet.enable_xformers_memory_efficient_attention()
-
-    if "lora" in args.model_type:
+    if args.controlnet:
+        if (
+            "deepfloyd" in StateTracker.get_args().model_type
+            or StateTracker.is_sdxl_refiner()
+        ):
+            raise ValueError(
+                f"ControlNet is not yet supported with {'DeepFloyd' if not StateTracker.is_sdxl_refiner() else 'SDXL Refiner'} models. Please disable --controlnet, or switch to a full base model training task instead."
+            )
+        logger.info("Creating the controlnet..")
+        if args.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            controlnet = ControlNetModel.from_pretrained(
+                args.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from unet")
+            controlnet = ControlNetModel.from_unet(unet)
+    elif "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
         if webhook_handler is not None:
             webhook_handler.send(message="Using LoRA training mode.")
@@ -379,18 +380,60 @@ def main():
             target_modules=["to_k", "to_q", "to_v", "to_out.0"],
             use_dora=args.use_dora,
         )
-
         logger.info("Adding LoRA adapter to the unet model..")
         unet.add_adapter(unet_lora_config)
 
-    if args.freeze_unet_strategy == "bitfit":
+    if args.enable_xformers_memory_efficient_attention:
+        if is_xformers_available():
+            import xformers
+
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.20"):
+                logger.warn(
+                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
+                )
+                if webhook_handler is not None:
+                    webhook_handler.send(
+                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
+                        message_level="warning",
+                    )
+
+            unet.enable_xformers_memory_efficient_attention()
+            if args.controlnet:
+                controlnet.enable_xformers_memory_efficient_attention()
+
+    if args.controlnet:
+        # We freeze the base u-net for controlnet training.
+        unet.requires_grad_(False)
+        controlnet.train()
+        controlnet.to(device=accelerator.device, dtype=weight_dtype)
+        if args.train_text_encoder:
+            logger.warning(
+                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
+            )
+
+    if (
+        args.freeze_unet_strategy == "bitfit"
+        and not args.controlnet
+        and "lora" not in args.model_type
+    ):
         from helpers.training.model_freeze import apply_bitfit_freezing
 
         logger.info(f"Applying BitFit freezing strategy to the U-net.")
         unet = apply_bitfit_freezing(unet, args)
+    elif args.freeze_unet_strategy == "bitfit" and args.controlnet:
+        raise ValueError(
+            "BitFit freezing strategy is not supported when training the ControlNet."
+        )
+    elif args.freeze_unet_strategy == "bitfit" and "lora" in args.model_type:
+        raise ValueError(
+            "BitFit freezing strategy is not supported when training the LoRA model, as they do not have a bias function."
+        )
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+        if args.controlnet:
+            controlnet.enable_gradient_checkpointing()
         if args.train_text_encoder:
             text_encoder.gradient_checkpointing_enable()
 
@@ -553,11 +596,18 @@ def main():
         or args.model_type == "deepfloyd-full"
         or args.model_type == "deepfloyd-stage2"
     ):
-        params_to_optimize = (
-            itertools.chain(unet.parameters(), text_encoder.parameters())
-            if args.train_text_encoder
-            else unet.parameters()
-        )
+        if args.controlnet:
+            params_to_optimize = (
+                itertools.chain(controlnet.parameters(), text_encoder.parameters())
+                if args.train_text_encoder
+                else controlnet.parameters()
+            )
+        else:
+            params_to_optimize = (
+                itertools.chain(unet.parameters(), text_encoder.parameters())
+                if args.train_text_encoder
+                else unet.parameters()
+            )
     elif (
         args.model_type == "lora"
         or args.model_type == "deepfloyd-lora"
@@ -747,6 +797,10 @@ def main():
         if "train_dataloader" in backend:
             train_dataloaders.append(backend["train_dataloader"])
 
+    if len(train_dataloaders) == 0:
+        logger.error("For some reason, no dataloaders were configured.")
+        sys.exit(0)
+
     logger.info("Preparing accelerator..")
 
     # Base components to prepare
@@ -754,10 +808,18 @@ def main():
         accelerator.native_amp = False
     if webhook_handler is not None:
         webhook_handler.send(message="Moving weights to GPU...")
-    results = accelerator.prepare(unet, lr_scheduler, optimizer, *train_dataloaders)
-    unet = results[0]
+    primary_model = unet if not args.controlnet else controlnet
+    results = accelerator.prepare(
+        primary_model, lr_scheduler, optimizer, *train_dataloaders
+    )
+    if args.controlnet:
+        controlnet = results[0]
+    else:
+        unet = results[0]
     if torch.backends.mps.is_available() or args.unet_attention_slice:
         unet.set_attention_slice("auto")
+        if args.controlnet:
+            controlnet.set_attention_slice("auto")
 
     lr_scheduler = results[1]
     optimizer = results[2]
@@ -850,6 +912,7 @@ def main():
         tokenizer_2=None,
         ema_unet=ema_unet,
         vae=vae,
+        controlnet=controlnet if args.controlnet else None,
     )
     # Potentially load in the weights and states from a previous save
     first_epoch = 1
@@ -1000,9 +1063,13 @@ def main():
         if args.lr_scheduler == "cosine_with_restarts":
             scheduler_kwargs["epoch"] = epoch
 
-        unet.train()
         current_epoch_step = 0
-        training_models = [unet]
+        if args.controlnet:
+            controlnet.train()
+            training_models = [controlnet]
+        else:
+            unet.train()
+            training_models = [unet]
         if args.train_text_encoder:
             logger.debug(f"Bumping text encoder.")
             text_encoder.train()
@@ -1153,13 +1220,40 @@ def main():
                     class_labels = timesteps
                 else:
                     class_labels = None
-
-                model_pred = unet(
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states,
-                    class_labels=class_labels,
-                ).sample
+                if args.controlnet:
+                    # ControlNet conditioning.
+                    controlnet_image = batch["conditioning_pixel_values"].to(
+                        dtype=weight_dtype
+                    )
+                    training_logger.debug(f"Image shape: {controlnet_image.shape}")
+                    down_block_res_samples, mid_block_res_sample = controlnet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states=encoder_hidden_states,
+                        controlnet_cond=controlnet_image,
+                        return_dict=False,
+                    )
+                    # Predict the noise residual
+                    model_pred = unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states=encoder_hidden_states,
+                        down_block_additional_residuals=[
+                            sample.to(dtype=weight_dtype)
+                            for sample in down_block_res_samples
+                        ],
+                        mid_block_additional_residual=mid_block_res_sample.to(
+                            dtype=weight_dtype
+                        ),
+                        return_dict=False,
+                    )[0]
+                else:
+                    model_pred = unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states,
+                        class_labels=class_labels,
+                    ).sample
 
                 if model_pred.shape[1] == 6:
                     # Chop the variance off of DeepFloyd models.
