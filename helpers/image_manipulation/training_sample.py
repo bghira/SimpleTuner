@@ -11,7 +11,11 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class TrainingSample:
     def __init__(
-        self, image: Image.Image, data_backend_id: str, image_metadata: dict = None
+        self,
+        image: Image.Image,
+        data_backend_id: str,
+        image_metadata: dict = None,
+        image_path: str = None,
     ):
         """
         Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
@@ -62,6 +66,7 @@ class TrainingSample:
         self.maximum_image_size = self.data_backend_config.get(
             "maximum_image_size", None
         )
+        self._image_path = image_path
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
     def _set_resolution(self):
@@ -347,6 +352,34 @@ class TrainingSample:
         Image.Image: The current image.
         """
         return self.image
+
+    def get_conditioning_image(self):
+        """
+        Fetch a conditioning image, eg. a canny edge map for ControlNet training.
+        """
+        if not StateTracker.get_args().controlnet:
+            return None
+        conditioning_dataset = StateTracker.get_conditioning_dataset(
+            data_backend_id=self.data_backend_id
+        )
+        print(f"Conditioning dataset components: {conditioning_dataset.keys()}")
+
+    def cache_path(self):
+        metadata_backend = StateTracker.get_data_backend(self.data_backend_id)[
+            "metadata_backend"
+        ]
+        vae_cache = StateTracker.get_data_backend(self.data_backend_id)["vaecache"]
+        # remove metadata_backend.instance_data_root in exchange for vae_cache.cache_dir
+        partial_replacement = self._image_path.replace(
+            metadata_backend.instance_data_root, vae_cache.cache_dir
+        )
+        # replace .ext with .pt
+        return os.path.splitext(partial_replacement)[0] + ".pt"
+
+    def image_path(self, basename_only=False):
+        if basename_only:
+            return os.path.basename(self._image_path)
+        return self._image_path
 
 
 class PreparedSample:

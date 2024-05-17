@@ -143,7 +143,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             training_sample = TrainingSample(
-                image=image_data, data_backend_id=self.id, image_metadata=image_metadata
+                image=image_data,
+                data_backend_id=self.id,
+                image_metadata=image_metadata,
+                image_path=image_path,
             )
             training_sample.prepare()
             validation_shortname = f"{self.id}_{img_idx}"
@@ -374,6 +377,38 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _clear_batch_accumulator(self):
         self.batch_accumulator = []
 
+    def get_conditioning_sample(self, original_sample_path: str) -> str:
+        """
+        Given an original dataset sample path, return a TrainingSample
+        """
+        # strip leading /
+        original_sample_path = original_sample_path.lstrip("/")
+        full_path = os.path.join(
+            self.metadata_backend.instance_data_root, original_sample_path
+        )
+        conditioning_sample = TrainingSample(
+            image=self.data_backend.read_image(full_path),
+            data_backend_id=self.id,
+            image_metadata=self.metadata_backend.get_metadata_by_filepath(full_path),
+            image_path=full_path,
+        )
+        return conditioning_sample
+
+    def connect_conditioning_samples(self, samples: tuple):
+        if not StateTracker.get_args().controlnet:
+            return samples
+        # Locate the conditioning data
+        conditioning_dataset = StateTracker.get_conditioning_dataset(self.id)
+        sampler = conditioning_dataset["sampler"]
+        outputs = list(samples)
+        for sample in samples:
+            sample_path = sample["image_path"].split(
+                self.metadata_backend.instance_data_root
+            )[-1]
+            conditioning_sample = sampler.get_conditioning_sample(sample_path)
+            outputs.append(conditioning_sample)
+        return tuple(outputs)
+
     def __iter__(self):
         """
         Iterate over the sampler to yield image paths in batches.
@@ -428,6 +463,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         [instance["image_path"] for instance in final_yield]
                     )
                     self.accelerator.wait_for_everyone()
+                    final_yield = self.connect_conditioning_samples(final_yield)
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
                     self.change_bucket()

@@ -338,6 +338,7 @@ class ParquetMetadataBackend(MetadataBackend):
                         int(database_image_metadata[height_column]),
                     )
                 },
+                image_path=image_path_str,
             )
             prepared_sample = training_sample.prepare()
             image_metadata = {"original_size": training_sample.original_size}

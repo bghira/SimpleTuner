@@ -26,6 +26,7 @@ def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
         image=image,
         data_backend_id=data_backend_id,
         image_metadata=metadata,
+        image_path=filepath,
     )
     prepared_sample = training_sample.prepare()
     return (

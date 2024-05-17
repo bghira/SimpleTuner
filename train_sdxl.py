@@ -67,6 +67,7 @@ from transformers import AutoTokenizer, PretrainedConfig
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
     AutoencoderKL,
+    ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
     DPMSolverMultistepScheduler,
@@ -383,30 +384,25 @@ def main():
         revision=args.revision,
         variant=args.variant,
     )
-    logger.info(f"Moving the U-net to GPU in {weight_dtype} precision.")
-    unet.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention:
-        logger.info("Enabling xformers memory-efficient attention.")
-        if is_xformers_available():
-            import xformers
 
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.20"):
-                logger.warn(
-                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
-                )
-                if webhook_handler is not None:
-                    webhook_handler.send(
-                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
-                        message_level="warning",
-                    )
-            unet.enable_xformers_memory_efficient_attention()
-        else:
+    if args.controlnet:
+        if (
+            "deepfloyd" in StateTracker.get_args().model_type
+            or StateTracker.is_sdxl_refiner()
+        ):
             raise ValueError(
-                "xformers is not available. Make sure it is installed correctly"
+                f"ControlNet is not yet supported with {'DeepFloyd' if not StateTracker.is_sdxl_refiner() else 'SDXL Refiner'} models. Please disable --controlnet, or switch to a full base model training task instead."
             )
-
-    if "lora" in args.model_type:
+        logger.info("Creating the controlnet..")
+        if args.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            controlnet = ControlNetModel.from_pretrained(
+                args.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from unet")
+            controlnet = ControlNetModel.from_unet(unet)
+    elif "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
         if webhook_handler is not None:
             webhook_handler.send(message="Using LoRA training mode.")
@@ -439,11 +435,41 @@ def main():
             models = [unet]
             if args.train_text_encoder:
                 models.extend([text_encoder_1, text_encoder_2])
-            # for model in models:
-            #     for param in model.parameters():
-            #         # only upcast trainable parameters (LoRA) into fp32
-            #         if param.requires_grad:
-            #             param.data = param.to(torch.float32)
+
+    logger.info(f"Moving the U-net to GPU in {weight_dtype} precision.")
+    unet.to(accelerator.device, dtype=weight_dtype)
+    if args.enable_xformers_memory_efficient_attention:
+        logger.info("Enabling xformers memory-efficient attention.")
+        if is_xformers_available():
+            import xformers
+
+            xformers_version = version.parse(xformers.__version__)
+            if xformers_version == version.parse("0.0.20"):
+                logger.warn(
+                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
+                )
+                if webhook_handler is not None:
+                    webhook_handler.send(
+                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
+                        message_level="warning",
+                    )
+            unet.enable_xformers_memory_efficient_attention()
+            if args.controlnet:
+                controlnet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
+
+    if args.controlnet:
+        # We freeze the base u-net for controlnet training.
+        unet.requires_grad_(False)
+        controlnet.train()
+        controlnet.to(device=accelerator.device, dtype=weight_dtype)
+        if args.train_text_encoder:
+            logger.warning(
+                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
+            )
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in bfloat16 to avoid NaN losses.
@@ -601,6 +627,8 @@ def main():
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+        if args.controlnet:
+            controlnet.enable_gradient_checkpointing()
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
@@ -762,12 +790,19 @@ def main():
         extra_optimizer_args["lr"] = args.learning_rate
 
     if args.model_type == "full":
-        params_to_optimize = unet.parameters()
+        if args.controlnet:
+            params_to_optimize = controlnet.parameters()
+        else:
+            params_to_optimize = unet.parameters()
         if args.train_text_encoder:
             raise ValueError(
                 "Full model tuning does not currently support text encoder training."
             )
     elif "lora" in args.model_type:
+        if args.controlnet:
+            raise ValueError(
+                "SimpleTuner does not currently support training a ControlNet LoRA."
+            )
         params_to_optimize = list(filter(lambda p: p.requires_grad, unet.parameters()))
         if args.train_text_encoder:
             params_to_optimize = (
@@ -845,6 +880,9 @@ def main():
             continue
         train_dataloaders.append(backend["train_dataloader"])
         break
+    if len(train_dataloaders) == 0:
+        logger.error("For some reason, no dataloaders were configured.")
+        sys.exit(0)
 
     if not disable_accelerator:
         logger.info(f"Loading our accelerator...")
@@ -852,10 +890,14 @@ def main():
             accelerator.native_amp = False
         if webhook_handler is not None:
             webhook_handler.send(message="Moving weights to GPU...")
+        primary_model = unet if not args.controlnet else controlnet
         results = accelerator.prepare(
-            unet, lr_scheduler, optimizer, train_dataloaders[0]
+            primary_model, lr_scheduler, optimizer, train_dataloaders[0]
         )
-        unet = results[0]
+        if args.controlnet:
+            controlnet = results[0]
+        else:
+            unet = results[0]
         if args.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
@@ -961,6 +1003,7 @@ def main():
         tokenizer_2=tokenizer_2,
         ema_unet=ema_unet,
         vae=vae,
+        controlnet=controlnet if args.controlnet else None,
     )
 
     # Potentially load in the weights and states from a previous save
@@ -1127,8 +1170,12 @@ def main():
         if args.lr_scheduler == "cosine_with_restarts":
             scheduler_kwargs["epoch"] = epoch
 
-        unet.train()
-        training_models = [unet]
+        if args.controlnet:
+            controlnet.train()
+            training_models = [controlnet]
+        else:
+            unet.train()
+            training_models = [unet]
         if "lora" in args.model_type and args.train_text_encoder:
             text_encoder_1.train()
             text_encoder_2.train()
@@ -1288,13 +1335,47 @@ def main():
                     f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
                     f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
                 )
+                if args.controlnet:
+                    training_logger.debug(
+                        f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
+                    )
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
-                    model_pred = unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states,
-                        added_cond_kwargs=added_cond_kwargs,
-                    ).sample
+                    if args.controlnet:
+                        # ControlNet conditioning.
+                        controlnet_image = batch["conditioning_pixel_values"].to(
+                            dtype=weight_dtype
+                        )
+                        training_logger.debug(f"Image shape: {controlnet_image.shape}")
+                        down_block_res_samples, mid_block_res_sample = controlnet(
+                            noisy_latents,
+                            timesteps,
+                            encoder_hidden_states=encoder_hidden_states,
+                            added_cond_kwargs=added_cond_kwargs,
+                            controlnet_cond=controlnet_image,
+                            return_dict=False,
+                        )
+                        # Predict the noise residual
+                        model_pred = unet(
+                            noisy_latents,
+                            timesteps,
+                            encoder_hidden_states=encoder_hidden_states,
+                            added_cond_kwargs=added_cond_kwargs,
+                            down_block_additional_residuals=[
+                                sample.to(dtype=weight_dtype)
+                                for sample in down_block_res_samples
+                            ],
+                            mid_block_additional_residual=mid_block_res_sample.to(
+                                dtype=weight_dtype
+                            ),
+                            return_dict=False,
+                        )[0]
+                    else:
+                        model_pred = unet(
+                            noisy_latents,
+                            timesteps,
+                            encoder_hidden_states,
+                            added_cond_kwargs=added_cond_kwargs,
+                        ).sample
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
@@ -1509,10 +1590,13 @@ def main():
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
             ):
-                hub_manager.upload_latest_checkpoint(
-                    validation_images=validation.validation_images,
-                    webhook_handler=webhook_handler,
-                )
+                try:
+                    hub_manager.upload_latest_checkpoint(
+                        validation_images=validation.validation_images,
+                        webhook_handler=webhook_handler,
+                    )
+                except Exception as e:
+                    logger.error(f"Error uploading to hub: {e}, continuing training.")
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
@@ -1651,5 +1735,5 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
-        logger.error(e)
-        logger.error(traceback.format_exc())
+        print(e)
+        print(traceback.format_exc())
