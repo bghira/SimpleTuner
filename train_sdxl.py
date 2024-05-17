@@ -1590,10 +1590,13 @@ def main():
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
             ):
-                hub_manager.upload_latest_checkpoint(
-                    validation_images=validation.validation_images,
-                    webhook_handler=webhook_handler,
-                )
+                try:
+                    hub_manager.upload_latest_checkpoint(
+                        validation_images=validation.validation_images,
+                        webhook_handler=webhook_handler,
+                    )
+                except Exception as e:
+                    logger.error(f"Error uploading to hub: {e}, continuing training.")
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
@@ -1732,5 +1735,5 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
             )
-        logger.error(e)
-        logger.error(traceback.format_exc())
+        print(e)
+        print(traceback.format_exc())
