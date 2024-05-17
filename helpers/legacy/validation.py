@@ -57,11 +57,33 @@ def retrieve_validation_images():
             logger.warning(f"Not collecting images from {data_backend['id']}")
             continue
         if "sampler" in data_backend:
-            validation_set.extend(
-                data_backend["sampler"].retrieve_validation_set(
-                    batch_size=args.num_eval_images
-                )
-            )
+            validation_samples_from_sampler = data_backend[
+                "sampler"
+            ].retrieve_validation_set(batch_size=args.num_eval_images)
+            if "stage2" in args.model_type:
+                # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
+                resized_validation_samples = []
+                for _sample in validation_samples_from_sampler:
+                    validation_shortname, validation_prompt, training_sample_image = (
+                        _sample
+                    )
+                    resize_to, crop_to, new_aspect_ratio = (
+                        MultiaspectImage.calculate_new_size_by_pixel_edge(
+                            aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
+                                training_sample_image
+                            ),
+                            resolution=64,
+                            original_size=training_sample_image.size,
+                        )
+                    )
+                    # we can be less precise here
+                    training_sample_image = training_sample_image.resize(crop_to)
+                    resized_validation_samples.append(
+                        (validation_shortname, validation_prompt, training_sample_image)
+                    )
+                validation_samples_from_sampler = resized_validation_samples
+
+            validation_set.extend(validation_samples_from_sampler)
         else:
             logger.warning(
                 f"Data backend {data_backend['id']} does not have a sampler. Skipping."
