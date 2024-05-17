@@ -46,7 +46,7 @@ def save_model_card(
                 image.save(image_path, format="PNG")
                 validation_prompt = (
                     validation_prompts[shortname_idx]
-                    if validation_prompts
+                    if validation_prompts and shortname_idx in validation_prompts
                     else "no prompt available"
                 )
                 if validation_prompt == "":
@@ -56,7 +56,7 @@ def save_model_card(
                     validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
                 widget_str += f"\n  parameters:"
-                widget_str += f"\n    negative_prompt: {StateTracker.get_args().validation_negative_prompt}"
+                widget_str += f"\n    negative_prompt: '{str(StateTracker.get_args().validation_negative_prompt)}'"
                 widget_str += f"\n  output:"
                 widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.png"
                 idx += 1

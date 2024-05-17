@@ -24,6 +24,28 @@ logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
+def resize_validation_images(validation_images, edge_length):
+    # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
+    resized_validation_samples = []
+    for _sample in validation_images:
+        validation_shortname, validation_prompt, training_sample_image = _sample
+        resize_to, crop_to, new_aspect_ratio = (
+            MultiaspectImage.calculate_new_size_by_pixel_edge(
+                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
+                    training_sample_image
+                ),
+                resolution=edge_length,
+                original_size=training_sample_image.size,
+            )
+        )
+        # we can be less precise here
+        training_sample_image = training_sample_image.resize(crop_to)
+        resized_validation_samples.append(
+            (validation_shortname, validation_prompt, training_sample_image)
+        )
+    return resized_validation_samples
+
+
 def retrieve_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
@@ -61,27 +83,9 @@ def retrieve_validation_images():
                 "sampler"
             ].retrieve_validation_set(batch_size=args.num_eval_images)
             if "stage2" in args.model_type:
-                # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
-                resized_validation_samples = []
-                for _sample in validation_samples_from_sampler:
-                    validation_shortname, validation_prompt, training_sample_image = (
-                        _sample
-                    )
-                    resize_to, crop_to, new_aspect_ratio = (
-                        MultiaspectImage.calculate_new_size_by_pixel_edge(
-                            aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
-                                training_sample_image
-                            ),
-                            resolution=64,
-                            original_size=training_sample_image.size,
-                        )
-                    )
-                    # we can be less precise here
-                    training_sample_image = training_sample_image.resize(crop_to)
-                    resized_validation_samples.append(
-                        (validation_shortname, validation_prompt, training_sample_image)
-                    )
-                validation_samples_from_sampler = resized_validation_samples
+                validation_samples_from_sampler = resize_validation_images(
+                    validation_samples_from_sampler, edge_length=64
+                )
 
             validation_set.extend(validation_samples_from_sampler)
         else:
