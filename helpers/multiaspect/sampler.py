@@ -392,7 +392,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata=self.metadata_backend.get_metadata_by_filepath(full_path),
             image_path=full_path,
         )
-        print(f"Conditioning sample: {conditioning_sample}")
         return conditioning_sample
 
     def connect_conditioning_samples(self, samples: tuple):
@@ -401,7 +400,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Locate the conditioning data
         conditioning_dataset = StateTracker.get_conditioning_dataset(self.id)
         sampler = conditioning_dataset["sampler"]
-        print(f"Using sampler {sampler.id}")
         outputs = list(samples)
         for sample in samples:
             sample_path = sample["image_path"].split(
