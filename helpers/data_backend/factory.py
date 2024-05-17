@@ -752,7 +752,7 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends()}."
             )
-        elif "condition_data" in backend:
+        if "conditioning_data" in backend:
             StateTracker.set_conditioning_dataset(
                 backend["id"], backend["conditioning_data"]
             )

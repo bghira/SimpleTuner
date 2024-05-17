@@ -411,6 +411,7 @@ def main():
             logger.warning(
                 "Unknown results will occur when finetuning the text encoder alongside ControlNet."
             )
+    unet.to(device=accelerator.device, dtype=weight_dtype)
 
     if (
         args.freeze_unet_strategy == "bitfit"
@@ -790,6 +791,7 @@ def main():
         text_encoder_cls,
         use_deepspeed_optimizer,
         ema_unet,
+        controlnet=controlnet,
     )
 
     train_dataloaders = []
