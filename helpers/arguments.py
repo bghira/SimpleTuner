@@ -120,7 +120,7 @@ def parse_args(input_args=None):
         action="store_true",
         default=None,
         help=(
-            "When provided alongside `--controlnet`, this will specify ControlNet model weights to preload from the hub."
+            "When provided alongside --controlnet, this will specify ControlNet model weights to preload from the hub."
         ),
     )
     parser.add_argument(
@@ -1243,7 +1243,7 @@ def parse_args(input_args=None):
         action="store_true",
         default=False,
         help=(
-            "If set, the SDXL Refiner will use the full range of the model, rather than the design value of 20%."
+            "If set, the SDXL Refiner will use the full range of the model, rather than the design value of 20 percent."
             " This is useful for training models that will be used for inference from end-to-end of the noise schedule."
             " You may use this for example, to turn the SDXL refiner into a full text-to-image model."
         ),
