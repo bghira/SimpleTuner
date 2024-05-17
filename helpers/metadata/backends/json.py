@@ -219,7 +219,10 @@ class JsonMetadataBackend(MetadataBackend):
                     return aspect_ratio_bucket_indices
                 image_metadata["original_size"] = image.size
                 training_sample = TrainingSample(
-                    image=image, data_backend_id=self.id, image_metadata=image_metadata
+                    image=image,
+                    data_backend_id=self.id,
+                    image_metadata=image_metadata,
+                    image_path=image_path_str,
                 )
                 prepared_sample = training_sample.prepare()
                 image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates

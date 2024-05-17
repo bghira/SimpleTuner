@@ -91,8 +91,9 @@ class SDXLSaveHook:
         if self.args.use_ema:
             self.ema_unet.save_pretrained(os.path.join(temporary_dir, "unet_ema"))
 
+        sub_dir = "unet" if not self.args.controlnet else "controlnet"
         for model in models:
-            model.save_pretrained(os.path.join(temporary_dir, "unet"))
+            model.save_pretrained(os.path.join(temporary_dir, sub_dir))
             if weights:
                 weights.pop()  # Pop the last weight
 
@@ -191,9 +192,16 @@ class SDXLSaveHook:
                     model = models.pop()
 
                     # load diffusers style into model
-                    load_model = UNet2DConditionModel.from_pretrained(
-                        input_dir, subfolder="unet"
-                    )
+                    if self.args.controlnet:
+                        from diffusers import ControlNetModel
+
+                        load_model = ControlNetModel.from_pretrained(
+                            input_dir, subfolder="controlnet"
+                        )
+                    else:
+                        load_model = UNet2DConditionModel.from_pretrained(
+                            input_dir, subfolder="unet"
+                        )
                     model.register_to_config(**load_model.config)
 
                     model.load_state_dict(load_model.state_dict())

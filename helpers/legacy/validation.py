@@ -24,6 +24,28 @@ logger = logging.getLogger("validation")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
+def resize_validation_images(validation_images, edge_length):
+    # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
+    resized_validation_samples = []
+    for _sample in validation_images:
+        validation_shortname, validation_prompt, training_sample_image = _sample
+        resize_to, crop_to, new_aspect_ratio = (
+            MultiaspectImage.calculate_new_size_by_pixel_edge(
+                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
+                    training_sample_image
+                ),
+                resolution=edge_length,
+                original_size=training_sample_image.size,
+            )
+        )
+        # we can be less precise here
+        training_sample_image = training_sample_image.resize(crop_to)
+        resized_validation_samples.append(
+            (validation_shortname, validation_prompt, training_sample_image)
+        )
+    return resized_validation_samples
+
+
 def retrieve_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
@@ -32,13 +54,22 @@ def retrieve_validation_images():
     Returns:
         dict: A dictionary of shortname to image paths.
     """
-    data_backends = StateTracker.get_data_backends()
-    validation_data_backend_id = StateTracker.get_args().eval_dataset_id
+    args = StateTracker.get_args()
+    data_backends = StateTracker.get_data_backends(
+        _type="conditioning" if args.controlnet else "image"
+    )
+    validation_data_backend_id = args.eval_dataset_id
     validation_set = []
-    logger.info("Collecting DF-II validation images")
+    logger.info("Collecting validation images")
     for _data_backend in data_backends:
         data_backend = StateTracker.get_data_backend(_data_backend)
-        if "id" not in data_backend:
+        logger.info(f"Backend {_data_backend}: {data_backend}")
+        if "id" not in data_backend or (
+            args.controlnet and data_backend.get("dataset_type", None) != "conditioning"
+        ):
+            logger.info(
+                f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}"
+            )
             continue
         logger.info(f"Checking data backend: {data_backend['id']}")
         if (
@@ -48,11 +79,15 @@ def retrieve_validation_images():
             logger.warning(f"Not collecting images from {data_backend['id']}")
             continue
         if "sampler" in data_backend:
-            validation_set.extend(
-                data_backend["sampler"].retrieve_validation_set(
-                    batch_size=StateTracker.get_args().num_eval_images
+            validation_samples_from_sampler = data_backend[
+                "sampler"
+            ].retrieve_validation_set(batch_size=args.num_eval_images)
+            if "stage2" in args.model_type:
+                validation_samples_from_sampler = resize_validation_images(
+                    validation_samples_from_sampler, edge_length=64
                 )
-            )
+
+            validation_set.extend(validation_samples_from_sampler)
         else:
             logger.warning(
                 f"Data backend {data_backend['id']} does not have a sampler. Skipping."
@@ -71,7 +106,7 @@ def prepare_validation_prompt_list(args, embed_cache):
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
-    if "deepfloyd-stage2" in StateTracker.get_args().model_type:
+    if "deepfloyd-stage2" in args.model_type or args.controlnet:
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
         validation_sample_images = retrieve_validation_images()
@@ -81,7 +116,7 @@ def prepare_validation_prompt_list(args, embed_cache):
             for _validation_sample in tqdm(
                 validation_sample_images,
                 ncols=100,
-                desc="Precomputing DeepFloyd stage 2 eval prompt embeds",
+                desc="Precomputing validation image embeds",
             ):
                 _, validation_prompt, _ = _validation_sample
                 embed_cache.compute_embeddings_for_prompts(

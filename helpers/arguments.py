@@ -108,6 +108,22 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--controlnet",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, ControlNet style training will be used, where a conditioning input image is required alongside the training data."
+        ),
+    )
+    parser.add_argument(
+        "--controlnet_model_name_or_path",
+        action="store_true",
+        default=None,
+        help=(
+            "When provided alongside --controlnet, this will specify ControlNet model weights to preload from the hub."
+        ),
+    )
+    parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
@@ -1227,7 +1243,7 @@ def parse_args(input_args=None):
         action="store_true",
         default=False,
         help=(
-            "If set, the SDXL Refiner will use the full range of the model, rather than the design value of 20%."
+            "If set, the SDXL Refiner will use the full range of the model, rather than the design value of 20 percent."
             " This is useful for training models that will be used for inference from end-to-end of the noise schedule."
             " You may use this for example, to turn the SDXL refiner into a full text-to-image model."
         ),
@@ -1456,6 +1472,9 @@ def parse_args(input_args=None):
         logger.info(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
+
+    if args.controlnet and "lora" in args.model_type:
+        raise ValueError("ControlNet is not supported for LoRA models.")
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")

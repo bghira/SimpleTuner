@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 from helpers.training.state_tracker import StateTracker
+from helpers.image_manipulation.training_sample import TrainingSample
 from pathlib import Path
 import logging, os
 
@@ -29,10 +30,16 @@ class MultiAspectDataset(Dataset):
         return sum([len(dataset) for dataset in self.datasets])
 
     def __getitem__(self, image_tuple):
-        output_data = []
+        output_data = {
+            "training_samples": [],
+            "conditioning_samples": [],
+        }
         first_aspect_ratio = None
         for sample in image_tuple:
-            image_metadata = sample
+            if type(sample) is TrainingSample:
+                image_metadata = sample.image_metadata
+            else:
+                image_metadata = sample
             if "aspect_ratio" in image_metadata:
                 if first_aspect_ratio is None:
                     first_aspect_ratio = image_metadata["aspect_ratio"]
@@ -53,10 +60,14 @@ class MultiAspectDataset(Dataset):
                     f"Dataset is now using image: {image_metadata['image_path']}"
                 )
 
+            if type(sample) is TrainingSample:
+                output_data["conditioning_samples"].append(sample)
+                continue
+            else:
+                output_data["training_samples"].append(image_metadata)
+
             if "instance_prompt_text" not in image_metadata:
                 raise ValueError(
                     f"Instance prompt text must be provided in image metadata. Image metadata: {image_metadata}"
                 )
-            output_data.append(image_metadata)
-
         return output_data

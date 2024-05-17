@@ -343,6 +343,18 @@ class StateTracker:
         return cls.data_backends[id]
 
     @classmethod
+    def set_conditioning_dataset(
+        cls, data_backend_id: str, conditioning_backend_id: str
+    ):
+        cls.data_backends[data_backend_id]["conditioning_data"] = cls.data_backends[
+            conditioning_backend_id
+        ]
+
+    @classmethod
+    def get_conditioning_dataset(cls, data_backend_id: str):
+        return cls.data_backends[data_backend_id]["conditioning_data"]
+
+    @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
         return cls.data_backends.get(data_backend_id, {}).get("config", {})
 
@@ -353,10 +365,10 @@ class StateTracker:
         cls.data_backends[data_backend_id]["config"] = config
 
     @classmethod
-    def get_data_backends(cls):
+    def get_data_backends(cls, _type="image"):
         output = {}
         for backend_id, backend in dict(cls.data_backends).items():
-            if backend.get("dataset_type", "image") == "image":
+            if backend.get("dataset_type", "image") == _type:
                 output[backend_id] = backend
         return output
 
