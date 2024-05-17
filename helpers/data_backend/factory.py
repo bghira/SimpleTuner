@@ -746,18 +746,19 @@ def configure_multi_databackend(
                 f"Skipping disabled data backend {backend['id']} in config file."
             )
             continue
-        if backend["conditioning_data"] not in StateTracker.get_data_backends(
-            _type="conditioning"
-        ):
+        if "conditioning_data" in backend and backend[
+            "conditioning_data"
+        ] not in StateTracker.get_data_backends(_type="conditioning"):
             raise ValueError(
                 f"Conditioning data backend {backend['conditioning_data']} not found in data backend list: {StateTracker.get_data_backends()}."
             )
-        StateTracker.set_conditioning_dataset(
-            backend["id"], backend["conditioning_data"]
-        )
-        logger.info(
-            f"Successfully configured conditioning image dataset for {backend['id']}"
-        )
+        elif "condition_data" in backend:
+            StateTracker.set_conditioning_dataset(
+                backend["id"], backend["conditioning_data"]
+            )
+            logger.info(
+                f"Successfully configured conditioning image dataset for {backend['id']}"
+            )
 
     if len(StateTracker.get_data_backends()) == 0:
         raise ValueError(
