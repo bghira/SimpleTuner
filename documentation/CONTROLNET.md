@@ -6,7 +6,7 @@ ControlNet models are capable of many tasks, which depend on the conditioning da
 
 Example (taken from the Diffusers ControlNet model card):
 
-[!example](https://tripleback.net/public/controlnet-example-1.png)
+![example](https://tripleback.net/public/controlnet-example-1.png)
 
 On the left, you can see the "canny edge map" given as the conditioning input. To the right of that are the outputs the ControlNet model guided out of the base SDXL model.
 
@@ -16,7 +16,7 @@ When the model is used in this way, the prompt handles almost none of the compos
 
 At first, when training a ControlNet, it has zero indication of control:
 
-[!example](https://tripleback.net/public/controlnet-example-2.png)
+![example](https://tripleback.net/public/controlnet-example-2.png)
 (_ControlNet trained for just 4 steps on a Stable Diffusion 2.1 model_)
 
 
@@ -24,7 +24,7 @@ The antelope prompt still has a majority of control over the composition, and th
 
 Over time, the control input should be respected:
 
-[!example](https://tripleback.net/public/controlnet-example-3.png)
+![example](https://tripleback.net/public/controlnet-example-3.png)
 (_ControlNet trained for just 100 steps on a Stable Diffusion XL model_)
 
 At that point, a few indications of ControlNet influence began to appear, but the results were incredibly inconsistent.
