@@ -47,8 +47,9 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
 - Support for a variety of image sizes and aspect ratios, enabling widescreen and portrait training on SDXL and SD 2.x.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
-- DeepFloyd stage I and II full u-net or parameter-efficient fine-tuning via LoRA using 22G VRAM
+- [DeepFloyd stage I and II full u-net or parameter-efficient fine-tuning](/documentation/DEEPFLOYD.md) via LoRA using 22G VRAM
 - SDXL Refiner LoRA or full u-net training, incl validation using img2img
+- Full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
