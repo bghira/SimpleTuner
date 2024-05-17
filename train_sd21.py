@@ -1495,10 +1495,13 @@ def main():
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
             ):
-                hub_manager.upload_latest_checkpoint(
-                    validation_images=validation.validation_images,
-                    webhook_handler=webhook_handler,
-                )
+                try:
+                    hub_manager.upload_latest_checkpoint(
+                        validation_images=validation.validation_images,
+                        webhook_handler=webhook_handler,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to push checkpoint to hub: {e}")
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
                 logger.info(
