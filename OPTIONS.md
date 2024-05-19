@@ -181,7 +181,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--lora_type {Standard}]
                      [--lora_init_type {default,gaussian,loftq}]
                      [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
-                     [--lora_dropout LORA_DROPOUT]
+                     [--lora_dropout LORA_DROPOUT] [--controlnet]
+                     [--controlnet_model_name_or_path]
                      --pretrained_model_name_or_path
                      PRETRAINED_MODEL_NAME_OR_PATH
                      [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
@@ -201,8 +202,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--vae_cache_scan_behaviour {recreate,sync}]
                      [--vae_cache_preprocess] [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
-                     [--revision REVISION] [--preserve_data_backend_cache]
-                     [--use_dora] [--override_dataset_config]
+                     [--revision REVISION] [--variant VARIANT]
+                     [--preserve_data_backend_cache] [--use_dora]
+                     [--override_dataset_config]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
@@ -256,12 +258,12 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--adam_weight_decay ADAM_WEIGHT_DECAY]
                      [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
                      [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
-                     [--push_checkpoints_to_hub]
-                     [--hub_model_id HUB_MODEL_ID] [--logging_dir LOGGING_DIR]
+                     [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
+                     [--logging_dir LOGGING_DIR]
                      [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                      [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
-                     [--allow_tf32] [--webhook_config WEBHOOK_CONFIG]
-                     [--report_to REPORT_TO]
+                     [--allow_tf32] [--validation_using_datasets]
+                     [--webhook_config WEBHOOK_CONFIG] [--report_to REPORT_TO]
                      [--tracker_run_name TRACKER_RUN_NAME]
                      [--tracker_project_name TRACKER_PROJECT_NAME]
                      [--validation_prompt VALIDATION_PROMPT]
@@ -296,6 +298,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--freeze_encoder FREEZE_ENCODER] [--save_text_encoder]
                      [--text_encoder_limit TEXT_ENCODER_LIMIT]
                      [--prepend_instance_prompt] [--only_instance_prompt]
+                     [--data_aesthetic_score DATA_AESTHETIC_SCORE]
+                     [--sdxl_refiner_uses_full_range]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                      [--input_perturbation INPUT_PERTURBATION]
                      [--input_perturbation_probability INPUT_PERTURBATION_PROBABILITY]
@@ -345,6 +349,13 @@ options:
   --lora_dropout LORA_DROPOUT
                         LoRA dropout randomly ignores neurons during training.
                         This can help prevent overfitting.
+  --controlnet          If set, ControlNet style training will be used, where
+                        a conditioning input image is required alongside the
+                        training data.
+  --controlnet_model_name_or_path
+                        When provided alongside --controlnet, this will
+                        specify ControlNet model weights to preload from the
+                        hub.
   --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
                         huggingface.co/models.
@@ -455,7 +466,10 @@ options:
                         aspect, vae, text, metadata.
   --revision REVISION   Revision of pretrained model identifier from
                         huggingface.co/models. Trainable model components
-                        should be float32 precision.
+                        should be at least bfloat16 precision.
+  --variant VARIANT     Variant of pretrained model identifier from
+                        huggingface.co/models. Trainable model components
+                        should be at least bfloat16 precision.
   --preserve_data_backend_cache
                         For very large cloud storage buckets that will never
                         change, enabling this option will prevent the trainer
@@ -753,6 +767,11 @@ options:
                         used to speed up training. For more information, see h
                         ttps://pytorch.org/docs/stable/notes/cuda.html#tensorf
                         loat-32-tf32-on-ampere-devices
+  --validation_using_datasets
+                        When set, validation will use images sampled randomly
+                        from each dataset for validation. Be mindful of
+                        privacy issues when publishing training data to the
+                        internet.
   --webhook_config WEBHOOK_CONFIG
                         The path to the webhook configuration file. This file
                         should be a JSON file with the following format:
@@ -930,6 +949,17 @@ options:
   --only_instance_prompt
                         Use the instance prompt instead of the caption from
                         filename.
+  --data_aesthetic_score DATA_AESTHETIC_SCORE
+                        Since currently we do not calculate aesthetic scores
+                        for data, we will statically set it to one value. This
+                        is only used by the SDXL Refiner.
+  --sdxl_refiner_uses_full_range
+                        If set, the SDXL Refiner will use the full range of
+                        the model, rather than the design value of 20 percent.
+                        This is useful for training models that will be used
+                        for inference from end-to-end of the noise schedule.
+                        You may use this for example, to turn the SDXL refiner
+                        into a full text-to-image model.
   --caption_dropout_probability CAPTION_DROPOUT_PROBABILITY
                         Caption dropout will randomly drop captions and, for
                         SDXL, size conditioning inputs based on this
