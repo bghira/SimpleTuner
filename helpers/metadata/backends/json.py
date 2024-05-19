@@ -4,7 +4,7 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from pathlib import Path
-import json, logging, os, time, re
+import json, logging, os, traceback
 from multiprocessing import Manager
 from PIL import Image
 from tqdm import tqdm
@@ -204,19 +204,19 @@ class JsonMetadataBackend(MetadataBackend):
                 logger.debug(
                     f"Image {image_path_str} was not found on the backend. Skipping image."
                 )
-                del image_data
+                statistics.setdefault("skipped", {}).setdefault("not_found", 0)
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
+
             with Image.open(BytesIO(image_data)) as image:
-                # Apply EXIF transforms
-                if not self.meets_resolution_requirements(
-                    image=image,
-                ):
+                if not self.meets_resolution_requirements(image=image):
                     logger.debug(
-                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
+                        f"Image {image_path_str} does not meet minimum size requirements. Skipping image."
                     )
+                    statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                     statistics["skipped"]["too_small"] += 1
                     return aspect_ratio_bucket_indices
+
                 image_metadata["original_size"] = image.size
                 training_sample = TrainingSample(
                     image=image,
@@ -225,32 +225,32 @@ class JsonMetadataBackend(MetadataBackend):
                     image_path=image_path_str,
                 )
                 prepared_sample = training_sample.prepare()
-                image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
-                image_metadata["target_size"] = prepared_sample.target_size
-                image_metadata["intermediary_size"] = prepared_sample.intermediary_size
-                # Round to avoid excessive unique buckets
-                image_metadata["aspect_ratio"] = prepared_sample.aspect_ratio
-                image_metadata["luminance"] = calculate_luminance(image)
+                image_metadata.update(
+                    {
+                        "crop_coordinates": prepared_sample.crop_coordinates,
+                        "target_size": prepared_sample.target_size,
+                        "intermediary_size": prepared_sample.intermediary_size,
+                        "aspect_ratio": prepared_sample.aspect_ratio,
+                        "luminance": calculate_luminance(image),
+                    }
+                )
                 logger.debug(
                     f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio} and size {image.size}."
                 )
 
-            # Create a new bucket if it doesn't exist
-            if str(prepared_sample.aspect_ratio) not in aspect_ratio_bucket_indices:
-                aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)] = []
-            aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)].append(
-                image_path_str
-            )
-            # Instead of directly updating, just fill the provided dictionary
+            aspect_ratio_key = str(prepared_sample.aspect_ratio)
+            if aspect_ratio_key not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[aspect_ratio_key] = []
+            aspect_ratio_bucket_indices[aspect_ratio_key].append(image_path_str)
+
             if metadata_updates is not None:
                 metadata_updates[image_path_str] = image_metadata
-        except Exception as e:
-            import traceback
 
+        except Exception as e:
             logger.error(f"Error processing image: {e}")
             logger.error(f"Error traceback: {traceback.format_exc()}")
-            logger.error(e)
             if delete_problematic_images:
-                logger.error(f"Deleting image.")
+                logger.error(f"Deleting image {image_path_str}.")
                 self.data_backend.delete(image_path_str)
+
         return aspect_ratio_bucket_indices
