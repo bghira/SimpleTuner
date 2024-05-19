@@ -1013,11 +1013,21 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_disable_unconditional",
+        action="store_true",
+        help=(
+            "When set, the validation pipeline will not generate unconditional samples."
+            " This is useful to speed up validations with a single prompt on slower systems, or if you are not"
+            " interested in unconditional space generations."
+        ),
+    )
+    parser.add_argument(
         "--disable_compel",
         action="store_true",
         help=(
-            "If provided, prompts will be handled using the typical prompt encoding strategy."
+            "If provided, validation pipeline prompts will be handled using the typical prompt encoding strategy."
             " Otherwise, the default behaviour is to use Compel for prompt embed generation."
+            " Note that the training input text embeds are not generated using Compel, and will be truncated to 77 tokens."
         ),
     )
     parser.add_argument(

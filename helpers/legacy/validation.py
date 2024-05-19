@@ -98,8 +98,14 @@ def retrieve_validation_images():
 def prepare_validation_prompt_list(args, embed_cache):
     validation_negative_prompt_embeds = None
     validation_negative_pooled_embeds = None
-    validation_prompts = [""]
-    validation_shortnames = ["unconditional"]
+    validation_prompts = (
+        [""] if not StateTracker.get_args().validation_disable_unconditional else []
+    )
+    validation_shortnames = (
+        ["unconditional"]
+        if not StateTracker.get_args().validation_disable_unconditional
+        else []
+    )
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"Embed cache engine did not contain a model_type. Cannot continue."
