@@ -68,9 +68,9 @@ class TrainingSample:
             "maximum_image_size", None
         )
         self._image_path = image_path
-        self._validate_image_metadata()
         # RGB/EXIF conversions.
         self.correct_image()
+        self._validate_image_metadata()
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
     def _validate_image_metadata(self) -> bool:
@@ -92,6 +92,13 @@ class TrainingSample:
             self.intermediary_size = self.image_metadata["intermediary_size"]
             self.crop_coordinates = self.image_metadata["crop_coordinates"]
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
+
+        self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            self.original_size
+        )
+
+        if not self.valid_metadata:
+            self.original_size = self.image.size
 
         return self.valid_metadata
 
@@ -389,8 +396,6 @@ class TrainingSample:
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
             self.image = self.image.convert("RGB")
             self.image = exif_transpose(self.image)
-            if not self.valid_metadata:
-                self.original_size = self.image.size
         return self
 
     def crop(self):
