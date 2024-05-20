@@ -546,10 +546,10 @@ class PreparedSample:
         self.crop_coordinates = crop_coordinates
         from time import time as current_time
 
-        if hasattr(image, "save") and "image_path" in image_metadata:
-            image.save(
-                f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png"
-            )
+        # if hasattr(image, "save") and "image_path" in image_metadata:
+        #     image.save(
+        #         f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png"
+        #     )
 
     def __str__(self):
         return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"
