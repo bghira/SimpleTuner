@@ -10,7 +10,10 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "instance_data_dir": "/path/to/data/tree",
         "crop": false,
         "crop_style": "random|center|corner|face",
-        "crop_aspect": "square|preserve",
+        "crop_aspect": "square|preserve|random",
+        "crop_aspect_buckets": [
+            0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75
+        ],
         "resolution": 1.0,
         "resolution_type": "area|pixel",
         "minimum_image_size": 1.0,
@@ -88,7 +91,8 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 ### Cropping Options
 - `crop`: Enables or disables image cropping.
 - `crop_style`: Selects the cropping style (`random`, `center`, `corner`, `face`).
-- `crop_aspect`: Chooses the cropping aspect (`square` or `preserve`).
+- `crop_aspect`: Chooses the cropping aspect (`random`, `square` or `preserve`).
+- `crop_aspect_buckets`: When `crop_aspect` is set to `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
 
 ### `resolution`
 - **Area-Based:** Cropping/sizing is done by megapixel count.
@@ -113,7 +117,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 - Specifies the number of times all samples in the dataset are seen during an epoch. Useful for giving more impact to smaller datasets or maximizing the usage of VAE cache objects.
 
 ### `vae_cache_clear_each_epoch`
-- When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets.
+- When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
 
 ### `ignore_epochs`
 - When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets *without* this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
