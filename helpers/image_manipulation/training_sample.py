@@ -465,6 +465,8 @@ class TrainingSample:
                     f"After crop-adjusting pixel alignment, our image is now {self.image.size if hasattr(self.image, 'size') else size} resolution and its crop coordinates are now {self.crop_coordinates}"
                 )
 
+                return self
+
             logger.debug(
                 f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else self.intermediary_size} to final target size: {size}"
             )
@@ -472,12 +474,12 @@ class TrainingSample:
             logger.debug(
                 f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else self.intermediary_size} to custom-provided size: {size}"
             )
-            if self.image and hasattr(self.image, "resize"):
-                logger.debug("Actually resizing image.")
-                self.image = self.image.resize(size, Image.Resampling.LANCZOS)
-                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                    self.image.size
-                )
+        if self.image and hasattr(self.image, "resize"):
+            logger.debug("Actually resizing image.")
+            self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.image.size
+            )
         logger.debug("Completed resize operation.")
         return self
 
@@ -546,10 +548,10 @@ class PreparedSample:
         self.crop_coordinates = crop_coordinates
         from time import time as current_time
 
-        # if hasattr(image, "save") and "image_path" in image_metadata:
-        #     image.save(
-        #         f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png"
-        #     )
+        if hasattr(image, "save") and "image_path" in image_metadata:
+            image.save(
+                f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png"
+            )
 
     def __str__(self):
         return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"
