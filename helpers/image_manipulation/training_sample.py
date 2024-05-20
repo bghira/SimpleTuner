@@ -97,7 +97,7 @@ class TrainingSample:
             self.original_size
         )
 
-        if not self.valid_metadata:
+        if not self.valid_metadata and hasattr(self.image, "size"):
             self.original_size = self.image.size
 
         return self.valid_metadata
