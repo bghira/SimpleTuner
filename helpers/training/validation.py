@@ -415,7 +415,7 @@ class Validation:
             total=(
                 len(_content)
                 if type(_content) is not zip
-                else len(self.validation_mage_inputs)
+                else len(self.validation_image_inputs)
             ),
             leave=False,
             position=1,
