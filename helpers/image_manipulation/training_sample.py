@@ -82,6 +82,7 @@ class TrainingSample:
             "target_size",
             "intermediary_size",
             "crop_coordinates",
+            "aspect_ratio",
         ]
         self.valid_metadata = all(key in self.image_metadata for key in required_keys)
         if self.valid_metadata:
@@ -90,6 +91,7 @@ class TrainingSample:
             self.target_size = self.image_metadata["target_size"]
             self.intermediary_size = self.image_metadata["intermediary_size"]
             self.crop_coordinates = self.image_metadata["crop_coordinates"]
+            self.aspect_ratio = self.image_metadata["aspect_ratio"]
 
         return self.valid_metadata
 
@@ -542,9 +544,12 @@ class PreparedSample:
         self.target_size = target_size
         self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
-        # from time import time as current_time
-        # if hasattr(image, 'save') and 'image_path' in image_metadata:
-        #     image.save(f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png")
+        from time import time as current_time
+
+        if hasattr(image, "save") and "image_path" in image_metadata:
+            image.save(
+                f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png"
+            )
 
     def __str__(self):
         return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"
