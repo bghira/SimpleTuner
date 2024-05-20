@@ -412,7 +412,11 @@ class Validation:
         for content in tqdm(
             _content if _content else [],
             desc="Processing validation prompts",
-            total=len(_content),
+            total=(
+                len(_content)
+                if type(_content) is not zip
+                else len(self.validation_mage_inputs)
+            ),
             leave=False,
             position=1,
         ):
