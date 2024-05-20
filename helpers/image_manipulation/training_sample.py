@@ -3,7 +3,7 @@ from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
 from helpers.multiaspect.image import crop_handlers
 from helpers.training.state_tracker import StateTracker
-import logging, os
+import logging, os, random
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -49,6 +49,9 @@ class TrainingSample:
         self.crop_enabled = self.data_backend_config.get("crop", False)
         self.crop_style = self.data_backend_config.get("crop_style", "random")
         self.crop_aspect = self.data_backend_config.get("crop_aspect", "square")
+        self.crop_aspect_buckets = self.data_backend_config.get(
+            "crop_aspect_buckets", []
+        )
         self.crop_coordinates = (0, 0)
         crop_handler_cls = crop_handlers.get(self.crop_style)
         if not crop_handler_cls:
@@ -86,6 +89,108 @@ class TrainingSample:
             self.megapixel_resolution = self.resolution
         else:
             raise Exception(f"Unknown resolution type: {self.resolution_type}")
+
+    def _trim_aspect_bucket_list(self):
+        """Momentarily return a temporarily list of pruned buckets that'll work for this image."""
+        available_buckets = []
+        for bucket in self.crop_aspect_buckets:
+            # We want to ensure we don't upscale images beyond about 20% of their original size.
+            # If any of the aspect buckets will result in that, we'll ignore it.
+            if type(bucket) is dict:
+                aspect = bucket["aspect_ratio"]
+            elif type(bucket) is float:
+                aspect = bucket
+            else:
+                raise ValueError(
+                    "Aspect buckets must be a list of floats or dictionaries."
+                )
+            # Calculate new size
+            target_size, intermediary_size, aspect_ratio = self.target_size_calculator(
+                aspect, self.resolution, self.original_size
+            )
+            # Check the size vs a 20% threshold
+            if (
+                target_size[0] * 1.2 < self.original_size[0]
+                and target_size[1] * 1.2 < self.original_size[1]
+            ):
+                available_buckets.append(aspect)
+        return available_buckets
+
+    def _select_random_aspect(self):
+        if not self.crop_aspect_buckets:
+            raise ValueError(
+                "Aspect buckets are not defined in the data backend config."
+            )
+        if (
+            len(self.crop_aspect_buckets) > 0
+            and type(self.crop_aspect_buckets[0]) is dict
+        ):
+            has_portrait_buckets = any(
+                bucket["aspect"] < 1.0 for bucket in self.crop_aspect_buckets
+            )
+            has_landscape_buckets = any(
+                bucket["aspect"] > 1.0 for bucket in self.crop_aspect_buckets
+            )
+            # our aspect ratio is w / h
+            # so portrait is < 1.0 and landscape is > 1.0
+            if not has_portrait_buckets or not has_landscape_buckets:
+                return 1.0
+            if (
+                not has_portrait_buckets
+                and self.aspect_ratio < 1.0
+                or not has_landscape_buckets
+                and self.aspect_ratio > 1.0
+            ):
+                logger.warning(
+                    f"No {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect buckets found, defaulting to 1.0 square crop. Define a {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect bucket to avoid this warning"
+                )
+                return 1.0
+            total_weight = sum(bucket["weight"] for bucket in self.crop_aspect_buckets)
+            if total_weight != 1.0:
+                raise ValueError("The weights of aspect buckets must add up to 1.")
+
+            aspects = [bucket["aspect"] for bucket in self.crop_aspect_buckets]
+            weights = [bucket["weight"] for bucket in self.crop_aspect_buckets]
+
+            selected_aspect = random.choices(aspects, weights)[0]
+            logger.debug(f"Randomly selected aspect ratio: {selected_aspect}")
+        elif (
+            len(self.crop_aspect_buckets) > 0
+            and type(self.crop_aspect_buckets[0]) is float
+        ):
+            has_landscape_buckets = any(
+                bucket > 1.0 for bucket in self.crop_aspect_buckets
+            )
+            has_portrait_buckets = any(
+                bucket < 1.0 for bucket in self.crop_aspect_buckets
+            )
+            if not has_portrait_buckets or not has_landscape_buckets:
+                return 1.0
+            if (
+                not has_portrait_buckets
+                and self.aspect_ratio < 1.0
+                or not has_landscape_buckets
+                and self.aspect_ratio > 1.0
+            ):
+                logger.warning(
+                    f"No {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect buckets found, defaulting to 1.0 square crop. Define a {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect bucket to avoid this warning"
+                )
+                return 1.0
+            # filter to portrait or landscape buckets, depending on our aspect ratio
+            available_aspects = self._trim_aspect_bucket_list()
+            logger.debug(
+                f"Available aspect buckets: {available_aspects} for {self.aspect_ratio} from {self.crop_aspect_buckets}"
+            )
+            selected_aspect = random.choice(available_aspects)
+            logger.debug(f"Randomly selected aspect ratio: {selected_aspect}")
+        else:
+            raise ValueError(
+                "Aspect buckets must be a list of floats or dictionaries."
+                " If using a dictionary, it is expected to be in the format {'aspect': 1.0, 'weight': 0.5}."
+                " To provide multiple aspect ratios, use a list of dictionaries: [{'aspect': 1.0, 'weight': 0.5}, {'aspect': 1.5, 'weight': 0.5}]."
+            )
+
+        return selected_aspect
 
     def prepare(self, return_tensor: bool = False):
         """
@@ -199,18 +304,18 @@ class TrainingSample:
 
     def calculate_target_size(self, downsample_before_crop: bool = False):
         # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
-        if (
-            self.crop_enabled
-            and self.crop_aspect == "square"
-            and not downsample_before_crop
-        ):
-            self.aspect_ratio = 1.0
-            self.target_size = (self.pixel_resolution, self.pixel_resolution)
-            self.intermediary_size = (self.pixel_resolution, self.pixel_resolution)
-            return self.target_size, self.intermediary_size, self.aspect_ratio
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size
         )
+        if self.crop_enabled:
+            if self.crop_aspect == "square" and not downsample_before_crop:
+                self.aspect_ratio = 1.0
+                self.target_size = (self.pixel_resolution, self.pixel_resolution)
+                self.intermediary_size = (self.pixel_resolution, self.pixel_resolution)
+                return self.target_size, self.intermediary_size, self.aspect_ratio
+        if self.crop_enabled and self.crop_aspect == "random":
+            # Grab a random aspect ratio from a list.
+            self.aspect_ratio = self._select_random_aspect()
         if downsample_before_crop and self.target_downsample_size is not None:
             self.target_size, self.intermediary_size, self.aspect_ratio = (
                 self.target_size_calculator(

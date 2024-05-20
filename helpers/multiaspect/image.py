@@ -84,7 +84,7 @@ class MultiaspectImage:
         # We can't increase the intermediary size larger than the original size.
         if W_initial < W_adjusted or H_initial < H_adjusted:
             logger.debug(
-                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} (original size: {original_size})."
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} (original size: {original_size}, aspect ratio: {aspect_ratio})."
             )
             # How much leeway to we have between the intermediary size and the reformed size?
             reformed_W_diff = W_adjusted - W_initial
