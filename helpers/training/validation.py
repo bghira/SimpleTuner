@@ -406,17 +406,19 @@ class Validation:
         """Processes each validation prompt and logs the result."""
         validation_images = {}
         _content = zip(self.validation_shortnames, self.validation_prompts)
+        total_samples = (
+            len(self.validation_shortnames)
+            if self.validation_shortnames is not None
+            else 0
+        )
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
+            total_samples = len(_content) if _content is not None else 0
         for content in tqdm(
             _content if _content else [],
             desc="Processing validation prompts",
-            total=(
-                len(_content)
-                if type(_content) is not zip
-                else len(self.validation_image_inputs)
-            ),
+            total=total_samples,
             leave=False,
             position=1,
         ):
