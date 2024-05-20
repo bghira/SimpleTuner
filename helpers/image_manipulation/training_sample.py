@@ -347,11 +347,13 @@ class TrainingSample:
             # Grab a random aspect ratio from a list.
             self.aspect_ratio = self._select_random_aspect()
         if downsample_before_crop and self.target_downsample_size is not None:
-            self.target_size, self.intermediary_size, self.aspect_ratio = (
+            self.target_size, calculated_intermediary_size, self.aspect_ratio = (
                 self.target_size_calculator(
                     self.aspect_ratio, self.target_downsample_size, self.original_size
                 )
             )
+            if self.crop_aspect != "random" or not self.valid_metadata:
+                self.intermediary_size = calculated_intermediary_size
             logger.debug(
                 f"Pre-crop downsample target size based on {self.target_downsample_size} results in target size of {self.target_size} via intermediary size {self.intermediary_size}"
             )
@@ -548,7 +550,11 @@ class PreparedSample:
         self.crop_coordinates = crop_coordinates
         from time import time as current_time
 
-        if hasattr(image, "save") and "image_path" in image_metadata:
+        if (
+            hasattr(image, "save")
+            and "image_path" in image_metadata
+            and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", False)
+        ):
             image.save(
                 f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png"
             )
