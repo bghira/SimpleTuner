@@ -41,8 +41,6 @@ class TrainingSample:
 
         # Torchvision transforms turn the pixels into a Tensor and normalize them for the VAE.
         self.transforms = MultiaspectImage.get_image_transforms()
-        # RGB/EXIF conversions.
-        self.correct_image()
 
         # Backend config details
         self.data_backend_config = StateTracker.get_data_backend_config(data_backend_id)
@@ -70,7 +68,30 @@ class TrainingSample:
             "maximum_image_size", None
         )
         self._image_path = image_path
+        self._validate_image_metadata()
+        # RGB/EXIF conversions.
+        self.correct_image()
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
+
+    def _validate_image_metadata(self) -> bool:
+        """
+        Determine whether all required keys exist for prepare() to skip calculations
+        """
+        required_keys = [
+            "original_size",
+            "target_size",
+            "intermediary_size",
+            "crop_coordinates",
+        ]
+        self.valid_metadata = all(key in self.image_metadata for key in required_keys)
+        if self.valid_metadata:
+            logger.info(f"Setting metadata: {self.image_metadata}")
+            self.original_size = self.image_metadata["original_size"]
+            self.target_size = self.image_metadata["target_size"]
+            self.intermediary_size = self.image_metadata["intermediary_size"]
+            self.crop_coordinates = self.image_metadata["crop_coordinates"]
+
+        return self.valid_metadata
 
     def _set_resolution(self):
         if self.resolution_type == "pixel":
@@ -121,6 +142,12 @@ class TrainingSample:
             raise ValueError(
                 "Aspect buckets are not defined in the data backend config."
             )
+        if self.valid_metadata:
+            logger.debug(
+                f"As we received valid metadata, we will use existing aspect ratio {self.aspect_ratio} for image {self.image_metadata}"
+            )
+            self.aspect_ratio = self.image_metadata["aspect_ratio"]
+            return self.aspect_ratio
         if (
             len(self.crop_aspect_buckets) > 0
             and type(self.crop_aspect_buckets[0]) is dict
@@ -271,15 +298,16 @@ class TrainingSample:
         Downsample the image before cropping, to preserve scene details.
         """
         if self.image and self._should_downsample_before_crop():
-            self.calculate_target_size(downsample_before_crop=True)
-            # Is the image smaller than the target size? We don't want to upscale images.
-            if (
-                self.image.size[0] * 1.25 < self.intermediary_size[0]
-                or self.image.size[1] * 1.25 < self.intermediary_size[1]
-            ):
-                raise ValueError(
-                    f"Image is much smaller than the intermediary size: {self.image.size} < {self.intermediary_size}. You can avoid this error by adjusting the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
-                )
+            if not self.valid_metadata:
+                self.calculate_target_size(downsample_before_crop=True)
+                # Is the image smaller than the target size? We don't want to upscale images.
+                if (
+                    self.image.size[0] * 1.25 < self.intermediary_size[0]
+                    or self.image.size[1] * 1.25 < self.intermediary_size[1]
+                ):
+                    raise ValueError(
+                        f"Image is much smaller than the intermediary size: {self.image.size} < {self.intermediary_size}. You can avoid this error by adjusting the dataloader parameters 'resolution' to a lower value, or 'minimum_image_size' to exclude this image from processing."
+                    )
             logger.debug(
                 f"Downsampling image from {self.image.size} to {self.intermediary_size} before cropping."
             )
@@ -357,7 +385,8 @@ class TrainingSample:
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
             self.image = self.image.convert("RGB")
             self.image = exif_transpose(self.image)
-            self.original_size = self.image.size
+            if not self.valid_metadata:
+                self.original_size = self.image.size
         return self
 
     def crop(self):
@@ -398,9 +427,10 @@ class TrainingSample:
         """
         current_size = self.image.size if self.image is not None else self.original_size
         if size is None:
-            self.target_size, self.intermediary_size, self.target_aspect_ratio = (
-                self.calculate_target_size()
-            )
+            if not self.valid_metadata:
+                self.target_size, self.intermediary_size, self.target_aspect_ratio = (
+                    self.calculate_target_size()
+                )
             size = self.target_size
             if self.target_size != self.intermediary_size:
                 # Now we can resize the image to the intermediary size.
@@ -440,12 +470,12 @@ class TrainingSample:
             logger.debug(
                 f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else self.intermediary_size} to custom-provided size: {size}"
             )
-        if self.image and hasattr(self.image, "resize"):
-            logger.debug("Actually resizing image.")
-            self.image = self.image.resize(size, Image.Resampling.LANCZOS)
-            self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-                self.image.size
-            )
+            if self.image and hasattr(self.image, "resize"):
+                logger.debug("Actually resizing image.")
+                self.image = self.image.resize(size, Image.Resampling.LANCZOS)
+                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                    self.image.size
+                )
         logger.debug("Completed resize operation.")
         return self
 
@@ -512,6 +542,9 @@ class PreparedSample:
         self.target_size = target_size
         self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
+        # from time import time as current_time
+        # if hasattr(image, 'save') and 'image_path' in image_metadata:
+        #     image.save(f"inference/images/{str(int(current_time()))}_{os.path.basename(image_metadata['image_path'])}.png")
 
     def __str__(self):
         return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"

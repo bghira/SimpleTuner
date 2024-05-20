@@ -172,7 +172,7 @@ class MultiaspectImage:
         if isinstance(image, Image.Image):
             # An actual image was passed in.
             width, height = image.size
-        elif isinstance(image, tuple):
+        elif isinstance(image, tuple) or isinstance(image, list):
             # An image.size or a similar (W, H) tuple was provided.
             width, height = image
         elif isinstance(image, float):
