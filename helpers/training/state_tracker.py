@@ -45,6 +45,8 @@ class StateTracker:
     vae_dtype = None
     weight_dtype = None
     args = None
+    # Aspect to resolution map, we'll store once generated for consistency.
+    aspect_resolution_map = {}
 
     webhook_handler = None
 
@@ -447,3 +449,38 @@ class StateTracker:
             if metadata is not None:
                 return metadata
         return None
+
+    @classmethod
+    def set_aspect_resolution_map(cls, aspect_resolution_map: dict = {}):
+        """We will save to disk or load back a new map to the aspect resolution map."""
+        if aspect_resolution_map is not None:
+            cls.aspect_resolution_map = aspect_resolution_map or {}
+            cls._save_to_disk("aspect_resolution_map", cls.aspect_resolution_map)
+        else:
+            cls.aspect_resolution_map = (
+                cls._load_from_disk("aspect_resolution_map") or {}
+            )
+        logger.debug(f"Aspect resolution map: {cls.aspect_resolution_map}")
+
+    @classmethod
+    def get_aspect_resolution_map(cls):
+        return cls.aspect_resolution_map
+
+    @classmethod
+    def get_resolution_by_aspect(cls, aspect: float):
+        return cls.aspect_resolution_map.get(str(aspect), None)
+
+    @classmethod
+    def set_resolution_by_aspect(cls, aspect: float, resolution: int):
+        cls.aspect_resolution_map[str(aspect)] = resolution
+        cls._save_to_disk("aspect_resolution_map", cls.aspect_resolution_map)
+        logger.debug(f"Aspect resolution map: {cls.aspect_resolution_map}")
+
+    @classmethod
+    def save_aspect_resolution_map(cls):
+        cls._save_to_disk("aspect_resolution_map", cls.aspect_resolution_map)
+
+    @classmethod
+    def load_aspect_resolution_map(cls):
+        cls.aspect_resolution_map = cls._load_from_disk("aspect_resolution_map") or {}
+        logger.debug(f"Aspect resolution map: {cls.aspect_resolution_map}")

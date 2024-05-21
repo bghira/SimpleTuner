@@ -135,7 +135,62 @@ class MultiaspectImage:
         # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
         W_diff = W_adjusted - W_initial
         H_diff = H_adjusted - H_initial
-        logger.debug(f"Differences: {W_diff}, {H_diff}")
+        logger.debug(
+            f"Aspect ratio {aspect_ratio}, dimensions {original_size}, differences: {W_diff}, {H_diff}"
+        )
+        if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
+            logger.debug(
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+            )
+            H_initial += W_diff
+            W_initial += W_diff
+        elif H_diff > 0 and H_diff > W_diff:
+            logger.debug(
+                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+            )
+            W_initial += H_diff
+            H_initial += H_diff
+        adjusted_resolution = (W_adjusted, H_adjusted)
+        adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            adjusted_resolution
+        )
+        previously_stored_resolution = StateTracker.get_resolution_by_aspect(
+            adjusted_aspect_ratio
+        )
+        if previously_stored_resolution is not None:
+            logger.debug(
+                f"Using cached aspect-resolution map value for {adjusted_aspect_ratio}:{previously_stored_resolution}"
+            )
+            return (
+                previously_stored_resolution,
+                MultiaspectImage.adjust_resolution_to_bucket_interval(
+                    (W_initial, H_initial),
+                    previously_stored_resolution,
+                ),
+                adjusted_aspect_ratio,
+            )
+        logger.debug(
+            f"Aspect ratio {adjusted_aspect_ratio} had no mapping: {previously_stored_resolution}. Storing {adjusted_resolution}."
+        )
+        StateTracker.set_resolution_by_aspect(
+            aspect=adjusted_aspect_ratio,
+            resolution=adjusted_resolution,
+        )
+        return (
+            adjusted_resolution,
+            (W_initial, H_initial),
+            adjusted_aspect_ratio,
+        )
+
+    @staticmethod
+    def adjust_resolution_to_bucket_interval(
+        initial_resolution: tuple, target_resolution: tuple
+    ):
+        W_initial, H_initial = initial_resolution
+        W_adjusted, H_adjusted = target_resolution
+        # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
+        W_diff = W_adjusted - W_initial
+        H_diff = H_adjusted - H_initial
         if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
             logger.debug(
                 f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
@@ -149,11 +204,7 @@ class MultiaspectImage:
             W_initial += H_diff
             H_initial += H_diff
 
-        return (
-            (W_adjusted, H_adjusted),
-            (W_initial, H_initial),
-            MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted)),
-        )
+        return W_initial, H_initial
 
     @staticmethod
     def calculate_image_aspect_ratio(image, rounding: int = 2):
