@@ -219,7 +219,15 @@ class TestMultiaspectImage(unittest.TestCase):
         test_megapixels = [1.0, 0.5]
         # Number of random tests to perform
         num_random_tests = 100
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_args"
+        ) as mock_args, patch(
+            "helpers.training.state_tracker.StateTracker._load_from_disk"
+        ) as load_from_disk_mock, patch(
+            "helpers.training.state_tracker.StateTracker._save_to_disk"
+        ) as save_to_disk_mock:
+            load_from_disk_mock.return_value = {}
+            save_to_disk_mock.return_value = True
             mock_args.return_value = Mock(
                 resolution_type="pixel",
                 resolution=self.resolution,
@@ -276,7 +284,15 @@ class TestMultiaspectImage(unittest.TestCase):
             1216,
         )  # Expected final size for all test cases based on a fixed aspect ratio
 
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_args"
+        ) as mock_args, patch(
+            "helpers.training.state_tracker.StateTracker._load_from_disk"
+        ) as load_from_disk_mock, patch(
+            "helpers.training.state_tracker.StateTracker._save_to_disk"
+        ) as save_to_disk_mock:
+            load_from_disk_mock.return_value = {}
+            save_to_disk_mock.return_value = True
             mock_args.return_value = Mock(
                 resolution_type="pixel",
                 resolution=self.resolution,
