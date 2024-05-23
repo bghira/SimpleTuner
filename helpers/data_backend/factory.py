@@ -435,7 +435,10 @@ def configure_multi_databackend(
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
         # Assign a TextEmbeddingCache to this dataset. it might be undefined.
-        text_embed_id = backend.get("text_embeds", default_text_embed_backend_id)
+        text_embed_id = backend.get(
+            "text_embeds",
+            backend.get("text_embed_cache", default_text_embed_backend_id),
+        )
         if text_embed_id not in text_embed_backends:
             raise ValueError(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
