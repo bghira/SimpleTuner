@@ -76,9 +76,9 @@ class TextEmbeddingCache:
         # Reuse the hash object
         md5_hash = hashlib.md5()
         md5_hash.update(caption.encode())
-        logger.debug(f"Hashing caption: {caption}")
+        # logger.debug(f"Hashing caption: {caption}")
         result = md5_hash.hexdigest() + hash_format
-        logger.debug(f"-> {result}")
+        # logger.debug(f"-> {result}")
         return result
 
     def hash_prompt(self, caption):

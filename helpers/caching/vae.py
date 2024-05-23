@@ -21,7 +21,12 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
-    metadata = StateTracker.get_metadata_by_filepath(filepath)
+    metadata = StateTracker.get_metadata_by_filepath(
+        filepath, data_backend_id=data_backend_id
+    )
+    logger.debug(
+        f"Preparing sample {image} from {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
+    )
     training_sample = TrainingSample(
         image=image,
         data_backend_id=data_backend_id,
@@ -29,6 +34,7 @@ def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
         image_path=filepath,
     )
     prepared_sample = training_sample.prepare()
+    logger.debug(f"Prepared: {prepared_sample.to_dict()}")
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
@@ -443,11 +449,13 @@ class VAECache:
         if len(missing_images) > 0 and not self.vae_cache_preprocess:
             missing_image_paths = [filepaths[i] for i in missing_images]
             logger.debug(f"Missing image paths: {missing_image_paths}")
+            missing_image_data_generator = self._read_from_storage_concurrently(
+                missing_image_paths, hide_errors=True
+            )
+            # extract images from generator:
             missing_image_data = [
-                self._read_from_storage_concurrently(
-                    missing_image_paths, hide_errors=True
-                ).__next__()[1]
-                for i in missing_images
+                retrieved_image_data[1]
+                for retrieved_image_data in missing_image_data_generator
             ]
             logger.debug(f"Missing image data: {missing_image_data}")
             missing_image_pixel_values = self._process_images_in_batch(
@@ -629,7 +637,7 @@ class VAECache:
                             f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
                         )
                         continue
-
+                # image.save(f"test_{os.path.basename(filepath)}.png")
                 initial_data.append((filepath, image, aspect_bucket))
 
             # Process Pool Execution

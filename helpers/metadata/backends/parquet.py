@@ -4,7 +4,7 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.metadata.backends.base import MetadataBackend
 from tqdm import tqdm
-import json, logging, os, time
+import json, logging, os, time, traceback
 from io import BytesIO
 from PIL import Image
 
@@ -113,7 +113,7 @@ class ParquetMetadataBackend(MetadataBackend):
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
 
-        logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
+        # logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
 
         all_image_files_set = set(all_image_files)
 
@@ -302,6 +302,7 @@ class ParquetMetadataBackend(MetadataBackend):
         statistics: dict = {},
     ):
         try:
+            # Adjust image path if the identifier does not include extension
             image_path_filtered = image_path_str
             if not self.parquet_config.get("identifier_includes_extension", False):
                 image_path_filtered = os.path.splitext(
@@ -309,102 +310,112 @@ class ParquetMetadataBackend(MetadataBackend):
                 )[0]
             if image_path_filtered.isdigit():
                 image_path_filtered = int(image_path_filtered)
+
             logger.debug(
                 f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
             )
+
             try:
                 database_image_metadata = self.parquet_database.loc[image_path_filtered]
             except KeyError:
                 database_image_metadata = None
+
             logger.debug(f"Found image metadata: {database_image_metadata}")
             if database_image_metadata is None:
                 logger.debug(
                     f"Image {image_path_str} was not found on the backend. Skipping image."
                 )
+                statistics.setdefault("skipped", {}).setdefault("not_found", 0)
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
-            width_column = self.parquet_config.get("width_column", None)
-            height_column = self.parquet_config.get("height_column", None)
+
+            width_column = self.parquet_config.get("width_column")
+            height_column = self.parquet_config.get("height_column")
             if width_column is None or height_column is None:
                 raise ValueError(
                     "ParquetMetadataBackend requires width and height columns to be defined."
                 )
+
+            original_size = (
+                int(database_image_metadata[width_column]),
+                int(database_image_metadata[height_column]),
+            )
+            if (
+                original_size[0] < StateTracker.get_args().aspect_bucket_alignment
+                or original_size[1] < StateTracker.get_args().aspect_bucket_alignment
+            ):
+                logger.debug(
+                    f"Image {image_path_str} is smaller than the aspect bucket index. Skipping image."
+                )
+                return aspect_ratio_bucket_indices
+
             training_sample = TrainingSample(
                 image=None,
                 data_backend_id=self.id,
-                image_metadata={
-                    "original_size": (
-                        int(database_image_metadata[width_column]),
-                        int(database_image_metadata[height_column]),
-                    )
-                },
+                image_metadata={"original_size": original_size},
                 image_path=image_path_str,
             )
             prepared_sample = training_sample.prepare()
             image_metadata = {"original_size": training_sample.original_size}
-            logger.debug("Prepared sample: %s", str(prepared_sample))
-            if (
-                image_metadata["original_size"][0] == 0
-                or image_metadata["original_size"][1] == 0
-            ):
-                logger.debug(
-                    f"Image {image_path_str} has a zero dimension. Skipping image."
-                )
-                return aspect_ratio_bucket_indices
 
-            logger.debug("Checking minimum resolution size vs image size..")
+            logger.debug("Prepared sample: %s", str(prepared_sample))
+
+            logger.debug("Checking minimum resolution size vs image size...")
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
                 logger.debug(
                     f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
                 )
+                statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1
                 return aspect_ratio_bucket_indices
-            logger.debug("Collecting aspect ratio data..")
-            aspect_ratio_column = self.parquet_config.get("aspect_ratio_column", None)
-            if aspect_ratio_column:
-                aspect_ratio = database_image_metadata[aspect_ratio_column]
-            else:
-                aspect_ratio = training_sample.aspect_ratio
-            logger.debug("Collected aspect ratio: %s", str(aspect_ratio))
+
+            logger.debug("Collecting aspect ratio data...")
+            aspect_ratio_column = self.parquet_config.get("aspect_ratio_column")
+            aspect_ratio = (
+                database_image_metadata[aspect_ratio_column]
+                if aspect_ratio_column
+                else training_sample.aspect_ratio
+            )
             aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 float(aspect_ratio)
             )
-            logger.debug("Image metadat has been generated and collected.")
-            image_metadata["intermediary_size"] = prepared_sample.intermediary_size
-            image_metadata["crop_coordinates"] = prepared_sample.crop_coordinates
-            image_metadata["target_size"] = prepared_sample.target_size
-            image_metadata["aspect_ratio"] = prepared_sample.aspect_ratio
-            luminance_column = self.parquet_config.get("luminance_column", None)
-            if luminance_column:
-                image_metadata["luminance"] = database_image_metadata[
-                    luminance_column
-                ].values[0]
-            else:
-                image_metadata["luminance"] = 0
+
+            logger.debug("Image metadata has been generated and collected.")
+            image_metadata.update(
+                {
+                    "intermediary_size": prepared_sample.intermediary_size,
+                    "crop_coordinates": prepared_sample.crop_coordinates,
+                    "target_size": prepared_sample.target_size,
+                    "aspect_ratio": prepared_sample.aspect_ratio,
+                    "luminance": database_image_metadata.get(
+                        self.parquet_config.get("luminance_column"), 0
+                    ),
+                }
+            )
+
             logger.debug(
                 f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
             )
 
             # Create a new bucket if it doesn't exist
-            if str(prepared_sample.aspect_ratio) not in aspect_ratio_bucket_indices:
-                aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)] = []
-            logger.debug("Adding to list..")
-            aspect_ratio_bucket_indices[str(prepared_sample.aspect_ratio)].append(
-                image_path_str
-            )
+            aspect_ratio_key = str(prepared_sample.aspect_ratio)
+            if aspect_ratio_key not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[aspect_ratio_key] = []
+            logger.debug("Adding to list...")
+            aspect_ratio_bucket_indices[aspect_ratio_key].append(image_path_str)
             logger.debug("Added to list.")
+
             # Instead of directly updating, just fill the provided dictionary
             if metadata_updates is not None:
-                logger.debug("Adding to metadata list..")
+                logger.debug("Adding to metadata list...")
                 metadata_updates[image_path_str] = image_metadata
                 logger.debug("Added to metadata list.")
-        except Exception as e:
-            import traceback
 
+        except Exception as e:
             logger.error(f"Error processing image: {e}")
             logger.error(f"Error traceback: {traceback.format_exc()}")
-            logger.error(e)
             if delete_problematic_images:
-                logger.error(f"Deleting image.")
+                logger.error(f"Deleting image {image_path_str}.")
                 self.data_backend.delete(image_path_str)
+
         return aspect_ratio_bucket_indices

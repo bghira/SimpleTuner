@@ -60,7 +60,22 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     else:
         output["config"]["crop"] = args.crop
     if "crop_aspect" in backend:
+        choices = ["square", "preserve", "random"]
+        if backend.get("crop_aspect", None) not in choices:
+            raise ValueError(
+                f"(id={backend['id']}) crop_aspect must be one of {choices}."
+            )
         output["config"]["crop_aspect"] = backend["crop_aspect"]
+        if (
+            output["config"]["crop_aspect"] == "random"
+            and "crop_aspect_buckets" not in backend
+        ):
+            raise ValueError(
+                f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
+                " This should be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
+                " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
+            )
+        output["config"]["crop_aspect_buckets"] = backend.get("crop_aspect_buckets")
     else:
         output["config"]["crop_aspect"] = "square"
     if "crop_style" in backend:
@@ -391,6 +406,9 @@ def configure_multi_databackend(
                 data_backend_id=init_backend["id"],
                 preserve_data_backend_cache=preserve_data_backend_cache,
             )
+        StateTracker.load_aspect_resolution_map(
+            dataloader_resolution=init_backend["config"]["resolution"],
+        )
 
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
@@ -419,7 +437,10 @@ def configure_multi_databackend(
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
         # Assign a TextEmbeddingCache to this dataset. it might be undefined.
-        text_embed_id = backend.get("text_embeds", default_text_embed_backend_id)
+        text_embed_id = backend.get(
+            "text_embeds",
+            backend.get("text_embed_cache", default_text_embed_backend_id),
+        )
         if text_embed_id not in text_embed_backends:
             raise ValueError(
                 f"Text embed backend {text_embed_id} not found in data backend config file."

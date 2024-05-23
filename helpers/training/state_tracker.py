@@ -45,6 +45,8 @@ class StateTracker:
     vae_dtype = None
     weight_dtype = None
     args = None
+    # Aspect to resolution map, we'll store once generated for consistency.
+    aspect_resolution_map = {}
 
     webhook_handler = None
 
@@ -437,9 +439,11 @@ class StateTracker:
         return cls.data_backends[data_backend_id]["text_embed_cache"]
 
     @classmethod
-    def get_metadata_by_filepath(cls, filepath):
+    def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
         for _, data_backend in cls.get_data_backends().items():
             if "metadata_backend" not in data_backend:
+                continue
+            if data_backend_id != data_backend["metadata_backend"].id:
                 continue
             metadata = data_backend["metadata_backend"].get_metadata_by_filepath(
                 filepath
@@ -447,3 +451,43 @@ class StateTracker:
             if metadata is not None:
                 return metadata
         return None
+
+    @classmethod
+    def get_resolution_by_aspect(cls, dataloader_resolution: float, aspect: float):
+        return cls.aspect_resolution_map.get(dataloader_resolution, {}).get(
+            str(aspect), None
+        )
+
+    @classmethod
+    def set_resolution_by_aspect(
+        cls, dataloader_resolution: float, aspect: float, resolution: int
+    ):
+        if dataloader_resolution not in cls.aspect_resolution_map:
+            cls.aspect_resolution_map[dataloader_resolution] = {}
+        cls.aspect_resolution_map[dataloader_resolution][str(aspect)] = resolution
+        cls._save_to_disk(
+            f"aspect_resolution_map-{dataloader_resolution}",
+            cls.aspect_resolution_map[dataloader_resolution],
+        )
+        logger.debug(
+            f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
+        )
+
+    @classmethod
+    def save_aspect_resolution_map(cls, dataloader_resolution: float):
+        cls._save_to_disk(
+            f"aspect_resolution_map-{dataloader_resolution}",
+            cls.aspect_resolution_map[dataloader_resolution],
+        )
+
+    @classmethod
+    def load_aspect_resolution_map(cls, dataloader_resolution: float):
+        if dataloader_resolution not in cls.aspect_resolution_map:
+            cls.aspect_resolution_map = {dataloader_resolution: {}}
+
+        cls.aspect_resolution_map[dataloader_resolution] = (
+            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}") or {}
+        )
+        logger.debug(
+            f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
+        )

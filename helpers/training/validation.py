@@ -153,7 +153,7 @@ class Validation:
             self.validation_image_inputs = retrieve_validation_images()
             # Validation inputs are in the format of a list of tuples:
             # [(shortname, prompt, image), ...]
-            logger.info(
+            logger.debug(
                 f"Image inputs discovered for validation: {self.validation_image_inputs}"
             )
 
@@ -311,11 +311,11 @@ class Validation:
             )
 
         if self.accelerator.is_main_process:
-            logger.info("Starting validation process...")
+            logger.debug("Starting validation process...")
             self.setup_pipeline(validation_type)
             self.process_prompts()
             self.finalize_validation(validation_type)
-            logger.info("Validation process completed.")
+            logger.debug("Validation process completed.")
 
         return self
 
@@ -406,10 +406,22 @@ class Validation:
         """Processes each validation prompt and logs the result."""
         validation_images = {}
         _content = zip(self.validation_shortnames, self.validation_prompts)
+        total_samples = (
+            len(self.validation_shortnames)
+            if self.validation_shortnames is not None
+            else 0
+        )
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
-        for content in _content:
+            total_samples = len(_content) if _content is not None else 0
+        for content in tqdm(
+            _content if _content else [],
+            desc="Processing validation prompts",
+            total=total_samples,
+            leave=False,
+            position=1,
+        ):
             validation_input_image = None
             if len(content) == 3:
                 shortname, prompt, validation_input_image = content
@@ -449,7 +461,7 @@ class Validation:
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
-        logger.info(f"Validating prompt: {prompt}")
+        logger.debug(f"Validating prompt: {prompt}")
         validation_images = {}
         for resolution in self.validation_resolutions:
             extra_validation_kwargs = {}
@@ -457,7 +469,7 @@ class Validation:
                 extra_validation_kwargs["generator"] = torch.Generator(
                     device=self.accelerator.device
                 ).manual_seed(self.args.validation_seed or self.args.seed or 0)
-                logger.info(
+                logger.debug(
                     f"Using a generator? {extra_validation_kwargs['generator']}"
                 )
             if validation_input_image is not None:
@@ -508,14 +520,16 @@ class Validation:
                     ),
                     **extra_validation_kwargs,
                 }
-                logger.info(f"Image being generated with parameters: {pipeline_kwargs}")
+                logger.debug(
+                    f"Image being generated with parameters: {pipeline_kwargs}"
+                )
                 # Print the device attr of any parameters that have one
                 for key, value in pipeline_kwargs.items():
                     if hasattr(value, "device"):
-                        logger.info(f"Device for {key}: {value.device}")
+                        logger.debug(f"Device for {key}: {value.device}")
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
-                        logger.info(f"Device for {key}: {value.device}")
+                        logger.debug(f"Device for {key}: {value.device}")
                 validation_image_results = self.pipeline(**pipeline_kwargs).images
                 if self.args.controlnet:
                     validation_image_results = self.stitch_conditioning_images(

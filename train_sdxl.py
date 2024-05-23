@@ -121,20 +121,6 @@ def import_model_class_from_model_name_or_path(
         raise ValueError(f"{model_class} is not supported.")
 
 
-def compute_null_conditioning(
-    tokenizers, text_encoders, tokenize_captions, accelerator
-):
-    null_conditioning_list = []
-    for a_tokenizer, a_text_encoder in zip(tokenizers, text_encoders):
-        null_conditioning_list.append(
-            a_text_encoder(
-                tokenize_captions([""], tokenizer=a_tokenizer).to(accelerator.device),
-                output_hidden_states=True,
-            ).hidden_states[-2]
-        )
-    return torch.concat(null_conditioning_list, dim=-1)
-
-
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
