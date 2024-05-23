@@ -213,20 +213,18 @@ As with other dataloader configurations:
 
 ## Custom aspect ratio-to-resolution mapping
 
-When SimpleTuner first launches, it generates resolution-specific aspect mapping lists that link a decimal aspect-ratio value to its target pixel size. For example, aspect ratio `1.0` would return `1024, 1024` for a square sample.
+When SimpleTuner first launches, it generates resolution-specific aspect mapping lists that link a decimal aspect-ratio value to its target pixel size.
 
-It's possible to create a custom mapping that forces the trainer to adjust its cropping and resizing such that it ends up at your chosen target resolution instead of its natural outcome.
-
-The filenames for the mapping follow the format of `aspect_resolution_map-{resolution}`, where `{resolution}` would be the value you've configured for your dataset.
-
-For a configuration value of `resolution=1.0` / `resolution_type=area`, the mapping filename will be `aspect_resolution_map-1.0.json`.
+It's possible to create a custom mapping that forces the trainer to adjust to your chosen target resolution instead of its own calculations. This functionality is provided at your own risk, as it can obviously cause great harm if configured incorrectly.
 
 To create the custom mapping:
 
 - Create a file that follows the example (below)
 - Name the file using the format `aspect_ratio_map-{resolution}.json`
+  - For a configuration value of `resolution=1.0` / `resolution_type=area`, the mapping filename will be `aspect_resolution_map-1.0.json`
 - Place this file in the location specified as `--output_dir`
   - This is the same location where your checkpoints and validation images will be found.
+- No additional configuration flags or options are required. It will be automatically discovered and used, as long as the name and location are correct.
 
 ### Example mapping configuration
 
