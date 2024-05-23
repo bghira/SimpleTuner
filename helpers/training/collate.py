@@ -254,7 +254,7 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
         if example["aspect_ratio"] != batch[0]["aspect_ratio"]:
             error_msg = f"(id=({data_backend_id}) Aspect ratio mismatch: {example['aspect_ratio']} != {batch[0][0]['aspect_ratio']}"
             logger.error(error_msg)
-            logger.debug(f"Erroneous batch: {batch}")
+            logger.error(f"Erroneous batch: {batch}")
             raise ValueError(error_msg)
     for idx, latent in enumerate(latents):
         # Are there any inf or nan positions?
