@@ -439,9 +439,11 @@ class StateTracker:
         return cls.data_backends[data_backend_id]["text_embed_cache"]
 
     @classmethod
-    def get_metadata_by_filepath(cls, filepath):
+    def get_metadata_by_filepath(cls, filepath, data_backend_id: str):
         for _, data_backend in cls.get_data_backends().items():
             if "metadata_backend" not in data_backend:
+                continue
+            if data_backend_id != data_backend["metadata_backend"].id:
                 continue
             metadata = data_backend["metadata_backend"].get_metadata_by_filepath(
                 filepath
