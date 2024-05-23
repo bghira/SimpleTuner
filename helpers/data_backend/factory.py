@@ -246,7 +246,6 @@ def configure_multi_databackend(
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
-    StateTracker.load_aspect_resolution_map()
     logger.setLevel(
         os.environ.get(
             "SIMPLETUNER_LOG_LEVEL", "INFO" if accelerator.is_main_process else "ERROR"
@@ -407,6 +406,9 @@ def configure_multi_databackend(
                 data_backend_id=init_backend["id"],
                 preserve_data_backend_cache=preserve_data_backend_cache,
             )
+        StateTracker.load_aspect_resolution_map(
+            dataloader_resolution=init_backend["config"]["resolution"],
+        )
 
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(

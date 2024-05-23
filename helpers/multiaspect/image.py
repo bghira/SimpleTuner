@@ -155,7 +155,7 @@ class MultiaspectImage:
             adjusted_resolution
         )
         previously_stored_resolution = StateTracker.get_resolution_by_aspect(
-            adjusted_aspect_ratio
+            dataloader_resolution=megapixels, aspect=adjusted_aspect_ratio
         )
         if previously_stored_resolution is not None:
             logger.debug(
@@ -173,6 +173,7 @@ class MultiaspectImage:
             f"Aspect ratio {adjusted_aspect_ratio} had no mapping: {previously_stored_resolution}. Storing {adjusted_resolution}."
         )
         StateTracker.set_resolution_by_aspect(
+            dataloader_resolution=megapixels,
             aspect=adjusted_aspect_ratio,
             resolution=adjusted_resolution,
         )

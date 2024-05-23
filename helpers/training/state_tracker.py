@@ -451,36 +451,41 @@ class StateTracker:
         return None
 
     @classmethod
-    def set_aspect_resolution_map(cls, aspect_resolution_map: dict = {}):
-        """We will save to disk or load back a new map to the aspect resolution map."""
-        if aspect_resolution_map is not None:
-            cls.aspect_resolution_map = aspect_resolution_map or {}
-            cls._save_to_disk("aspect_resolution_map", cls.aspect_resolution_map)
-        else:
-            cls.aspect_resolution_map = (
-                cls._load_from_disk("aspect_resolution_map") or {}
-            )
-        logger.debug(f"Aspect resolution map: {cls.aspect_resolution_map}")
+    def get_resolution_by_aspect(cls, dataloader_resolution: float, aspect: float):
+        return cls.aspect_resolution_map.get(dataloader_resolution, {}).get(
+            str(aspect), None
+        )
 
     @classmethod
-    def get_aspect_resolution_map(cls):
-        return cls.aspect_resolution_map
+    def set_resolution_by_aspect(
+        cls, dataloader_resolution: float, aspect: float, resolution: int
+    ):
+        if dataloader_resolution not in cls.aspect_resolution_map:
+            cls.aspect_resolution_map[dataloader_resolution] = {}
+        cls.aspect_resolution_map[dataloader_resolution][str(aspect)] = resolution
+        cls._save_to_disk(
+            f"aspect_resolution_map-{dataloader_resolution}",
+            cls.aspect_resolution_map[dataloader_resolution],
+        )
+        logger.debug(
+            f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
+        )
 
     @classmethod
-    def get_resolution_by_aspect(cls, aspect: float):
-        return cls.aspect_resolution_map.get(str(aspect), None)
+    def save_aspect_resolution_map(cls, dataloader_resolution: float):
+        cls._save_to_disk(
+            f"aspect_resolution_map-{dataloader_resolution}",
+            cls.aspect_resolution_map[dataloader_resolution],
+        )
 
     @classmethod
-    def set_resolution_by_aspect(cls, aspect: float, resolution: int):
-        cls.aspect_resolution_map[str(aspect)] = resolution
-        cls._save_to_disk("aspect_resolution_map", cls.aspect_resolution_map)
-        logger.debug(f"Aspect resolution map: {cls.aspect_resolution_map}")
+    def load_aspect_resolution_map(cls, dataloader_resolution: float):
+        if dataloader_resolution not in cls.aspect_resolution_map:
+            cls.aspect_resolution_map = {dataloader_resolution: {}}
 
-    @classmethod
-    def save_aspect_resolution_map(cls):
-        cls._save_to_disk("aspect_resolution_map", cls.aspect_resolution_map)
-
-    @classmethod
-    def load_aspect_resolution_map(cls):
-        cls.aspect_resolution_map = cls._load_from_disk("aspect_resolution_map") or {}
-        logger.debug(f"Aspect resolution map: {cls.aspect_resolution_map}")
+        cls.aspect_resolution_map[dataloader_resolution] = (
+            cls._load_from_disk(f"aspect_resolution_map-{dataloader_resolution}") or {}
+        )
+        logger.debug(
+            f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
+        )
