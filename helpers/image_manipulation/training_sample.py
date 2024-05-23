@@ -86,7 +86,7 @@ class TrainingSample:
         ]
         self.valid_metadata = all(key in self.image_metadata for key in required_keys)
         if self.valid_metadata:
-            logger.info(f"Setting metadata: {self.image_metadata}")
+            logger.debug(f"Setting metadata: {self.image_metadata}")
             self.original_size = self.image_metadata["original_size"]
             self.target_size = self.image_metadata["target_size"]
             self.intermediary_size = self.image_metadata["intermediary_size"]
