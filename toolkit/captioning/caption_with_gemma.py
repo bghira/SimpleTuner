@@ -58,10 +58,11 @@ def generate_caption_with_pali_gemma(
 
 
 def process_and_evaluate_image(args, image_path, model, processor):
-    query_strings = ["caption en", "simple"]
+    query_strings = ["caption en"]
     result = generate_caption_with_pali_gemma(
         image_path, processor, model, query_strings, do_sample=True, temperature=1.2
     )
+    return result[0]
     output = {query: result for query, result in zip(query_strings, result)}
     print(f"Output: {json.dumps(output, indent=4)}")
     return output
