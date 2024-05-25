@@ -4,7 +4,7 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.metadata.backends.base import MetadataBackend
 from tqdm import tqdm
-import json, logging, os, time, traceback
+import json, logging, os, time, traceback, numpy
 from io import BytesIO
 from PIL import Image
 
@@ -292,6 +292,23 @@ class ParquetMetadataBackend(MetadataBackend):
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
 
+    def _get_first_value(self, series_or_scalar):
+        """Extract the first value if the input is a Series, else return the value itself."""
+        if isinstance(series_or_scalar, pd.Series):
+            return int(series_or_scalar.iloc[0])
+        elif isinstance(series_or_scalar, str):
+            # Convert to int if the input is a string representing a number
+            return int(series_or_scalar)
+        elif isinstance(series_or_scalar, (int, float)):
+            return series_or_scalar
+        elif isinstance(series_or_scalar, numpy.int64):
+            new_type = int(series_or_scalar)
+            if type(new_type) != int:
+                raise ValueError(f"Unsupported data type: {type(series_or_scalar)}.")
+            return new_type
+        else:
+            raise ValueError(f"Unsupported data type: {type(series_or_scalar)}.")
+
     def _process_for_bucket(
         self,
         image_path_str,
@@ -335,11 +352,12 @@ class ParquetMetadataBackend(MetadataBackend):
                 raise ValueError(
                     "ParquetMetadataBackend requires width and height columns to be defined."
                 )
-
-            original_size = (
-                int(database_image_metadata[width_column]),
-                int(database_image_metadata[height_column]),
+            w = self._get_first_value(database_image_metadata[width_column])
+            h = self._get_first_value(database_image_metadata[height_column])
+            logger.debug(
+                f"Image {image_path_str} has dimensions {w}x{h} types {type(w)}."
             )
+            original_size = (w, h)
             if (
                 original_size[0] < StateTracker.get_args().aspect_bucket_alignment
                 or original_size[1] < StateTracker.get_args().aspect_bucket_alignment
@@ -386,12 +404,23 @@ class ParquetMetadataBackend(MetadataBackend):
                     "intermediary_size": prepared_sample.intermediary_size,
                     "crop_coordinates": prepared_sample.crop_coordinates,
                     "target_size": prepared_sample.target_size,
-                    "aspect_ratio": prepared_sample.aspect_ratio,
-                    "luminance": database_image_metadata.get(
-                        self.parquet_config.get("luminance_column"), 0
+                    "aspect_ratio": float(prepared_sample.aspect_ratio),
+                    "luminance": int(
+                        database_image_metadata.get(
+                            self.parquet_config.get("luminance_column"), 0
+                        )
                     ),
                 }
             )
+            logger.debug(
+                f"Data types for metadata: {[type(v) for v in image_metadata.values()]}"
+            )
+            # print the types of any iterable values
+            for key, value in image_metadata.items():
+                if hasattr(value, "__iter__"):
+                    logger.debug(f"Key {key} has type {type(value)}: {value}")
+                    for v in value:
+                        logger.debug(f"Value has type {type(v)}: {v}")
 
             logger.debug(
                 f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."

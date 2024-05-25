@@ -100,10 +100,10 @@ def register_file_hooks(
                     num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
                     removing_checkpoints = checkpoints[0:num_to_remove]
 
-                    logger.info(
+                    logger.debug(
                         f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
                     )
-                    logger.info(
+                    logger.debug(
                         f"removing checkpoints: {', '.join(removing_checkpoints)}"
                     )
 
