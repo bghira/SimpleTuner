@@ -200,7 +200,7 @@ class PromptHandler:
         # Did we find the item?
         if len(item) == 0 and instance_prompt is None:
             logger.error(
-                f"Could not locate image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries. Using filename as prompt."
+                f"Could not locate image {image_path} via stem {image_filename_stem} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries. Using filename as prompt."
             )
             return image_filename_stem
         if (
