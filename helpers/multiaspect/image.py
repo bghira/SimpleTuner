@@ -3,7 +3,7 @@ from helpers.image_manipulation.brightness import calculate_luminance
 from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-import logging, os, random
+import logging, os, random, numpy
 from math import sqrt, floor
 from helpers.training.state_tracker import StateTracker
 from helpers.image_manipulation.cropping import crop_handlers
@@ -106,7 +106,7 @@ class MultiaspectImage:
     def calculate_new_size_by_pixel_area(
         aspect_ratio: float, megapixels: float, original_size: tuple
     ):
-        if type(aspect_ratio) != float:
+        if type(aspect_ratio) != float and type(aspect_ratio) != numpy.float64:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
         pixels = megapixels * 1e6  # Convert megapixels to pixels
         logger.debug(f"Converted {megapixels} megapixels to {pixels} pixels.")

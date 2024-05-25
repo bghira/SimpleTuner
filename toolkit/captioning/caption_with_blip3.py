@@ -24,9 +24,8 @@ logger = logging.getLogger("Captioner")
 # Define the prompt template for BLIP3
 def apply_prompt_template(prompt):
     s = (
-        "<|system|>\nA chat between a curious user and an artificial intelligence assistant. "
-        "The assistant gives helpful, detailed, and polite answers to the user's questions.<|end|>\n"
-        f"<|user|>\n<image>\n{prompt}<|end|>\n<|assistant|>\n"
+        "<|system|>\nYou are an image tagger. Provide image tags only separated by commas.<|end|>\n"
+        f"<|user|>\n<image>\n{prompt}\n<|end|>\n<|assistant|>\n"
     )
     return s
 
@@ -40,6 +39,12 @@ class EosListStoppingCriteria(StoppingCriteria):
     ) -> bool:
         last_ids = input_ids[:, -len(self.eos_sequence) :].tolist()
         return self.eos_sequence in last_ids
+
+
+# load the existing parquet file if it exists
+def load_input_parquet(parquet_path: str):
+    df = pd.read_parquet(path=parquet_path)
+    return df
 
 
 # Load BLIP3 model
@@ -75,9 +80,10 @@ def eval_blip3_model(query, raw_image, model, tokenizer, image_processor):
         **inputs,
         image_size=[raw_image.size],
         pad_token_id=tokenizer.pad_token_id,
-        do_sample=False,
+        do_sample=True,
         max_new_tokens=110,
-        top_p=None,
+        top_p=0.95,
+        top_k=50,
         num_beams=1,
         stopping_criteria=[EosListStoppingCriteria()],
     )
@@ -85,9 +91,9 @@ def eval_blip3_model(query, raw_image, model, tokenizer, image_processor):
         "<|end|>"
     )[0]
     # If it doesn't end on a complete sentence, remove everything after the final '.'
-    if not prediction.endswith("."):
-        # Remove everything after the final '.'
-        prediction = re.sub(r"\.[^.]*$", ".", prediction)
+    # if not prediction.endswith("."):
+    #     # Remove everything after the final '.'
+    #     prediction = re.sub(r"\.[^.]*$", ".", prediction)
 
     return prediction
 
@@ -131,53 +137,99 @@ def process_and_evaluate_image(
 
 
 def process_directory(
-    args, image_dir, output_parquet, model, tokenizer, image_processor
+    args,
+    image_dir,
+    output_parquet,
+    model,
+    tokenizer,
+    image_processor,
+    input_parquet=None,
+    original_query_str=None,
 ):
     records = []
     parquet_path = f"{output_parquet}.{os.path.basename(image_dir)}.parquet"
     print(f"Parquet: {parquet_path}")
+    total_to_process = 10000
+    total_processed = 0
     for filename in tqdm(os.listdir(image_dir), desc="Processing Images"):
+        if input_parquet is not None:
+            # if the caption column at the filename position is non-empty, skip
+            current_caption = input_parquet[input_parquet["filename"] == filename]
+            hint_column = args.input_parquet_hint_column
+            hint_value = None
+            if hint_column is not None and hint_column != "":
+                hint_value = current_caption[hint_column].values[0]
+                if hint_value is not None and not hint_value == "":
+                    if original_query_str is not None:
+                        args.query_str = original_query_str
+                    args.query_str = args.query_str.replace("%s", hint_value)
+                    logger.info(
+                        f"Using query string: {args.query_str} for hint value: {hint_value}"
+                    )
+            try:
+                if (
+                    not current_caption.empty
+                    and not current_caption["caption"].isnull().values[0]
+                ):
+                    logger.debug(f"Already has caption: {current_caption['caption']}")
+                    continue
+            except:
+                logger.debug(f"Error checking for existing caption: {current_caption}")
         full_filepath = os.path.join(image_dir, filename)
         if os.path.isdir(full_filepath):
-            logging.info(f"Found directory to traverse: {full_filepath}")
+            logger.info(f"Found directory to traverse: {full_filepath}")
             process_directory(
-                args, full_filepath, output_parquet, model, tokenizer, image_processor
+                args,
+                full_filepath,
+                output_parquet,
+                model,
+                tokenizer,
+                image_processor,
+                input_parquet=input_parquet,
+                original_query_str=original_query_str,
             )
-        elif filename.lower().endswith((".jpg", ".png")):
+            args.query_str = original_query_str
+            original_query_str = None
+        elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
             try:
-                logging.info(f"Attempting to load image: {filename}")
+                logger.debug(f"Attempting to load image: {filename}")
                 with Image.open(full_filepath) as image:
-                    logging.info(f"Processing image: {filename}, data: {image}")
+                    logger.debug(f"Processing image: {filename}, data: {image}")
                     best_match = process_and_evaluate_image(
                         args, full_filepath, model, tokenizer, image_processor
                     )
-                    logging.info(f"Best match for {filename}: {best_match}")
+                    total_processed += 1
+                    logger.debug(f"Best match for {filename}: {best_match}")
 
                     with Image.open(full_filepath) as img_file:
                         image_bytes = img_file.tobytes()
 
-                    records.append(
-                        {
-                            "filename": filename,
-                            "caption": best_match,
-                            "image": image_bytes,
-                        }
-                    )
+                    records.append({"filename": filename, "caption": best_match})
+                    if total_processed >= total_to_process:
+                        break
 
             except Exception as e:
                 import traceback
 
-                logging.error(
+                logger.error(
                     f"Error processing {filename}: {str(e)}, traceback: {traceback.format_exc()}"
                 )
                 if "CUDA error" in str(e):
                     import sys
 
                     sys.exit(1)
-
-    df = pd.DataFrame(records)
-    df.to_parquet(parquet_path, engine="pyarrow")
-    logging.info(f"Processed Parquet file saved to {output_parquet}")
+    new_df = pd.DataFrame(records)
+    if input_parquet is not None:
+        # Merge new_df with input_parquet
+        input_parquet.set_index("filename", inplace=True)
+        new_df.set_index("filename", inplace=True)
+        combined_df = input_parquet.combine_first(new_df).reset_index()
+    else:
+        combined_df = new_df
+    # reduce duplicates by "filename" contents
+    combined_df = combined_df.drop_duplicates(subset=["filename"])
+    combined_df.to_parquet(parquet_path, engine="pyarrow")
+    logger.info(f"Processed Parquet file saved to {output_parquet}")
 
 
 def parse_args():
@@ -206,7 +258,18 @@ def parse_args():
         default="fp16",
         help=("Precision for loading the model. Default: fp16"),
     )
-
+    parser.add_argument(
+        "--input_parquet",
+        type=str,
+        default=None,
+        help="Path to the input Parquet dataset which will be adjusted to have the new column.",
+    )
+    parser.add_argument(
+        "--input_parquet_hint_column",
+        type=str,
+        default="title",
+        help="When set, the column to use as a hint for the input query str placement value. Default: title",
+    )
     args = parser.parse_args()
     return args
 
@@ -214,10 +277,23 @@ def parse_args():
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
+    input_database = None
+    if args.input_parquet:
+        if not os.path.exists(args.input_parquet):
+            raise ValueError("The parquet file specified as input did not exist.")
+
+        input_database = load_input_parquet(args.input_parquet)
 
     model, tokenizer, image_processor = load_blip3_model()
     process_directory(
-        args, args.input_dir, args.output_parquet, model, tokenizer, image_processor
+        args,
+        args.input_dir,
+        args.output_parquet,
+        model,
+        tokenizer,
+        image_processor,
+        input_parquet=input_database,
+        original_query_str=str(args.query_str),
     )
 
 
