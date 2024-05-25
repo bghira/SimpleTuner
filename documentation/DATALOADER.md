@@ -18,7 +18,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "resolution_type": "area|pixel",
         "minimum_image_size": 1.0,
         "prepend_instance_prompt": false,
-        "instance_prompt": "cat girls",
+        "instance_prompt": "something to label every image",
         "only_instance_prompt": false,
         "caption_strategy": "filename",
         "cache_dir_vae": "/path/to/vaecache",
