@@ -81,7 +81,7 @@ def eval_blip3_model(query, raw_image, model, tokenizer, image_processor):
         image_size=[raw_image.size],
         pad_token_id=tokenizer.pad_token_id,
         do_sample=True,
-        max_new_tokens=110,
+        max_new_tokens=512,
         top_p=0.95,
         top_k=50,
         num_beams=1,
@@ -158,7 +158,10 @@ def process_directory(
             hint_column = args.input_parquet_hint_column
             hint_value = None
             if hint_column is not None and hint_column != "":
-                hint_value = current_caption[hint_column].values[0]
+                try:
+                    hint_value = current_caption[hint_column].values[0]
+                except:
+                    hint_value = None
                 if hint_value is not None and not hint_value == "":
                     if original_query_str is not None:
                         args.query_str = original_query_str
