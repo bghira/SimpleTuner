@@ -313,6 +313,7 @@ class Validation:
         if self.accelerator.is_main_process:
             logger.debug("Starting validation process...")
             self.setup_pipeline(validation_type)
+            self.setup_scheduler()
             self.process_prompts()
             self.finalize_validation(validation_type)
             logger.debug("Validation process completed.")
