@@ -240,6 +240,8 @@ class ParquetMetadataBackend(MetadataBackend):
         self.load_image_metadata()
         last_write_time = time.time()
         aspect_ratio_bucket_updates = {}
+        # log a truncated set of the parquet table
+        logger.debug(f"Parquet table head: {self.parquet_database.head().to_string()}")
         for file in tqdm(
             new_files,
             desc="Generating aspect bucket cache",

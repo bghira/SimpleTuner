@@ -537,7 +537,11 @@ class Validation:
                     )
                 validation_images[validation_shortname].extend(validation_image_results)
             except Exception as e:
-                logger.error(f"Error generating validation image: {e}")
+                import traceback
+
+                logger.error(
+                    f"Error generating validation image: {e}, {traceback.format_exc()}"
+                )
                 continue
         return validation_images
 
