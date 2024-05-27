@@ -1,4 +1,4 @@
-import os, torch, logging, xformers, accelerate, re, random, argparse, io
+import os, torch, logging, accelerate, re, random, argparse, io
 from tqdm.auto import tqdm
 from PIL import Image
 import requests, boto3
@@ -102,6 +102,12 @@ def parse_args():
         type=str,
         default="Caption this image accurately, with as few words as possible.",
         help="The query string to use for captioning. This instructs the model how to behave.",
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        default="THUDM/cogvlm2-llama3-chat-19B",
+        help="Model path to load. Default: THUDM/cogvlm2-llama3-chat-19B, also useful is THUDM/cogvlm-chat-hf to utilise CogVLM v1.1",
     )
     return parser.parse_args()
 
@@ -340,8 +346,13 @@ def main():
 
     tokenizer = LlamaTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
     logger.info(f"Loading CogVLM in {args.precision} precision.")
+    if "cogvlm2" in args.model_path and torch.backends.mps.is_available():
+        logger.warning(
+            "Can not run CogVLM 2 on MPS because Triton is unavailable. Falling back to CogVLM 1.1"
+        )
+        args.model_path = "THUDM/cogvlm-chat-hf"
     model = AutoModelForCausalLM.from_pretrained(
-        "THUDM/cogvlm-chat-hf",
+        args.model_path,
         torch_dtype=torch_dtype,
         low_cpu_mem_usage=True,
         trust_remote_code=True,

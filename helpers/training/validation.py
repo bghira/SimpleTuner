@@ -4,7 +4,7 @@ from tqdm import tqdm
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
-from helpers.legacy.pipeline import DiffusionPipeline
+from helpers.legacy.pipeline import StableDiffusionPipeline
 from helpers.legacy.validation import retrieve_validation_images
 from diffusers.pipelines import StableDiffusionXLImg2ImgPipeline
 from diffusers.training_utils import EMAModel
@@ -173,7 +173,7 @@ class Validation:
 
                 return IFSuperResolutionPipeline
             else:
-                return DiffusionPipeline
+                return StableDiffusionPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
@@ -537,7 +537,11 @@ class Validation:
                     )
                 validation_images[validation_shortname].extend(validation_image_results)
             except Exception as e:
-                logger.error(f"Error generating validation image: {e}")
+                import traceback
+
+                logger.error(
+                    f"Error generating validation image: {e}, {traceback.format_exc()}"
+                )
                 continue
         return validation_images
 

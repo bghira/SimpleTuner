@@ -177,7 +177,15 @@ class VAECache:
             torch.Tensor: The cached Tensor object.
         """
         if os.path.splitext(filename)[1] != ".pt":
-            return self.data_backend.read_image(filename)
+            try:
+                return self.data_backend.read_image(filename)
+            except Exception as e:
+                if self.delete_problematic_images:
+                    self.data_backend.delete(filename)
+                    self.debug_log(
+                        f"Deleted {filename} because it was problematic: {e}"
+                    )
+                raise e
         try:
             return self.data_backend.torch_load(filename).to("cpu")
         except Exception as e:

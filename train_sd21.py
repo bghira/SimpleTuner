@@ -326,7 +326,7 @@ def main():
         webhook_handler.send(
             message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
         )
-
+    controlnet = None
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="unet",

@@ -1444,6 +1444,11 @@ def parse_args(input_args=None):
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
         )
         args.pretrained_vae_model_name_or_path = None
+    if (
+        args.pretrained_vae_model_name_or_path == ""
+        or args.pretrained_vae_model_name_or_path == "''"
+    ):
+        args.pretrained_vae_model_name_or_path = None
     if "deepfloyd" not in args.model_type:
         logger.info(
             f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
