@@ -519,7 +519,11 @@ class StableDiffusionPipeline(
                 batch_size * num_images_per_prompt, seq_len, -1
             )
 
-        if isinstance(self, LoraLoaderMixin) and USE_PEFT_BACKEND:
+        if (
+            isinstance(self, LoraLoaderMixin)
+            and USE_PEFT_BACKEND
+            and self.text_encoder is not None
+        ):
             # Retrieve the original scale by scaling back the LoRA layers
             unscale_lora_layers(self.text_encoder, lora_scale)
 
