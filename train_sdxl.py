@@ -1090,7 +1090,7 @@ def main():
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    initial_msg += f"\n-  Num batches = {total_num_batches}, unet dtype: `{unet.dtype}`"
+    initial_msg += f"\n-  Num batches = {total_num_batches}"
 
     initial_msg += f"\n-  Num Epochs = {args.num_train_epochs}"
     initial_msg += f"\n  - Current Epoch = {first_epoch}"
@@ -1586,7 +1586,7 @@ def main():
                         logger.error(
                             f"Error uploading to hub: {e}, continuing training."
                         )
-                accelerator.wait_for_everyone()
+            accelerator.wait_for_everyone()
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
