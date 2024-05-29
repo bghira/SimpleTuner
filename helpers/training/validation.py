@@ -106,7 +106,7 @@ class Validation:
         self.args = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
         if not os.path.exists(self.save_dir):
-            os.makedirs(self.save_dir)
+            os.makedirs(self.save_dir, exist_ok=True)
         self.global_step = None
         self.global_resume_step = None
         self.text_encoder_1 = text_encoder_1
@@ -313,6 +313,7 @@ class Validation:
         if self.accelerator.is_main_process:
             logger.debug("Starting validation process...")
             self.setup_pipeline(validation_type)
+            self.setup_scheduler()
             self.process_prompts()
             self.finalize_validation(validation_type)
             logger.debug("Validation process completed.")

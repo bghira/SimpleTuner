@@ -574,7 +574,7 @@ def main():
     # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
     # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
     collected_data_backend_str = list(StateTracker.get_data_backends().keys())
-    if args.push_to_hub:
+    if args.push_to_hub and accelerator.is_main_process:
         hub_manager.collected_data_backend_str = collected_data_backend_str
         hub_manager.set_validation_prompts(validation_prompts)
     logger.info(f"Collected the following data backends: {collected_data_backend_str}")
@@ -1090,7 +1090,7 @@ def main():
             for _, backend in StateTracker.get_data_backends().items()
         ]
     )
-    initial_msg += f"\n-  Num batches = {total_num_batches}, unet dtype: `{unet.dtype}`"
+    initial_msg += f"\n-  Num batches = {total_num_batches}"
 
     initial_msg += f"\n-  Num Epochs = {args.num_train_epochs}"
     initial_msg += f"\n  - Current Epoch = {first_epoch}"
@@ -1576,13 +1576,17 @@ def main():
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
             ):
-                try:
-                    hub_manager.upload_latest_checkpoint(
-                        validation_images=validation.validation_images,
-                        webhook_handler=webhook_handler,
-                    )
-                except Exception as e:
-                    logger.error(f"Error uploading to hub: {e}, continuing training.")
+                if accelerator.is_main_process:
+                    try:
+                        hub_manager.upload_latest_checkpoint(
+                            validation_images=validation.validation_images,
+                            webhook_handler=webhook_handler,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error uploading to hub: {e}, continuing training."
+                        )
+            accelerator.wait_for_everyone()
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs:
                 logger.info(
@@ -1694,7 +1698,7 @@ def main():
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
 
-        if args.push_to_hub:
+        if args.push_to_hub and accelerator.is_main_process:
             hub_manager.upload_model(validation_images, webhook_handler)
     accelerator.end_training()
     # List any running child threads remaining:
