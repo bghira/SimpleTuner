@@ -285,11 +285,14 @@ class StateTracker:
 
     @classmethod
     def get_vae_cache_files(cls: list, data_backend_id: str):
-        if data_backend_id not in cls.all_vae_cache_files:
+        if (
+            data_backend_id not in cls.all_vae_cache_files
+            or cls.all_vae_cache_files.get(data_backend_id) is None
+        ):
             cls.all_vae_cache_files[data_backend_id] = cls._load_from_disk(
                 "all_vae_cache_files_{}".format(data_backend_id)
             )
-        return cls.all_vae_cache_files[data_backend_id]
+        return cls.all_vae_cache_files[data_backend_id] or {}
 
     @classmethod
     def set_text_cache_files(cls, raw_file_list: list, data_backend_id: str):

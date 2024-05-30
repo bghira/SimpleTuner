@@ -157,15 +157,21 @@ class MetadataBackend:
         time.sleep(0.001)
         logger.debug(f"Bucket worker completed processing. Returning to main thread.")
 
-    def compute_aspect_ratio_bucket_indices(self):
+    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
         """
         Compute the aspect ratio bucket indices. The workhorse of this class.
+
+        Arguments:
+            ignore_existing_cache (bool): Whether to ignore the existing cache
+            and entirely recompute the aspect ratio bucket indices.
 
         Returns:
             dict: The aspect ratio bucket indices.
         """
         logger.info("Discovering new files...")
-        new_files = self._discover_new_files()
+        new_files = self._discover_new_files(
+            ignore_existing_cache=ignore_existing_cache
+        )
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
         logger.info(
@@ -186,6 +192,8 @@ class MetadataBackend:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
             return
+        else:
+            logger.debug(f"New files: {new_files}")
         num_cpus = (
             StateTracker.get_args().aspect_bucket_worker_count
         )  # Using a fixed number for better control and predictability
