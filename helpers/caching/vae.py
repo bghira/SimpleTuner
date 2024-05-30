@@ -17,7 +17,7 @@ from concurrent.futures import as_completed
 from concurrent.futures import ProcessPoolExecutor
 
 logger = logging.getLogger("VAECache")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
