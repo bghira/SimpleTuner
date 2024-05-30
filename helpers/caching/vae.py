@@ -259,15 +259,6 @@ class VAECache:
         First, we'll clear the cache before rebuilding it.
         """
         self.debug_log("Rebuilding cache.")
-        self.debug_log("-> Clearing cache objects")
-        self.clear_cache()
-        self.debug_log("-> Split tasks between GPU(s)")
-        self.split_cache_between_processes()
-        self.debug_log("-> Load VAE")
-        self.init_vae()
-        self.debug_log("-> Process VAE cache")
-        self.process_buckets()
-        self.debug_log("-> Completed cache rebuild")
         if self.accelerator.is_local_main_process:
             self.debug_log("Updating StateTracker with new VAE cache entry list.")
             StateTracker.set_vae_cache_files(
@@ -278,6 +269,26 @@ class VAECache:
                 data_backend_id=self.id,
             )
         self.accelerator.wait_for_everyone()
+        self.debug_log("-> Clearing cache objects")
+        self.clear_cache()
+        self.debug_log("-> Split tasks between GPU(s)")
+        self.split_cache_between_processes()
+        self.debug_log("-> Load VAE")
+        self.init_vae()
+        if StateTracker.get_args().vae_cache_preprocess:
+            self.debug_log("-> Process VAE cache")
+            self.process_buckets()
+            if self.accelerator.is_local_main_process:
+                self.debug_log("Updating StateTracker with new VAE cache entry list.")
+                StateTracker.set_vae_cache_files(
+                    self.data_backend.list_files(
+                        instance_data_root=self.cache_dir,
+                        str_pattern="*.pt",
+                    ),
+                    data_backend_id=self.id,
+                )
+        self.accelerator.wait_for_everyone()
+        self.debug_log("-> Completed cache rebuild")
 
     def clear_cache(self):
         """
