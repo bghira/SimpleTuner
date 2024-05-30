@@ -341,6 +341,13 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = os.path.splitext(
                     os.path.split(image_path_str)[-1]
                 )[0]
+            if self.instance_data_root in image_path_filtered:
+                image_path_filtered = image_path_filtered.replace(
+                    self.instance_data_root, ""
+                )
+                # remove leading /
+                if image_path_filtered.startswith("/"):
+                    image_path_filtered = image_path_filtered[1:]
             if image_path_filtered.isdigit():
                 image_path_filtered = int(image_path_filtered)
 
