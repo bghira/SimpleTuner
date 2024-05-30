@@ -192,8 +192,6 @@ class MetadataBackend:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
             return
-        else:
-            logger.debug(f"New files: {new_files}")
         num_cpus = (
             StateTracker.get_args().aspect_bucket_worker_count
         )  # Using a fixed number for better control and predictability

@@ -19,7 +19,7 @@ class TestPromptHandler(unittest.TestCase):
     @patch("helpers.training.state_tracker.StateTracker.get_parquet_database")
     def test_prepare_instance_prompt_from_parquet(self, mock_get_parquet_database):
         # Setup
-        image_path = "path/to/image_3.jpg"
+        image_path = "image_3.jpg"
         use_captions = True
         prepend_instance_prompt = True
         data_backend = MagicMock()

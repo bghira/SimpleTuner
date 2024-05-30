@@ -110,7 +110,13 @@ class ParquetMetadataBackend(MetadataBackend):
             )
         else:
             logger.debug("Using cached image file list")
-
+        if ignore_existing_cache:
+            # Return all files and remove the existing buckets.
+            logger.debug(
+                f"Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
+            )
+            self.aspect_ratio_bucket_indices = {}
+            return list(all_image_files.keys())
         # Flatten the list if it contains nested lists
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
@@ -335,6 +341,13 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = os.path.splitext(
                     os.path.split(image_path_str)[-1]
                 )[0]
+            if self.instance_data_root in image_path_filtered:
+                image_path_filtered = image_path_filtered.replace(
+                    self.instance_data_root, ""
+                )
+                # remove leading /
+                if image_path_filtered.startswith("/"):
+                    image_path_filtered = image_path_filtered[1:]
             if image_path_filtered.isdigit():
                 image_path_filtered = int(image_path_filtered)
 

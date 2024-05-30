@@ -99,6 +99,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["caption_strategy"] = backend["caption_strategy"]
     else:
         output["config"]["caption_strategy"] = args.caption_strategy
+    output["config"]["instance_data_root"] = backend.get(
+        "instance_data_dir", backend.get("aws_data_prefix", "")
+    )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
