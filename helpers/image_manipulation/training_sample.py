@@ -26,12 +26,25 @@ class TrainingSample:
         metadata (dict): Optional metadata associated with the image.
         """
         self.image = image
+        self.target_size = None
+        self.intermediary_size = None
+        self.original_size = None
         self.data_backend_id = data_backend_id
-        self.image_metadata = image_metadata if image_metadata else {}
+        self.image_metadata = (
+            image_metadata
+            if image_metadata
+            else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
+        )
         if hasattr(image, "size"):
             self.original_size = self.image.size
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size
+            )
         elif image_metadata is not None:
             self.original_size = image_metadata.get("original_size")
+            self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                self.original_size
+            )
             logger.debug(
                 f"Metadata for training sample given instead of image? {image_metadata}"
             )
@@ -339,10 +352,43 @@ class TrainingSample:
             )
         return self
 
+    def correct_randomised_intermediate_size(self):
+        """
+        When we have a randomised aspect bucket, the intermediary size will be the wrong aspect ratio.
+
+        This function corrects the intermediary size to the correct aspect ratio by calculating it again,
+         using the original aspect ratio.
+        """
+        if self.crop_aspect == "random":
+            _, self.intermediary_size, _ = self.target_size_calculator(
+                self.original_aspect_ratio, self.resolution, self.original_size
+            )
+            # The intermediary size may be smaller than the target size on one edge, we should add the difference to both sides if so.
+            diff_A = self.target_size[0] - self.intermediary_size[0]
+            diff_B = self.target_size[1] - self.intermediary_size[1]
+            if diff_A > diff_B:
+                self.intermediary_size = (
+                    self.intermediary_size[0] + diff_A,
+                    self.intermediary_size[1] + diff_A,
+                )
+            elif diff_B > diff_A:
+                self.intermediary_size = (
+                    self.intermediary_size[0] + diff_B,
+                    self.intermediary_size[1] + diff_B,
+                )
+
+        return self
+
     def calculate_target_size(self, downsample_before_crop: bool = False):
         # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size
+        )
+        logger.debug(
+            "Before calculating target size: "
+            f"\n-> Target size: {self.target_size}"
+            f"\n-> Intermediary size: {self.intermediary_size}"
+            f"\n-> Aspect ratio: {self.aspect_ratio}"
         )
         if self.crop_enabled:
             if self.crop_aspect == "square" and not downsample_before_crop:
@@ -360,20 +406,25 @@ class TrainingSample:
                 )
             )
             if self.crop_aspect != "random" or not self.valid_metadata:
+                logger.debug(
+                    f"We had {'non-random crops' if self.crop_aspect != 'random' else 'invalid metadata: '} {self.image_metadata} and calculated intermediary size {calculated_intermediary_size}"
+                )
                 self.intermediary_size = calculated_intermediary_size
             logger.debug(
                 f"Pre-crop downsample target size based on {self.target_downsample_size} results in target size of {self.target_size} via intermediary size {self.intermediary_size}"
             )
         else:
-            self.target_size, self.intermediary_size, self.aspect_ratio = (
+            self.target_size, calculated_intermediary_size, self.aspect_ratio = (
                 self.target_size_calculator(
                     self.aspect_ratio, self.resolution, self.original_size
                 )
             )
+            if self.crop_aspect != "random" or not self.valid_metadata:
+                self.intermediary_size = calculated_intermediary_size
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
         )
-        self.correct_intermediary_square_size()
+        self.correct_intermediary_square_size().correct_randomised_intermediate_size()
         if self.aspect_ratio == 1.0:
             self.target_size = (self.pixel_resolution, self.pixel_resolution)
         logger.debug(
