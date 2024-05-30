@@ -227,11 +227,17 @@ class TrainingSample:
                 return 1.0
             # filter to portrait or landscape buckets, depending on our aspect ratio
             available_aspects = self._trim_aspect_bucket_list()
-            logger.debug(
-                f"Available aspect buckets: {available_aspects} for {self.aspect_ratio} from {self.crop_aspect_buckets}"
-            )
-            selected_aspect = random.choice(available_aspects)
-            logger.debug(f"Randomly selected aspect ratio: {selected_aspect}")
+            if len(available_aspects) == 0:
+                selected_aspect = 1.0
+                logger.warning(
+                    f"Image dimensions do not fit into the configured aspect buckets. Using square crop."
+                )
+            else:
+                logger.debug(
+                    f"Available aspect buckets: {available_aspects} for {self.aspect_ratio} from {self.crop_aspect_buckets}"
+                )
+                selected_aspect = random.choice(available_aspects)
+                logger.debug(f"Randomly selected aspect ratio: {selected_aspect}")
         else:
             raise ValueError(
                 "Aspect buckets must be a list of floats or dictionaries."

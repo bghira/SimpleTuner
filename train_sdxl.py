@@ -1143,11 +1143,26 @@ def main():
             for backend_id, backend in StateTracker.get_data_backends().items():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
                 if (
+                    "crop_aspect" in backend_config
+                    and backend_config["crop_aspect"] is not None
+                    and backend_config["crop_aspect"] == "random"
+                    and "metadata_backend" in backend
+                ):
+                    # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
+                    backend["metadata_backend"].compute_aspect_ratio_bucket_indices(
+                        ignore_existing_cache=True
+                    )
+                    # we have to rebuild the VAE cache if it exists.
+                    if "vaecache" in backend:
+                        backend["vaecache"].rebuild_cache()
+                    backend["metadata_backend"].save_cache()
+                elif (
                     "vae_cache_clear_each_epoch" in backend_config
                     and backend_config["vae_cache_clear_each_epoch"]
                     and "vaecache" in backend
                 ):
-                    # We will clear the cache and then rebuild it. This is useful for random crops.
+                    # If the user has specified that this should happen,
+                    # we will clear the cache and then rebuild it. This is useful for random crops.
                     logger.debug(f"VAE Cache rebuild is enabled. Rebuilding.")
                     logger.debug(f"Backend config: {backend_config}")
                     backend["vaecache"].rebuild_cache()

@@ -63,7 +63,9 @@ class JsonMetadataBackend(MetadataBackend):
             if len(bucket) >= self.batch_size
         )
 
-    def _discover_new_files(self, for_metadata: bool = False):
+    def _discover_new_files(
+        self, for_metadata: bool = False, ignore_existing_cache: bool = False
+    ):
         """
         Discover new files that have not been processed yet.
 
@@ -73,6 +75,13 @@ class JsonMetadataBackend(MetadataBackend):
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.data_backend.id
         )
+        if ignore_existing_cache:
+            # Return all files and remove the existing buckets.
+            logger.debug(
+                f"Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
+            )
+            self.aspect_ratio_bucket_indices = {}
+            return list(all_image_files.keys())
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(

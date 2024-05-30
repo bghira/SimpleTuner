@@ -87,7 +87,9 @@ class ParquetMetadataBackend(MetadataBackend):
             if len(bucket) >= self.batch_size
         )
 
-    def _discover_new_files(self, for_metadata: bool = False):
+    def _discover_new_files(
+        self, for_metadata: bool = False, ignore_existing_cache: bool = False
+    ):
         """
         Discover new files that have not been processed yet.
 
@@ -108,7 +110,13 @@ class ParquetMetadataBackend(MetadataBackend):
             )
         else:
             logger.debug("Using cached image file list")
-
+        if ignore_existing_cache:
+            # Return all files and remove the existing buckets.
+            logger.debug(
+                f"Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
+            )
+            self.aspect_ratio_bucket_indices = {}
+            return list(all_image_files.keys())
         # Flatten the list if it contains nested lists
         if any(isinstance(i, list) for i in all_image_files):
             all_image_files = [item for sublist in all_image_files for item in sublist]
@@ -123,6 +131,10 @@ class ParquetMetadataBackend(MetadataBackend):
                 for file in all_image_files
                 if self.get_metadata_by_filepath(file) is None
             ]
+        elif ignore_existing_cache:
+            # Remove existing aspect bucket indices and return all image files.
+            result = all_image_files
+            self.aspect_ratio_bucket_indices = {}
         else:
             processed_files = set(
                 path
@@ -209,7 +221,7 @@ class ParquetMetadataBackend(MetadataBackend):
         """Save image metadata to a JSON file."""
         self.data_backend.write(self.metadata_file, json.dumps(self.image_metadata))
 
-    def compute_aspect_ratio_bucket_indices(self):
+    def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
         """
         Compute the aspect ratio bucket indices without any threads or queues.
 
@@ -219,7 +231,9 @@ class ParquetMetadataBackend(MetadataBackend):
             dict: The aspect ratio bucket indices.
         """
         logger.info("Discovering new files...")
-        new_files = self._discover_new_files()
+        new_files = self._discover_new_files(
+            ignore_existing_cache=ignore_existing_cache
+        )
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
         # Initialize aggregated statistics
@@ -327,6 +341,13 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = os.path.splitext(
                     os.path.split(image_path_str)[-1]
                 )[0]
+            if self.instance_data_root in image_path_filtered:
+                image_path_filtered = image_path_filtered.replace(
+                    self.instance_data_root, ""
+                )
+                # remove leading /
+                if image_path_filtered.startswith("/"):
+                    image_path_filtered = image_path_filtered[1:]
             if image_path_filtered.isdigit():
                 image_path_filtered = int(image_path_filtered)
 
