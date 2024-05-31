@@ -518,7 +518,9 @@ class PromptHandler:
                 else:
                     # Treat as plain string and remove occurrences
                     if modified_caption is not None:
-                        modified_caption = modified_caption.replace(filter_item, "")
+                        modified_caption = str(modified_caption).replace(
+                            filter_item, ""
+                        )
                 try:
                     # Assume all filters as regex patterns for flexibility
                     pattern = re.compile(filter_item)
