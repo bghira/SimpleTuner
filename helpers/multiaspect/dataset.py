@@ -1,5 +1,6 @@
 from torch.utils.data import Dataset
 from helpers.training.state_tracker import StateTracker
+from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.training_sample import TrainingSample
 from pathlib import Path
 import logging, os
@@ -40,12 +41,15 @@ class MultiAspectDataset(Dataset):
                 image_metadata = sample.image_metadata
             else:
                 image_metadata = sample
-            if "aspect_ratio" in image_metadata:
+            if "target_size" in image_metadata:
+                calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+                    image_metadata["target_size"]
+                )
                 if first_aspect_ratio is None:
-                    first_aspect_ratio = image_metadata["aspect_ratio"]
-                elif first_aspect_ratio != image_metadata["aspect_ratio"]:
+                    first_aspect_ratio = calculated_aspect_ratio
+                elif first_aspect_ratio != calculated_aspect_ratio:
                     raise ValueError(
-                        f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {image_metadata['aspect_ratio']}"
+                        f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {calculated_aspect_ratio}"
                     )
             if "deepfloyd" not in StateTracker.get_args().model_type and (
                 image_metadata["original_size"] is None
