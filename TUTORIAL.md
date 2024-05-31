@@ -114,9 +114,9 @@ For a caption to be useful by SimpleTuner:
 
 - It could be the image's filename (the default behaviour)
 - It could be the contents of a .txt file with the same name as the image (if `--caption_strategy=textfile` is provided)
-- (Advanced users) You may compile your dataset metadata into a parquet file and provide it directly to SimpleTuner
+- (Advanced users) You may compile your dataset metadata into a parquet, json, or jsonl file and [provide it directly to SimpleTuner](/documentation/DATALOADER.md#advanced-techniques)
 
-Longer captions aren't necessarily better for training. Simpler, concise captions work best!
+Longer captions aren't necessarily better for training. Simpler, concise captions work well, but a hybrid dataset mixing short and long captions will cover all bases.
 
 #### Caption Dropout Parameter: CAPTION_DROPOUT_PROBABILITY
 

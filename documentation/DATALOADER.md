@@ -157,11 +157,11 @@ In order, the lines behave as follows:
 
 # Advanced techniques
 
-## Parquet caption strategy
+## Parquet caption strategy / JSON Lines datasets
 
 > ⚠️ This is an advanced feature, and will not be necessary for most users.
 
-When training a model with a very-large dataset numbering in the hundreds of thousands or millions of images, it is expedient to store your metadata inside a parquet database instead of txt files - especially when your training data is stored on an S3 bucket.
+When training a model with a very-large dataset numbering in the hundreds of thousands or millions of images, it's fastest to store your metadata inside a parquet database instead of txt files - especially when your training data is stored on an S3 bucket.
 
 Using the parquet caption strategy allows you to name all of your files by their `id` value, and change their caption column via a config value rather than updating many text files, or having to rename the files to update their captions.
 
@@ -173,11 +173,20 @@ Here is an example dataloader configuration that makes use of the captions and d
     "type": "local",
     "instance_data_dir": "/models/training/datasets/photo-concept-bucket-downloads",
     "caption_strategy": "parquet",
-    "parquet_path": "/models/training/datasets/photo-concept-bucket/photo-concept-bucket.parquet",
-    "parquet_filename_column": "id",
-    "parquet_caption_column": "cogvlm_caption",
-    "parquet_fallback_caption_column": "tags",
-    "minimum_image_size": 0.25,
+    "metadata_backend": "parquet",
+    "parquet": {
+        "path": "photo-concept-bucket.parquet",
+        "filename_column": "id",
+        "caption_column": "cogvlm_caption",
+        "fallback_caption_column": "tags",
+        "width_column": "width",
+        "height_column": "height",
+        "identifier_includes_extension": false
+    },
+    "resolution": 1.0,
+    "minimum_image_size": 0.75,
+    "maximum_image_size": 2.0,
+    "target_downsample_size": 1.5,
     "prepend_instance_prompt": false,
     "instance_prompt": null,
     "only_instance_prompt": false,
@@ -189,9 +198,13 @@ Here is an example dataloader configuration that makes use of the captions and d
     "vae_cache_clear_each_epoch": true,
     "repeats": 1,
     "crop": true,
-    "crop_aspect": "square",
+    "crop_aspect": "random",
     "crop_style": "random",
-    "resolution": 0.5,
+    "crop_aspect_buckets": [
+        1.0,
+        0.75,
+        1.23
+    ],
     "resolution_type": "area"
 }
 ```
@@ -199,10 +212,14 @@ Here is an example dataloader configuration that makes use of the captions and d
 In this configuration:
 
 - `caption_strategy` is set to `parquet`.
-- `parquet_path` is the path to the parquet file.
-- `parquet_filename_column` is the name of the column in the parquet file that contains the filenames. For this case, we are using the numeric `id` column (recommended).
-- `parquet_caption_column` is the name of the column in the parquet file that contains the captions. For this case, we are using the `cogvlm_caption` column. For LAION datasets, this would be the TEXT field.
-- `parquet_fallback_caption_column` is an optional name of a column in the parquet file that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
+- `metadata_backend` is set to `parquet`.
+- A new section, `parquet` must be defined:
+    - `path` is the path to the parquet or JSONL file.
+    - `filename_column` is the name of the column in the table that contains the filenames. For this case, we are using the numeric `id` column (recommended).
+    - `caption_column` is the name of the column in the table that contains the captions. For this case, we are using the `cogvlm_caption` column. For LAION datasets, this would be the TEXT field.
+    - `width_column` and `height_column` can be a column containing strings, int, or even a single-entry Series data type, measuring the actual image's dimensions. This notably improves the dataset preparation time, as we don't need to access the real images to discover this information.
+    - `fallback_caption_column` is an optional name of a column in the table that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
+    - `identifier_includes_extension` should be set to `true` when your filename column contains the image extension. Otherwise, the extension will be assumed as `.png`. It is recommended to include filename extensions in your table filename column.
 
 > ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [toolkit/datasets](toolkit/datasets) directory for ideas.
 
@@ -210,6 +227,7 @@ As with other dataloader configurations:
 
 - `prepend_instance_prompt` and `instance_prompt` behave as normal.
 - Updating a sample's caption in between training runs will cache the new embed, but not remove the old (orphaned) unit.
+- When an image doesn't exist in a dataset, its filename will be used as its caption and an error will be emitted.
 
 ## Custom aspect ratio-to-resolution mapping
 
@@ -228,7 +246,7 @@ To create the custom mapping:
 
 ### Example mapping configuration
 
-This is an example aspect ratio mapping generated by SimpleTuner.
+This is an example aspect ratio mapping generated by SimpleTuner. You don't need to manually configure this, as the trainer will automatically create one. However, for full control over the resulting resolutions, these mappings are supplied as a starting point for modification.
 
 - The dataset had more than 1 million images
 - The dataloader `resolution` was set to `1.0`
@@ -257,5 +275,24 @@ This is the most common configuration, and list of aspect buckets trainable for 
     "0.41": [704, 1728],    "0.88": [960, 1088],    "2.6": [1664, 640],     "4.38": [2240, 512],
     "0.42": [704, 1664],    "0.89": [1024, 1152],   "2.7": [1728, 640],     "5.0": [2240, 448],
     "0.44": [704, 1600],    "0.94": [1024, 1088],   "2.8": [1792, 640],     "5.14": [2304, 448]
+}
+```
+
+For Stable Diffusion 1.5 / 2.0-base (512px) models, the following mapping will work:
+
+```json
+{
+    "1.3": [832, 640], "1.0": [768, 768], "2.0": [1024, 512],
+    "0.64": [576, 896], "0.77": [640, 832], "0.79": [704, 896],
+    "0.53": [576, 1088], "1.18": [832, 704], "0.85": [704, 832],
+    "0.56": [576, 1024], "0.92": [704, 768], "1.78": [1024, 576],
+    "1.56": [896, 576], "0.67": [640, 960], "1.67": [960, 576],
+    "0.5": [512, 1024], "1.09": [768, 704], "1.08": [832, 768],
+    "0.44": [512, 1152], "0.71": [640, 896], "1.4": [896, 640],
+    "0.39": [448, 1152], "2.25": [1152, 512], "2.57": [1152, 448],
+    "0.4": [512, 1280], "3.5": [1344, 384], "2.12": [1088, 512],
+    "0.3": [448, 1472], "2.71": [1216, 448], "8.25": [2112, 256],
+    "0.29": [384, 1344], "2.86": [1280, 448], "6.2": [1984, 320],
+    "0.6": [576, 960]
 }
 ```
