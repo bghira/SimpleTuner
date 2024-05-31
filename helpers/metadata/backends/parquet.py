@@ -38,8 +38,8 @@ class ParquetMetadataBackend(MetadataBackend):
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
-        self.is_json_lines = self.parquet_config.endswith(".jsonl")
-        self.is_json_file = self.parquet_config.endswith(".json")
+        self.is_json_lines = self.parquet_path.endswith(".jsonl")
+        self.is_json_file = self.parquet_path.endswith(".json")
         super().__init__(
             id=id,
             instance_data_root=instance_data_root,
