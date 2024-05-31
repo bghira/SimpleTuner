@@ -385,6 +385,7 @@ def main():
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
+            # noinspection PyUnresolvedReferences
             import xformers
 
             xformers_version = version.parse(xformers.__version__)

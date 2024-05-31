@@ -427,7 +427,7 @@ def main():
     if args.enable_xformers_memory_efficient_attention:
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
-            import xformers
+            import xformers  # type: ignore
 
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.20"):
@@ -715,7 +715,7 @@ def main():
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
-            import bitsandbytes as bnb
+            import bitsandbytes as bnb  # type: ignore
         except ImportError:
             raise ImportError(
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
