@@ -38,6 +38,8 @@ class ParquetMetadataBackend(MetadataBackend):
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
+        self.is_json_lines = self.parquet_config.endswith(".jsonl")
+        self.is_json_file = self.parquet_config.endswith(".json")
         super().__init__(
             id=id,
             instance_data_root=instance_data_root,
@@ -67,7 +69,10 @@ class ParquetMetadataBackend(MetadataBackend):
                 pq = io.BytesIO(bytes_string)
             except Exception as e:
                 raise e
-            self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
+            if self.is_json_lines or self.is_json_file:
+                self.parquet_database = pd.read_json(pq, lines=self.is_json_lines)
+            else:
+                self.parquet_database = pd.read_parquet(pq, engine="pyarrow")
             self.parquet_database.set_index(
                 self.parquet_config.get("filename_column"), inplace=True
             )
