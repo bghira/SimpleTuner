@@ -967,9 +967,10 @@ def main():
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
 
-    lr_scheduler = get_lr_scheduler(
-        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    )
+    # if not use_deepspeed_scheduler:
+    #     lr_scheduler = get_lr_scheduler(
+    #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    #     )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.

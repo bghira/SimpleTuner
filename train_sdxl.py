@@ -1023,14 +1023,6 @@ def main():
             logger.debug(
                 f"Training state inside checkpoint: {StateTracker.get_training_state()}"
             )
-
-            # If we use a constant LR, we can update that now.
-            if args.lr_scheduler == "constant":
-                lr_scheduler = get_scheduler(
-                    "constant",
-                    optimizer=optimizer,
-                    num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-                )
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = global_resume_step
             logger.info(f"Resuming from global_step {global_resume_step}.")
@@ -1056,9 +1048,10 @@ def main():
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
 
-    lr_scheduler = get_lr_scheduler(
-        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    )
+    if not use_deepspeed_scheduler:
+        lr_scheduler = get_lr_scheduler(
+            args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+        )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
