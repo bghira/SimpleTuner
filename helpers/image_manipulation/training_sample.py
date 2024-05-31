@@ -86,6 +86,22 @@ class TrainingSample:
         self._validate_image_metadata()
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
+    @staticmethod
+    def from_image_path(image_path: str, data_backend_id: str):
+        """
+        Create a new TrainingSample instance from an image path.
+
+        Args:
+        image_path (str): The path to the image.
+        data_backend_id (str): Identifier for the data backend used for additional operations.
+
+        Returns:
+        TrainingSample: A new TrainingSample instance.
+        """
+        data_backend = StateTracker.get_data_backend(data_backend_id)
+        image = data_backend["metadata_backend"].read_image(image_path)
+        return TrainingSample(image, data_backend_id, image_path=image_path)
+
     def _validate_image_metadata(self) -> bool:
         """
         Determine whether all required keys exist for prepare() to skip calculations
