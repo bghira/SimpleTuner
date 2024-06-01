@@ -5,6 +5,7 @@ from PIL.ImageOps import exif_transpose
 from helpers.training.multi_process import rank_info
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
+from helpers.multiaspect.image import MultiaspectImage
 from helpers.multiaspect.state import BucketStateManager
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
@@ -448,9 +449,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                         self.batch_accumulator
                     )
                     # Now we'll add only remaining_entries_needed amount to the accumulator:
-                    if "aspect_ratio" in to_yield[0]:
+                    if "target_size" in to_yield[0]:
                         self.debug_log(
-                            f"Current bucket: {self.current_bucket}. Adding samples with aspect ratios: {[i['aspect_ratio'] for i in to_yield[:remaining_entries_needed]]}"
+                            f"Current bucket: {self.current_bucket}. Adding samples with aspect ratios: {[MultiaspectImage.calculate_image_aspect_ratio(i['target_size']) for i in to_yield[:remaining_entries_needed]]}"
                         )
                     self.batch_accumulator.extend(to_yield[:remaining_entries_needed])
                 # If the batch is full, yield it

@@ -427,7 +427,7 @@ def main():
     if args.enable_xformers_memory_efficient_attention:
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
-            import xformers
+            import xformers  # type: ignore
 
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.20"):
@@ -715,7 +715,7 @@ def main():
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
-            import bitsandbytes as bnb
+            import bitsandbytes as bnb  # type: ignore
         except ImportError:
             raise ImportError(
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
@@ -1023,14 +1023,6 @@ def main():
             logger.debug(
                 f"Training state inside checkpoint: {StateTracker.get_training_state()}"
             )
-
-            # If we use a constant LR, we can update that now.
-            if args.lr_scheduler == "constant":
-                lr_scheduler = get_scheduler(
-                    "constant",
-                    optimizer=optimizer,
-                    num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-                )
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = global_resume_step
             logger.info(f"Resuming from global_step {global_resume_step}.")
@@ -1056,9 +1048,10 @@ def main():
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
 
-    lr_scheduler = get_lr_scheduler(
-        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    )
+    # if not use_deepspeed_scheduler:
+    #     lr_scheduler = get_lr_scheduler(
+    #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+    #     )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
