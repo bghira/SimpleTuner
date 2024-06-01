@@ -26,7 +26,7 @@ fi
 export SIMPLETUNER_LOG_LEVEL=INFO
 
 # Reproducible training.
-export TRAINING_SEED=420420420
+export TRAINING_SEED=42
 
 # Restart where we left off. Change this to "checkpoint-1234" to start from a specific checkpoint.
 export RESUME_CHECKPOINT="latest"
