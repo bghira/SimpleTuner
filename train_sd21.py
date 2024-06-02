@@ -1438,6 +1438,8 @@ def main():
 
                 if (
                     args.freeze_encoder
+                    and args.train_text_encoder
+                    and text_encoder is not None
                     and current_percent_completion > args.text_encoder_limit
                 ):
                     # We want to stop training the text_encoder around 25% by default.
