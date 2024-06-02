@@ -1508,7 +1508,7 @@ def main():
                 "lr": lr_scheduler.get_last_lr()[0],
             }
             progress_bar.set_postfix(**logs)
-            validation.run_validations(validation_type="intermediary", step=global_step)
+            validation.run_validations(validation_type="intermediary", step=step)
             if (
                 args.push_to_hub
                 and args.push_checkpoints_to_hub

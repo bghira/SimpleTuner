@@ -1580,17 +1580,13 @@ def main():
                 "lr": lr,
             }
             progress_bar.set_postfix(**logs)
-            if sync_gradients:
-                validation.run_validations(
-                    validation_type="intermediary", step=global_step
-                )
+            validation.run_validations(validation_type="intermediary", step=step)
             if (
                 args.push_to_hub
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
                 and step % args.gradient_accumulation_steps == 0
                 and global_step > global_resume_step
-                and sync_gradients
             ):
                 if accelerator.is_main_process:
                     try:
