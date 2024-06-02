@@ -385,8 +385,7 @@ def main():
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
-            # noinspection PyUnresolvedReferences
-            import xformers
+            import xformers  # type: ignore
 
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.20"):
@@ -533,7 +532,7 @@ def main():
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
-            import bitsandbytes as bnb
+            import bitsandbytes as bnb  # type: ignore
         except ImportError:
             raise ImportError(
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
@@ -1512,14 +1511,18 @@ def main():
                 args.push_to_hub
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
+                and step % args.gradient_accumulation_steps == 0
+                and global_step > global_resume_step
             ):
-                try:
-                    hub_manager.upload_latest_checkpoint(
-                        validation_images=validation.validation_images,
-                        webhook_handler=webhook_handler,
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to push checkpoint to hub: {e}")
+                if accelerator.is_main_process:
+                    try:
+                        hub_manager.upload_latest_checkpoint(
+                            validation_images=validation.validation_images,
+                            webhook_handler=webhook_handler,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to push checkpoint to hub: {e}")
+            accelerator.wait_for_everyone()
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
                 logger.info(

@@ -1583,6 +1583,8 @@ def main():
                 args.push_to_hub
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
+                and step % args.gradient_accumulation_steps == 0
+                and global_step > global_resume_step
             ):
                 if accelerator.is_main_process:
                     try:
