@@ -90,9 +90,12 @@ class HubManager:
         # self.upload_validation_images(
         #     validation_images, webhook_handler=None, override_path=override_path
         # )
-        self.upload_validation_folder(
-            webhook_handler=webhook_handler, override_path=override_path
-        )
+        try:
+            self.upload_validation_folder(
+                webhook_handler=webhook_handler, override_path=override_path
+            )
+        except:
+            logger.error("Error uploading validation images to Hugging Face Hub.")
         attempt = 0
         while attempt < 3:
             attempt += 1
