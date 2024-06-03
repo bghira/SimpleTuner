@@ -962,7 +962,7 @@ def main():
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
         )
     current_epoch = first_epoch
-    if current_epoch >= args.num_train_epochs + 1:
+    if current_epoch > args.num_train_epochs + 1:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
@@ -1040,7 +1040,7 @@ def main():
     current_epoch_step = None
 
     for epoch in range(first_epoch, args.num_train_epochs + 1):
-        if current_epoch >= args.num_train_epochs + 1:
+        if current_epoch > args.num_train_epochs + 1:
             # This might immediately end training, but that's useful for simply exporting the model.
             logger.info(
                 f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
