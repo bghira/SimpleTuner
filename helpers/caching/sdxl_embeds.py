@@ -183,6 +183,8 @@ class TextEmbeddingCache:
                 if tokenizer is None or text_encoder is None:
                     # SDXL Refiner only has one text encoder and tokenizer
                     continue
+                if type(prompt) is not str and type(prompt) is not list:
+                    prompt = str(prompt)
                 text_inputs = tokenizer(
                     prompt, padding="max_length", truncation=True, return_tensors="pt"
                 )
