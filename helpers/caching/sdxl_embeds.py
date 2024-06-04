@@ -181,7 +181,7 @@ class TextEmbeddingCache:
         try:
             for tokenizer, text_encoder in zip(tokenizers, text_encoders):
                 if tokenizer is None or text_encoder is None:
-                    logger.warning("Skipping disabled tokenizer/text encoder")
+                    # SDXL Refiner only has one text encoder and tokenizer
                     continue
                 text_inputs = tokenizer(
                     prompt, padding="max_length", truncation=True, return_tensors="pt"
