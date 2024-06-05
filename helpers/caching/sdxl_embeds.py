@@ -316,7 +316,7 @@ class TextEmbeddingCache:
         is_validation: bool = False,
         load_from_cache: bool = True,
     ):
-        logger.debug("Initialising validations...")
+        logger.debug("Initialising text embed calculator...")
         if not self.batch_write_thread.is_alive():
             logger.debug("Restarting background write thread.")
             # Start the thread again.
