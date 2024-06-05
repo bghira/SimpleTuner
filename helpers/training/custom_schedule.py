@@ -12,8 +12,10 @@ def segmented_timestep_selection(
     num_timesteps, bsz, weights, use_refiner_range: bool = False
 ):
     # Segment size
-    if use_refiner_range:
-        num_timesteps = int(num_timesteps * 0.2)
+    if use_refiner_range or StateTracker.get_args().refiner_training:
+        num_timesteps = int(
+            num_timesteps * StateTracker.get_args().refiner_training_strength
+        )
     logger.debug(
         f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps and a segment size of {num_timesteps // bsz} timesteps."
     )
