@@ -507,6 +507,8 @@ class Validation:
             logger.debug(
                 f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}"
             )
+            if validation_shortname not in validation_images:
+                validation_images[validation_shortname] = []
             try:
                 extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
             except Exception as e:
@@ -514,8 +516,6 @@ class Validation:
                     f"Error gathering text embed for validation prompt {prompt}: {e}"
                 )
                 continue
-            if validation_shortname not in validation_images:
-                validation_images[validation_shortname] = []
             try:
                 pipeline_kwargs = {
                     "num_images_per_prompt": self.args.num_validation_images,
