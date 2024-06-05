@@ -187,6 +187,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--refiner_training_invert_schedule",
+        action="store_true",
+        default=False,
+        help=(
+            "While the refiner training strength is applied to the end of the schedule, this option will invert the result"
+            " for training a **base** model, eg. the first model in a mixture-of-experts series."
+            " A --refiner_training_strength of 0.35 will result in the refiner learning timesteps 349-0."
+            " Setting --refiner_training_invert_schedule then would result in the base model learning timesteps 999-350."
+        ),
+    )
+    parser.add_argument(
         "--refiner_training_strength",
         default=0.2,
         type=float,

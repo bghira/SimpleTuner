@@ -9,24 +9,39 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def segmented_timestep_selection(
-    num_timesteps, bsz, weights, use_refiner_range: bool = False
+    actual_num_timesteps, bsz, weights, use_refiner_range: bool = False
 ):
-    # Segment size
+    # Determine the range of timesteps to use
     if use_refiner_range or StateTracker.get_args().refiner_training:
-        num_timesteps = int(
-            num_timesteps * StateTracker.get_args().refiner_training_strength
-        )
+        if StateTracker.get_args().refiner_training_invert_schedule:
+            # Invert the schedule range to train from higher to a specific lower timestep
+            start_timestep = actual_num_timesteps - int(
+                actual_num_timesteps * StateTracker.get_args().refiner_training_strength
+            )
+            end_timestep = actual_num_timesteps
+        else:
+            # Normal refiner training schedule
+            start_timestep = 0
+            end_timestep = int(
+                actual_num_timesteps * StateTracker.get_args().refiner_training_strength
+            )
+        num_timesteps = end_timestep - start_timestep
+    else:
+        start_timestep = 0
+        end_timestep = actual_num_timesteps
+        num_timesteps = actual_num_timesteps
+
     logger.debug(
-        f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps and a segment size of {num_timesteps // bsz} timesteps."
+        f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps from a full schedule of {actual_num_timesteps} and a segment size of {num_timesteps // bsz} timesteps."
     )
     segment_size = num_timesteps // bsz
     selected_timesteps = []
 
     # Select one timestep from each segment based on the weights
     for i in range(bsz):
-        start = i * segment_size
+        start = start_timestep + i * segment_size
         logger.debug(f"Starting from {start}")
-        end = (i + 1) * segment_size if i != bsz - 1 else num_timesteps
+        end = start_timestep + (i + 1) * segment_size if i != bsz - 1 else end_timestep
         segment_weights = weights[start:end]
 
         # Normalize segment weights to ensure they sum to 1
