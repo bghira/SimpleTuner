@@ -3,10 +3,12 @@ from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
-from helpers.sdxl.pipeline import StableDiffusionXLPipeline
+from helpers.sdxl.pipeline import (
+    StableDiffusionXLPipeline,
+    StableDiffusionXLImg2ImgPipeline,
+)
 from helpers.legacy.pipeline import StableDiffusionPipeline
 from helpers.legacy.validation import retrieve_validation_images
-from diffusers.pipelines import StableDiffusionXLImg2ImgPipeline
 from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
