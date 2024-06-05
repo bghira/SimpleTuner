@@ -1454,7 +1454,9 @@ def main():
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
+            sync_gradients = False
             if accelerator.sync_gradients:
+                sync_gradients = True
                 try:
                     if args.use_adafactor_optimizer:
                         lr = lr_scheduler.get_lr()[0]
@@ -1578,11 +1580,13 @@ def main():
                 "lr": lr,
             }
             progress_bar.set_postfix(**logs)
-            validation.run_validations(validation_type="intermediary", step=global_step)
+            validation.run_validations(validation_type="intermediary", step=step)
             if (
                 args.push_to_hub
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
+                and step % args.gradient_accumulation_steps == 0
+                and global_step > global_resume_step
             ):
                 if accelerator.is_main_process:
                     try:

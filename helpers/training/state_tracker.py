@@ -267,7 +267,7 @@ class StateTracker:
 
     @classmethod
     def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_vae_cache_files[data_backend_id] is not None:
+        if cls.all_vae_cache_files.get(data_backend_id) is not None:
             cls.all_vae_cache_files[data_backend_id].clear()
         else:
             cls.all_vae_cache_files[data_backend_id] = {}

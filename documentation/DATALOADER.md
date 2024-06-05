@@ -20,7 +20,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
         "prepend_instance_prompt": false,
         "instance_prompt": "something to label every image",
         "only_instance_prompt": false,
-        "caption_strategy": "filename",
+        "caption_strategy": "filename|instanceprompt|parquet|textfile",
         "cache_dir_vae": "/path/to/vaecache",
         "vae_cache_clear_each_epoch": true,
         "probability": 1.0,

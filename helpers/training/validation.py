@@ -479,7 +479,7 @@ class Validation:
                     validation_resolution_width, validation_resolution_height = (
                         val * 4 for val in extra_validation_kwargs["image"].size
                     )
-                elif self.args.controlnet:
+                elif self.args.controlnet or self.args.validation_using_datasets:
                     validation_resolution_width, validation_resolution_height = (
                         extra_validation_kwargs["image"].size
                     )

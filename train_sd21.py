@@ -385,8 +385,7 @@ def main():
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
-            # noinspection PyUnresolvedReferences
-            import xformers
+            import xformers  # type: ignore
 
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.20"):
@@ -533,7 +532,7 @@ def main():
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
-            import bitsandbytes as bnb
+            import bitsandbytes as bnb  # type: ignore
         except ImportError:
             raise ImportError(
                 "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
@@ -963,7 +962,7 @@ def main():
             f"Resuming from epoch {first_epoch}, which leaves us with {total_steps_remaining_at_start}."
         )
     current_epoch = first_epoch
-    if current_epoch >= args.num_train_epochs + 1:
+    if current_epoch > args.num_train_epochs + 1:
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
@@ -1041,7 +1040,7 @@ def main():
     current_epoch_step = None
 
     for epoch in range(first_epoch, args.num_train_epochs + 1):
-        if current_epoch >= args.num_train_epochs + 1:
+        if current_epoch > args.num_train_epochs + 1:
             # This might immediately end training, but that's useful for simply exporting the model.
             logger.info(
                 f"Training run is complete ({args.num_train_epochs}/{args.num_train_epochs} epochs, {global_step}/{args.max_train_steps} steps)."
@@ -1439,6 +1438,8 @@ def main():
 
                 if (
                     args.freeze_encoder
+                    and args.train_text_encoder
+                    and text_encoder is not None
                     and current_percent_completion > args.text_encoder_limit
                 ):
                     # We want to stop training the text_encoder around 25% by default.
@@ -1507,19 +1508,23 @@ def main():
                 "lr": lr_scheduler.get_last_lr()[0],
             }
             progress_bar.set_postfix(**logs)
-            validation.run_validations(validation_type="intermediary", step=global_step)
+            validation.run_validations(validation_type="intermediary", step=step)
             if (
                 args.push_to_hub
                 and args.push_checkpoints_to_hub
                 and global_step % args.checkpointing_steps == 0
+                and step % args.gradient_accumulation_steps == 0
+                and global_step > global_resume_step
             ):
-                try:
-                    hub_manager.upload_latest_checkpoint(
-                        validation_images=validation.validation_images,
-                        webhook_handler=webhook_handler,
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to push checkpoint to hub: {e}")
+                if accelerator.is_main_process:
+                    try:
+                        hub_manager.upload_latest_checkpoint(
+                            validation_images=validation.validation_images,
+                            webhook_handler=webhook_handler,
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to push checkpoint to hub: {e}")
+            accelerator.wait_for_everyone()
 
             if global_step >= args.max_train_steps or epoch > args.num_train_epochs + 1:
                 logger.info(
