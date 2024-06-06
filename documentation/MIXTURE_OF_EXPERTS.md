@@ -18,7 +18,7 @@ Let's see how we can improve this situation.
 
 ## The Base model, "Stage One"
 
-The first portion of a mixture-of-experts is known as the base model. As mentioned in SDXL's case, it is trained on all 1000 timesteps - but it doesn't need to be.
+The first portion of a mixture-of-experts is known as the base model. As mentioned in SDXL's case, it is trained on all 1000 timesteps - but it doesn't need to be. The following configuration will train the base model on just 650 steps out of the total 1000, saving time and training more reliably.
 
 ### Environment configuration
 
