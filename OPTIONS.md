@@ -30,6 +30,10 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
 
+### `--refiner_training`
+
+- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+
 ## 📂 Data Storage and Management
 
 ### `--data_backend_config`
@@ -190,6 +194,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--snr_weight SNR_WEIGHT]
                      [--training_scheduler_timestep_spacing {leading,linspace,trailing}]
                      [--inference_scheduler_timestep_spacing {leading,linspace,trailing}]
+                     [--refiner_training] [--refiner_training_invert_schedule]
+                     [--refiner_training_strength REFINER_TRAINING_STRENGTH]
                      [--timestep_bias_strategy {earlier,later,range,none}]
                      [--timestep_bias_multiplier TIMESTEP_BIAS_MULTIPLIER]
                      [--timestep_bias_begin TIMESTEP_BIAS_BEGIN]
@@ -277,8 +283,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
                      [--validation_resolution VALIDATION_RESOLUTION]
                      [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
-                     [--disable_compel] [--enable_watermark]
-                     [--mixed_precision {bf16}] [--local_rank LOCAL_RANK]
+                     [--validation_disable_unconditional] [--disable_compel]
+                     [--enable_watermark] [--mixed_precision {bf16}]
+                     [--local_rank LOCAL_RANK]
                      [--enable_xformers_memory_efficient_attention]
                      [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                      [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
@@ -386,6 +393,28 @@ options:
                         recommends inference using 'trailing'. SD 2.x always
                         uses 'trailing', but SDXL may do better in its default
                         state when using 'leading'.
+  --refiner_training    When training or adapting a model into a mixture-of-
+                        experts 2nd stage / refiner model, this option should
+                        be set. This will slice the timestep schedule defined
+                        by --refiner_training_strength proportion value
+                        (default 0.2)
+  --refiner_training_invert_schedule
+                        While the refiner training strength is applied to the
+                        end of the schedule, this option will invert the
+                        result for training a **base** model, eg. the first
+                        model in a mixture-of-experts series. A
+                        --refiner_training_strength of 0.35 will result in the
+                        refiner learning timesteps 349-0. Setting
+                        --refiner_training_invert_schedule then would result
+                        in the base model learning timesteps 999-350.
+  --refiner_training_strength REFINER_TRAINING_STRENGTH
+                        When training a refiner / 2nd stage mixture of experts
+                        model, the refiner training strength indicates how
+                        much of the *end* of the schedule it will be trained
+                        on. A value of 0.2 means timesteps 199-0 will be the
+                        focus of this model, and 0.3 would be 299-0 and so on.
+                        The default value is 0.2, in line with the SDXL
+                        refiner pretraining.
   --timestep_bias_strategy {earlier,later,range,none}
                         The timestep bias strategy, which may help direct the
                         model toward learning low or frequency details.
@@ -834,10 +863,18 @@ options:
                         instabilities a bit better. For zero-terminal SNR
                         models, DDIM is the best choice. Choices: ['ddim',
                         'ddpm', 'euler', 'euler-a', 'unipc'], Default: ddim
-  --disable_compel      If provided, prompts will be handled using the typical
-                        prompt encoding strategy. Otherwise, the default
-                        behaviour is to use Compel for prompt embed
-                        generation.
+  --validation_disable_unconditional
+                        When set, the validation pipeline will not generate
+                        unconditional samples. This is useful to speed up
+                        validations with a single prompt on slower systems, or
+                        if you are not interested in unconditional space
+                        generations.
+  --disable_compel      If provided, validation pipeline prompts will be
+                        handled using the typical prompt encoding strategy.
+                        Otherwise, the default behaviour is to use Compel for
+                        prompt embed generation. Note that the training input
+                        text embeds are not generated using Compel, and will
+                        be truncated to 77 tokens.
   --enable_watermark    The SDXL 0.9 and 1.0 licenses both require a watermark
                         be used to identify any images created to be shared.
                         Since the images created during validation typically

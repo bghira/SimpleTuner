@@ -3,10 +3,12 @@ from pathlib import Path
 from tqdm import tqdm
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
-from helpers.sdxl.pipeline import StableDiffusionXLPipeline
+from helpers.sdxl.pipeline import (
+    StableDiffusionXLPipeline,
+    StableDiffusionXLImg2ImgPipeline,
+)
 from helpers.legacy.pipeline import StableDiffusionPipeline
 from helpers.legacy.validation import retrieve_validation_images
-from diffusers.pipelines import StableDiffusionXLImg2ImgPipeline
 from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
@@ -505,9 +507,15 @@ class Validation:
             logger.debug(
                 f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}"
             )
-            extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
             if validation_shortname not in validation_images:
                 validation_images[validation_shortname] = []
+            try:
+                extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
+            except Exception as e:
+                logger.error(
+                    f"Error gathering text embed for validation prompt {prompt}: {e}"
+                )
+                continue
             try:
                 pipeline_kwargs = {
                     "num_images_per_prompt": self.args.num_validation_images,

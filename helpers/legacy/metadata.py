@@ -82,7 +82,7 @@ inference: true
 
 This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full rank'} finetuned model derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'The main validation prompt used during training was:' if prompt else 'No validation prompt was used during training.'}
+{'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if StateTracker.get_args().validation_using_datasets else 'No validation prompt was used during training.'}
 
 ```
 {prompt}

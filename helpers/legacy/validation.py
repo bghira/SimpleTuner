@@ -112,7 +112,11 @@ def prepare_validation_prompt_list(args, embed_cache):
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
-    if "deepfloyd-stage2" in args.model_type or args.controlnet:
+    if (
+        "deepfloyd-stage2" in args.model_type
+        or args.controlnet
+        or args.validation_using_datasets
+    ):
         # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
         # If we don't do it here, they won't be available at inference time.
         validation_sample_images = retrieve_validation_images()

@@ -178,6 +178,37 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--refiner_training",
+        action="store_true",
+        default=False,
+        help=(
+            "When training or adapting a model into a mixture-of-experts 2nd stage / refiner model, this option should be set."
+            " This will slice the timestep schedule defined by --refiner_training_strength proportion value (default 0.2)"
+        ),
+    )
+    parser.add_argument(
+        "--refiner_training_invert_schedule",
+        action="store_true",
+        default=False,
+        help=(
+            "While the refiner training strength is applied to the end of the schedule, this option will invert the result"
+            " for training a **base** model, eg. the first model in a mixture-of-experts series."
+            " A --refiner_training_strength of 0.35 will result in the refiner learning timesteps 349-0."
+            " Setting --refiner_training_invert_schedule then would result in the base model learning timesteps 999-350."
+        ),
+    )
+    parser.add_argument(
+        "--refiner_training_strength",
+        default=0.2,
+        type=float,
+        help=(
+            "When training a refiner / 2nd stage mixture of experts model, the refiner training strength"
+            " indicates how much of the *end* of the schedule it will be trained on. A value of 0.2 means"
+            " timesteps 199-0 will be the focus of this model, and 0.3 would be 299-0 and so on."
+            " The default value is 0.2, in line with the SDXL refiner pretraining."
+        ),
+    )
+    parser.add_argument(
         "--timestep_bias_strategy",
         type=str,
         default="none",

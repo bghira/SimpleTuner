@@ -305,3 +305,7 @@ For more details, consult the [INSTALL](/INSTALL.md) and [OPTIONS](/OPTIONS.md) 
 ### Single-subject fine-tuning (Dreambooth)
 
 See [DREAMBOOTH](/documentation/DREAMBOOTH.md) for a breakdown on how Dreambooth training can be configured in SimpleTuner.
+
+### Mixture-of-Experts split-schedule model training
+
+See [MIXTURE-OF-EXPERTS](/documentation/MIXTURE_OF_EXPERTS.md) for information on how to split training over two models, such that one is responsible for composition and large details, and the other is responsible for finalising and filling in the fine details.

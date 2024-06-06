@@ -50,6 +50,7 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - [DeepFloyd stage I and II full u-net or parameter-efficient fine-tuning](/documentation/DEEPFLOYD.md) via LoRA using 22G VRAM
 - SDXL Refiner LoRA or full u-net training, incl validation using img2img
 - Full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
+- Training [Mixture of Experts](/documentation/MIXTURE_OF_EXPERTS.md) for lightweight, high-quality diffusion models
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
