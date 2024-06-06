@@ -154,4 +154,4 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --data_aesthetic_score=5.6"
 
 Update **5.6** to the score you would like to target. The default is **7.0**.
 
-> ⚠️ Currently, the validations images generate a complete image using only the refiner model. This is undesirable, but future work plans on extending evaluations for SDXL Refiner models to include a refining process from a ground truth image set.
+> ⚠️ When training the SDXL refiner, your validation prompts will be ignored. Instead, random images from your datasets will be refined.
