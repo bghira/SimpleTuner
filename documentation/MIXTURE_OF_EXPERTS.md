@@ -31,10 +31,14 @@ export USE_DORA=false
 # lora could be used here instead, but the concept hasn't been explored.
 export MODEL_TYPE="full"
 export MODEL_NAME="segmind/SSD-1B"
+# The original Segmind model used a learning rate of 1e-5, which is
+# probably too high for whatever batch size most users can pull off.
 export LEARNING_RATE=4e-7
 
 # We really want this as high as you can tolerate.
-# If training is very slow, ensure you alter your CHECKPOINT_STEPS and VALIDATION_STEPS are set low enough that you'll get a checkpoint in an hour or two.
+# - If training is very slow, ensure your CHECKPOINT_STEPS and VALIDATION_STEPS
+#   are set low enough that you'll get a checkpoint every couple hours.
+# - The original Segmind models used a batch size of 32 with 4 accumulations.
 export TRAIN_BATCH_SIZE=8
 export GRADIENT_ACCUMULATION_STEPS=4
 
