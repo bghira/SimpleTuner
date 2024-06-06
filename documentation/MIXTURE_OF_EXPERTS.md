@@ -110,11 +110,12 @@ If you'd like to plug both of the models together to experiment with in a simple
 
 ```py
 from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
-from torch import float16
+from torch import float16, cuda
+from torch.backends import mps
 
 stage_1_model_id = 'ptx0/terminus-xl-velocity-v2'
 stage_2_model_id = 'ptx0/terminus-xl-refiner'
-torch_device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+torch_device = 'cuda' if cuda.is_available() else 'mps' if mps.is_available() else 'cpu'
 
 pipe = StableDiffusionXLPipeline.from_pretrained(stage_1_model_id, add_watermarker=False, torch_dtype=float16).to(torch_device)
 img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(stage_2_model_id).to(device=torch_device, dtype=float16)
