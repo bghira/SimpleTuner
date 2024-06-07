@@ -41,7 +41,7 @@ def segmented_timestep_selection(
     for i in range(bsz):
         start = start_timestep - i * segment_size
         logger.debug(f"Starting from {start}")
-        end = start - segment_size if i != bsrz - 1 else end_timestep - 1
+        end = start - segment_size if i != bsz - 1 else end_timestep - 1
         segment_weights = weights[end : start + 1]
 
         # Normalize segment weights to ensure they sum to 1
