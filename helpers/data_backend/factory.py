@@ -87,6 +87,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop_style"] = backend["crop_style"]
     else:
         output["config"]["crop_style"] = "random"
+    output["config"]["disable_validation"] = backend.get("disable_validation", False)
     if "resolution" in backend:
         output["config"]["resolution"] = backend["resolution"]
     else:

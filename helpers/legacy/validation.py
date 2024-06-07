@@ -63,6 +63,8 @@ def retrieve_validation_images():
     logger.info("Collecting validation images")
     for _data_backend in data_backends:
         data_backend = StateTracker.get_data_backend(_data_backend)
+        data_backend_config = data_backend.get("config", {})
+        should_skip_dataset = data_backend_config.get("disable_validation", False)
         logger.debug(f"Backend {_data_backend}: {data_backend}")
         if "id" not in data_backend or (
             args.controlnet and data_backend.get("dataset_type", None) != "conditioning"
@@ -75,7 +77,7 @@ def retrieve_validation_images():
         if (
             validation_data_backend_id is not None
             and data_backend["id"] != validation_data_backend_id
-        ):
+        ) or should_skip_dataset:
             logger.warning(f"Not collecting images from {data_backend['id']}")
             continue
         if "sampler" in data_backend:

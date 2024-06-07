@@ -109,37 +109,51 @@ Stage two refiner training will automatically select images from each of your tr
 If you'd like to plug both of the models together to experiment with in a simple script, this will get you started:
 
 ```py
-from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline
-from torch import float16
+from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipeline, UniPCMultistepScheduler
+from torch import float16, cuda
+from torch.backends import mps
 
+# For a training_refiner_strength of .35, you'll set the base model strength to 0.65.
+# Formula: 1 - training_refiner_strength
+training_refiner_strength = 0.35
+base_model_power = 1 - training_refiner_strength
+# Reduce this for lower quality but speed-up.
+num_inference_steps = 40
+# Update these to your local or hugging face hub paths.
 stage_1_model_id = 'ptx0/terminus-xl-velocity-v2'
 stage_2_model_id = 'ptx0/terminus-xl-refiner'
-torch_device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+torch_device = 'cuda' if cuda.is_available() else 'mps' if mps.is_available() else 'cpu'
 
 pipe = StableDiffusionXLPipeline.from_pretrained(stage_1_model_id, add_watermarker=False, torch_dtype=float16).to(torch_device)
+pipe.scheduler = UniPCMultistepScheduler.from_pretrained(stage_1_model_id, subfolder="scheduler")
 img2img_pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(stage_2_model_id).to(device=torch_device, dtype=float16)
+img2img_pipe.scheduler = UniPCMultistepScheduler.from_pretrained(stage_1_model_id, subfolder="scheduler")
 
 prompt = "An astronaut riding a green horse"
 
 # Important: update this to True if you reparameterised the models.
-use_zsnr = False
+use_zsnr = True
 
 image = pipe(
     prompt=prompt,
-    num_inference_steps=40,
-    denoising_end=0.8,
+    num_inference_steps=num_inference_steps,
+    denoising_end=base_model_power,
     guidance_scale=9.2,
     guidance_rescale=0.7 if use_zsnr else 0.0,
     output_type="latent",
 ).images
 image = img2img_pipe(
     prompt=prompt,
-    num_inference_steps=40,
-    denoising_start=0.8,
+    num_inference_steps=num_inference_steps,
+    denoising_start=base_model_power,
     guidance_scale=9.2,
     guidance_rescale=0.7 if use_zsnr else 0.0,
     image=image,
 ).images[0]
 image.save('demo.png', format="PNG")
-
 ```
+
+Some experimentations you can run:
+- Play with some values here such as `base_model_power` or `num_inference_steps`, which must be the same for both pipelines.
+- You can also play with `guidance_scale`, `guidance_rescale` which can be set differently for each stage. These impact contrast and realism.
+- Using separate prompts between the base and refiner models to shift the guidance focus for fine details.

@@ -11,44 +11,46 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 def segmented_timestep_selection(
     actual_num_timesteps, bsz, weights, use_refiner_range: bool = False
 ):
+    args = StateTracker.get_args()
     # Determine the range of timesteps to use
-    if use_refiner_range or StateTracker.get_args().refiner_training:
-        if StateTracker.get_args().refiner_training_invert_schedule:
-            # Invert the schedule range to train from higher to a specific lower timestep
-            start_timestep = actual_num_timesteps - int(
-                actual_num_timesteps * StateTracker.get_args().refiner_training_strength
-            )
-            end_timestep = actual_num_timesteps
+    num_timesteps = actual_num_timesteps
+    if use_refiner_range or args.refiner_training:
+        if args.refiner_training_invert_schedule:
+            # Inverted schedule calculation: we start from the last timestep and move downwards
+            start_timestep = (
+                actual_num_timesteps - 1
+            )  # Start from the last timestep, e.g., 999
+            # Calculate the end of the range based on the inverse of the training strength
+            end_timestep = int(args.refiner_training_strength * actual_num_timesteps)
         else:
             # Normal refiner training schedule
-            start_timestep = 0
-            end_timestep = int(
-                actual_num_timesteps * StateTracker.get_args().refiner_training_strength
+            start_timestep = (
+                int(actual_num_timesteps * args.refiner_training_strength) - 1
             )
-        num_timesteps = end_timestep - start_timestep
+            end_timestep = 0
+        num_timesteps = start_timestep - end_timestep + 1
     else:
-        start_timestep = 0
-        end_timestep = actual_num_timesteps
-        num_timesteps = actual_num_timesteps
+        start_timestep = actual_num_timesteps - 1
+        end_timestep = 0
 
     logger.debug(
         f"{'Using SDXL refiner' if StateTracker.is_sdxl_refiner() else 'Training base model '} with {num_timesteps} timesteps from a full schedule of {actual_num_timesteps} and a segment size of {num_timesteps // bsz} timesteps."
     )
-    segment_size = num_timesteps // bsz
+    segment_size = max(num_timesteps // bsz, 1)
     selected_timesteps = []
 
     # Select one timestep from each segment based on the weights
     for i in range(bsz):
-        start = start_timestep + i * segment_size
-        logger.debug(f"Starting from {start}")
-        end = start_timestep + (i + 1) * segment_size if i != bsz - 1 else end_timestep
-        segment_weights = weights[start:end]
+        start = start_timestep - i * segment_size
+        end = max(start - segment_size, end_timestep) if i != bsz - 1 else end_timestep
+        logger.debug(f"Segment from {start} to {end}")
+        segment_weights = weights[end : start + 1]
 
         # Normalize segment weights to ensure they sum to 1
         segment_weights /= segment_weights.sum()
 
         # Sample one timestep from the segment
-        segment_timesteps = torch.arange(start, end)
+        segment_timesteps = torch.arange(end, start + 1)
         selected_timestep = torch.multinomial(segment_weights, 1).item()
         selected_timesteps.append(segment_timesteps[selected_timestep])
 
