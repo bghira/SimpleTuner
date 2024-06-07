@@ -21,9 +21,7 @@ def segmented_timestep_selection(
                 actual_num_timesteps - 1
             )  # Start from the last timestep, e.g., 999
             # Calculate the end of the range based on the inverse of the training strength
-            end_timestep = int(
-                (1 - args.refiner_training_strength) * actual_num_timesteps
-            )
+            end_timestep = int(args.refiner_training_strength * actual_num_timesteps)
         else:
             # Normal refiner training schedule
             start_timestep = (

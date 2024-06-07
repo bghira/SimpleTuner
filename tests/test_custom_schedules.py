@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import patch, MagicMock
 import torch
 import torch.optim as optim
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     enforce_zero_terminal_snr,
     patch_scheduler_betas,
+    segmented_timestep_selection,
 )
 
 
@@ -53,6 +55,39 @@ class TestPolynomialDecayWithWarmup(unittest.TestCase):
 
         final_beta = scheduler.betas[-1]
         self.assertEqual(final_beta, 1.0)
+
+    def test_inverted_schedule(self):
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_args",
+            return_value=MagicMock(
+                refiner_training=True,
+                refiner_training_invert_schedule=True,
+                refiner_training_strength=0.35,
+            ),
+        ):
+            weights = torch.ones(1000)  # Uniform weights
+            selected_timesteps = segmented_timestep_selection(
+                1000, 10, weights, use_refiner_range=False
+            )
+            self.assertTrue(
+                all(350 <= t <= 999 for t in selected_timesteps),
+                f"Selected timesteps: {selected_timesteps}",
+            )
+
+    def test_normal_schedule(self):
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_args",
+            return_value=MagicMock(
+                refiner_training=True,
+                refiner_training_invert_schedule=False,
+                refiner_training_strength=0.35,
+            ),
+        ):
+            weights = torch.ones(1000)  # Uniform weights
+            selected_timesteps = segmented_timestep_selection(
+                1000, 10, weights, use_refiner_range=False
+            )
+            self.assertTrue(all(0 <= t < 350 for t in selected_timesteps))
 
 
 if __name__ == "__main__":
