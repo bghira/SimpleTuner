@@ -163,8 +163,10 @@ class PromptHandler:
     def retrieve_prompt_column_from_parquet(
         sampler_backend_id: str,
     ) -> str:
-        parquet_db = StateTracker.get_parquet_database(sampler_backend_id)
-        if parquet_db is None:
+        dataframe, filename_column, caption_column, fallback_caption_column = (
+            StateTracker.get_parquet_database(sampler_backend_id)
+        )
+        if dataframe is None:
             raise ValueError(
                 f"Parquet database not found for sampler {sampler_backend_id}."
             )
@@ -178,7 +180,7 @@ class PromptHandler:
                 f"Caption column not found for sampler {sampler_backend_id}. Config: {StateTracker.get_data_backend_config(sampler_backend_id)}"
             )
         # Return just that column
-        return parquet_db[caption_column].values
+        return dataframe[caption_column].values
 
     @staticmethod
     def prepare_instance_prompt_from_parquet(
