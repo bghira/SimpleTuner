@@ -180,7 +180,19 @@ class PromptHandler:
                 f"Caption column not found for sampler {sampler_backend_id}. Config: {StateTracker.get_data_backend_config(sampler_backend_id)}"
             )
         # Return just that column
-        return dataframe[caption_column].values
+        all_captions = dataframe[caption_column].values
+        fallback_caption_column = (
+            StateTracker.get_data_backend_config(sampler_backend_id)
+            .get("parquet", {})
+            .get("fallback_caption_column")
+        )
+        if fallback_caption_column is not None and all_captions is not None:
+            # Combine the lists
+            fallback_captions = dataframe[fallback_caption_column].values
+            all_captions = [
+                x if x else y for x, y in zip(all_captions, fallback_captions)
+            ]
+        return all_captions
 
     @staticmethod
     def prepare_instance_prompt_from_parquet(
