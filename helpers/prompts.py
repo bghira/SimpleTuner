@@ -160,6 +160,26 @@ class PromptHandler:
         self.tokenizers = tokenizers
 
     @staticmethod
+    def retrieve_prompt_column_from_parquet(
+        sampler_backend_id: str,
+    ) -> str:
+        parquet_db = StateTracker.get_parquet_database(sampler_backend_id)
+        if parquet_db is None:
+            raise ValueError(
+                f"Parquet database not found for sampler {sampler_backend_id}."
+            )
+        caption_column = (
+            StateTracker.get_data_backend_config(sampler_backend_id)
+            .get("parquet", {})
+            .get("caption_column", None)
+        )
+        if not caption_column:
+            raise ValueError(
+                f"Caption column not found for sampler {sampler_backend_id}."
+            )
+        return parquet_db[caption_column]
+
+    @staticmethod
     def prepare_instance_prompt_from_parquet(
         image_path: str,
         use_captions: bool,
@@ -377,6 +397,11 @@ class PromptHandler:
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
+
+        if caption_strategy == "parquet":
+            return PromptHandler.retrieve_prompt_column_from_parquet(
+                sampler_backend_id=data_backend.id
+            )
 
         for image_path in tqdm(
             all_image_files,
