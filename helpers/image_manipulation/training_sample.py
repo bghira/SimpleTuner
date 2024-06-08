@@ -113,7 +113,12 @@ class TrainingSample:
             "crop_coordinates",
             "aspect_ratio",
         ]
-        self.valid_metadata = all(key in self.image_metadata for key in required_keys)
+        if type(self.image_metadata) is not dict:
+            self.valid_metadata = False
+        else:
+            self.valid_metadata = all(
+                key in self.image_metadata for key in required_keys
+            )
         if self.valid_metadata:
             logger.debug(f"Setting metadata: {self.image_metadata}")
             self.original_size = self.image_metadata["original_size"]
