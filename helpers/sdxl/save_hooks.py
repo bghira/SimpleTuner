@@ -207,7 +207,9 @@ class SDXLSaveHook:
                     model.load_state_dict(load_model.state_dict())
                     del load_model
                 except Exception as e:
-                    return_exception = e
+                    import traceback
+
+                    return_exception = f"Could not load model: {e}, traceback: {traceback.format_exc()}"
 
             if return_exception:
-                raise Exception("Could not load model: {}".format(return_exception))
+                raise Exception(return_exception)
