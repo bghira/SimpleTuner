@@ -49,8 +49,13 @@ def merge_safetensors_files(directory):
                     all_tensors[tensor_key] = f.get_tensor(tensor_key)
 
     # Step 4: Save all loaded tensors into a single new safetensors file
-    output_file_path = os.path.join(directory, "diffusion_model_pytorch.safetensors")
+    output_file_path = os.path.join(directory, "diffusion_pytorch_model.safetensors")
     save_file(all_tensors, output_file_path)
+    # Step 5: If the file now exists, remove the index and part files
+    if os.path.exists(output_file_path):
+        os.remove(json_file_path)
+        for file_name in files_to_load:
+            os.remove(os.path.join(directory, file_name))
 
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
@@ -132,6 +137,7 @@ class SDXLSaveHook:
         sub_dir = "unet" if not self.args.controlnet else "controlnet"
         for model in models:
             model.save_pretrained(os.path.join(temporary_dir, sub_dir))
+            merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
             if weights:
                 weights.pop()  # Pop the last weight
 
@@ -233,6 +239,7 @@ class SDXLSaveHook:
                     if self.args.controlnet:
                         from diffusers import ControlNetModel
 
+                        merge_safetensors_files(os.path.join(input_dir, "controlnet"))
                         load_model = ControlNetModel.from_pretrained(
                             input_dir, subfolder="controlnet"
                         )
