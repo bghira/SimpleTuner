@@ -175,7 +175,7 @@ class PromptHandler:
         )
         if not caption_column:
             raise ValueError(
-                f"Caption column not found for sampler {sampler_backend_id}."
+                f"Caption column not found for sampler {sampler_backend_id}. Config: {StateTracker.get_data_backend_config(sampler_backend_id)}"
             )
         return parquet_db[caption_column]
 
