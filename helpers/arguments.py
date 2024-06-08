@@ -1076,7 +1076,7 @@ def parse_args(input_args=None):
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16"],
+        choices=["bf16", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
@@ -1364,8 +1364,11 @@ def parse_args(input_args=None):
         args = parser.parse_args()
 
     if args.adam_bfloat16 and args.mixed_precision != "bf16":
-        logging.error("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
-        sys.exit(1)
+        if not torch.backends.mps.is_available():
+            logging.error(
+                "You cannot use --adam_bfloat16 without --mixed_precision=bf16."
+            )
+            sys.exit(1)
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
