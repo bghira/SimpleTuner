@@ -379,14 +379,14 @@ class VAECache:
         relevant_files = []
         for f in aspect_bucket_cache[bucket]:
             if os.path.splitext(f)[0] in processed_images:
-                # self.debug_log(
-                #     f"Skipping {f} because it is already in the processed images list"
-                # )
+                self.debug_log(
+                    f"Skipping {f} because it is already in the processed images list"
+                )
                 continue
             if f not in self.local_unprocessed_files:
-                # self.debug_log(
-                #     f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                # )
+                self.debug_log(
+                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                )
                 continue
             relevant_files.append(f)
         if do_shuffle:
