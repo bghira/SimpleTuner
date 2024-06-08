@@ -21,7 +21,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 def merge_safetensors_files(directory):
-    json_file_name = "diffusion_model_pytorch.safetensors.index.json"
+    json_file_name = "diffusion_pytorch_model.safetensors.index.json"
     json_file_path = os.path.join(directory, json_file_name)
     if not os.path.exists(json_file_path):
         raise FileNotFoundError(f"{json_file_name} not found in the directory.")
