@@ -96,6 +96,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution_type"] = backend["resolution_type"]
     else:
         output["config"]["resolution_type"] = args.resolution_type
+    if "parquet" in backend:
+        output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:
         output["config"]["caption_strategy"] = backend["caption_strategy"]
     else:
