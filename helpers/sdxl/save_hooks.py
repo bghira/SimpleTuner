@@ -24,7 +24,7 @@ def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
     json_file_path = os.path.join(directory, json_file_name)
     if not os.path.exists(json_file_path):
-        raise FileNotFoundError(f"{json_file_name} not found in the directory.")
+        return
 
     # Step 2: Load the JSON file and extract the weight map
     with open(json_file_path, "r") as file:
