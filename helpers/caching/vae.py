@@ -662,7 +662,9 @@ class VAECache:
 
             # Process Pool Execution
             processed_images = []
+            self.debug_log("Creating process pool for prepare_sample")
             with ProcessPoolExecutor() as executor:
+                self.debug_log("Submitting jobs to process pool worker")
                 futures = [
                     executor.submit(
                         prepare_sample,
@@ -672,8 +674,10 @@ class VAECache:
                     )
                     for data in initial_data
                 ]
+                self.debug_log("Checking jobs for completion")
                 first_aspect_ratio = None
                 for future in futures:
+                    self.debug_log(f"Checking future: {future}")
                     try:
                         result = (
                             future.result()
