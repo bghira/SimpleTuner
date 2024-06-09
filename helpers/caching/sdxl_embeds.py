@@ -419,7 +419,7 @@ class TextEmbeddingCache:
         )
         with torch.no_grad():
             for prompt in tqdm(
-                shuffle(local_caption_split),
+                local_caption_split,
                 desc="Processing prompts",
                 disable=return_concat,
                 leave=False,
