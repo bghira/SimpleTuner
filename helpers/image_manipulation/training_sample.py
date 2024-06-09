@@ -635,6 +635,7 @@ class PreparedSample:
 
         if (
             hasattr(image, "save")
+            and type(image_metadata) is dict
             and "image_path" in image_metadata
             and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", False)
         ):
