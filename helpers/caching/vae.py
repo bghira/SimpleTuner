@@ -701,7 +701,7 @@ class VAECache:
                                 )
 
                     except Exception as e:
-                        self.debug_log(
+                        logger.error(
                             f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
                         )
                     self.debug_log("Completed processing.")
