@@ -336,9 +336,9 @@ class VAECache:
         pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
-        self.debug_log(
-            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
-        )
+        # self.debug_log(
+        #     f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
+        # )
         return results
 
     def discover_unprocessed_files(self, directory: str = None):
@@ -383,25 +383,13 @@ class VAECache:
         Given a bucket, return the relevant files for that bucket.
         """
         relevant_files = []
-        self.debug_log(f"Already processed files: {processed_images}")
-        self.debug_log(f"Local unprocessed files: {self.local_unprocessed_files}")
         for full_image_path in aspect_bucket_cache[bucket]:
-            # full_image_path is the full *image* path:
-            #    /home/user/training/data/train/a_lightcolored_chihuahua_dog_is_walking_through_a_muddy_puddle_with_reflection_visible_in_the_water_the_dog_wears_a_black_collar.png
-            # processed_images contains basename *cache* paths:
-            #    /home/user/training/data/vae/a_lightcolored_chihuahua_dog_is_walking_through_a_muddy_puddle_with_reflection_visible_in_the_water_the_dog_wears_a_black_collar
-            # we have to swap the image prefix path for the cache prefix path to compare.
             comparison_path = self.generate_vae_cache_filename(full_image_path)[0]
-            self.debug_log(f"Comparison path: {comparison_path}")
             if os.path.splitext(comparison_path)[0] in processed_images:
-                # self.debug_log(
-                #     f"Skipping {full_image_path} because it is already in the processed images list"
-                # )
+                # full_image_path is the full *image* path:
                 continue
             if full_image_path not in self.local_unprocessed_files:
-                # self.debug_log(
-                #     f"Skipping {full_image_path} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                # )
+                # processed_images contains basename *cache* paths:
                 continue
             relevant_files.append(full_image_path)
         if do_shuffle:
