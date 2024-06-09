@@ -336,9 +336,9 @@ class VAECache:
         pt_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
         # Extract just the base filename without the extension
         results = {os.path.splitext(f)[0] for f in pt_files}
-        # self.debug_log(
-        #     f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
-        # )
+        self.debug_log(
+            f"Found {len(pt_files)} cached files in {self.cache_dir} (truncated): {list(results)[:5]}"
+        )
         return results
 
     def discover_unprocessed_files(self, directory: str = None):
