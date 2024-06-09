@@ -20,15 +20,23 @@ logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
-def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
+def prepare_sample(
+    image: Image.Image = None, data_backend_id: str = None, filepath: str = None
+):
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
     )
     logger.debug(
         f"Prepare sample {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
     )
+    data_backend = StateTracker.get_data_backend(data_backend_id)
+    data_sampler = data_backend.get("sampler")
+    print(f"Backend {data_backend_id}: {data_backend}")
+    image_data = image
+    if image_data is None:
+        image_data = data_sampler.yield_single_image(filepath)
     training_sample = TrainingSample(
-        image=image,
+        image=image_data,
         data_backend_id=data_backend_id,
         image_metadata=metadata,
         image_path=filepath,
@@ -668,7 +676,6 @@ class VAECache:
                 futures = [
                     executor.submit(
                         prepare_sample,
-                        image=data[1],
                         data_backend_id=self.id,
                         filepath=data[0],
                     )

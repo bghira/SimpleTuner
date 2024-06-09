@@ -173,6 +173,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
         return image_path
 
+    def yield_single_image(self, filepath: str):
+        """
+        Yield a single image from the dataset by path.
+
+        If the path prefix isn't in the path, we'll add it.
+        """
+        if self.metadata_backend.instance_data_root not in filepath:
+            filepath = os.path.join(self.metadata_backend.instance_data_root, filepath)
+        image_data = self.data_backend.read_image(filepath)
+        return image_data
+
     def _bucket_name_to_id(self, bucket_name: str) -> int:
         """
         Return a bucket array index, by its name.
