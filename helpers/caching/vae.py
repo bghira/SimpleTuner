@@ -383,6 +383,8 @@ class VAECache:
         Given a bucket, return the relevant files for that bucket.
         """
         relevant_files = []
+        self.debug_log(f"Already processed files: {processed_images}")
+        self.debug_log(f"Local unprocessed files: {self.local_unprocessed_files}")
         for f in aspect_bucket_cache[bucket]:
             if os.path.splitext(f)[0] in processed_images:
                 self.debug_log(
