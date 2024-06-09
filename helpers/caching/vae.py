@@ -624,7 +624,7 @@ class VAECache:
             None
         """
         try:
-            logger.debug(
+            self.debug_log(
                 f"Processing batch of images into VAE embeds. image_paths: {type(image_paths)}, image_data: {type(image_data)}"
             )
             initial_data = []
@@ -633,7 +633,7 @@ class VAECache:
                 qlen = len(image_paths)
             else:
                 qlen = self.process_queue.qsize()
-            logger.debug(f"we have {qlen} images to process.")
+            self.debug_log(f"we have {qlen} images to process.")
 
             # First Loop: Preparation and Filtering
             for _ in range(qlen):
@@ -658,6 +658,7 @@ class VAECache:
                         continue
                 # image.save(f"test_{os.path.basename(filepath)}.png")
                 initial_data.append((filepath, image, aspect_bucket))
+            self.debug_log("Completed gathering data for processing.")
 
             # Process Pool Execution
             processed_images = []
@@ -678,6 +679,7 @@ class VAECache:
                             future.result()
                         )  # Returns PreparedSample or tuple(image, crop_coordinates, aspect_ratio)
                         if result:  # Ensure result is not None or invalid
+                            self.debug_log(f"Result: {result}")
                             processed_images.append(result)
                             if first_aspect_ratio is None:
                                 first_aspect_ratio = result[2]
@@ -704,11 +706,15 @@ class VAECache:
                         self.debug_log(
                             f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
                         )
+                    self.debug_log("Completed processing.")
 
             # Second Loop: Final Processing
             is_final_sample = False
             output_values = []
             first_aspect_ratio = None
+            self.debug_log(
+                "Processing, transforming, and adding images to the VAE processing queue."
+            )
             for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
                 processed_images
             ):
@@ -738,9 +744,9 @@ class VAECache:
                     value=crop_coordinates,
                     update_json=False,
                 )
-                self.debug_log(
-                    f"Completed processing {filepath}, gathered {len(output_values)} output values."
-                )
+            self.debug_log(
+                f"Completed processing gathered {len(output_values)} output values."
+            )
         except Exception as e:
             logger.error(
                 f"Error processing images {filepaths if len(filepaths) > 0 else image_paths}: {e}"
