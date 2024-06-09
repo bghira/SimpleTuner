@@ -415,7 +415,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=0,
+            position=get_rank() + self.accelerator.num_processes,
         )
         with torch.no_grad():
             for prompt in tqdm(
