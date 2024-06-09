@@ -1,5 +1,6 @@
 import os, torch, hashlib, logging, time, gc
 from tqdm import tqdm
+from random import shuffle
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.prompts import PromptHandler
@@ -8,6 +9,7 @@ from queue import Queue
 import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
+from helpers.training.multi_process import _get_rank as get_rank
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -372,6 +374,16 @@ class TextEmbeddingCache:
         logger.debug(f"Returning output: {output}")
         return output
 
+    def split_captions_between_processes(self, all_captions: list):
+        with self.accelerator.split_between_processes(all_captions) as split:
+            split_captions = split
+        self.debug_log(
+            f"Before splitting, we had {len(all_captions)} captions. After splitting, we have {len(split_captions)} unprocessed files."
+        )
+        # # Print the first 5 as a debug log:
+        self.debug_log(f"Local unprocessed captions: {split_captions[:5]} (truncated)")
+        return split_captions
+
     def compute_embeddings_for_sdxl_prompts(
         self,
         prompts: list = None,
@@ -383,6 +395,9 @@ class TextEmbeddingCache:
         add_text_embeds_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
+        local_caption_split = self.split_captions_between_processes(
+            prompts or self.prompts
+        )
         if (
             hasattr(args, "cache_clear_validation_prompts")
             and args.cache_clear_validation_prompts
@@ -399,17 +414,17 @@ class TextEmbeddingCache:
             leave=False,
             ncols=125,
             disable=return_concat,
-            total=len(prompts or self.prompts),
-            position=0,
+            total=len(local_caption_split),
+            position=get_rank() + self.accelerator.num_processes,
         )
         with torch.no_grad():
             for prompt in tqdm(
-                prompts or self.prompts,
+                local_caption_split,
                 desc="Processing prompts",
                 disable=return_concat,
                 leave=False,
                 ncols=125,
-                position=1,
+                position=get_rank(),
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
