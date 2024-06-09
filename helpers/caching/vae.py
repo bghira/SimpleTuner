@@ -385,23 +385,30 @@ class VAECache:
         relevant_files = []
         self.debug_log(f"Already processed files: {processed_images}")
         self.debug_log(f"Local unprocessed files: {self.local_unprocessed_files}")
-        for f in aspect_bucket_cache[bucket]:
-            if os.path.splitext(f)[0] in processed_images:
-                self.debug_log(
-                    f"Skipping {f} because it is already in the processed images list"
-                )
+        for full_image_path in aspect_bucket_cache[bucket]:
+            # full_image_path is the full *image* path:
+            #    /home/user/training/data/train/a_lightcolored_chihuahua_dog_is_walking_through_a_muddy_puddle_with_reflection_visible_in_the_water_the_dog_wears_a_black_collar.png
+            # processed_images contains basename *cache* paths:
+            #    /home/user/training/data/vae/a_lightcolored_chihuahua_dog_is_walking_through_a_muddy_puddle_with_reflection_visible_in_the_water_the_dog_wears_a_black_collar
+            # we have to swap the image prefix path for the cache prefix path to compare.
+            comparison_path = self.generate_vae_cache_filename(full_image_path)[0]
+            self.debug_log(f"Comparison path: {comparison_path}")
+            if os.path.splitext(comparison_path)[0] in processed_images:
+                # self.debug_log(
+                #     f"Skipping {full_image_path} because it is already in the processed images list"
+                # )
                 continue
-            if f not in self.local_unprocessed_files:
-                self.debug_log(
-                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                )
+            if full_image_path not in self.local_unprocessed_files:
+                # self.debug_log(
+                #     f"Skipping {full_image_path} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                # )
                 continue
-            relevant_files.append(f)
+            relevant_files.append(full_image_path)
         if do_shuffle:
             shuffle(relevant_files)
         self.debug_log(
             f"Reduced bucket {bucket} down from {len(aspect_bucket_cache[bucket])} to {len(relevant_files)} relevant files."
-            f" Our system has {len(self.local_unprocessed_files)} images in its assigned slice for processing."
+            f" Our system has {len(self.local_unprocessed_files)} total images in its assigned slice for processing across all buckets."
         )
         return relevant_files
 
