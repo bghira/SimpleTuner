@@ -31,7 +31,6 @@ def prepare_sample(
     )
     data_backend = StateTracker.get_data_backend(data_backend_id)
     data_sampler = data_backend.get("sampler")
-    print(f"Backend {data_backend_id}: {data_backend}")
     image_data = image
     if image_data is None:
         image_data = data_sampler.yield_single_image(filepath)
