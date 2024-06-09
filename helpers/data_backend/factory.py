@@ -736,10 +736,7 @@ def configure_multi_databackend(
                 ),
             )
             init_backend["metadata_backend"].scan_for_metadata()
-        elif not backend.get("scan_for_errors", False):
-            logger.info(
-                f"Skipping error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to True in the dataset config to enable this if your training runs into mismatched latent dimensions."
-            )
+
         accelerator.wait_for_everyone()
         if not accelerator.is_main_process:
             init_backend["metadata_backend"].load_image_metadata()
@@ -753,7 +750,7 @@ def configure_multi_databackend(
             init_backend["vaecache"].split_cache_between_processes()
             if args.vae_cache_preprocess:
                 init_backend["vaecache"].process_buckets()
-            logger.info(
+            logger.debug(
                 f"Encoding images during training: {not args.vae_cache_preprocess}"
             )
             accelerator.wait_for_everyone()
