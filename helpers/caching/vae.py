@@ -51,11 +51,6 @@ def prepare_sample(
 
 
 class VAECache:
-    read_queue = Queue()
-    process_queue = Queue()
-    write_queue = Queue()
-    vae_input_queue = Queue()
-
     def __init__(
         self,
         id: str,
@@ -118,6 +113,10 @@ class VAECache:
             )
         self.maximum_image_size = maximum_image_size
         self.target_downsample_size = target_downsample_size
+        self.read_queue = Queue()
+        self.process_queue = Queue()
+        self.write_queue = Queue()
+        self.vae_input_queue = Queue()
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
