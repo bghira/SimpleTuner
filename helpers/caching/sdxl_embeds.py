@@ -382,6 +382,7 @@ class TextEmbeddingCache:
         )
         # # Print the first 5 as a debug log:
         self.debug_log(f"Local unprocessed captions: {split_captions[:5]} (truncated)")
+        return split_captions
 
     def compute_embeddings_for_sdxl_prompts(
         self,
