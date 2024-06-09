@@ -159,7 +159,7 @@ class VAECache:
     def already_cached(self, filepath: str) -> bool:
         test_path = self.generate_vae_cache_filename(filepath)[0]
         if self.data_backend.exists(test_path):
-            # self.debug_log(f"Skipping {test_path} because it is already in the cache")
+            self.debug_log(f"Skipping {test_path} because it is already in the cache")
             return True
         return False
 
