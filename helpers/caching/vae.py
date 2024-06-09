@@ -375,14 +375,28 @@ class VAECache:
         Given a bucket, return the relevant files for that bucket.
         """
         relevant_files = []
+        total_files = 0
+        skipped_files = 0
         for full_image_path in aspect_bucket_cache[bucket]:
+            total_files += 1
             comparison_path = self.generate_vae_cache_filename(full_image_path)[0]
             if os.path.splitext(comparison_path)[0] in processed_images:
                 # processed_images contains basename *cache* paths:
+                skipped_files += 1
+                self.debug_log(
+                    f"Reduce bucket {bucket}, skipping ({skipped_files}/{total_files}) {full_image_path} because it is in processed_images"
+                )
                 continue
             if full_image_path not in self.local_unprocessed_files:
                 # full_image_path is the full *image* path:
+                skipped_files += 1
+                self.debug_log(
+                    f"Reduce bucket {bucket}, skipping ({skipped_files}/{total_files}) {full_image_path} because it is not in local processed_images"
+                )
                 continue
+            self.debug_log(
+                f"Reduce bucket {bucket}, adding ({len(relevant_files)}/{total_files}) {full_image_path}"
+            )
             relevant_files.append(full_image_path)
         if do_shuffle:
             shuffle(relevant_files)
