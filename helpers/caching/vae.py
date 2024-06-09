@@ -26,7 +26,7 @@ def prepare_sample(
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
     )
-    logger.debug(
+    self.debug_log(
         f"Prepare sample {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
     )
     data_backend = StateTracker.get_data_backend(data_backend_id)
@@ -41,7 +41,7 @@ def prepare_sample(
         image_path=filepath,
     )
     prepared_sample = training_sample.prepare()
-    logger.debug(f"Prepared sample {filepath}: {prepared_sample.to_dict()}")
+    self.debug_log(f"Prepared sample {filepath}: {prepared_sample.to_dict()}")
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
@@ -118,7 +118,7 @@ class VAECache:
         self.vae_input_queue = Queue()
 
     def debug_log(self, msg: str):
-        logger.debug(f"{self.rank_info}{msg}")
+        self.debug_log(f"{self.rank_info}{msg}")
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
@@ -138,7 +138,7 @@ class VAECache:
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         generated_names = self.generate_vae_cache_filename(filepath)
-        logger.debug(f"VAE cache generated names: {generated_names}")
+        self.debug_log(f"VAE cache generated names: {generated_names}")
 
         # Assuming the first item in generated_names is the one we want:
         test_filepath = generated_names[0]
@@ -153,11 +153,11 @@ class VAECache:
             relative_path = os.path.relpath(test_filepath_png, self.cache_dir)
             # Construct the new path by joining the relative path with the instance_data_root
             test_filepath_png = os.path.join(self.instance_data_root, relative_path)
-            logger.debug(f"Converted to image data path: {test_filepath_png}")
+            self.debug_log(f"Converted to image data path: {test_filepath_png}")
         else:
             # Handle cases where the cache_dir is not in the filepath
             # This might involve logic specific to your use case
-            logger.debug("Cache directory prefix not found in the filepath.")
+            self.debug_log("Cache directory prefix not found in the filepath.")
 
         # Prepare the JPG version as well
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
@@ -196,7 +196,7 @@ class VAECache:
             return self.data_backend.torch_load(filename).to("cpu")
         except Exception as e:
             if hide_errors:
-                logger.debug(
+                self.debug_log(
                     f"Filename: {filename}, returning None even though read_from_storage found no object, since hide_errors is True: {e}"
                 )
                 return None
@@ -426,7 +426,7 @@ class VAECache:
         If load_from_cache=True, we read from the VAE cache rather than encode.
         If load_from_cache=True, we will throw an exception if the entry is not found.
         """
-        logger.debug(
+        self.debug_log(
             f"Begin call to encode_images, images: {type(images)}, filepaths: {type(filepaths)}, load_from_cache: {load_from_cache}"
         )
         batch_size = len(images)
@@ -463,14 +463,14 @@ class VAECache:
             for i, image in enumerate(images)
             if i in uncached_image_indices and image is None
         ]
-        logger.debug(
+        self.debug_log(
             f"Encoding during training: {not self.vae_cache_preprocess}, load_from_cache: {load_from_cache}, uncached_image_indices: {uncached_image_indices}, missing_images: {missing_images}"
         )
         missing_image_pixel_values = []
         written_latents = []
         if len(missing_images) > 0 and not self.vae_cache_preprocess:
             missing_image_paths = [filepaths[i] for i in missing_images]
-            logger.debug(f"Missing image paths: {missing_image_paths}")
+            self.debug_log(f"Missing image paths: {missing_image_paths}")
             missing_image_data_generator = self._read_from_storage_concurrently(
                 missing_image_paths, hide_errors=True
             )
@@ -479,30 +479,30 @@ class VAECache:
                 retrieved_image_data[1]
                 for retrieved_image_data in missing_image_data_generator
             ]
-            logger.debug(f"Missing image data: {missing_image_data}")
+            self.debug_log(f"Missing image data: {missing_image_data}")
             missing_image_pixel_values = self._process_images_in_batch(
                 missing_image_paths, missing_image_data, disable_queue=True
             )
-            logger.debug(
+            self.debug_log(
                 f"Missing image pixel values: {type(missing_image_pixel_values)}"
             )
             missing_image_vae_outputs = self._encode_images_in_batch(
                 image_pixel_values=missing_image_pixel_values, disable_queue=True
             )
-            logger.debug(f"Missing image VAE outputs: {missing_image_vae_outputs}")
+            self.debug_log(f"Missing image VAE outputs: {missing_image_vae_outputs}")
             written_latents = self._write_latents_in_batch(missing_image_vae_outputs)
             if len(written_latents) == len(images):
-                logger.debug(
+                self.debug_log(
                     f"Returning {len(written_latents)}, as we had only {len(images)} images to encode"
                 )
                 return written_latents
-            logger.debug(
+            self.debug_log(
                 f"Gathered {len(written_latents)} written latents, continuing to retrieve cached entries"
             )
 
         if len(uncached_image_indices) > 0:
             uncached_images = [images[i] for i in uncached_image_indices]
-            logger.debug(
+            self.debug_log(
                 f"Running vanilla encode_images, all {len(uncached_images)} images are available: {uncached_image_indices}"
             )
         elif len(missing_images) > 0 and len(missing_image_pixel_values) > 0:
@@ -512,7 +512,7 @@ class VAECache:
                     uncached_images.append(images[i])
                 elif i in missing_image_pixel_values:
                     uncached_images.append(missing_image_pixel_values[i])
-            logger.debug(
+            self.debug_log(
                 f"Running encode_images with missing images: {uncached_images}"
             )
 
@@ -529,7 +529,7 @@ class VAECache:
         latents = []
         if load_from_cache:
             # If all images are cached, simply load them
-            logger.debug(
+            self.debug_log(
                 f"Attempting to read latents from {self.cache_dir}: {full_filenames}"
             )
             latents = [
@@ -544,7 +544,7 @@ class VAECache:
             len(images) != len(latents) or len(filepaths) != len(latents)
         ):
             # Process images not found in cache
-            logger.debug(
+            self.debug_log(
                 f"Processing:"
                 f"\n-> {len(images)} images as input"
                 f"\n-> {len(filepaths)} filepaths as input"
@@ -574,10 +574,10 @@ class VAECache:
                     latents.append(self._read_from_storage(full_filenames[i]))
                     cached_idx += 1
         else:
-            logger.debug(
+            self.debug_log(
                 f"No uncached images to retrieve, {uncached_images} or missing images: {missing_images}"
             )
-        logger.debug(f"completed encode_images, returning {len(latents)} latents")
+        self.debug_log(f"completed encode_images, returning {len(latents)} latents")
         return latents
 
     def _write_latents_in_batch(self, input_latents: list = None):
@@ -772,15 +772,15 @@ class VAECache:
         try:
             if image_pixel_values is not None:
                 qlen = len(image_pixel_values)
-                logger.debug(f"Using override list for image encode: {qlen} items")
+                self.debug_log(f"Using override list for image encode: {qlen} items")
                 if self.vae_batch_size != len(image_pixel_values):
-                    logger.debug(
+                    self.debug_log(
                         f"Updated VAE batch size to equal the training batch size."
                     )
                     self.vae_batch_size = len(image_pixel_values)
             else:
                 qlen = self.vae_input_queue.qsize()
-                logger.debug(
+                self.debug_log(
                     f"Using VAE cache vanilla queue for job retrieval: {qlen} items"
                 )
 
@@ -791,7 +791,7 @@ class VAECache:
                 vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
                 batch_aspect_bucket = None
                 count_to_process = min(qlen, self.vae_batch_size)
-                logger.debug(f"Processing {count_to_process} images.")
+                self.debug_log(f"Processing {count_to_process} images.")
                 for idx in range(0, count_to_process):
                     if image_pixel_values:
                         pixel_values, filepath, aspect_bucket, is_final_sample = (
