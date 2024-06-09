@@ -391,7 +391,7 @@ class VAECache:
                 # full_image_path is the full *image* path:
                 skipped_files += 1
                 self.debug_log(
-                    f"Reduce bucket {bucket}, skipping ({skipped_files}/{total_files}) {full_image_path} because it is not in local processed_images"
+                    f"Reduce bucket {bucket}, skipping ({skipped_files}/{total_files}) {full_image_path} because it is not in local_unprocessed_files"
                 )
                 continue
             self.debug_log(
@@ -408,6 +408,7 @@ class VAECache:
 
     def split_cache_between_processes(self):
         all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
+        return
         self.debug_log(
             f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
         )
