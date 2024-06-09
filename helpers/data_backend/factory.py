@@ -707,6 +707,7 @@ def configure_multi_databackend(
                 write_batch_size=args.write_batch_size,
                 cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
                 max_workers=backend.get("max_workers", 32),
+                process_queue_size=backend.get("process_queue_size", 64),
                 vae_cache_preprocess=args.vae_cache_preprocess,
             )
 
