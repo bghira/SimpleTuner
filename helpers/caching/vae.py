@@ -407,7 +407,7 @@ class VAECache:
         return relevant_files
 
     def split_cache_between_processes(self):
-        all_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
+        self.local_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
         return
         self.debug_log(
             f"All unprocessed files: {all_unprocessed_files[:5]} (truncated)"
