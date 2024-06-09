@@ -25,7 +25,7 @@ def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
         filepath, data_backend_id=data_backend_id
     )
     logger.debug(
-        f"Preparing sample {image} from {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
+        f"Prepare sample {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
     )
     training_sample = TrainingSample(
         image=image,
@@ -34,7 +34,7 @@ def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
         image_path=filepath,
     )
     prepared_sample = training_sample.prepare()
-    logger.debug(f"Prepared: {prepared_sample.to_dict()}")
+    logger.debug(f"Prepared sample {filepath}: {prepared_sample.to_dict()}")
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
