@@ -26,9 +26,6 @@ def prepare_sample(
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
     )
-    self.debug_log(
-        f"Prepare sample {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
-    )
     data_backend = StateTracker.get_data_backend(data_backend_id)
     data_sampler = data_backend.get("sampler")
     image_data = image
@@ -41,7 +38,6 @@ def prepare_sample(
         image_path=filepath,
     )
     prepared_sample = training_sample.prepare()
-    self.debug_log(f"Prepared sample {filepath}: {prepared_sample.to_dict()}")
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
@@ -138,7 +134,7 @@ class VAECache:
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         generated_names = self.generate_vae_cache_filename(filepath)
-        self.debug_log(f"VAE cache generated names: {generated_names}")
+        # self.debug_log(f"VAE cache generated names: {generated_names}")
 
         # Assuming the first item in generated_names is the one we want:
         test_filepath = generated_names[0]
@@ -153,11 +149,7 @@ class VAECache:
             relative_path = os.path.relpath(test_filepath_png, self.cache_dir)
             # Construct the new path by joining the relative path with the instance_data_root
             test_filepath_png = os.path.join(self.instance_data_root, relative_path)
-            self.debug_log(f"Converted to image data path: {test_filepath_png}")
-        else:
-            # Handle cases where the cache_dir is not in the filepath
-            # This might involve logic specific to your use case
-            self.debug_log("Cache directory prefix not found in the filepath.")
+            # self.debug_log(f"Converted to image data path: {test_filepath_png}")
 
         # Prepare the JPG version as well
         test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
@@ -386,10 +378,10 @@ class VAECache:
         for full_image_path in aspect_bucket_cache[bucket]:
             comparison_path = self.generate_vae_cache_filename(full_image_path)[0]
             if os.path.splitext(comparison_path)[0] in processed_images:
-                # full_image_path is the full *image* path:
+                # processed_images contains basename *cache* paths:
                 continue
             if full_image_path not in self.local_unprocessed_files:
-                # processed_images contains basename *cache* paths:
+                # full_image_path is the full *image* path:
                 continue
             relevant_files.append(full_image_path)
         if do_shuffle:
