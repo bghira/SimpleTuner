@@ -9,6 +9,7 @@ from queue import Queue
 import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
+from helpers.training.multi_process import _get_rank as get_rank
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -422,7 +423,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
-                position=1,
+                position=get_rank(),
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
