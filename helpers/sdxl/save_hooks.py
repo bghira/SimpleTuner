@@ -11,10 +11,53 @@ from peft.utils import get_peft_model_state_dict
 from diffusers import UNet2DConditionModel
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
-import os, logging, shutil, torch
+import os, logging, shutil, torch, json
+from safetensors import safe_open
+from safetensors.torch import save_file
+
 
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+
+
+def merge_safetensors_files(directory):
+    json_file_name = "diffusion_pytorch_model.safetensors.index.json"
+    json_file_path = os.path.join(directory, json_file_name)
+    if not os.path.exists(json_file_path):
+        return
+
+    # Step 2: Load the JSON file and extract the weight map
+    with open(json_file_path, "r") as file:
+        data = json.load(file)
+        weight_map = data.get("weight_map")
+        if weight_map is None:
+            raise KeyError("'weight_map' key not found in the JSON file.")
+
+    # Collect all unique safetensors files from weight_map
+    files_to_load = set(weight_map.values())
+    all_tensors = {}
+
+    # Load tensors from each unique file
+    for file_name in files_to_load:
+        part_file_path = os.path.join(directory, file_name)
+        if not os.path.exists(part_file_path):
+            raise FileNotFoundError(f"Part file {file_name} not found.")
+
+        with safe_open(part_file_path, framework="pt", device="cpu") as f:
+            for tensor_key in f.keys():
+                if tensor_key in weight_map:
+                    all_tensors[tensor_key] = f.get_tensor(tensor_key)
+
+    # Step 4: Save all loaded tensors into a single new safetensors file
+    output_file_path = os.path.join(directory, "diffusion_pytorch_model.safetensors")
+    save_file(all_tensors, output_file_path)
+    # Step 5: If the file now exists, remove the index and part files
+    if os.path.exists(output_file_path):
+        os.remove(json_file_path)
+        for file_name in files_to_load:
+            os.remove(os.path.join(directory, file_name))
+
+    logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
 
 class SDXLSaveHook:
@@ -94,6 +137,7 @@ class SDXLSaveHook:
         sub_dir = "unet" if not self.args.controlnet else "controlnet"
         for model in models:
             model.save_pretrained(os.path.join(temporary_dir, sub_dir))
+            merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
             if weights:
                 weights.pop()  # Pop the last weight
 
@@ -195,10 +239,12 @@ class SDXLSaveHook:
                     if self.args.controlnet:
                         from diffusers import ControlNetModel
 
+                        merge_safetensors_files(os.path.join(input_dir, "controlnet"))
                         load_model = ControlNetModel.from_pretrained(
                             input_dir, subfolder="controlnet"
                         )
                     else:
+                        merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(
                             input_dir, subfolder="unet"
                         )
@@ -207,7 +253,9 @@ class SDXLSaveHook:
                     model.load_state_dict(load_model.state_dict())
                     del load_model
                 except Exception as e:
-                    return_exception = e
+                    import traceback
+
+                    return_exception = f"Could not load model: {e}, traceback: {traceback.format_exc()}"
 
             if return_exception:
-                raise Exception("Could not load model: {}".format(return_exception))
+                raise Exception(return_exception)

@@ -160,6 +160,41 @@ class PromptHandler:
         self.tokenizers = tokenizers
 
     @staticmethod
+    def retrieve_prompt_column_from_parquet(
+        sampler_backend_id: str,
+    ) -> str:
+        parquetdb = StateTracker.get_parquet_database(sampler_backend_id)
+        print(f"Parquet DB: {parquetdb}")
+        dataframe = parquetdb[0]
+        if dataframe is None:
+            raise ValueError(
+                f"Parquet database not found for sampler {sampler_backend_id}."
+            )
+        caption_column = (
+            StateTracker.get_data_backend_config(sampler_backend_id)
+            .get("parquet", {})
+            .get("caption_column", None)
+        )
+        if not caption_column:
+            raise ValueError(
+                f"Caption column not found for sampler {sampler_backend_id}. Config: {StateTracker.get_data_backend_config(sampler_backend_id)}"
+            )
+        # Return just that column
+        all_captions = dataframe[caption_column].values
+        fallback_caption_column = (
+            StateTracker.get_data_backend_config(sampler_backend_id)
+            .get("parquet", {})
+            .get("fallback_caption_column")
+        )
+        if fallback_caption_column is not None and all_captions is not None:
+            # Combine the lists
+            fallback_captions = dataframe[fallback_caption_column].values
+            all_captions = [
+                x if x else y for x, y in zip(all_captions, fallback_captions)
+            ]
+        return all_captions
+
+    @staticmethod
     def prepare_instance_prompt_from_parquet(
         image_path: str,
         use_captions: bool,
@@ -377,6 +412,11 @@ class PromptHandler:
         if type(all_image_files) == list and type(all_image_files[0]) == tuple:
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
+
+        if caption_strategy == "parquet":
+            return PromptHandler.retrieve_prompt_column_from_parquet(
+                sampler_backend_id=data_backend.id
+            )
 
         for image_path in tqdm(
             all_image_files,

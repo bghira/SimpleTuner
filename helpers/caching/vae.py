@@ -20,21 +20,28 @@ logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
-def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
+def prepare_sample(
+    image: Image.Image = None, data_backend_id: str = None, filepath: str = None
+):
     metadata = StateTracker.get_metadata_by_filepath(
         filepath, data_backend_id=data_backend_id
     )
     logger.debug(
-        f"Preparing sample {image} from {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
+        f"Prepare sample {filepath} with data backend {data_backend_id}. Metadata: {metadata}"
     )
+    data_backend = StateTracker.get_data_backend(data_backend_id)
+    data_sampler = data_backend.get("sampler")
+    image_data = image
+    if image_data is None:
+        image_data = data_sampler.yield_single_image(filepath)
     training_sample = TrainingSample(
-        image=image,
+        image=image_data,
         data_backend_id=data_backend_id,
         image_metadata=metadata,
         image_path=filepath,
     )
     prepared_sample = training_sample.prepare()
-    logger.debug(f"Prepared: {prepared_sample.to_dict()}")
+    logger.debug(f"Prepared sample {filepath}: {prepared_sample.to_dict()}")
     return (
         prepared_sample.image,
         prepared_sample.crop_coordinates,
@@ -43,11 +50,6 @@ def prepare_sample(image: Image.Image, data_backend_id: str, filepath: str):
 
 
 class VAECache:
-    read_queue = Queue()
-    process_queue = Queue()
-    write_queue = Queue()
-    vae_input_queue = Queue()
-
     def __init__(
         self,
         id: str,
@@ -110,6 +112,10 @@ class VAECache:
             )
         self.maximum_image_size = maximum_image_size
         self.target_downsample_size = target_downsample_size
+        self.read_queue = Queue()
+        self.process_queue = Queue()
+        self.write_queue = Queue()
+        self.vae_input_queue = Queue()
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -379,14 +385,14 @@ class VAECache:
         relevant_files = []
         for f in aspect_bucket_cache[bucket]:
             if os.path.splitext(f)[0] in processed_images:
-                # self.debug_log(
-                #     f"Skipping {f} because it is already in the processed images list"
-                # )
+                self.debug_log(
+                    f"Skipping {f} because it is already in the processed images list"
+                )
                 continue
             if f not in self.local_unprocessed_files:
-                # self.debug_log(
-                #     f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
-                # )
+                self.debug_log(
+                    f"Skipping {f} because it is not in local unprocessed files (truncated): {self.local_unprocessed_files[:5]}"
+                )
                 continue
             relevant_files.append(f)
         if do_shuffle:
@@ -624,7 +630,7 @@ class VAECache:
             None
         """
         try:
-            logger.debug(
+            self.debug_log(
                 f"Processing batch of images into VAE embeds. image_paths: {type(image_paths)}, image_data: {type(image_data)}"
             )
             initial_data = []
@@ -633,7 +639,7 @@ class VAECache:
                 qlen = len(image_paths)
             else:
                 qlen = self.process_queue.qsize()
-            logger.debug(f"we have {qlen} images to process.")
+            self.debug_log(f"we have {qlen} images to process.")
 
             # First Loop: Preparation and Filtering
             for _ in range(qlen):
@@ -658,26 +664,31 @@ class VAECache:
                         continue
                 # image.save(f"test_{os.path.basename(filepath)}.png")
                 initial_data.append((filepath, image, aspect_bucket))
+            self.debug_log("Completed gathering data for processing.")
 
             # Process Pool Execution
             processed_images = []
+            self.debug_log("Creating process pool for prepare_sample")
             with ProcessPoolExecutor() as executor:
+                self.debug_log("Submitting jobs to process pool worker")
                 futures = [
                     executor.submit(
                         prepare_sample,
-                        image=data[1],
                         data_backend_id=self.id,
                         filepath=data[0],
                     )
                     for data in initial_data
                 ]
+                self.debug_log("Checking jobs for completion")
                 first_aspect_ratio = None
                 for future in futures:
+                    self.debug_log(f"Checking future: {future}")
                     try:
                         result = (
                             future.result()
                         )  # Returns PreparedSample or tuple(image, crop_coordinates, aspect_ratio)
                         if result:  # Ensure result is not None or invalid
+                            self.debug_log(f"Result: {result}")
                             processed_images.append(result)
                             if first_aspect_ratio is None:
                                 first_aspect_ratio = result[2]
@@ -704,11 +715,15 @@ class VAECache:
                         self.debug_log(
                             f"Error processing image in pool: {e}, traceback: {traceback.format_exc()}"
                         )
+                    self.debug_log("Completed processing.")
 
             # Second Loop: Final Processing
             is_final_sample = False
             output_values = []
             first_aspect_ratio = None
+            self.debug_log(
+                "Processing, transforming, and adding images to the VAE processing queue."
+            )
             for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(
                 processed_images
             ):
@@ -738,9 +753,9 @@ class VAECache:
                     value=crop_coordinates,
                     update_json=False,
                 )
-                self.debug_log(
-                    f"Completed processing {filepath}, gathered {len(output_values)} output values."
-                )
+            self.debug_log(
+                f"Completed processing gathered {len(output_values)} output values."
+            )
         except Exception as e:
             logger.error(
                 f"Error processing images {filepaths if len(filepaths) > 0 else image_paths}: {e}"

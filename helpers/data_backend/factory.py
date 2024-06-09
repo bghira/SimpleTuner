@@ -96,6 +96,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution_type"] = backend["resolution_type"]
     else:
         output["config"]["resolution_type"] = args.resolution_type
+    if "parquet" in backend:
+        output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:
         output["config"]["caption_strategy"] = backend["caption_strategy"]
     else:
@@ -669,6 +671,9 @@ def configure_multi_databackend(
                 f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
             )
 
+        # Register the backend here so the sampler can be found.
+        StateTracker.register_data_backend(init_backend)
+
         if "deepfloyd" not in StateTracker.get_args().model_type:
             logger.info(f"(id={init_backend['id']}) Creating VAE latent cache.")
             init_backend["vaecache"] = VAECache(
@@ -702,6 +707,7 @@ def configure_multi_databackend(
                 write_batch_size=args.write_batch_size,
                 cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
                 max_workers=backend.get("max_workers", 32),
+                process_queue_size=backend.get("process_queue_size", 64),
                 vae_cache_preprocess=args.vae_cache_preprocess,
             )
 
