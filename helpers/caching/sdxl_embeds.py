@@ -395,9 +395,12 @@ class TextEmbeddingCache:
         add_text_embeds_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
-        local_caption_split = self.split_captions_between_processes(
-            prompts or self.prompts
-        )
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
         if (
             hasattr(args, "cache_clear_validation_prompts")
             and args.cache_clear_validation_prompts

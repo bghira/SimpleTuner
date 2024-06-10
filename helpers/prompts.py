@@ -413,10 +413,10 @@ class PromptHandler:
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm
 
-        if caption_strategy == "parquet":
-            return PromptHandler.retrieve_prompt_column_from_parquet(
-                sampler_backend_id=data_backend.id
-            )
+        # if caption_strategy == "parquet":
+        #     return PromptHandler.retrieve_prompt_column_from_parquet(
+        #         sampler_backend_id=data_backend.id
+        #     )
 
         for image_path in tqdm(
             all_image_files,
