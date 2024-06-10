@@ -86,6 +86,7 @@ class Validation:
         accelerator,
         prompt_handler,
         unet,
+        transformer,
         args,
         validation_prompts,
         validation_shortnames,
@@ -105,6 +106,7 @@ class Validation:
         self.accelerator = accelerator
         self.prompt_handler = prompt_handler
         self.unet = unet
+        self.transformer = transformer
         self.controlnet = controlnet
         self.args = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
@@ -361,8 +363,9 @@ class Validation:
 
     def setup_pipeline(self, validation_type):
         if validation_type == "intermediary" and self.args.use_ema:
-            self.ema_unet.store(self.unet.parameters())
-            self.ema_unet.copy_to(self.unet.parameters())
+            if self.unet is not None:
+                self.ema_unet.store(self.unet.parameters())
+                self.ema_unet.copy_to(self.unet.parameters())
 
         if not self.pipeline:
             pipeline_cls = self._pipeline_cls()
@@ -389,26 +392,45 @@ class Validation:
                 extra_pipeline_kwargs["controlnet"] = unwrap_model(
                     self.accelerator, self.controlnet
                 )
+            if self.unet is not None:
+                extra_pipeline_kwargs["unet"] = unwrap_model(
+                    self.accelerator, self.unet
+                )
+            if self.transformer is not None:
+                extra_pipeline_kwargs["transformer"] = unwrap_model(
+                    self.accelerator, self.transformer
+                )
+
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
-                "unet": unwrap_model(self.accelerator, self.unet),
                 "revision": self.args.revision,
                 "variant": self.args.variant,
                 "torch_dtype": self.weight_dtype,
                 **extra_pipeline_kwargs,
             }
             self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
-            if self.args.validation_torch_compile and not is_compiled_module(
-                self.pipeline.unet
-            ):
-                logger.warning(
-                    f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-                )
-                self.pipeline.unet = torch.compile(
-                    self.pipeline.unet,
-                    mode=self.args.validation_torch_compile_mode,
-                    fullgraph=False,
-                )
+            if self.args.validation_torch_compile:
+                if self.unet is not None and not is_compiled_module(self.pipeline.unet):
+                    logger.warning(
+                        f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
+                    )
+                    self.pipeline.unet = torch.compile(
+                        self.pipeline.unet,
+                        mode=self.args.validation_torch_compile_mode,
+                        fullgraph=False,
+                    )
+                if self.transformer is not None and not is_compiled_module(
+                    self.pipeline.transformer
+                ):
+                    logger.warning(
+                        f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
+                    )
+                    self.pipeline.transformer = torch.compile(
+                        self.pipeline.transformer,
+                        mode=self.args.validation_torch_compile_mode,
+                        fullgraph=False,
+                    )
+
         self.pipeline = self.pipeline.to(self.accelerator.device)
         self.pipeline.set_progress_bar_config(disable=True)
 
@@ -623,7 +645,8 @@ class Validation:
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
         if validation_type == "intermediary" and self.args.use_ema:
-            self.ema_unet.restore(self.unet.parameters())
+            if self.unet is not None:
+                self.ema_unet.restore(self.unet.parameters())
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None
         self.pipeline = None

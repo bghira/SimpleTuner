@@ -64,6 +64,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--sd3",
+        action="store_true",
+        default=False,
+        help=("This option must be provided when training a Stable Diffusion 3 model."),
+    )
+    parser.add_argument(
         "--lora_type",
         type=str,
         choices=["Standard"],
