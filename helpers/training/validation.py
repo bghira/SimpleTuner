@@ -377,19 +377,21 @@ class Validation:
                 del extra_pipeline_kwargs["text_encoder"]
                 del extra_pipeline_kwargs["tokenizer"]
                 extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
-                    self.text_encoder_1
+                    self.accelerator, self.text_encoder_1
                 )
                 extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                    self.text_encoder_2
+                    self.accelerator, self.text_encoder_2
                 )
                 extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
                 extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
-                extra_pipeline_kwargs["controlnet"] = unwrap_model(self.controlnet)
+                extra_pipeline_kwargs["controlnet"] = unwrap_model(
+                    self.accelerator, self.controlnet
+                )
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
-                "unet": unwrap_model(self.unet),
+                "unet": unwrap_model(self.accelerator, self.unet),
                 "revision": self.args.revision,
                 "variant": self.args.variant,
                 "torch_dtype": self.weight_dtype,
