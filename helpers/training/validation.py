@@ -1,6 +1,7 @@
 import torch, os, wandb, logging
 from pathlib import Path
 from tqdm import tqdm
+from helpers.training.wrappers import unwrap_model
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from helpers.sdxl.pipeline import (
@@ -375,16 +376,20 @@ class Validation:
                 del extra_pipeline_kwargs["safety_checker"]
                 del extra_pipeline_kwargs["text_encoder"]
                 del extra_pipeline_kwargs["tokenizer"]
-                extra_pipeline_kwargs["text_encoder_1"] = self.text_encoder_1
-                extra_pipeline_kwargs["text_encoder_2"] = self.text_encoder_2
+                extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
+                    self.text_encoder_1
+                )
+                extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                    self.text_encoder_2
+                )
                 extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
                 extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
-                extra_pipeline_kwargs["controlnet"] = self.controlnet
+                extra_pipeline_kwargs["controlnet"] = unwrap_model(self.controlnet)
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
-                "unet": self.unet,
+                "unet": unwrap_model(self.unet),
                 "revision": self.args.revision,
                 "variant": self.args.variant,
                 "torch_dtype": self.weight_dtype,
