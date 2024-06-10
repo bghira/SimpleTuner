@@ -399,6 +399,8 @@ class TextEmbeddingCache:
             local_caption_split = self.split_captions_between_processes(
                 prompts or self.prompts
             )
+        else:
+            local_caption_split = prompts or self.prompts
         if (
             hasattr(args, "cache_clear_validation_prompts")
             and args.cache_clear_validation_prompts
