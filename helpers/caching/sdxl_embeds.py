@@ -152,6 +152,12 @@ class TextEmbeddingCache:
         result = self.data_backend.torch_load(filename)
         return result
 
+    def encode_sd3_prompt(self, text_encoders, tokenizers, prompt):
+        """
+        Stable Diffusion 3 has three text encoders and they are all optional.
+        """
+        raise Exception("Stable Diffusion 3 text encoder not yet implemented.")
+
     def encode_legacy_prompt(self, text_encoder, tokenizer, prompt):
         input_tokens = tokenizer(
             PromptHandler.filter_caption(self.data_backend, prompt),
@@ -263,6 +269,10 @@ class TextEmbeddingCache:
     def encode_prompt(self, prompt: str, is_validation: bool = False):
         if self.model_type == "sdxl":
             return self.encode_sdxl_prompt(
+                self.text_encoders, self.tokenizers, prompt, is_validation
+            )
+        elif self.model_type == "sd3":
+            return self.encode_sd3_prompt(
                 self.text_encoders, self.tokenizers, prompt, is_validation
             )
         else:
