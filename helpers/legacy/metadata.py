@@ -1,5 +1,42 @@
-import os
+import os, torch
 from helpers.training.state_tracker import StateTracker
+
+
+def _model_imports(args):
+    output = "import torch"
+    output += f"from diffusers import DiffusionPipeline\n"
+
+
+def _torch_device():
+    return """'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'"""
+
+
+def code_example(args):
+    """Return a string with the code example."""
+    code_example = f"""
+```python
+{_model_imports(args)}
+
+model_id = "/path/to/checkpoint" # or "username/checkpoint"
+prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
+negative_prompt = "malformed, disgusting, overexposed, washed-out"
+
+pipeline = DiffusionPipeline.from_pretrained(model_id)
+pipeline.to({_torch_device()})
+image = pipeline(
+    prompt=prompt,
+    negative_prompt='{args.validation_negative_prompt}',
+    num_inference_steps={args.validation_num_inference_steps},
+    generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
+    width=1152,
+    height=768,
+    guidance_scale={args.validation_guidance},
+    guidance_rescale={args.validation_guidance_rescale},
+).images[0]
+image.save(f"output.png", format="PNG")
+```
+"""
+    return code_example
 
 
 def lora_info(args):
@@ -44,11 +81,11 @@ def save_model_card(
             for image in image_list:
                 image_path = os.path.join(assets_folder, f"image_{idx}_{sub_idx}.png")
                 image.save(image_path, format="PNG")
-                validation_prompt = (
-                    validation_prompts[shortname_idx]
-                    if validation_prompts and shortname_idx in validation_prompts
-                    else "no prompt available"
-                )
+                validation_prompt = "no prompt available"
+                if validation_prompts is not None:
+                    validation_prompt = validation_prompts.get(
+                        shortname_idx, f"prompt not found ({shortname_idx})"
+                    )
                 if validation_prompt == "":
                     validation_prompt = "unconditional (blank prompt)"
                 else:
@@ -80,13 +117,13 @@ inference: true
 """
     model_card_content = f"""# {repo_id}
 
-This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full rank'} finetuned model derived from [{base_model}](https://huggingface.co/{base_model}).
+This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full rank finetune'} derived from [{base_model}](https://huggingface.co/{base_model}).
 
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if StateTracker.get_args().validation_using_datasets else 'No validation prompt was used during training.'}
 
-```
+{'```' if prompt else ''}
 {prompt}
-```
+{'```' if prompt else ''}
 
 ## Validation settings
 - CFG: `{StateTracker.get_args().validation_guidance}`
@@ -111,9 +148,10 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Training epochs: {StateTracker.get_epoch() - 1}
 - Training steps: {StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
-- Effective batch size: {StateTracker.get_args().train_batch_size * StateTracker.get_args().gradient_accumulation_steps}
+- Effective batch size: {StateTracker.get_args().train_batch_size * StateTracker.get_args().gradient_accumulation_steps * StateTracker.get_accelerator().num_processes}
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
+  - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Prediction type: {StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
