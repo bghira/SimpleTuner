@@ -1207,6 +1207,9 @@ def main():
                 or "train_dataloader" not in backend
             ):
                 # Exclude exhausted backends.
+                logger.debug(
+                    f"Excluding backend: {backend_id}, as it is exhausted? {StateTracker.backend_status(backend_id)} or not found {('train_dataloader' not in backend)}"
+                )
                 continue
             train_backends[backend_id] = backend["train_dataloader"]
 
