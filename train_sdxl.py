@@ -1142,13 +1142,28 @@ def main():
                     and "metadata_backend" in backend
                 ):
                     # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
-                    backend["metadata_backend"].compute_aspect_ratio_bucket_indices(
-                        ignore_existing_cache=True
+                    if accelerator.is_main_process:
+                        # we only compute the aspect ratio indices on the main process.
+                        # we have to set read_only to False since we're generating a new, un-split list.
+                        # otherwise, we can't actually save the new cache to disk.
+                        backend["metadata_backend"].read_only = False
+                        # this will generate+save the new cache to the storage backend.
+                        backend["metadata_backend"].compute_aspect_ratio_bucket_indices(
+                            ignore_existing_cache=True
+                        )
+                    accelerator.wait_for_everyone()
+                    if not accelerator.is_main_process:
+                        # now that the main process has completed rebuild, the subprocesses should retrieve the new cache.
+                        backend["metadata_backend"].reload_cache()
+                    accelerator.wait_for_everyone()
+                    # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
+                    backend["metadata_backend"].split_buckets_between_processes(
+                        gradient_accumulation_steps=args.gradient_accumulation_steps
                     )
                     # we have to rebuild the VAE cache if it exists.
                     if "vaecache" in backend:
                         backend["vaecache"].rebuild_cache()
-                    backend["metadata_backend"].save_cache()
+                    # no need to manually call metadata_backend.save_cache() here.
                 elif (
                     "vae_cache_clear_each_epoch" in backend_config
                     and backend_config["vae_cache_clear_each_epoch"]
