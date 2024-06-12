@@ -25,6 +25,14 @@ from helpers.image_manipulation.brightness import calculate_luminance
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
+try:
+    from diffusers import StableDiffusion3Pipeline, StableDiffusion3Img2ImgPipeline
+except ImportError:
+    logger.error(
+        f"Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
+    )
+    raise ImportError()
+
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
@@ -177,8 +185,13 @@ class Validation:
                 from diffusers.pipelines import IFSuperResolutionPipeline
 
                 return IFSuperResolutionPipeline
-            else:
-                return StableDiffusionPipeline
+            return StableDiffusionPipeline
+        elif model_type == "sd3":
+            if self.args.controlnet:
+                raise Exception(f"SD3 ControlNet is not yet supported.")
+            if self.args.validation_using_datasets:
+                return StableDiffusion3Img2ImgPipeline
+            return StableDiffusion3Pipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}

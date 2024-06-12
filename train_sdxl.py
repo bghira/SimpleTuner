@@ -325,8 +325,11 @@ def main():
     # Load scheduler and models
     if args.sd3:
         # Stable Diffusion 3 uses rectified flow.
-        raise Exception("SD3 noise scheduler is not yet implemented.")
+        from helpers.training.custom_schedule import FlowMatchingEulerScheduler
 
+        noise_scheduler = FlowMatchingEulerScheduler.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="scheduler"
+        )
     else:
         # SDXL uses the old style noise scheduler.
         noise_scheduler = DDPMScheduler.from_pretrained(
@@ -407,17 +410,30 @@ def main():
         webhook_handler.send(
             message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
         )
+    pretrained_load_args = {
+        "revision": args.revision,
+        "variant": args.variant,
+    }
     if args.sd3:
         # Stable Diffusion 3 uses a Diffusion transformer.
+        logger.info(f"Loading Stable Diffusion 3 diffusion transformer..")
         unet = None
-        raise Exception("SD3 transformer creation is not yet implemented.")
+        try:
+            from diffusers import SD3Transformer2DModel
+        except Exception as e:
+            logger.error(
+                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
+            )
+        transformer = SD3Transformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
     else:
+        logger.info(f"Loading Stable Diffusion XL U-net..")
         transformer = None
         unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="unet",
-            revision=args.revision,
-            variant=args.variant,
+            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
 
     model_type_label = (
