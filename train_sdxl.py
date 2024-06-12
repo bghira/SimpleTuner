@@ -63,7 +63,7 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PretrainedConfig
+from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
     AutoencoderKL,
@@ -117,6 +117,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import CLIPTextModelWithProjection
 
         return CLIPTextModelWithProjection
+    elif model_class == "T5EncoderModel":
+        from transformers import T5EncoderModel
+
+        return T5EncoderModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -262,18 +266,24 @@ def main():
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     try:
-        tokenizer_1 = AutoTokenizer.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer",
-            revision=args.revision,
-            use_fast=False,
-        )
-    except:
+        tokenizer_kwargs = {
+            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
+            "subfolder": "tokenizer",
+            "revision": args.revision,
+        }
+        tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
+    except Exception as e:
+        import traceback
+
         logger.warning(
             "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
+            f"\nError: -> {e}"
+            f"\nTraceback: {traceback.format_exc()}"
         )
+        if args.sd3:
+            raise e
     try:
-        tokenizer_2 = AutoTokenizer.from_pretrained(
+        tokenizer_2 = CLIPTokenizer.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="tokenizer_2",
             revision=args.revision,
@@ -294,14 +304,16 @@ def main():
     if not tokenizer_1 and not tokenizer_2:
         raise Exception("Failed to load tokenizer")
     try:
-        tokenizer_3 = AutoTokenizer.from_pretrained(
+        from transformers import T5TokenizerFast
+
+        tokenizer_3 = T5TokenizerFast.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="tokenizer_3",
             revision=args.revision,
             use_fast=True,
         )
     except:
-        logger.warning(
+        raise ValueError(
             "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
         )
 
