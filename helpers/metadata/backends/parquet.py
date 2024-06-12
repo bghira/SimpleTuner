@@ -152,7 +152,7 @@ class ParquetMetadataBackend(MetadataBackend):
 
         return result
 
-    def reload_cache(self):
+    def reload_cache(self, set_config: bool = True):
         """
         Load cache data from a parquet file.
 
@@ -175,14 +175,15 @@ class ParquetMetadataBackend(MetadataBackend):
             self.aspect_ratio_bucket_indices = cache_data.get(
                 "aspect_ratio_bucket_indices", {}
             )
-            self.config = cache_data.get("config", {})
-            if self.config != {}:
-                logger.debug(f"Setting config to {self.config}")
-                logger.debug(f"Loaded previous data backend config: {self.config}")
-                StateTracker.set_data_backend_config(
-                    data_backend_id=self.id,
-                    config=self.config,
-                )
+            if set_config:
+                self.config = cache_data.get("config", {})
+                if self.config != {}:
+                    logger.debug(f"Setting config to {self.config}")
+                    logger.debug(f"Loaded previous data backend config: {self.config}")
+                    StateTracker.set_data_backend_config(
+                        data_backend_id=self.id,
+                        config=self.config,
+                    )
 
     def save_cache(self, enforce_constraints: bool = False):
         """
