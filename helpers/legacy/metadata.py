@@ -1,5 +1,8 @@
-import os, torch
+import os, logging
 from helpers.training.state_tracker import StateTracker
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def _model_imports(args):
@@ -168,7 +171,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 {code_example(args=StateTracker.get_args(), repo_id=repo_id)}
 """
 
-    print(f"YAML:\n{yaml_content}")
-    print(f"Model Card:\n{model_card_content}")
+    logger.debug(f"YAML:\n{yaml_content}")
+    logger.debug(f"Model Card:\n{model_card_content}")
     with open(os.path.join(repo_folder, "README.md"), "w") as f:
         f.write(yaml_content + model_card_content)
