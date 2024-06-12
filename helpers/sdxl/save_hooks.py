@@ -258,9 +258,16 @@ class SDXLSaveHook:
                         )
                     elif self.args.sd3:
                         # Load a stable diffusion 3 checkpoint
-                        # load_model = TransformerModel.from_pretrained(input_dir)
-                        # TODO: Implement.
-                        pass
+                        try:
+                            from diffusers import SD3Transformer2DModel
+                        except Exception as e:
+                            logger.error(
+                                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
+                            )
+                            raise e
+                        load_model = SD3Transformer2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
                     elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(
