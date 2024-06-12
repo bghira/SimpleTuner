@@ -256,7 +256,18 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.debug("No new files discovered. Doing nothing.")
             return
 
-        self.load_image_metadata()
+        try:
+            self.load_image_metadata()
+        except Exception as e:
+            if ignore_existing_cache:
+                logger.warning(
+                    f"Error loading image metadata, creating new metadata cache: {e}"
+                )
+                self.image_metadata = {}
+            else:
+                raise Exception(
+                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                )
         last_write_time = time.time()
         aspect_ratio_bucket_updates = {}
         # log a truncated set of the parquet table
