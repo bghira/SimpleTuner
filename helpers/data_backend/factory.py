@@ -896,7 +896,10 @@ def random_dataloader_iterator(backends: dict):
     logger.debug(f"Backends to select from {backends}")
     while backends:
         if backends == {}:
-            logger.debug("No dataloader iterators were available.")
+            logger.debug(
+                "All dataloaders exhausted. Moving to next epoch in main training loop."
+            )
+            StateTracker.clear_exhausted_buckets()
             return step, None
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
