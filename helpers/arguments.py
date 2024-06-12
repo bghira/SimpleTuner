@@ -322,9 +322,8 @@ def parse_args(input_args=None):
         default=False,
         help=(
             "When using a randomised aspect bucket list, the VAE and aspect cache are rebuilt on each epoch."
-            " With a large and diverse enough dataset, this may be undesirable, in which case this option will prevent it."
-            " This option will not override any dataset property value for vae_cache_clear_each_epoch. If that option"
-            " is set with this one, the VAE cache will still be rebuilt on each epoch, but the aspect bucket lists will not."
+            " With a large and diverse enough dataset, rebuilding the aspect list may take a long time, and this may be undesirable."
+            " This option will not override vae_cache_clear_each_epoch. If both options are provided, only the VAE cache will be rebuilt."
         ),
     )
     parser.add_argument(
