@@ -1153,10 +1153,8 @@ def main():
                             ignore_existing_cache=True
                         )
                     accelerator.wait_for_everyone()
-                    if not accelerator.is_main_process:
-                        # now that the main process has completed rebuild, the subprocesses should retrieve the new cache.
-                        logger.info(f"Reloading cache for backend {backend_id}")
-                        backend["metadata_backend"].reload_cache(set_config=False)
+                    logger.info(f"Reloading cache for backend {backend_id}")
+                    backend["metadata_backend"].reload_cache(set_config=False)
                     logger.info(f"Waiting for other threads to finish..")
                     accelerator.wait_for_everyone()
                     # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
