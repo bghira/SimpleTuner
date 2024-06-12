@@ -324,9 +324,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if alt_stats:
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
+            total_image_count = len(self.metadata_backend.seen_images) + len(
+                self._get_unseen_images()
+            )
+            if self.accelerator.num_processes > 1:
+                # We don't know the direct count without more work, so we'll estimate it here for multi-GPU training.
+                total_image_count *= self.accelerator.num_processes
+                total_image_count = f"~{total_image_count}"
             printed_state = (
                 f"- Repeats: {StateTracker.get_data_backend_config(self.id).get('repeats', 0)}\n"
-                f"- Total number of images: {len(self.metadata_backend.seen_images) + len(self._get_unseen_images())}\n"
+                f"- Total number of images: {total_image_count}\n"
                 f"- Total number of aspect buckets: {len(self.buckets)}\n"
                 f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}\n"
                 f"- Cropped: {StateTracker.get_data_backend_config(self.id).get('crop')}\n"

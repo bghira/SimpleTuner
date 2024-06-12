@@ -201,7 +201,18 @@ class MetadataBackend:
         written_files_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
-        self.load_image_metadata()
+        try:
+            self.load_image_metadata()
+        except Exception as e:
+            if ignore_existing_cache:
+                logger.warning(
+                    f"Error loading image metadata, creating new metadata cache: {e}"
+                )
+                self.image_metadata = {}
+            else:
+                raise Exception(
+                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                )
         worker_cls = (
             Process if StateTracker.get_args().enable_multiprocessing else Thread
         )

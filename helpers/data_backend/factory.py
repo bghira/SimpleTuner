@@ -15,6 +15,7 @@ from helpers.training.state_tracker import StateTracker
 import json, os, torch, logging, io, time
 
 logger = logging.getLogger("DataBackendFactory")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
@@ -894,6 +895,13 @@ def random_dataloader_iterator(backends: dict):
 
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
     logger.debug(f"Backends to select from {backends}")
+    if backends == {}:
+        logger.debug(
+            "All dataloaders exhausted. Moving to next epoch in main training loop."
+        )
+        StateTracker.clear_exhausted_buckets()
+        StateTracker.set_repeats(repeats=0)
+        return step, None
     while backends:
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
@@ -901,7 +909,7 @@ def random_dataloader_iterator(backends: dict):
 
         chosen_backend_id = select_dataloader_index(step, backends)
         if chosen_backend_id is None:
-            logger.info("No dataloader iterators were available.")
+            logger.debug("No dataloader iterators were available.")
             break
 
         chosen_iter = iter(backends[chosen_backend_id])

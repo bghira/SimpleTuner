@@ -1270,15 +1270,33 @@ def main():
                     and backend_config["crop_aspect"] is not None
                     and backend_config["crop_aspect"] == "random"
                     and "metadata_backend" in backend
+                    and not args.aspect_bucket_disable_rebuild
                 ):
                     # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
-                    backend["metadata_backend"].compute_aspect_ratio_bucket_indices(
-                        ignore_existing_cache=True
+                    if accelerator.is_main_process:
+                        # we only compute the aspect ratio indices on the main process.
+                        # we have to set read_only to False since we're generating a new, un-split list.
+                        # otherwise, we can't actually save the new cache to disk.
+                        backend["metadata_backend"].read_only = False
+                        # this will generate+save the new cache to the storage backend.
+                        backend["metadata_backend"].compute_aspect_ratio_bucket_indices(
+                            ignore_existing_cache=True
+                        )
+                    accelerator.wait_for_everyone()
+                    logger.info(f"Reloading cache for backend {backend_id}")
+                    backend["metadata_backend"].reload_cache(set_config=False)
+                    logger.info(f"Waiting for other threads to finish..")
+                    accelerator.wait_for_everyone()
+                    # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
+                    logger.info(f"Splitting buckets across GPUs")
+                    backend["metadata_backend"].split_buckets_between_processes(
+                        gradient_accumulation_steps=args.gradient_accumulation_steps
                     )
                     # we have to rebuild the VAE cache if it exists.
                     if "vaecache" in backend:
+                        logger.info(f"Rebuilding VAE cache..")
                         backend["vaecache"].rebuild_cache()
-                    backend["metadata_backend"].save_cache()
+                    # no need to manually call metadata_backend.save_cache() here.
                 elif (
                     "vae_cache_clear_each_epoch" in backend_config
                     and backend_config["vae_cache_clear_each_epoch"]
