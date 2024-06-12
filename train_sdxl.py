@@ -1140,6 +1140,7 @@ def main():
                     and backend_config["crop_aspect"] is not None
                     and backend_config["crop_aspect"] == "random"
                     and "metadata_backend" in backend
+                    and not args.aspect_bucket_disable_rebuild
                 ):
                     # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                     if accelerator.is_main_process:

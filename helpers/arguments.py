@@ -317,6 +317,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--aspect_bucket_disable_rebuild",
+        action="store_true",
+        default=False,
+        help=(
+            "When using a randomised aspect bucket list, the VAE and aspect cache are rebuilt on each epoch."
+            " With a large and diverse enough dataset, this may be undesirable, in which case this option will prevent it."
+            " This option will not override any dataset property value for vae_cache_clear_each_epoch. If that option"
+            " is set with this one, the VAE cache will still be rebuilt on each epoch, but the aspect bucket lists will not."
+        ),
+    )
+    parser.add_argument(
         "--keep_vae_loaded",
         action="store_true",
         default=False,
