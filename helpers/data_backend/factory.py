@@ -900,6 +900,7 @@ def random_dataloader_iterator(backends: dict):
                 "All dataloaders exhausted. Moving to next epoch in main training loop."
             )
             StateTracker.clear_exhausted_buckets()
+            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
             return step, None
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
