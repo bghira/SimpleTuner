@@ -11,13 +11,13 @@ def _torch_device():
     return """'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'"""
 
 
-def code_example(args):
+def code_example(args, repo_id: str = None):
     """Return a string with the code example."""
     code_example = f"""
 ```python
 {_model_imports(args)}
 
-model_id = "/path/to/checkpoint" # or "username/checkpoint"
+model_id = "{repo_id if repo_id else '/path/to/repository'}"
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
 negative_prompt = "malformed, disgusting, overexposed, washed-out"
 
@@ -165,7 +165,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 
 ## Inference
 
-{code_example(StateTracker.get_args())}
+{code_example(args=StateTracker.get_args(), repo_id=repo_id)}
 """
 
     print(f"YAML:\n{yaml_content}")
