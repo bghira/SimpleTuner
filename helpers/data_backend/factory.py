@@ -895,13 +895,16 @@ def random_dataloader_iterator(backends: dict):
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
     logger.debug(f"Backends to select from {backends}")
     while backends:
+        if backends == {}:
+            logger.debug("No dataloader iterators were available.")
+            return step, None
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
 
         chosen_backend_id = select_dataloader_index(step, backends)
         if chosen_backend_id is None:
-            logger.info("No dataloader iterators were available.")
+            logger.debug("No dataloader iterators were available.")
             break
 
         chosen_iter = iter(backends[chosen_backend_id])
