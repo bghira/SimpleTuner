@@ -840,6 +840,7 @@ class VAECache:
                     output_value = (output_file, filepath, latent_vector)
                     output_values.append(output_value)
                     if not disable_queue:
+                        logger.debug(f"Adding outputs to write queue")
                         self.write_queue.put(output_value)
                 if image_pixel_values is not None:
                     qlen = len(image_pixel_values)

@@ -66,7 +66,6 @@ def _encode_sd3_prompt_with_clip(
         truncation=True,
         return_tensors="pt",
     )
-
     text_input_ids = text_inputs.input_ids
     prompt_embeds = text_encoder(text_input_ids.to(device), output_hidden_states=True)
 
@@ -219,14 +218,25 @@ class TextEmbeddingCache:
         result = self.data_backend.torch_load(filename)
         return result
 
+    # Adapted from pipelines.StableDiffusion3Pipeline.encode_prompt
     def encode_sd3_prompt(
-        self,
-        text_encoders,
-        tokenizers,
-        prompt: str,
-        num_images_per_prompt: int = 1,
+        self, text_encoders, tokenizers, prompt: str, is_validation: bool = False
     ):
+        """
+        Encode a prompt for an SD3 model.
+
+        Args:
+            text_encoders: List of text encoders.
+            tokenizers: List of tokenizers.
+            prompt: The prompt to encode.
+            num_images_per_prompt: The number of images to generate per prompt.
+            is_validation: Whether the prompt is for validation. No-op for SD3.
+
+        Returns:
+            Tuple of (prompt_embeds, pooled_prompt_embeds).
+        """
         prompt = [prompt] if isinstance(prompt, str) else prompt
+        num_images_per_prompt = 1
 
         clip_tokenizers = tokenizers[:2]
         clip_text_encoders = text_encoders[:2]
@@ -486,6 +496,16 @@ class TextEmbeddingCache:
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
             )
+        elif self.model_type == "sd3":
+            output = self.compute_embeddings_for_sd3_prompts(
+                raw_prompts,
+                return_concat=return_concat,
+                load_from_cache=load_from_cache,
+            )
+        else:
+            raise ValueError(
+                f"No such text encoding backend for model type '{self.model_type}'"
+            )
         logger.debug(f"Returning output: {output}")
         return output
 
@@ -732,6 +752,130 @@ class TextEmbeddingCache:
 
         logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
         return prompt_embeds_all
+
+    def compute_embeddings_for_sd3_prompts(
+        self,
+        prompts: list = None,
+        return_concat: bool = True,
+        is_validation: bool = False,
+        load_from_cache: bool = True,
+    ):
+        prompt_embeds_all = []
+        add_text_embeds_all = []
+        should_encode = not load_from_cache
+        args = StateTracker.get_args()
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and is_validation
+        ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
+            load_from_cache = False
+            should_encode = True
+        # self.debug_log(
+        #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
+        # )
+        self.write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(local_caption_split),
+            position=get_rank() + self.accelerator.num_processes,
+        )
+        with torch.no_grad():
+            for prompt in tqdm(
+                local_caption_split,
+                desc="Processing prompts",
+                disable=return_concat,
+                leave=False,
+                ncols=125,
+                position=get_rank(),
+            ):
+                filename = os.path.join(
+                    self.cache_dir, self.create_hash(prompt) + ".pt"
+                )
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
+                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                logger.debug(debug_msg)
+                if return_concat and load_from_cache:
+                    try:
+                        # We attempt to load.
+                        prompt_embeds, add_text_embeds = self.load_from_cache(filename)
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.error(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
+                        )
+                        should_encode = True
+                        raise Exception("This won't work. We cannot continue.")
+                if should_encode:
+                    # If load_from_cache is True, should_encode would be False unless we failed to load.
+                    # self.debug_log(f"Encoding prompt: {prompt}")
+                    prompt_embeds, pooled_prompt_embeds = self.encode_sd3_prompt(
+                        self.text_encoders,
+                        self.tokenizers,
+                        [prompt],
+                        is_validation,
+                    )
+                    add_text_embeds = pooled_prompt_embeds
+                    # If the prompt is empty, zero out the embeddings
+                    if prompt == "":
+                        prompt_embeds = torch.zeros_like(prompt_embeds)
+                        add_text_embeds = torch.zeros_like(add_text_embeds)
+                    # Get the current size of the queue.
+                    current_size = self.write_queue.qsize()
+                    if current_size >= 2048:
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large."
+                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
+                        )
+                        self.write_thread_bar.write(log_msg)
+                        while self.write_queue.qsize() > 100:
+                            time.sleep(0.1)
+
+                    self.debug_log(f"Adding embed to write queue: {filename}")
+                    self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                        add_text_embeds = add_text_embeds.to(self.accelerator.device)
+                    else:
+                        del prompt_embeds
+                        del add_text_embeds
+                        del pooled_prompt_embeds
+                        continue
+
+                if return_concat:
+                    prompt_embeds_all.append(prompt_embeds)
+                    add_text_embeds_all.append(add_text_embeds)
+
+            while self.write_queue.qsize() > 0:
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            self.write_thread_bar.close()
+            self.process_write_batches = False
+
+            if not return_concat:
+                del prompt_embeds_all
+                del add_text_embeds_all
+                return
+
+            prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
+            add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
+
+        return prompt_embeds_all, add_text_embeds_all
 
     def split_cache_between_processes(self, prompts: list):
         # Use the accelerator to split the data
