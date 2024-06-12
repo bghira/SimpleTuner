@@ -225,8 +225,13 @@ class StateTracker:
         }
 
     @classmethod
-    def set_repeats(cls, repeats: int, data_backend_id: str):
-        cls.repeats[data_backend_id] = repeats
+    def set_repeats(cls, repeats: int, data_backend_id: str = None):
+        if data_backend_id is None:
+            # set every entry in repeats to zero
+            for key in cls.repeats.keys():
+                cls.repeats[key] = repeats
+        else:
+            cls.repeats[data_backend_id] = repeats
 
     @classmethod
     def init_repeats(cls, repeats: int):
