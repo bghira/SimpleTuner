@@ -1,9 +1,12 @@
 from helpers.webhooks.config import WebhookConfig
-import requests
+import requests, os, logging
 from io import BytesIO
 from PIL import Image
 
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class WebhookHandler:
@@ -53,7 +56,11 @@ class WebhookHandler:
                 )
 
         # Send request to webhook URL with images if present
-        post_result = requests.post(self.webhook_url, data=data, files=files)
+        try:
+            post_result = requests.post(self.webhook_url, data=data, files=files)
+        except Exception as e:
+            logger.error(f"Could not send webhook request: {e}")
+            return
         if store_response:
             self.stored_response = post_result.headers
 

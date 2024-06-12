@@ -285,7 +285,7 @@ class VAECache:
                     ),
                     data_backend_id=self.id,
                 )
-        self.accelerator.wait_for_everyone()
+            self.accelerator.wait_for_everyone()
         self.debug_log("-> Completed cache rebuild")
 
     def clear_cache(self):
