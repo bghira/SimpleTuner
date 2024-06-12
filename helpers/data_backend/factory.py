@@ -15,6 +15,7 @@ from helpers.training.state_tracker import StateTracker
 import json, os, torch, logging, io, time
 
 logger = logging.getLogger("DataBackendFactory")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
