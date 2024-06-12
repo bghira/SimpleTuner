@@ -162,6 +162,10 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 ## Datasets
 
 {datasets_str}
+
+## Inference
+
+{code_example(StateTracker.get_args())}
 """
 
     print(f"YAML:\n{yaml_content}")
