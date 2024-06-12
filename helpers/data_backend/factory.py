@@ -895,14 +895,14 @@ def random_dataloader_iterator(backends: dict):
 
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
     logger.debug(f"Backends to select from {backends}")
+    if backends == {}:
+        logger.debug(
+            "All dataloaders exhausted. Moving to next epoch in main training loop."
+        )
+        StateTracker.clear_exhausted_buckets()
+        StateTracker.set_repeats(repeats=0)
+        return step, None
     while backends:
-        if backends == {}:
-            logger.debug(
-                "All dataloaders exhausted. Moving to next epoch in main training loop."
-            )
-            StateTracker.clear_exhausted_buckets()
-            StateTracker.set_repeats(repeats=0)
-            return step, None
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
