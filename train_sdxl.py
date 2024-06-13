@@ -1443,11 +1443,11 @@ def main():
                             mean=args.logit_mean,
                             std=args.logit_std,
                             size=(bsz,),
-                            device=accelerator.device,
+                            device="cpu",
                         )
                         u = torch.nn.functional.sigmoid(u)
                     elif args.weighting_scheme == "mode":
-                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        u = torch.rand(size=(bsz,), device="cpu")
                         u = (
                             1
                             - u
@@ -1455,13 +1455,13 @@ def main():
                             * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
                         )
                     else:
-                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        u = torch.rand(size=(bsz,), device="cpu")
 
                     indices = (
                         u * noise_scheduler_copy.config.num_train_timesteps
                     ).long()
                     timesteps = noise_scheduler_copy.timesteps[indices].to(
-                        device=accelerator.device
+                        device=latents.device
                     )
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
