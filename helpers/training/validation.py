@@ -14,6 +14,7 @@ from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
+    FlowMatchEulerDiscreteScheduler,
     UniPCMultistepScheduler,
     DDIMScheduler,
     DDPMScheduler,
@@ -36,6 +37,7 @@ except ImportError:
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
+    "flow-match": FlowMatchEulerDiscreteScheduler,
     "unipc": UniPCMultistepScheduler,
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
@@ -110,6 +112,8 @@ class Validation:
         ema_unet,
         vae,
         controlnet=None,
+        text_encoder_3=None,
+        tokenizer_3=None,
     ):
         self.accelerator = accelerator
         self.prompt_handler = prompt_handler
@@ -147,8 +151,31 @@ class Validation:
             if "deepfloyd-stage2" not in args.model_type
             else ["base-256"]
         )
+        self.text_encoder_3 = text_encoder_3
+        self.tokenizer_3 = tokenizer_3
 
         self._update_state()
+
+    def init_vae(self):
+        from diffusers import AutoencoderKL
+
+        args = StateTracker.get_args()
+        vae_path = (
+            args.pretrained_model_name_or_path
+            if args.pretrained_vae_model_name_or_path is None
+            else args.pretrained_vae_model_name_or_path
+        )
+        precached_vae = StateTracker.get_vae()
+        logger.debug(f"Was the VAE loaded? {precached_vae}")
+        self.vae = precached_vae or AutoencoderKL.from_pretrained(
+            vae_path,
+            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+            revision=args.revision,
+            force_upcast=False,
+        ).to(self.accelerator.device)
+        StateTracker.set_vae(self.vae)
+
+        return self.vae
 
     def _discover_validation_input_samples(self):
         """
@@ -195,12 +222,18 @@ class Validation:
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
-        if StateTracker.get_model_type() == "sdxl":
+        if (
+            StateTracker.get_model_type() == "sdxl"
+            or StateTracker.get_model_type() == "sd3"
+        ):
             (
                 current_validation_prompt_embeds,
                 current_validation_pooled_embeds,
             ) = self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
-            if self.prompt_handler is not None:
+            if (
+                self.prompt_handler is not None
+                and not StateTracker.get_model_type() == "sd3"
+            ):
                 for text_encoder in self.prompt_handler.text_encoders:
                     # Can't remember why we move this to the GPU right here..
                     if text_encoder is not None:
@@ -361,6 +394,9 @@ class Validation:
             scheduler_args["variance_type"] = variance_type
         if "deepfloyd" in self.args.model_type:
             self.args.validation_noise_scheduler = "ddpm"
+        if self.args.sd3:
+            # NO TOUCHIE
+            return
 
         self.pipeline.scheduler = SCHEDULER_NAME_MAP[
             self.args.validation_noise_scheduler
@@ -413,6 +449,21 @@ class Validation:
                 extra_pipeline_kwargs["transformer"] = unwrap_model(
                     self.accelerator, self.transformer
                 )
+            if self.args.sd3:
+                extra_pipeline_kwargs["text_encoder"] = unwrap_model(
+                    self.accelerator, self.text_encoder_1
+                )
+                extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                    self.accelerator, self.text_encoder_2
+                )
+                extra_pipeline_kwargs["text_encoder_3"] = unwrap_model(
+                    self.accelerator, self.text_encoder_3
+                )
+                extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
+                extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+                extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
+                if self.vae is None:
+                    extra_pipeline_kwargs["vae"] = self.init_vae()
 
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
@@ -421,7 +472,15 @@ class Validation:
                 "torch_dtype": self.weight_dtype,
                 **extra_pipeline_kwargs,
             }
-            self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
+            attempt = 0
+            while attempt < 3:
+                attempt += 1
+                try:
+                    self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
+                except Exception as e:
+                    logger.error(e)
+                    continue
+                break
             if self.args.validation_torch_compile:
                 if self.unet is not None and not is_compiled_module(self.pipeline.unet):
                     logger.warning(
@@ -534,7 +593,7 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if "deepfloyd" not in self.args.model_type:
+            if "deepfloyd" not in self.args.model_type and not self.args.sd3:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
                 )

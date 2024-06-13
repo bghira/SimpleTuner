@@ -1148,6 +1148,8 @@ def main():
         validation_negative_prompt_embeds=validation_negative_prompt_embeds,
         text_encoder_2=text_encoder_2,
         tokenizer_2=tokenizer_2,
+        text_encoder_3=text_encoder_3,
+        tokenizer_3=tokenizer_3,
         ema_unet=ema_unet,
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
