@@ -319,8 +319,6 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--data_aesthetic_score DATA_AESTHETIC_SCORE]
                      [--sdxl_refiner_uses_full_range]
                      [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
-                     [--input_perturbation INPUT_PERTURBATION]
-                     [--input_perturbation_probability INPUT_PERTURBATION_PROBABILITY]
                      [--delete_unwanted_images] [--delete_problematic_images]
                      [--offset_noise] [--lr_end LR_END]
                      [--i_know_what_i_am_doing]
@@ -1037,14 +1035,6 @@ options:
                         percent of the inputs. Maximum technical value is 1.0.
                         The default is to use zero caption dropout, though for
                         better generalisation, a value of 0.1 is recommended.
-  --input_perturbation INPUT_PERTURBATION
-                        The scale of input pretubation. Recommended 0.1.
-  --input_perturbation_probability INPUT_PERTURBATION_PROBABILITY
-                        While input perturbation can help with training
-                        convergence, having it applied all the time is likely
-                        damaging. When this value is less than 1.0, any
-                        perturbed noise will be applied probabilistically.
-                        Default: 0.25
   --delete_unwanted_images
                         If set, will delete images that are not of a minimum
                         size to save on disk space for large training runs.
