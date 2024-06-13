@@ -306,19 +306,20 @@ def main():
         )
     if not tokenizer_1 and not tokenizer_2:
         raise Exception("Failed to load tokenizer")
-    try:
-        from transformers import T5TokenizerFast
+    if args.sd3:
+        try:
+            from transformers import T5TokenizerFast
 
-        tokenizer_3 = T5TokenizerFast.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer_3",
-            revision=args.revision,
-            use_fast=True,
-        )
-    except:
-        raise ValueError(
-            "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
-        )
+            tokenizer_3 = T5TokenizerFast.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer_3",
+                revision=args.revision,
+                use_fast=True,
+            )
+        except:
+            raise ValueError(
+                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
+            )
 
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
@@ -330,7 +331,7 @@ def main():
             args.revision,
             subfolder="text_encoder_2",
         )
-    if tokenizer_3 is not None:
+    if tokenizer_3 is not None and args.sd3:
         text_encoder_cls_3 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
@@ -382,7 +383,7 @@ def main():
                 revision=args.revision,
                 variant=args.variant,
             )
-        if tokenizer_3 is not None:
+        if tokenizer_3 is not None and args.sd3:
             logger.info("Loading T5-XXL v1.1 text encoder..")
             text_encoder_3 = text_encoder_cls_3.from_pretrained(
                 args.pretrained_model_name_or_path,
