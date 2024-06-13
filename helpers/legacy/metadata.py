@@ -85,6 +85,9 @@ def save_model_card(
     widget_str = ""
     idx = 0
     shortname_idx = 0
+    negative_prompt_text = str(StateTracker.get_args().validation_negative_prompt)
+    if negative_prompt_text == "":
+        negative_prompt_text = "''"
     if images:
         widget_str = "widget:"
         for image_list in images.values() if isinstance(images, dict) else images:
@@ -107,7 +110,7 @@ def save_model_card(
                     validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
                 widget_str += f"\n  parameters:"
-                widget_str += f"\n    negative_prompt: '{str(StateTracker.get_args().validation_negative_prompt)}'"
+                widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
                 widget_str += f"\n  output:"
                 widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.png"
                 idx += 1
