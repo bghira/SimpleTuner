@@ -66,6 +66,8 @@ from tqdm.auto import tqdm
 from helpers.training.custom_schedule import get_sd3_sigmas
 from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
+from diffusers import StableDiffusion3Pipeline
+
 from diffusers import (
     AutoencoderKL,
     ControlNetModel,
@@ -679,6 +681,7 @@ def main():
     if args.push_to_hub and accelerator.is_main_process:
         hub_manager.collected_data_backend_str = collected_data_backend_str
         hub_manager.set_validation_prompts(validation_prompts)
+        logger.debug(f"Collected validation prompts: {validation_prompts}")
     logger.info(f"Collected the following data backends: {collected_data_backend_str}")
     if webhook_handler is not None:
         webhook_handler.send(
@@ -1941,8 +1944,6 @@ def main():
         if args.model_type == "full":
             # Now we build a full SDXL Pipeline to export the model with.
             if args.sd3:
-                from diffusers import StableDiffusion3Pipeline
-
                 pipeline = StableDiffusion3Pipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     text_encoder=text_encoder_1

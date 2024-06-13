@@ -59,11 +59,16 @@ def save_model_card(
     base_model: str = "",
     train_text_encoder: bool = False,
     prompt: str = "",
-    validation_prompts: dict = None,
+    validation_prompts: list = None,
+    validation_shortnames: list = None,
     repo_folder: str = None,
 ):
     if repo_folder is None:
         raise ValueError("The repo_folder must be specified and not be None.")
+    if type(validation_prompts) is not list:
+        raise ValueError(
+            f"The validation_prompts must be a list. Received {validation_prompts}"
+        )
 
     assets_folder = os.path.join(repo_folder, "assets")
     os.makedirs(assets_folder, exist_ok=True)
@@ -86,9 +91,10 @@ def save_model_card(
                 image.save(image_path, format="PNG")
                 validation_prompt = "no prompt available"
                 if validation_prompts is not None:
-                    validation_prompt = validation_prompts.get(
-                        shortname_idx, f"prompt not found ({shortname_idx})"
-                    )
+                    if idx in validation_prompts:
+                        validation_prompt = validation_prompts[idx]
+                    else:
+                        validation_prompt = f"prompt not found ({validation_shortnames[shortname_idx] if validation_shortnames is not None and shortname_idx in validation_shortnames else shortname_idx})"
                 if validation_prompt == "":
                     validation_prompt = "unconditional (blank prompt)"
                 else:
