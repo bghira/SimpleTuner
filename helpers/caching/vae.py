@@ -567,6 +567,7 @@ class VAECache:
                     processed_images
                 ).latent_dist.sample()
                 latents_uncached = latents_uncached * self.vae.config.scaling_factor
+                logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
             cached_idx, uncached_idx = 0, 0

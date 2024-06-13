@@ -58,6 +58,20 @@ def segmented_timestep_selection(
     return torch.tensor(selected_timesteps)
 
 
+def get_sd3_sigmas(
+    accelerator, noise_scheduler_copy, timesteps, n_dim=4, dtype=torch.float32
+):
+    sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
+    schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
+    timesteps = timesteps.to(accelerator.device)
+    step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+
+    sigma = sigmas[step_indices].flatten()
+    while len(sigma.shape) < n_dim:
+        sigma = sigma.unsqueeze(-1)
+    return sigma
+
+
 def generate_timestep_weights(args, num_timesteps):
     weights = torch.ones(num_timesteps)
 

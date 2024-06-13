@@ -809,6 +809,9 @@ class TextEmbeddingCache:
                     try:
                         # We attempt to load.
                         prompt_embeds, add_text_embeds = self.load_from_cache(filename)
+                        logger.debug(
+                            f"Cached SD3 embeds: {prompt_embeds.shape}, {add_text_embeds.shape}"
+                        )
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
                         logger.error(
@@ -822,12 +825,15 @@ class TextEmbeddingCache:
                         raise Exception("This won't work. We cannot continue.")
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    # self.debug_log(f"Encoding prompt: {prompt}")
+                    self.debug_log(f"Encoding prompt: {prompt}")
                     prompt_embeds, pooled_prompt_embeds = self.encode_sd3_prompt(
                         self.text_encoders,
                         self.tokenizers,
                         [prompt],
                         is_validation,
+                    )
+                    logger.debug(
+                        f"SD3 prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}"
                     )
                     add_text_embeds = pooled_prompt_embeds
                     # If the prompt is empty, zero out the embeddings
@@ -872,6 +878,7 @@ class TextEmbeddingCache:
                 del add_text_embeds_all
                 return
 
+            logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
