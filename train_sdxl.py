@@ -331,7 +331,7 @@ def main():
             args.revision,
             subfolder="text_encoder_2",
         )
-    if tokenizer_3 is not None:
+    if tokenizer_3 is not None and args.sd3:
         text_encoder_cls_3 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
@@ -383,7 +383,7 @@ def main():
                 revision=args.revision,
                 variant=args.variant,
             )
-        if tokenizer_3 is not None:
+        if tokenizer_3 is not None and args.sd3:
             logger.info("Loading T5-XXL v1.1 text encoder..")
             text_encoder_3 = text_encoder_cls_3.from_pretrained(
                 args.pretrained_model_name_or_path,
