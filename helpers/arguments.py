@@ -1344,21 +1344,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--input_perturbation",
-        type=float,
-        default=0,
-        help="The scale of input pretubation. Recommended 0.1.",
-    )
-    parser.add_argument(
-        "--input_perturbation_probability",
-        type=float,
-        default=0.25,
-        help=(
-            "While input perturbation can help with training convergence, having it applied all the time is likely damaging."
-            " When this value is less than 1.0, any perturbed noise will be applied probabilistically. Default: 0.25"
-        ),
-    )
-    parser.add_argument(
         "--delete_unwanted_images",
         action="store_true",
         help=(

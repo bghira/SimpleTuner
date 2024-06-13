@@ -1156,14 +1156,6 @@ def main():
                         )
                 else:
                     noise = torch.randn_like(latents)
-                if args.input_perturbation:
-                    if (
-                        args.input_perturbation_probability == 1.0
-                        or random.random() < args.input_perturbation_probability
-                    ):
-                        noise = noise + args.input_perturbation * torch.randn_like(
-                            noise
-                        )
                 bsz, channels, height, width = latents.shape
 
                 logger.debug(f"Working on batch size: {bsz}")

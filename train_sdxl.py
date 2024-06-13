@@ -1443,9 +1443,31 @@ def main():
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
                 if args.sd3:
-                    indices = torch.randint(
-                        0, noise_scheduler_copy.config.num_train_timesteps, (bsz,)
-                    )
+                    # for weighting schemes where we sample timesteps non-uniformly
+                    # thanks to @Slickytail who implemented this correctly via #8528
+                    if args.weighting_scheme == "logit_normal":
+                        # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
+                        u = torch.normal(
+                            mean=args.logit_mean,
+                            std=args.logit_std,
+                            size=(bsz,),
+                            device=accelerator.device,
+                        )
+                        u = torch.nn.functional.sigmoid(u)
+                    elif args.weighting_scheme == "mode":
+                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        u = (
+                            1
+                            - u
+                            - args.mode_scale
+                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
+                        )
+                    else:
+                        u = torch.rand(size=(bsz,), device=accelerator.device)
+
+                    indices = (
+                        u * noise_scheduler_copy.config.num_train_timesteps
+                    ).long()
                     timesteps = noise_scheduler_copy.timesteps[indices].to(
                         device=accelerator.device
                     )
@@ -1613,15 +1635,9 @@ def main():
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     if args.weighting_scheme == "sigma_sqrt":
                         weighting = (sigmas**-2.0).float()
-                    elif args.weighting_scheme == "logit_normal":
-                        # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
-                        u = torch.normal(
-                            mean=args.logit_mean,
-                            std=args.logit_std,
-                            size=(bsz,),
-                            device=accelerator.device,
-                        )
-                        weighting = torch.nn.functional.sigmoid(u)
+                    elif args.weighting_scheme == "cosmap":
+                        bot = 1 - 2 * sigmas + 2 * sigmas**2
+                        weighting = 2 / (math.pi * bot)
                     elif args.weighting_scheme == "mode":
                         # See sec 3.1 in the SD3 paper (20).
                         u = torch.rand(size=(bsz,), device=accelerator.device)
