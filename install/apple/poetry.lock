@@ -496,8 +496,8 @@ training = ["Jinja2", "accelerate (>=0.29.3)", "datasets", "peft (>=0.6.0)", "pr
 [package.source]
 type = "git"
 url = "https://github.com/huggingface/diffusers"
-reference = "HEAD"
-resolved_reference = "83bc6c94eaeb6f7704a2a428931cf2d9ad973ae9"
+reference = "sd3"
+resolved_reference = "c921fd2de8bbbfc26d9f65fb6ede431179c57f1a"
 
 [[package]]
 name = "dill"
@@ -3153,4 +3153,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "49aa06db84a65df14cfd60dcb393cf23c877c76b824007dd66f81106e84b9b42"
+content-hash = "b804a21a1608f9e3526ad679a97e49425d5c46dbea0b5e15e519f31c3e909485"
