@@ -20,6 +20,7 @@
 - [Hardware Requirements](#hardware-requirements)
   - [SDXL](#sdxl)
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-2x)
+  - [Stable Diffusion 3.0](#stable-diffusion-3)
 - [Scripts](#scripts)
 - [Toolkit](#toolkit)
 - [Setup](#setup)
@@ -62,6 +63,18 @@ Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn'
 - Enforced zero SNR on the terminal timestep instead of offset noise for clearer images.
 - The use of EMA (exponential moving average) during training to ensure we do not "fry" the model.
 - The ability to train on multiple datasets with different base resolutions in each, eg. 512px and 768px images simultaneously
+
+### Stable Diffusion 3
+
+This model is very new and the current level of support for it in SimpleTuner is preliminary:
+
+- LoRA is not yet implemented, only full finetuning.
+- ControlNet is not yet implemented.
+- Certain features such as segmented timestep selection and Compel long prompt weighting are not yet supported.
+
+A few sharp edges could catch you off-guard, but for the most part, this initial pass at SD3 support is considered to be robust enough not to let you screw up too many parameters - it will oftentimes simply override bad values and set them for more sensible ones.
+
+> ⚠️ In the current source release of Diffusers, gradient checkpointing is broken for Stable Diffusion 3 models. This will result in much, much higher memory use.
 
 ## Hardware Requirements
 
