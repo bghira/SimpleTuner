@@ -41,7 +41,7 @@ image = pipeline(
     guidance_scale={args.validation_guidance},
     guidance_rescale={args.validation_guidance_rescale},
 ).images[0]
-image.save(f"output.png", format="PNG")
+image.save("output.png", format="PNG")
 ```
 """
     return code_example
