@@ -189,7 +189,10 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                      [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                     [--lora_type {Standard}]
+                     [--sd3]
+                     [--weighting_scheme {sigma_sqrt,logit_normal,mode}]
+                     [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
+                     [--mode_scale MODE_SCALE] [--lora_type {Standard}]
                      [--lora_init_type {default,gaussian,loftq}]
                      [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
                      [--lora_dropout LORA_DROPOUT] [--controlnet]
@@ -213,7 +216,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--vae_dtype {default,fp16,fp32,bf16}]
                      [--vae_batch_size VAE_BATCH_SIZE]
                      [--vae_cache_scan_behaviour {recreate,sync}]
-                     [--vae_cache_preprocess] [--keep_vae_loaded]
+                     [--vae_cache_preprocess]
+                     [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] [--variant VARIANT]
                      [--preserve_data_backend_cache] [--use_dora]
@@ -291,7 +295,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--validation_resolution VALIDATION_RESOLUTION]
                      [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
                      [--validation_disable_unconditional] [--disable_compel]
-                     [--enable_watermark] [--mixed_precision {bf16}]
+                     [--enable_watermark] [--mixed_precision {bf16,no}]
                      [--local_rank LOCAL_RANK]
                      [--enable_xformers_memory_efficient_attention]
                      [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
@@ -340,6 +344,18 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --sd3                 This option must be provided when training a Stable
+                        Diffusion 3 model.
+  --weighting_scheme {sigma_sqrt,logit_normal,mode}
+                        Stable Diffusion 3 uses a different weighting scheme
+                        from other models. This option only applies for Stable
+                        Diffusion 3 training.
+  --logit_mean LOGIT_MEAN
+                        Stable Diffusion 3-specific training parameters.
+  --logit_std LOGIT_STD
+                        Stable Diffusion 3-specific training parameters.
+  --mode_scale MODE_SCALE
+                        Stable Diffusion 3-specific training parameters.
   --lora_type {Standard}
                         When training using --model_type=lora, you may specify
                         a different type of LoRA to train here. Currently,
@@ -488,6 +504,14 @@ options:
                         some situations, pre-processing may be desired. To
                         revert to the old behaviour, supply
                         --vae_cache_preprocess=false.
+  --aspect_bucket_disable_rebuild
+                        When using a randomised aspect bucket list, the VAE
+                        and aspect cache are rebuilt on each epoch. With a
+                        large and diverse enough dataset, rebuilding the
+                        aspect list may take a long time, and this may be
+                        undesirable. This option will not override
+                        vae_cache_clear_each_epoch. If both options are
+                        provided, only the VAE cache will be rebuilt.
   --keep_vae_loaded     If set, will keep the VAE loaded in memory. This can
                         reduce disk churn, but consumes VRAM during the
                         forward pass.
@@ -890,7 +914,7 @@ options:
                         sharing the validation images, it is up to you to
                         ensure that you are complying with the license,
                         whether that is through this watermarker, or another.
-  --mixed_precision {bf16}
+  --mixed_precision {bf16,no}
                         SimpleTuner only supports bf16 training. Bf16 requires
                         PyTorch >= 1.10. on an Nvidia Ampere or later GPU, and
                         PyTorch 2.3 or newer for Apple Silicon. Default to the
