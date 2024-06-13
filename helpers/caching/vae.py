@@ -567,6 +567,7 @@ class VAECache:
                     processed_images
                 ).latent_dist.sample()
                 latents_uncached = latents_uncached * self.vae.config.scaling_factor
+                logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
             cached_idx, uncached_idx = 0, 0
@@ -840,6 +841,7 @@ class VAECache:
                     output_value = (output_file, filepath, latent_vector)
                     output_values.append(output_value)
                     if not disable_queue:
+                        logger.debug(f"Adding outputs to write queue")
                         self.write_queue.put(output_value)
                 if image_pixel_values is not None:
                     qlen = len(image_pixel_values)

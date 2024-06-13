@@ -177,7 +177,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
-        if model_type == "sdxl":
+        if model_type == "sdxl" or model_type == "sd3":
             (
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
@@ -205,6 +205,8 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_shortnames,
                 validation_negative_prompt_embeds,
             )
+        else:
+            raise ValueError(f"Unknown model type '{model_type}'")
 
 
 def parse_validation_resolution(input_str: str) -> tuple:

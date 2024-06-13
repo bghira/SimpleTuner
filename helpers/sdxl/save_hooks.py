@@ -65,6 +65,7 @@ class SDXLSaveHook:
         self,
         args,
         unet,
+        transformer,
         ema_unet,
         text_encoder_1,
         text_encoder_2,
@@ -73,6 +74,7 @@ class SDXLSaveHook:
     ):
         self.args = args
         self.unet = unet
+        self.transformer = transformer
         self.text_encoder_1 = text_encoder_1
         self.text_encoder_2 = text_encoder_2
         self.ema_unet = ema_unet
@@ -85,9 +87,10 @@ class SDXLSaveHook:
             os.path.join(output_dir, "training_state.json")
         )
         if "lora" in self.args.model_type:
-            # there are only two options here. Either are just the unet attn processor layers
-            # or there are the unet and text encoder atten layers
+            # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
+            # or there are the unet and text encoder atten layers.
             unet_lora_layers_to_save = None
+            transformer_lora_layers_to_save = None
             text_encoder_1_lora_layers_to_save = None
             text_encoder_2_lora_layers_to_save = None
 
@@ -134,7 +137,12 @@ class SDXLSaveHook:
         if self.args.use_ema:
             self.ema_unet.save_pretrained(os.path.join(temporary_dir, "unet_ema"))
 
-        sub_dir = "unet" if not self.args.controlnet else "controlnet"
+        if self.unet is not None:
+            sub_dir = "unet"
+        if self.transformer is not None:
+            sub_dir = "transformer"
+        if self.args.controlnet:
+            sub_dir = "controlnet"
         for model in models:
             model.save_pretrained(os.path.join(temporary_dir, sub_dir))
             merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
@@ -166,6 +174,7 @@ class SDXLSaveHook:
         if "lora" in self.args.model_type:
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
             unet_ = None
+            transformer_ = None
             text_encoder_one_ = None
             text_encoder_two_ = None
 
@@ -174,6 +183,10 @@ class SDXLSaveHook:
 
                 if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
                     unet_ = model
+                elif isinstance(
+                    model, type(unwrap_model(self.accelerator, self.transformer))
+                ):
+                    transformer_ = model
                 elif isinstance(
                     model, type(unwrap_model(self.accelerator, self.text_encoder_one))
                 ):
@@ -216,7 +229,7 @@ class SDXLSaveHook:
                 _set_state_dict_into_text_encoder(
                     lora_state_dict,
                     prefix="text_encoder_2.",
-                    text_encoder=text_encoder_one_,
+                    text_encoder=text_encoder_two_,
                 )
 
             logger.info("Completed loading LoRA weights.")
@@ -243,7 +256,19 @@ class SDXLSaveHook:
                         load_model = ControlNetModel.from_pretrained(
                             input_dir, subfolder="controlnet"
                         )
-                    else:
+                    elif self.args.sd3:
+                        # Load a stable diffusion 3 checkpoint
+                        try:
+                            from diffusers import SD3Transformer2DModel
+                        except Exception as e:
+                            logger.error(
+                                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
+                            )
+                            raise e
+                        load_model = SD3Transformer2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
+                    elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(
                             input_dir, subfolder="unet"

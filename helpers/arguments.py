@@ -64,6 +64,39 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--sd3",
+        action="store_true",
+        default=False,
+        help=("This option must be provided when training a Stable Diffusion 3 model."),
+    )
+    parser.add_argument(
+        "--weighting_scheme",
+        type=str,
+        default="sigma_sqrt",
+        choices=["sigma_sqrt", "logit_normal", "mode"],
+        help=(
+            "Stable Diffusion 3 uses a different weighting scheme from other models. This option only applies for Stable Diffusion 3 training."
+        ),
+    )
+    parser.add_argument(
+        "--logit_mean",
+        type=float,
+        default=0.0,
+        help=("Stable Diffusion 3-specific training parameters."),
+    )
+    parser.add_argument(
+        "--logit_std",
+        type=float,
+        default=1.0,
+        help=("Stable Diffusion 3-specific training parameters."),
+    )
+    parser.add_argument(
+        "--mode_scale",
+        type=float,
+        default=1.29,
+        help=("Stable Diffusion 3-specific training parameters."),
+    )
+    parser.add_argument(
         "--lora_type",
         type=str,
         choices=["Standard"],

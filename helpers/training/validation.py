@@ -14,6 +14,7 @@ from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
+    FlowMatchEulerDiscreteScheduler,
     UniPCMultistepScheduler,
     DDIMScheduler,
     DDPMScheduler,
@@ -25,9 +26,18 @@ from helpers.image_manipulation.brightness import calculate_luminance
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
+try:
+    from diffusers import StableDiffusion3Pipeline, StableDiffusion3Img2ImgPipeline
+except ImportError:
+    logger.error(
+        f"Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
+    )
+    raise ImportError()
+
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
+    "flow-match": FlowMatchEulerDiscreteScheduler,
     "unipc": UniPCMultistepScheduler,
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
@@ -86,6 +96,7 @@ class Validation:
         accelerator,
         prompt_handler,
         unet,
+        transformer,
         args,
         validation_prompts,
         validation_shortnames,
@@ -101,10 +112,13 @@ class Validation:
         ema_unet,
         vae,
         controlnet=None,
+        text_encoder_3=None,
+        tokenizer_3=None,
     ):
         self.accelerator = accelerator
         self.prompt_handler = prompt_handler
         self.unet = unet
+        self.transformer = transformer
         self.controlnet = controlnet
         self.args = args
         self.save_dir = os.path.join(args.output_dir, "validation_images")
@@ -137,8 +151,31 @@ class Validation:
             if "deepfloyd-stage2" not in args.model_type
             else ["base-256"]
         )
+        self.text_encoder_3 = text_encoder_3
+        self.tokenizer_3 = tokenizer_3
 
         self._update_state()
+
+    def init_vae(self):
+        from diffusers import AutoencoderKL
+
+        args = StateTracker.get_args()
+        vae_path = (
+            args.pretrained_model_name_or_path
+            if args.pretrained_vae_model_name_or_path is None
+            else args.pretrained_vae_model_name_or_path
+        )
+        precached_vae = StateTracker.get_vae()
+        logger.debug(f"Was the VAE loaded? {precached_vae}")
+        self.vae = precached_vae or AutoencoderKL.from_pretrained(
+            vae_path,
+            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
+            revision=args.revision,
+            force_upcast=False,
+        ).to(self.accelerator.device)
+        StateTracker.set_vae(self.vae)
+
+        return self.vae
 
     def _discover_validation_input_samples(self):
         """
@@ -175,17 +212,28 @@ class Validation:
                 from diffusers.pipelines import IFSuperResolutionPipeline
 
                 return IFSuperResolutionPipeline
-            else:
-                return StableDiffusionPipeline
+            return StableDiffusionPipeline
+        elif model_type == "sd3":
+            if self.args.controlnet:
+                raise Exception(f"SD3 ControlNet is not yet supported.")
+            if self.args.validation_using_datasets:
+                return StableDiffusion3Img2ImgPipeline
+            return StableDiffusion3Pipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
-        if StateTracker.get_model_type() == "sdxl":
+        if (
+            StateTracker.get_model_type() == "sdxl"
+            or StateTracker.get_model_type() == "sd3"
+        ):
             (
                 current_validation_prompt_embeds,
                 current_validation_pooled_embeds,
             ) = self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
-            if self.prompt_handler is not None:
+            if (
+                self.prompt_handler is not None
+                and not StateTracker.get_model_type() == "sd3"
+            ):
                 for text_encoder in self.prompt_handler.text_encoders:
                     # Can't remember why we move this to the GPU right here..
                     if text_encoder is not None:
@@ -346,6 +394,9 @@ class Validation:
             scheduler_args["variance_type"] = variance_type
         if "deepfloyd" in self.args.model_type:
             self.args.validation_noise_scheduler = "ddpm"
+        if self.args.sd3:
+            # NO TOUCHIE
+            return
 
         self.pipeline.scheduler = SCHEDULER_NAME_MAP[
             self.args.validation_noise_scheduler
@@ -361,8 +412,9 @@ class Validation:
 
     def setup_pipeline(self, validation_type):
         if validation_type == "intermediary" and self.args.use_ema:
-            self.ema_unet.store(self.unet.parameters())
-            self.ema_unet.copy_to(self.unet.parameters())
+            if self.unet is not None:
+                self.ema_unet.store(self.unet.parameters())
+                self.ema_unet.copy_to(self.unet.parameters())
 
         if not self.pipeline:
             pipeline_cls = self._pipeline_cls()
@@ -389,26 +441,68 @@ class Validation:
                 extra_pipeline_kwargs["controlnet"] = unwrap_model(
                     self.accelerator, self.controlnet
                 )
+            if self.unet is not None:
+                extra_pipeline_kwargs["unet"] = unwrap_model(
+                    self.accelerator, self.unet
+                )
+            if self.transformer is not None:
+                extra_pipeline_kwargs["transformer"] = unwrap_model(
+                    self.accelerator, self.transformer
+                )
+            if self.args.sd3:
+                extra_pipeline_kwargs["text_encoder"] = unwrap_model(
+                    self.accelerator, self.text_encoder_1
+                )
+                extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                    self.accelerator, self.text_encoder_2
+                )
+                extra_pipeline_kwargs["text_encoder_3"] = unwrap_model(
+                    self.accelerator, self.text_encoder_3
+                )
+                extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
+                extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+                extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
+                if self.vae is None:
+                    extra_pipeline_kwargs["vae"] = self.init_vae()
+
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
-                "unet": unwrap_model(self.accelerator, self.unet),
                 "revision": self.args.revision,
                 "variant": self.args.variant,
                 "torch_dtype": self.weight_dtype,
                 **extra_pipeline_kwargs,
             }
-            self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
-            if self.args.validation_torch_compile and not is_compiled_module(
-                self.pipeline.unet
-            ):
-                logger.warning(
-                    f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-                )
-                self.pipeline.unet = torch.compile(
-                    self.pipeline.unet,
-                    mode=self.args.validation_torch_compile_mode,
-                    fullgraph=False,
-                )
+            attempt = 0
+            while attempt < 3:
+                attempt += 1
+                try:
+                    self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
+                except Exception as e:
+                    logger.error(e)
+                    continue
+                break
+            if self.args.validation_torch_compile:
+                if self.unet is not None and not is_compiled_module(self.pipeline.unet):
+                    logger.warning(
+                        f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
+                    )
+                    self.pipeline.unet = torch.compile(
+                        self.pipeline.unet,
+                        mode=self.args.validation_torch_compile_mode,
+                        fullgraph=False,
+                    )
+                if self.transformer is not None and not is_compiled_module(
+                    self.pipeline.transformer
+                ):
+                    logger.warning(
+                        f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
+                    )
+                    self.pipeline.transformer = torch.compile(
+                        self.pipeline.transformer,
+                        mode=self.args.validation_torch_compile_mode,
+                        fullgraph=False,
+                    )
+
         self.pipeline = self.pipeline.to(self.accelerator.device)
         self.pipeline.set_progress_bar_config(disable=True)
 
@@ -499,7 +593,7 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if "deepfloyd" not in self.args.model_type:
+            if "deepfloyd" not in self.args.model_type and not self.args.sd3:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
                 )
@@ -623,7 +717,8 @@ class Validation:
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
         if validation_type == "intermediary" and self.args.use_ema:
-            self.ema_unet.restore(self.unet.parameters())
+            if self.unet is not None:
+                self.ema_unet.restore(self.unet.parameters())
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None
         self.pipeline = None

@@ -154,7 +154,7 @@ def compute_latents(filepaths, data_backend_id: str):
     return latents
 
 
-def compute_single_embedding(caption, text_embed_cache, is_sdxl):
+def compute_single_embedding(caption, text_embed_cache, is_sdxl, is_sd3: bool = False):
     """Worker function to compute embedding for a single caption."""
     if caption == "" or not caption:
         # Grab the default text embed backend for null caption.
@@ -165,12 +165,17 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl):
     if is_sdxl:
         (
             prompt_embeds,
-            add_text_embeds,
+            pooled_prompt_embeds,
         ) = text_embed_cache.compute_embeddings_for_sdxl_prompts([caption])
         return (
             prompt_embeds[0],
-            add_text_embeds[0],
+            pooled_prompt_embeds[0],
         )  # Unpack the first (and only) element
+    elif is_sd3:
+        prompt_embeds, pooled_prompt_embeds = (
+            text_embed_cache.compute_embeddings_for_sd3_prompts(prompts=[caption])
+        )
+        return prompt_embeds[0], pooled_prompt_embeds[0]
     else:
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
@@ -193,6 +198,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     """
     debug_log(" -> get embed from cache")
     is_sdxl = text_embed_cache.model_type == "sdxl"
+    is_sd3 = text_embed_cache.model_type == "sd3"
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
@@ -202,11 +208,17 @@ def compute_prompt_embeddings(captions, text_embed_cache):
                 captions,
                 [text_embed_cache] * len(captions),
                 [is_sdxl] * len(captions),
+                [is_sd3] * len(captions),
             )
         )
 
     debug_log(f"Got embeddings: {embeddings}")
     if is_sdxl:
+        # Separate the tuples
+        prompt_embeds = [t[0] for t in embeddings]
+        add_text_embeds = [t[1] for t in embeddings]
+        return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
+    elif is_sd3:
         # Separate the tuples
         prompt_embeds = [t[0] for t in embeddings]
         add_text_embeds = [t[1] for t in embeddings]
