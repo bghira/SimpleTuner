@@ -481,11 +481,6 @@ def main():
             controlnet = ControlNetModel.from_unet(unet)
     elif "lora" in args.model_type:
         logger.info("Using LoRA training mode.")
-        if args.sd3 and not args.i_know_what_i_am_doing:
-            logger.warning(
-                f"LoRA training for SD3 is likely not working at this time and --i_know_what_i_am_doing was not provided."
-            )
-            sys.exit(0)
         if webhook_handler is not None:
             webhook_handler.send(message="Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
@@ -519,9 +514,14 @@ def main():
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
         if transformer is not None:
-            raise ValueError(
-                "LoRA adapters are not yet supported for diffusion transformer models."
+            transformer_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                init_lora_weights=lora_weight_init_type,
+                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                use_dora=args.use_dora,
             )
+            transformer.add_adapter(transformer_lora_config)
 
     logger.info(
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
@@ -1887,9 +1887,14 @@ def main():
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
-            unet_lora_layers = convert_state_dict_to_diffusers(
-                get_peft_model_state_dict(unet)
-            )
+            if args.sd3:
+                transformer_lora_layers = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(transformer)
+                )
+            else:
+                unet_lora_layers = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(unet)
+                )
             if args.train_text_encoder:
                 text_encoder_1 = accelerator.unwrap_model(text_encoder_1)
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
@@ -1899,16 +1904,28 @@ def main():
                 text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_2)
                 )
+                if args.sd3:
+                    text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
+                    text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(text_encoder_3)
+                    )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
+                text_encoder_3_lora_layers = None
 
-            StableDiffusionXLPipeline.save_lora_weights(
-                save_directory=args.output_dir,
-                unet_lora_layers=unet_lora_layers,
-                text_encoder_lora_layers=text_encoder_lora_layers,
-                text_encoder_2_lora_layers=text_encoder_2_lora_layers,
-            )
+            if args.sd3:
+                StableDiffusion3Pipeline.save_lora_weights(
+                    save_directory=args.output_dir,
+                    transformer_lora_layers=transformer_lora_layers,
+                )
+            else:
+                StableDiffusionXLPipeline.save_lora_weights(
+                    save_directory=args.output_dir,
+                    unet_lora_layers=unet_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers,
+                )
 
             del unet
             del transformer
@@ -1924,60 +1941,117 @@ def main():
         if args.model_type == "full":
             # Now we build a full SDXL Pipeline to export the model with.
             if args.sd3:
-                raise Exception(
-                    "Final model export for stable diffusion 3 is not yet implemented."
-                )
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                text_encoder=(
-                    text_encoder_cls_1.from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        subfolder="text_encoder",
-                        revision=args.revision,
-                        variant=args.variant,
-                    )
-                    if args.save_text_encoder
-                    else None
-                ),
-                text_encoder_2=(
-                    text_encoder_cls_2.from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        subfolder="text_encoder_2",
-                        revision=args.revision,
-                        variant=args.variant,
-                    )
-                    if args.save_text_encoder
-                    else None
-                ),
-                tokenizer=tokenizer_1,
-                tokenizer_2=tokenizer_2,
-                vae=StateTracker.get_vae()
-                or AutoencoderKL.from_pretrained(
-                    vae_path,
-                    subfolder=(
-                        "vae"
-                        if args.pretrained_vae_model_name_or_path is None
+                from diffusers import StableDiffusion3Pipeline
+
+                pipeline = StableDiffusion3Pipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
                         else None
                     ),
+                    tokenizer=tokenizer_1,
+                    text_encoder_2=text_encoder_2
+                    or (
+                        text_encoder_cls_2.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder_2",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer_2=tokenizer_2,
+                    text_encoder_3=text_encoder_3
+                    or (
+                        text_encoder_cls_3.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder_3",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer_3=tokenizer_3,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                )
+
+            else:
+                pipeline = StableDiffusionXLPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=(
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    text_encoder_2=(
+                        text_encoder_cls_2.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder_2",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    tokenizer_2=tokenizer_2,
+                    vae=StateTracker.get_vae()
+                    or AutoencoderKL.from_pretrained(
+                        vae_path,
+                        subfolder=(
+                            "vae"
+                            if args.pretrained_vae_model_name_or_path is None
+                            else None
+                        ),
+                        revision=args.revision,
+                        variant=args.variant,
+                        force_upcast=False,
+                    ),
+                    unet=unet,
                     revision=args.revision,
-                    variant=args.variant,
-                    force_upcast=False,
-                ),
-                unet=unet,
-                revision=args.revision,
-                add_watermarker=args.enable_watermark,
-                torch_dtype=weight_dtype,
-            )
-            pipeline.scheduler = SCHEDULER_NAME_MAP[
-                args.validation_noise_scheduler
-            ].from_pretrained(
-                args.pretrained_model_name_or_path,
-                revision=args.revision,
-                subfolder="scheduler",
-                prediction_type=args.prediction_type,
-                timestep_spacing=args.training_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-            )
+                    add_watermarker=args.enable_watermark,
+                    torch_dtype=weight_dtype,
+                )
+                # Stable Diffusion 3 doesn't like when you muck with the scheduler.
+                # We only set this for SDXL models.
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    revision=args.revision,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.training_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )

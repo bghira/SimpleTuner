@@ -43,7 +43,7 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during training.
 - Precomputed captions are run through the text encoder(s) and saved to storage to save on VRAM.
 - Trainable on a 24G GPU, or even down to 16G at lower base resolutions.
-  - LoRA training for SDXL and SD 2.x that uses less than 16G VRAM.
+  - LoRA training for SDXL, SD3, and SD 2.x that uses less than 16G VRAM.
 - DeepSpeed integration allowing for [training SDXL's full u-net on 12G of VRAM](/documentation/DEEPSPEED.md), albeit very slowly.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
 - Support for a variety of image sizes and aspect ratios, enabling widescreen and portrait training.
@@ -68,11 +68,13 @@ Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn'
 
 This model is very new and the current level of support for it in SimpleTuner is preliminary:
 
-- LoRA is not yet implemented, only full finetuning.
+- LoRA and full finetuning are supported as usual.
 - ControlNet is not yet implemented.
 - Certain features such as segmented timestep selection and Compel long prompt weighting are not yet supported.
 
 A few sharp edges could catch you off-guard, but for the most part, this initial pass at SD3 support is considered to be robust enough not to let you screw up too many parameters - it will oftentimes simply override bad values and set them for more sensible ones.
+
+Simply point your base model to a Stable Diffusion 3 checkpoint and set `STABLE_DIFFUSION_3=true` in your environment file.
 
 > ⚠️ In the current source release of Diffusers, gradient checkpointing is broken for Stable Diffusion 3 models. This will result in much, much higher memory use.
 

@@ -19,6 +19,11 @@ from safetensors.torch import save_file
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
+try:
+    from diffusers import StableDiffusion3Pipeline
+except ImportError:
+    logger.error("This release requires the latest version of Diffusers.")
+
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
@@ -100,7 +105,7 @@ class SDXLSaveHook:
                         get_peft_model_state_dict(model)
                     )
                 elif isinstance(
-                    model, type(self.accelerator.unwrap_model(self.text_encoder_1))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
                 ):
                     text_encoder_1_lora_layers_to_save = (
                         convert_state_dict_to_diffusers(
@@ -108,13 +113,18 @@ class SDXLSaveHook:
                         )
                     )
                 elif isinstance(
-                    model, type(self.accelerator.unwrap_model(self.text_encoder_2))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
                 ):
                     text_encoder_2_lora_layers_to_save = (
                         convert_state_dict_to_diffusers(
                             get_peft_model_state_dict(model)
                         )
                     )
+                elif isinstance(
+                    model, type(unwrap_model(self.accelerator, self.transformer))
+                ):
+                    transformer_lora_layers_to_save = get_peft_model_state_dict(model)
+
                 elif not self.use_deepspeed_optimizer:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
@@ -122,12 +132,17 @@ class SDXLSaveHook:
                 if weights:
                     weights.pop()
 
-            StableDiffusionXLPipeline.save_lora_weights(
-                output_dir,
-                unet_lora_layers=unet_lora_layers_to_save,
-                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
-                text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
-            )
+            if self.args.sd3:
+                StableDiffusion3Pipeline.save_lora_weights(
+                    output_dir, transformer_lora_layers=transformer_lora_layers_to_save
+                )
+            else:
+                StableDiffusionXLPipeline.save_lora_weights(
+                    output_dir,
+                    unet_lora_layers=unet_lora_layers_to_save,
+                    text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
+                )
             return
 
         # Create a temporary directory for atomic saves
@@ -198,17 +213,34 @@ class SDXLSaveHook:
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
-            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
+            if self.args.sd3:
+                lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+                transformer_state_dict = {
+                    f'{k.replace("transformer.", "")}': v
+                    for k, v in lora_state_dict.items()
+                    if k.startswith("unet.")
+                }
+                transformer_state_dict = convert_unet_state_dict_to_peft(
+                    transformer_state_dict
+                )
+                incompatible_keys = set_peft_model_state_dict(
+                    transformer_, transformer_state_dict, adapter_name="default"
+                )
 
-            unet_state_dict = {
-                f'{k.replace("unet.", "")}': v
-                for k, v in lora_state_dict.items()
-                if k.startswith("unet.")
-            }
-            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-            incompatible_keys = set_peft_model_state_dict(
-                unet_ or self.unet, unet_state_dict, adapter_name="default"
-            )
+            else:
+                lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
+                    input_dir
+                )
+
+                unet_state_dict = {
+                    f'{k.replace("unet.", "")}': v
+                    for k, v in lora_state_dict.items()
+                    if k.startswith("unet.")
+                }
+                unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
+                incompatible_keys = set_peft_model_state_dict(
+                    unet_ or self.unet, unet_state_dict, adapter_name="default"
+                )
             if incompatible_keys is not None:
                 # check only for unexpected keys
                 unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
