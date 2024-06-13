@@ -19,6 +19,7 @@ class HubManager:
         self.data_backends = StateTracker.get_data_backends()
         self._create_repo()
         self.validation_prompts = None
+        self.validation_shortnames = None
         self.collected_data_backend_str = None
 
     def _create_repo(self):
@@ -53,8 +54,9 @@ class HubManager:
             f"No Hugging Face Hub token found ({token_path}). Please ensure you have logged in with 'huggingface-cli login'."
         )
 
-    def set_validation_prompts(self, validation_prompts):
+    def set_validation_prompts(self, validation_prompts, validation_shortnames):
         self.validation_prompts = validation_prompts
+        self.validation_shortnames = validation_shortnames
 
     def upload_validation_folder(self, webhook_handler=None, override_path=None):
         try:

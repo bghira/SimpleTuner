@@ -725,7 +725,7 @@ def main():
     collected_data_backend_str = list(StateTracker.get_data_backends().keys())
     if args.push_to_hub:
         hub_manager.collected_data_backend_str = collected_data_backend_str
-        hub_manager.set_validation_prompts(validation_prompts)
+        hub_manager.set_validation_prompts(validation_prompts, validation_shortnames)
     logger.info(f"Collected the following data backends: {collected_data_backend_str}")
     if webhook_handler is not None:
         webhook_handler.send(
