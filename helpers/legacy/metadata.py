@@ -74,7 +74,7 @@ def save_model_card(
         raise ValueError(
             f"The validation_prompts must be a list. Received {validation_prompts}"
         )
-    logger.debug(f"Validationg from prompts: {validation_prompts}")
+    logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
@@ -96,9 +96,9 @@ def save_model_card(
                 image.save(image_path, format="PNG")
                 validation_prompt = "no prompt available"
                 if validation_prompts is not None:
-                    if idx in validation_prompts:
+                    try:
                         validation_prompt = validation_prompts[idx]
-                    else:
+                    except IndexError:
                         validation_prompt = f"prompt not found ({validation_shortnames[shortname_idx] if validation_shortnames is not None and shortname_idx in validation_shortnames else shortname_idx})"
                 if validation_prompt == "":
                     validation_prompt = "unconditional (blank prompt)"
