@@ -6,11 +6,11 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def _model_imports(args):
-    output = "import torch"
+    output = "import torch\n"
     if args.sd3:
-        output += f"from diffusers import StableDiffusion3Pipeline"
+        output += f"from diffusers import StableDiffusion3Pipeline\n"
     else:
-        output += f"from diffusers import DiffusionPipeline"
+        output += f"from diffusers import DiffusionPipeline\n"
 
     return f"{output}\n"
 
@@ -41,7 +41,7 @@ image = pipeline(
     guidance_scale={args.validation_guidance},
     guidance_rescale={args.validation_guidance_rescale},
 ).images[0]
-image.save(f"output.png", format="PNG")
+image.save("output.png", format="PNG")
 ```
 """
     return code_example
@@ -85,6 +85,9 @@ def save_model_card(
     widget_str = ""
     idx = 0
     shortname_idx = 0
+    negative_prompt_text = str(StateTracker.get_args().validation_negative_prompt)
+    if negative_prompt_text == "":
+        negative_prompt_text = "''"
     if images:
         widget_str = "widget:"
         for image_list in images.values() if isinstance(images, dict) else images:
@@ -97,7 +100,7 @@ def save_model_card(
                 validation_prompt = "no prompt available"
                 if validation_prompts is not None:
                     try:
-                        validation_prompt = validation_prompts[idx]
+                        validation_prompt = validation_prompts[shortname_idx]
                     except IndexError:
                         validation_prompt = f"prompt not found ({validation_shortnames[shortname_idx] if validation_shortnames is not None and shortname_idx in validation_shortnames else shortname_idx})"
                 if validation_prompt == "":
@@ -107,7 +110,7 @@ def save_model_card(
                     validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
                 widget_str += f"\n  parameters:"
-                widget_str += f"\n    negative_prompt: '{str(StateTracker.get_args().validation_negative_prompt)}'"
+                widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
                 widget_str += f"\n  output:"
                 widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.png"
                 idx += 1

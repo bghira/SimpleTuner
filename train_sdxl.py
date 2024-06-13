@@ -641,9 +641,10 @@ def main():
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         if accelerator.is_main_process:
             logger.info(f"Unloading text encoders, as they are not being trained.")
-        del text_encoder_1, text_encoder_2
+        del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
+        text_encoder_3 = None
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -656,10 +657,10 @@ def main():
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         if accelerator.is_main_process:
             logger.info(f"Moving text encoders back to CPU, to save VRAM.")
-        if text_encoder_1 is not None:
-            text_encoder_1.to("cpu")
-        if text_encoder_2 is not None:
-            text_encoder_2.to("cpu")
+        del text_encoder_1, text_encoder_2, text_encoder_3
+        text_encoder_1 = None
+        text_encoder_2 = None
+        text_encoder_3 = None
         gc.collect()
         torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
