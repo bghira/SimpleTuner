@@ -166,7 +166,9 @@ class Validation:
             else args.pretrained_vae_model_name_or_path
         )
         precached_vae = StateTracker.get_vae()
-        logger.debug(f"Was the VAE loaded? {precached_vae}")
+        logger.debug(
+            f"Was the VAE loaded? {precached_vae if precached_vae is None else 'Yes'}"
+        )
         self.vae = precached_vae or AutoencoderKL.from_pretrained(
             vae_path,
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
@@ -527,6 +529,7 @@ class Validation:
             position=1,
         ):
             validation_input_image = None
+            logger.debug(f"content: {content}")
             if len(content) == 3:
                 shortname, prompt, validation_input_image = content
             elif len(content) == 2:
