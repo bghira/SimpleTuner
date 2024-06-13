@@ -204,3 +204,5 @@ export ACCELERATE_EXTRA_ARGS=""                          # --multi_gpu or other 
 # If you're using aspect bucketing however, each resolution change will recompile. Seriously, just don't do it.
 # Well, then again... Pytorch 2.2 has support for dynamic shapes. Why not?
 export TRAINING_DYNAMO_BACKEND='no'                # or 'no' if you want to disable torch compile in case of performance issues or lack of support (eg. AMD)
+
+export TOKENIZERS_PARALLELISM=false
