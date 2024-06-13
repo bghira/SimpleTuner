@@ -15,6 +15,13 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 **Note:** DeepFloyd uses the `train_sd2x.sh`/`train_sd21.py` training script, `sd2x-env.sh` configuration file. See [DEEPFLOYD.md](/documentation/DEEPFLOYD.md) for more information.
 
+### `--sd3`
+
+- **What**: Enable Stable Diffusion 3 training quirks/overrides.
+- **Why**: SD3 has three text encoders, it's pretty hefty and needs specific validation-time options considered. The equivalent option for this in the `sdxl-env.sh` environment file is `STABLE_DIFFUSION_3`.
+
+**Note:** Stable Diffusion 3 uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
