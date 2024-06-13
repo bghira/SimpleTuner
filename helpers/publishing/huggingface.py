@@ -81,6 +81,7 @@ class HubManager:
             train_text_encoder=self.config.train_text_encoder,
             prompt=self.config.validation_prompt,
             validation_prompts=self.validation_prompts,
+            validation_shortnames=self.validation_shortnames,
             repo_folder=override_path
             or os.path.join(
                 self.config.output_dir,
