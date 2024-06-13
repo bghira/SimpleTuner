@@ -5,6 +5,9 @@
 # full - requires lots of vram, trains very slowly, needs a lot of data and concepts.
 export MODEL_TYPE='lora'
 
+# Set this to 'true' if you are training a Stable Diffusion 3 checkpoint.
+export STABLE_DIFFUSION_3=false
+
 # ControlNet model training is only supported when MODEL_TYPE='full'
 # DeepFloyd does not currently support ControlNet model training.
 # See this document for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md
