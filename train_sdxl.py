@@ -1431,14 +1431,6 @@ def main():
                                 1,
                                 device=latents.device,
                             )
-                    if args.input_perturbation:
-                        if (
-                            args.input_perturbation_probability == 1.0
-                            or random.random() < args.input_perturbation_probability
-                        ):
-                            noise = noise + args.input_perturbation * torch.randn_like(
-                                noise
-                            )
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
@@ -1633,20 +1625,15 @@ def main():
 
                 if args.sd3:
                     # upstream TODO: weighting sceme needs to be experimented with :)
+                    # these weighting schemes use a uniform timestep sampling
+                    # and instead post-weight the loss
                     if args.weighting_scheme == "sigma_sqrt":
                         weighting = (sigmas**-2.0).float()
                     elif args.weighting_scheme == "cosmap":
                         bot = 1 - 2 * sigmas + 2 * sigmas**2
                         weighting = 2 / (math.pi * bot)
-                    elif args.weighting_scheme == "mode":
-                        # See sec 3.1 in the SD3 paper (20).
-                        u = torch.rand(size=(bsz,), device=accelerator.device)
-                        weighting = (
-                            1
-                            - u
-                            - args.mode_scale
-                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
-                        )
+                    else:
+                        weighting = torch.ones_like(sigmas)
                     loss = torch.mean(
                         (
                             weighting.float()
