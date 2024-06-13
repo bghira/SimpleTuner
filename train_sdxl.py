@@ -63,6 +63,7 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
+from helpers.training.custom_schedule import get_sd3_sigmas
 from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
@@ -337,11 +338,13 @@ def main():
     # Load scheduler and models
     if args.sd3:
         # Stable Diffusion 3 uses rectified flow.
-        from helpers.training.custom_schedule import FlowMatchingEulerScheduler
+        from diffusers import FlowMatchEulerDiscreteScheduler
 
-        noise_scheduler = FlowMatchingEulerScheduler.from_pretrained(
+        noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="scheduler"
         )
+        noise_scheduler_copy = copy.deepcopy(noise_scheduler)
+
     else:
         # SDXL uses the old style noise scheduler.
         noise_scheduler = DDPMScheduler.from_pretrained(
@@ -1405,62 +1408,79 @@ def main():
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
-                if args.offset_noise:
-                    if (
-                        args.noise_offset_probability == 1.0
-                        or random.random() < args.noise_offset_probability
-                    ):
-                        noise = torch.randn_like(
-                            latents
-                        ) + args.noise_offset * torch.randn(
-                            latents.shape[0],
-                            latents.shape[1],
-                            1,
-                            1,
-                            device=latents.device,
-                        )
-                else:
-                    noise = torch.randn_like(latents)
-                if args.input_perturbation:
-                    if (
-                        args.input_perturbation_probability == 1.0
-                        or random.random() < args.input_perturbation_probability
-                    ):
-                        noise = noise + args.input_perturbation * torch.randn_like(
-                            noise
-                        )
+                if not args.sd3:
+                    if args.offset_noise:
+                        if (
+                            args.noise_offset_probability == 1.0
+                            or random.random() < args.noise_offset_probability
+                        ):
+                            noise = noise + args.noise_offset * torch.randn(
+                                latents.shape[0],
+                                latents.shape[1],
+                                1,
+                                1,
+                                device=latents.device,
+                            )
+                    if args.input_perturbation:
+                        if (
+                            args.input_perturbation_probability == 1.0
+                            or random.random() < args.input_perturbation_probability
+                        ):
+                            noise = noise + args.input_perturbation * torch.randn_like(
+                                noise
+                            )
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                # Sample a random timestep for each image, potentially biased by the timestep weights.
-                # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
-                weights = generate_timestep_weights(
-                    args, noise_scheduler.config.num_train_timesteps
-                ).to(accelerator.device)
-                # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
-                # This enables more broad sampling and potentially more effective training.
-                if bsz > 1 and not args.disable_segmented_timestep_sampling:
-                    timesteps = segmented_timestep_selection(
-                        actual_num_timesteps=noise_scheduler.config.num_train_timesteps,
-                        bsz=bsz,
-                        weights=weights,
-                        use_refiner_range=StateTracker.is_sdxl_refiner()
-                        and not StateTracker.get_args().sdxl_refiner_uses_full_range,
-                    ).to(accelerator.device)
+                if args.sd3:
+                    indices = torch.randint(
+                        0, noise_scheduler_copy.config.num_train_timesteps, (bsz,)
+                    )
+                    timesteps = noise_scheduler_copy.timesteps[indices].to(
+                        device=accelerator.device
+                    )
                 else:
-                    timesteps = torch.multinomial(weights, bsz, replacement=True).long()
+                    # Sample a random timestep for each image, potentially biased by the timestep weights.
+                    # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
+                    weights = generate_timestep_weights(
+                        args, noise_scheduler.config.num_train_timesteps
+                    ).to(accelerator.device)
+                    # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
+                    # This enables more broad sampling and potentially more effective training.
+                    if bsz > 1 and not args.disable_segmented_timestep_sampling:
+                        timesteps = segmented_timestep_selection(
+                            actual_num_timesteps=noise_scheduler.config.num_train_timesteps,
+                            bsz=bsz,
+                            weights=weights,
+                            use_refiner_range=StateTracker.is_sdxl_refiner()
+                            and not StateTracker.get_args().sdxl_refiner_uses_full_range,
+                        ).to(accelerator.device)
+                    else:
+                        timesteps = torch.multinomial(
+                            weights, bsz, replacement=True
+                        ).long()
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                # Add noise to the latents according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps).to(
-                    accelerator.device
-                )
+                if args.sd3:
+                    # Add noise according to flow matching.
+                    sigmas = get_sd3_sigmas(
+                        accelerator,
+                        noise_scheduler_copy,
+                        timesteps,
+                        n_dim=latents.ndim,
+                        dtype=latents.dtype,
+                    )
+                    noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
+                else:
+                    # Add noise to the latents according to the noise magnitude at each timestep
+                    # (this is the forward diffusion process)
+                    noisy_latents = noise_scheduler.add_noise(
+                        latents, noise, timesteps
+                    ).to(accelerator.device)
 
-                # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"].to(
                     dtype=weight_dtype, device=accelerator.device
                 )
@@ -1469,9 +1489,11 @@ def main():
                 )
 
                 add_text_embeds = batch["add_text_embeds"]
-                training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
+                training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
-                if noise_scheduler.config.prediction_type == "epsilon":
+                if args.sd3:
+                    target = latents
+                elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
@@ -1479,9 +1501,6 @@ def main():
                     # We set the target to latents here, but the model_pred will return the noise sample prediction.
                     # We will have to subtract the noise residual from the prediction to get the target sample.
                     target = latents
-                elif noise_scheduler.config.prediction_type == "flow":
-                    # Rectified flow for stable diffusion 3.
-                    raise Exception("Rectified flow is not yet implemented.")
                 else:
                     raise ValueError(
                         f"Unknown prediction type {noise_scheduler.config.prediction_type}"
@@ -1489,29 +1508,19 @@ def main():
                     )
 
                 # Predict the noise residual and compute loss
-                added_cond_kwargs = {
-                    "text_embeds": add_text_embeds.to(
-                        device=accelerator.device, dtype=weight_dtype
-                    ),
-                    "time_ids": batch["batch_time_ids"].to(
-                        device=accelerator.device, dtype=weight_dtype
-                    ),
-                }
-                training_logger.debug("Predicting noise residual.")
-                training_logger.debug(
-                    f"\n -> Latents device: {latents.device}"
-                    f"\n -> Noise device: {noise.device}"
-                    f"\n -> Timesteps device: {timesteps.device}"
-                    f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
-                    f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
-                    f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
-                    f"\n -> Latents dtype: {latents.dtype}"
-                    f"\n -> Noise dtype: {noise.dtype}"
-                    f"\n -> Timesteps dtype: {timesteps.dtype}"
-                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
-                    f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
-                    f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
-                )
+                if args.sd3:
+                    added_cond_kwargs = None
+                else:
+                    added_cond_kwargs = {
+                        "text_embeds": add_text_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
+                        ),
+                        "time_ids": batch["batch_time_ids"].to(
+                            device=accelerator.device, dtype=weight_dtype
+                        ),
+                    }
+                    training_logger.debug("Predicting noise residual.")
+
                 if args.controlnet:
                     training_logger.debug(
                         f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
@@ -1553,9 +1562,28 @@ def main():
                             )
                     elif args.sd3:
                         # Rectified flow prediction.
-                        raise Exception(
-                            "Rectified flow prediction for SD3 is not yet implemented."
+                        training_logger.debug(
+                            "SD3 inputs:"
+                            f"\n-> Noisy latents shape: {noisy_latents.shape if hasattr(noisy_latents, 'shape') else type(noisy_latents)}"
+                            f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else type(timesteps)}"
+                            f"\n-> Encoder hidden states shape: {encoder_hidden_states.shape if hasattr(encoder_hidden_states, 'shape') else type(encoder_hidden_states)}"
+                            f"\n-> Pooled embeds shape: {add_text_embeds.shape if hasattr(add_text_embeds, 'shape') else type(add_text_embeds)}"
                         )
+                        model_pred = transformer(
+                            hidden_states=noisy_latents,
+                            timestep=timesteps,
+                            encoder_hidden_states=encoder_hidden_states,
+                            pooled_projections=add_text_embeds.to(
+                                device=accelerator.device, dtype=weight_dtype
+                            ),
+                            return_dict=False,
+                        )[0]
+                        training_logger.debug(
+                            f"Model prediction shape: {model_pred.shape}"
+                        )
+                        # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+                        # Preconditioning of the model outputs.
+                        model_pred = model_pred * (-sigmas) + noisy_latents
                     else:
                         model_pred = unet(
                             noisy_latents,
@@ -1568,10 +1596,41 @@ def main():
                     model_pred = torch.randn_like(noisy_latents)
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
-                if noise_scheduler.config.prediction_type == "sample":
+                if not args.sd3 and noise_scheduler.config.prediction_type == "sample":
                     model_pred = model_pred - noise
 
-                if args.snr_gamma is None or args.snr_gamma == 0:
+                if args.sd3:
+                    # upstream TODO: weighting sceme needs to be experimented with :)
+                    if args.weighting_scheme == "sigma_sqrt":
+                        weighting = (sigmas**-2.0).float()
+                    elif args.weighting_scheme == "logit_normal":
+                        # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
+                        u = torch.normal(
+                            mean=args.logit_mean,
+                            std=args.logit_std,
+                            size=(bsz,),
+                            device=accelerator.device,
+                        )
+                        weighting = torch.nn.functional.sigmoid(u)
+                    elif args.weighting_scheme == "mode":
+                        # See sec 3.1 in the SD3 paper (20).
+                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        weighting = (
+                            1
+                            - u
+                            - args.mode_scale
+                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
+                        )
+                    loss = torch.mean(
+                        (
+                            weighting.float()
+                            * (model_pred.float() - target.float()) ** 2
+                        ).reshape(target.shape[0], -1),
+                        1,
+                    )
+                    loss = loss.mean()
+
+                elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug(f"Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
