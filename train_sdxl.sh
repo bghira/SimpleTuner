@@ -155,7 +155,7 @@ if [ -z "$METADATA_UPDATE_INTERVAL" ]; then
     printf "METADATA_UPDATE_INTERVAL not set, defaulting to 120 seconds.\n"
     export METADATA_UPDATE_INTERVAL=120
 fi
-if [ -n "$STABLE_DIFFUSION_3" ]; then
+if [ -n "$STABLE_DIFFUSION_3" ] && [[ "$STABLE_DIFFUSION_3" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --sd3"
 fi
 
