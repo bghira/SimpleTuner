@@ -63,7 +63,8 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PretrainedConfig
+from helpers.training.custom_schedule import get_sd3_sigmas
+from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
     AutoencoderKL,
@@ -117,6 +118,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import CLIPTextModelWithProjection
 
         return CLIPTextModelWithProjection
+    elif model_class == "T5EncoderModel":
+        from transformers import T5EncoderModel
+
+        return T5EncoderModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -124,6 +129,8 @@ def import_model_class_from_model_name_or_path(
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
+    if args.sd3:
+        StateTracker.set_model_type("sd3")
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
         StateTracker.delete_cache_files(
@@ -256,21 +263,28 @@ def main():
 
     # Load scheduler, tokenizer and models.
     logger.info("Load tokenizers")
-    tokenizer_1, tokenizer_2 = None, None
-    text_encoder_1, text_encoder_2 = None, None
+    # SDXL style models use text encoder and tokenizer 1 and 2, while SD3 will use all three.
+    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
+    text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     try:
-        tokenizer_1 = AutoTokenizer.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer",
-            revision=args.revision,
-            use_fast=False,
-        )
-    except:
+        tokenizer_kwargs = {
+            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
+            "subfolder": "tokenizer",
+            "revision": args.revision,
+        }
+        tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
+    except Exception as e:
+        import traceback
+
         logger.warning(
             "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
+            f"\nError: -> {e}"
+            f"\nTraceback: {traceback.format_exc()}"
         )
+        if args.sd3:
+            raise e
     try:
-        tokenizer_2 = AutoTokenizer.from_pretrained(
+        tokenizer_2 = CLIPTokenizer.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="tokenizer_2",
             revision=args.revision,
@@ -290,6 +304,19 @@ def main():
         )
     if not tokenizer_1 and not tokenizer_2:
         raise Exception("Failed to load tokenizer")
+    try:
+        from transformers import T5TokenizerFast
+
+        tokenizer_3 = T5TokenizerFast.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="tokenizer_3",
+            revision=args.revision,
+            use_fast=True,
+        )
+    except:
+        raise ValueError(
+            "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
+        )
 
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
@@ -301,15 +328,32 @@ def main():
             args.revision,
             subfolder="text_encoder_2",
         )
+    if tokenizer_3 is not None:
+        text_encoder_cls_3 = import_model_class_from_model_name_or_path(
+            args.pretrained_model_name_or_path,
+            args.revision,
+            subfolder="text_encoder_3",
+        )
 
     # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="scheduler",
-        prediction_type=args.prediction_type,
-        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-        timestep_spacing=args.training_scheduler_timestep_spacing,
-    )
+    if args.sd3:
+        # Stable Diffusion 3 uses rectified flow.
+        from diffusers import FlowMatchEulerDiscreteScheduler
+
+        noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="scheduler"
+        )
+        noise_scheduler_copy = copy.deepcopy(noise_scheduler)
+
+    else:
+        # SDXL uses the old style noise scheduler.
+        noise_scheduler = DDPMScheduler.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="scheduler",
+            prediction_type=args.prediction_type,
+            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+            timestep_spacing=args.training_scheduler_timestep_spacing,
+        )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -328,13 +372,23 @@ def main():
                 revision=args.revision,
                 variant=args.variant,
             )
-        logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
-        text_encoder_2 = text_encoder_cls_2.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="text_encoder_2",
-            revision=args.revision,
-            variant=args.variant,
-        )
+        if tokenizer_2 is not None:
+            logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
+            text_encoder_2 = text_encoder_cls_2.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="text_encoder_2",
+                revision=args.revision,
+                variant=args.variant,
+            )
+        if tokenizer_3 is not None:
+            logger.info("Loading T5-XXL v1.1 text encoder..")
+            text_encoder_3 = text_encoder_cls_3.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="text_encoder_3",
+                revision=args.revision,
+                variant=args.variant,
+            )
+
         logger.info("Load VAE..")
         vae = AutoencoderKL.from_pretrained(
             vae_path,
@@ -352,6 +406,11 @@ def main():
     tokenizers = [tokenizer_1, tokenizer_2]
     text_encoders = [text_encoder_1, text_encoder_2]
 
+    if tokenizer_3 is not None:
+        text_encoder_3.to(accelerator.device, dtype=weight_dtype)
+        tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
+        text_encoders = [text_encoder_1, text_encoder_2, text_encoder_3]
+
     # Freeze vae and text_encoders
     if vae is not None:
         vae.requires_grad_(False)
@@ -359,25 +418,57 @@ def main():
         text_encoder_1.requires_grad_(False)
     if text_encoder_2 is not None:
         text_encoder_2.requires_grad_(False)
+    if text_encoder_3 is not None:
+        text_encoder_3.requires_grad_(False)
     logger.info("Creating the U-net..")
     if webhook_handler is not None:
         webhook_handler.send(
             message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
         )
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="unet",
-        revision=args.revision,
-        variant=args.variant,
+    pretrained_load_args = {
+        "revision": args.revision,
+        "variant": args.variant,
+    }
+    if args.sd3:
+        # Stable Diffusion 3 uses a Diffusion transformer.
+        logger.info(f"Loading Stable Diffusion 3 diffusion transformer..")
+        unet = None
+        try:
+            from diffusers import SD3Transformer2DModel
+        except Exception as e:
+            logger.error(
+                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
+            )
+        transformer = SD3Transformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
+    else:
+        logger.info(f"Loading Stable Diffusion XL U-net..")
+        transformer = None
+        unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
+        )
+
+    model_type_label = (
+        "DeepFloyd"
+        if not StateTracker.is_sdxl_refiner()
+        else (
+            "SDXL Refiner"
+            if StateTracker.is_sdxl_refiner()
+            else "Stable Diffusion 3" if args.sd3 else "SDXL"
+        )
     )
 
     if args.controlnet:
         if (
             "deepfloyd" in StateTracker.get_args().model_type
             or StateTracker.is_sdxl_refiner()
+            or args.sd3
         ):
             raise ValueError(
-                f"ControlNet is not yet supported with {'DeepFloyd' if not StateTracker.is_sdxl_refiner() else 'SDXL Refiner'} models. Please disable --controlnet, or switch to a full base model training task instead."
+                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
         logger.info("Creating the controlnet..")
         if args.controlnet_model_name_or_path:
@@ -394,7 +485,10 @@ def main():
             webhook_handler.send(message="Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
         # Set correct lora layers
-        unet.requires_grad_(False)
+        if transformer is not None:
+            transformer.requires_grad_(False)
+        if unet is not None:
+            unet.requires_grad_(False)
         lora_initialisation_style = True
         if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
             lora_initialisation_style = args.lora_init_method
@@ -404,42 +498,47 @@ def main():
             else lora_initialisation_style
         )
         if args.use_dora:
+            logger.warning(
+                "DoRA support is experimental and not very thoroughly tested."
+            )
             lora_weight_init_type = "gaussian"
-        unet_lora_config = LoraConfig(
-            r=args.lora_rank,
-            lora_alpha=args.lora_alpha,
-            lora_dropout=args.lora_dropout,
-            init_lora_weights=lora_weight_init_type,
-            target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-            use_dora=args.use_dora,
-        )
+        if unet is not None:
+            unet_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                lora_dropout=args.lora_dropout,
+                init_lora_weights=lora_weight_init_type,
+                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                use_dora=args.use_dora,
+            )
+            logger.info("Adding LoRA adapter to the unet model..")
+            unet.add_adapter(unet_lora_config)
+        if transformer is not None:
+            transformer_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                init_lora_weights=lora_weight_init_type,
+                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                use_dora=args.use_dora,
+            )
+            transformer.add_adapter(transformer_lora_config)
 
-        logger.info("Adding LoRA adapter to the unet model..")
-        unet.add_adapter(unet_lora_config)
-
-        if args.mixed_precision == "bf16":
-            models = [unet]
-            if args.train_text_encoder:
-                models.extend([text_encoder_1, text_encoder_2])
-
-    logger.info(f"Moving the U-net to GPU in {weight_dtype} precision.")
-    unet.to(accelerator.device, dtype=weight_dtype)
+    logger.info(
+        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
+    )
+    if unet is not None:
+        unet.to(accelerator.device, dtype=weight_dtype)
+    if transformer is not None:
+        transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention:
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
             import xformers  # type: ignore
 
-            xformers_version = version.parse(xformers.__version__)
-            if xformers_version == version.parse("0.0.20"):
-                logger.warn(
-                    "SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers."
-                )
-                if webhook_handler is not None:
-                    webhook_handler.send(
-                        message="SimpleTuner requires at least PyTorch 2.0.1, which in turn requires a new version (0.0.20) of Xformers.",
-                        message_level="warning",
-                    )
-            unet.enable_xformers_memory_efficient_attention()
+            if unet is not None:
+                unet.enable_xformers_memory_efficient_attention()
+            if transformer is not None:
+                transformer.enable_xformers_memory_efficient_attention()
             if args.controlnet:
                 controlnet.enable_xformers_memory_efficient_attention()
         else:
@@ -449,7 +548,10 @@ def main():
 
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
-        unet.requires_grad_(False)
+        if unet is not None:
+            unet.requires_grad_(False)
+        if transformer is not None:
+            transformer.requires_grad_(False)
         controlnet.train()
         controlnet.to(device=accelerator.device, dtype=weight_dtype)
         if args.train_text_encoder:
@@ -608,11 +710,20 @@ def main():
     if args.freeze_unet_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
 
-        logger.info(f"Applying BitFit freezing strategy to the U-net.")
-        unet = apply_bitfit_freezing(unet, args)
+        if unet is not None:
+            logger.info(f"Applying BitFit freezing strategy to the U-net.")
+            unet = apply_bitfit_freezing(unet, args)
+        if transformer is not None:
+            logger.warning(
+                f"Training Diffusion transformer models with BitFit is not yet tested, and unexpected results may occur."
+            )
+            transformer = apply_bitfit_freezing(transformer, args)
 
     if args.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
+        if unet is not None:
+            unet.enable_gradient_checkpointing()
+        if transformer is not None:
+            transformer.enable_gradient_checkpointing()
         if args.controlnet:
             controlnet.enable_gradient_checkpointing()
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
@@ -778,8 +889,14 @@ def main():
     if args.model_type == "full":
         if args.controlnet:
             params_to_optimize = controlnet.parameters()
-        else:
-            params_to_optimize = unet.parameters()
+        elif unet is not None:
+            params_to_optimize = list(
+                filter(lambda p: p.requires_grad, unet.parameters())
+            )
+        elif transformer is not None:
+            params_to_optimize = list(
+                filter(lambda p: p.requires_grad, transformer.parameters())
+            )
         if args.train_text_encoder:
             raise ValueError(
                 "Full model tuning does not currently support text encoder training."
@@ -789,13 +906,38 @@ def main():
             raise ValueError(
                 "SimpleTuner does not currently support training a ControlNet LoRA."
             )
-        params_to_optimize = list(filter(lambda p: p.requires_grad, unet.parameters()))
-        if args.train_text_encoder:
-            params_to_optimize = (
-                params_to_optimize
-                + list(filter(lambda p: p.requires_grad, text_encoder_1.parameters()))
-                + list(filter(lambda p: p.requires_grad, text_encoder_2.parameters()))
+        if unet is not None:
+            params_to_optimize = list(
+                filter(lambda p: p.requires_grad, unet.parameters())
             )
+        if transformer is not None:
+            params_to_optimize = list(
+                filter(lambda p: p.requires_grad, transformer.parameters())
+            )
+        if args.train_text_encoder:
+            if args.sd3:
+                params_to_optimize = (
+                    params_to_optimize
+                    + list(
+                        filter(lambda p: p.requires_grad, text_encoder_1.parameters())
+                    )
+                    + list(
+                        filter(lambda p: p.requires_grad, text_encoder_2.parameters())
+                    )
+                    + list(
+                        filter(lambda p: p.requires_grad, text_encoder_3.parameters())
+                    )
+                )
+            else:
+                params_to_optimize = (
+                    params_to_optimize
+                    + list(
+                        filter(lambda p: p.requires_grad, text_encoder_1.parameters())
+                    )
+                    + list(
+                        filter(lambda p: p.requires_grad, text_encoder_2.parameters())
+                    )
+                )
 
     if use_deepspeed_optimizer:
         optimizer = optimizer_class(params_to_optimize)
@@ -805,7 +947,7 @@ def main():
         )
         if args.train_text_encoder and args.text_encoder_lr:
             logger.warn(
-                f"Learning rates were provided both for the unet and the text encoder- e.g. text_encoder_lr:"
+                f"Learning rates were provided both for the {'unet' if unet is not None else 'transformer'} and the text encoder- e.g. text_encoder_lr:"
                 f" {args.text_encoder_lr} and learning_rate: {args.learning_rate}. "
                 f"When using prodigy only learning_rate is used as the initial learning rate."
             )
@@ -813,6 +955,10 @@ def main():
             # --learning_rate
             params_to_optimize[1]["lr"] = args.learning_rate
             params_to_optimize[2]["lr"] = args.learning_rate
+            if args.sd3:
+                # Third text encoder.
+                params_to_optimize[3]["lr"] = args.learning_rate
+
         optimizer = optimizer_class(
             params_to_optimize,
             **extra_optimizer_args,
@@ -835,6 +981,12 @@ def main():
     # Create EMA for the unet.
     ema_unet = None
     if args.use_ema:
+        if args.sd3:
+            raise ValueError(
+                "Using EMA is not currently supported for Stable Diffusion 3 training."
+            )
+        if "lora" in args.model_type:
+            raise ValueError("Using EMA is not currently supported for LoRA training.")
         logger.info("Using EMA. Creating EMAModel.")
         ema_unet = EMAModel(
             unet.parameters(),
@@ -849,6 +1001,7 @@ def main():
     model_hooks = SDXLSaveHook(
         args=args,
         unet=unet,
+        transformer=transformer,
         ema_unet=ema_unet,
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
@@ -876,20 +1029,27 @@ def main():
             accelerator.native_amp = False
         if webhook_handler is not None:
             webhook_handler.send(message="Moving weights to GPU...")
-        primary_model = unet if not args.controlnet else controlnet
+        primary_model = unet if unet is not None else transformer
+        if args.controlnet:
+            primary_model = controlnet
         results = accelerator.prepare(
             primary_model, lr_scheduler, optimizer, train_dataloaders[0]
         )
         if args.controlnet:
             controlnet = results[0]
-        else:
+        elif unet is not None:
             unet = results[0]
+        elif transformer is not None:
+            transformer = results[0]
         if args.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
                     "Using attention slicing when training SDXL on MPS can result in NaN errors on the first backward pass. If you run into issues, disable this option and reduce your batch size instead to reduce memory consumption."
                 )
-            unet.set_attention_slice("auto")
+            if unet is not None:
+                unet.set_attention_slice("auto")
+            if transformer is not None:
+                transformer.set_attention_slice("auto")
         lr_scheduler = results[1]
         optimizer = results[2]
         # The rest of the entries are dataloaders:
@@ -975,6 +1135,7 @@ def main():
         accelerator=accelerator,
         prompt_handler=prompt_handler,
         unet=unet,
+        transformer=transformer,
         args=args,
         validation_prompts=validation_prompts,
         validation_shortnames=validation_shortnames,
@@ -987,6 +1148,8 @@ def main():
         validation_negative_prompt_embeds=validation_negative_prompt_embeds,
         text_encoder_2=text_encoder_2,
         tokenizer_2=tokenizer_2,
+        text_encoder_3=text_encoder_3,
+        tokenizer_3=tokenizer_3,
         ema_unet=ema_unet,
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
@@ -1186,8 +1349,12 @@ def main():
             controlnet.train()
             training_models = [controlnet]
         else:
-            unet.train()
-            training_models = [unet]
+            if unet is not None:
+                unet.train()
+                training_models = [unet]
+            if transformer is not None:
+                transformer.train()
+                training_models = [transformer]
         if "lora" in args.model_type and args.train_text_encoder:
             text_encoder_1.train()
             text_encoder_2.train()
@@ -1246,62 +1413,79 @@ def main():
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
-                if args.offset_noise:
-                    if (
-                        args.noise_offset_probability == 1.0
-                        or random.random() < args.noise_offset_probability
-                    ):
-                        noise = torch.randn_like(
-                            latents
-                        ) + args.noise_offset * torch.randn(
-                            latents.shape[0],
-                            latents.shape[1],
-                            1,
-                            1,
-                            device=latents.device,
-                        )
-                else:
-                    noise = torch.randn_like(latents)
-                if args.input_perturbation:
-                    if (
-                        args.input_perturbation_probability == 1.0
-                        or random.random() < args.input_perturbation_probability
-                    ):
-                        noise = noise + args.input_perturbation * torch.randn_like(
-                            noise
-                        )
+                if not args.sd3:
+                    if args.offset_noise:
+                        if (
+                            args.noise_offset_probability == 1.0
+                            or random.random() < args.noise_offset_probability
+                        ):
+                            noise = noise + args.noise_offset * torch.randn(
+                                latents.shape[0],
+                                latents.shape[1],
+                                1,
+                                1,
+                                device=latents.device,
+                            )
+                    if args.input_perturbation:
+                        if (
+                            args.input_perturbation_probability == 1.0
+                            or random.random() < args.input_perturbation_probability
+                        ):
+                            noise = noise + args.input_perturbation * torch.randn_like(
+                                noise
+                            )
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                # Sample a random timestep for each image, potentially biased by the timestep weights.
-                # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
-                weights = generate_timestep_weights(
-                    args, noise_scheduler.config.num_train_timesteps
-                ).to(accelerator.device)
-                # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
-                # This enables more broad sampling and potentially more effective training.
-                if bsz > 1 and not args.disable_segmented_timestep_sampling:
-                    timesteps = segmented_timestep_selection(
-                        actual_num_timesteps=noise_scheduler.config.num_train_timesteps,
-                        bsz=bsz,
-                        weights=weights,
-                        use_refiner_range=StateTracker.is_sdxl_refiner()
-                        and not StateTracker.get_args().sdxl_refiner_uses_full_range,
-                    ).to(accelerator.device)
+                if args.sd3:
+                    indices = torch.randint(
+                        0, noise_scheduler_copy.config.num_train_timesteps, (bsz,)
+                    )
+                    timesteps = noise_scheduler_copy.timesteps[indices].to(
+                        device=accelerator.device
+                    )
                 else:
-                    timesteps = torch.multinomial(weights, bsz, replacement=True).long()
+                    # Sample a random timestep for each image, potentially biased by the timestep weights.
+                    # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
+                    weights = generate_timestep_weights(
+                        args, noise_scheduler.config.num_train_timesteps
+                    ).to(accelerator.device)
+                    # Instead of uniformly sampling the timestep range, we'll split our weights and schedule into bsz number of segments.
+                    # This enables more broad sampling and potentially more effective training.
+                    if bsz > 1 and not args.disable_segmented_timestep_sampling:
+                        timesteps = segmented_timestep_selection(
+                            actual_num_timesteps=noise_scheduler.config.num_train_timesteps,
+                            bsz=bsz,
+                            weights=weights,
+                            use_refiner_range=StateTracker.is_sdxl_refiner()
+                            and not StateTracker.get_args().sdxl_refiner_uses_full_range,
+                        ).to(accelerator.device)
+                    else:
+                        timesteps = torch.multinomial(
+                            weights, bsz, replacement=True
+                        ).long()
 
                 # Prepare the data for the scatter plot
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                # Add noise to the latents according to the noise magnitude at each timestep
-                # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps).to(
-                    accelerator.device
-                )
+                if args.sd3:
+                    # Add noise according to flow matching.
+                    sigmas = get_sd3_sigmas(
+                        accelerator,
+                        noise_scheduler_copy,
+                        timesteps,
+                        n_dim=latents.ndim,
+                        dtype=latents.dtype,
+                    )
+                    noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
+                else:
+                    # Add noise to the latents according to the noise magnitude at each timestep
+                    # (this is the forward diffusion process)
+                    noisy_latents = noise_scheduler.add_noise(
+                        latents, noise, timesteps
+                    ).to(accelerator.device)
 
-                # SDXL additional inputs - probabilistic dropout
                 encoder_hidden_states = batch["prompt_embeds"].to(
                     dtype=weight_dtype, device=accelerator.device
                 )
@@ -1310,9 +1494,11 @@ def main():
                 )
 
                 add_text_embeds = batch["add_text_embeds"]
-                training_logger.debug(f"Added text embeds: {add_text_embeds.shape}")
+                training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
-                if noise_scheduler.config.prediction_type == "epsilon":
+                if args.sd3:
+                    target = latents
+                elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
@@ -1327,29 +1513,19 @@ def main():
                     )
 
                 # Predict the noise residual and compute loss
-                added_cond_kwargs = {
-                    "text_embeds": add_text_embeds.to(
-                        device=accelerator.device, dtype=weight_dtype
-                    ),
-                    "time_ids": batch["batch_time_ids"].to(
-                        device=accelerator.device, dtype=weight_dtype
-                    ),
-                }
-                training_logger.debug("Predicting noise residual.")
-                training_logger.debug(
-                    f"\n -> Latents device: {latents.device}"
-                    f"\n -> Noise device: {noise.device}"
-                    f"\n -> Timesteps device: {timesteps.device}"
-                    f"\n -> Encoder hidden states device: {encoder_hidden_states.device}"
-                    f"\n -> Added cond kwargs device: {added_cond_kwargs['text_embeds'].device}"
-                    f"\n -> Time IDs device: {added_cond_kwargs['time_ids'].device}"
-                    f"\n -> Latents dtype: {latents.dtype}"
-                    f"\n -> Noise dtype: {noise.dtype}"
-                    f"\n -> Timesteps dtype: {timesteps.dtype}"
-                    f"\n -> Encoder hidden states dtype: {encoder_hidden_states.dtype}"
-                    f"\n -> Added cond kwargs dtype: {added_cond_kwargs['text_embeds'].dtype}"
-                    f"\n -> Time IDs dtype: {added_cond_kwargs['time_ids'].dtype}"
-                )
+                if args.sd3:
+                    added_cond_kwargs = None
+                else:
+                    added_cond_kwargs = {
+                        "text_embeds": add_text_embeds.to(
+                            device=accelerator.device, dtype=weight_dtype
+                        ),
+                        "time_ids": batch["batch_time_ids"].to(
+                            device=accelerator.device, dtype=weight_dtype
+                        ),
+                    }
+                    training_logger.debug("Predicting noise residual.")
+
                 if args.controlnet:
                     training_logger.debug(
                         f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
@@ -1370,20 +1546,49 @@ def main():
                             return_dict=False,
                         )
                         # Predict the noise residual
-                        model_pred = unet(
-                            noisy_latents,
-                            timesteps,
+                        if unet is not None:
+                            model_pred = unet(
+                                noisy_latents,
+                                timesteps,
+                                encoder_hidden_states=encoder_hidden_states,
+                                added_cond_kwargs=added_cond_kwargs,
+                                down_block_additional_residuals=[
+                                    sample.to(dtype=weight_dtype)
+                                    for sample in down_block_res_samples
+                                ],
+                                mid_block_additional_residual=mid_block_res_sample.to(
+                                    dtype=weight_dtype
+                                ),
+                                return_dict=False,
+                            )[0]
+                        if transformer is not None:
+                            raise Exception(
+                                "ControlNet predictions for transformer models are not yet implemented."
+                            )
+                    elif args.sd3:
+                        # Rectified flow prediction.
+                        training_logger.debug(
+                            "SD3 inputs:"
+                            f"\n-> Noisy latents shape: {noisy_latents.shape if hasattr(noisy_latents, 'shape') else type(noisy_latents)}"
+                            f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else type(timesteps)}"
+                            f"\n-> Encoder hidden states shape: {encoder_hidden_states.shape if hasattr(encoder_hidden_states, 'shape') else type(encoder_hidden_states)}"
+                            f"\n-> Pooled embeds shape: {add_text_embeds.shape if hasattr(add_text_embeds, 'shape') else type(add_text_embeds)}"
+                        )
+                        model_pred = transformer(
+                            hidden_states=noisy_latents,
+                            timestep=timesteps,
                             encoder_hidden_states=encoder_hidden_states,
-                            added_cond_kwargs=added_cond_kwargs,
-                            down_block_additional_residuals=[
-                                sample.to(dtype=weight_dtype)
-                                for sample in down_block_res_samples
-                            ],
-                            mid_block_additional_residual=mid_block_res_sample.to(
-                                dtype=weight_dtype
+                            pooled_projections=add_text_embeds.to(
+                                device=accelerator.device, dtype=weight_dtype
                             ),
                             return_dict=False,
                         )[0]
+                        training_logger.debug(
+                            f"Model prediction shape: {model_pred.shape}"
+                        )
+                        # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+                        # Preconditioning of the model outputs.
+                        model_pred = model_pred * (-sigmas) + noisy_latents
                     else:
                         model_pred = unet(
                             noisy_latents,
@@ -1396,10 +1601,41 @@ def main():
                     model_pred = torch.randn_like(noisy_latents)
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
-                if noise_scheduler.config.prediction_type == "sample":
+                if not args.sd3 and noise_scheduler.config.prediction_type == "sample":
                     model_pred = model_pred - noise
 
-                if args.snr_gamma is None or args.snr_gamma == 0:
+                if args.sd3:
+                    # upstream TODO: weighting sceme needs to be experimented with :)
+                    if args.weighting_scheme == "sigma_sqrt":
+                        weighting = (sigmas**-2.0).float()
+                    elif args.weighting_scheme == "logit_normal":
+                        # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
+                        u = torch.normal(
+                            mean=args.logit_mean,
+                            std=args.logit_std,
+                            size=(bsz,),
+                            device=accelerator.device,
+                        )
+                        weighting = torch.nn.functional.sigmoid(u)
+                    elif args.weighting_scheme == "mode":
+                        # See sec 3.1 in the SD3 paper (20).
+                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        weighting = (
+                            1
+                            - u
+                            - args.mode_scale
+                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
+                        )
+                    loss = torch.mean(
+                        (
+                            weighting.float()
+                            * (model_pred.float() - target.float()) ** 2
+                        ).reshape(target.shape[0], -1),
+                        1,
+                    )
+                    loss = loss.mean()
+
+                elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug(f"Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
@@ -1500,8 +1736,12 @@ def main():
 
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
-                    training_logger.debug(f"Stepping EMA unet forward")
-                    ema_unet.step(unet.parameters())
+                    if unet is not None:
+                        training_logger.debug(f"Stepping EMA unet forward")
+                        ema_unet.step(unet.parameters())
+                    if transformer is not None:
+                        training_logger.debug(f"Stepping EMA transformer forward")
+                        ema_unet.step(transformer.parameters())
                     # There seems to be an issue with EMAmodel not keeping proper track of itself.
                     ema_unet.optimization_step = global_step
                     ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
@@ -1642,11 +1882,19 @@ def main():
             force_evaluation=True,
             skip_execution=True,
         ).validation_images
-        unet = unwrap_model(accelerator, unet)
+        if unet is not None:
+            unet = unwrap_model(accelerator, unet)
+        if transformer is not None:
+            transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
-            unet_lora_layers = convert_state_dict_to_diffusers(
-                get_peft_model_state_dict(unet)
-            )
+            if args.sd3:
+                transformer_lora_layers = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(transformer)
+                )
+            else:
+                unet_lora_layers = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(unet)
+                )
             if args.train_text_encoder:
                 text_encoder_1 = accelerator.unwrap_model(text_encoder_1)
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
@@ -1656,77 +1904,154 @@ def main():
                 text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_2)
                 )
+                if args.sd3:
+                    text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
+                    text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(text_encoder_3)
+                    )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
+                text_encoder_3_lora_layers = None
 
-            StableDiffusionXLPipeline.save_lora_weights(
-                save_directory=args.output_dir,
-                unet_lora_layers=unet_lora_layers,
-                text_encoder_lora_layers=text_encoder_lora_layers,
-                text_encoder_2_lora_layers=text_encoder_2_lora_layers,
-            )
+            if args.sd3:
+                StableDiffusion3Pipeline.save_lora_weights(
+                    save_directory=args.output_dir,
+                    transformer_lora_layers=transformer_lora_layers,
+                )
+            else:
+                StableDiffusionXLPipeline.save_lora_weights(
+                    save_directory=args.output_dir,
+                    unet_lora_layers=unet_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers,
+                )
 
             del unet
+            del transformer
             del text_encoder_lora_layers
             del text_encoder_2_lora_layers
             torch.cuda.empty_cache()
         elif args.use_ema:
-            ema_unet.copy_to(unet.parameters())
+            if unet is not None:
+                ema_unet.copy_to(unet.parameters())
+            if transformer is not None:
+                ema_unet.copy_to(transformer.parameters())
 
         if args.model_type == "full":
             # Now we build a full SDXL Pipeline to export the model with.
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
-                args.pretrained_model_name_or_path,
-                text_encoder=(
-                    text_encoder_cls_1.from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        subfolder="text_encoder",
-                        revision=args.revision,
-                        variant=args.variant,
-                    )
-                    if args.save_text_encoder
-                    else None
-                ),
-                text_encoder_2=(
-                    text_encoder_cls_2.from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        subfolder="text_encoder_2",
-                        revision=args.revision,
-                        variant=args.variant,
-                    )
-                    if args.save_text_encoder
-                    else None
-                ),
-                tokenizer=tokenizer_1,
-                tokenizer_2=tokenizer_2,
-                vae=StateTracker.get_vae()
-                or AutoencoderKL.from_pretrained(
-                    vae_path,
-                    subfolder=(
-                        "vae"
-                        if args.pretrained_vae_model_name_or_path is None
+            if args.sd3:
+                from diffusers import StableDiffusion3Pipeline
+
+                pipeline = StableDiffusion3Pipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
                         else None
                     ),
+                    tokenizer=tokenizer_1,
+                    text_encoder_2=text_encoder_2
+                    or (
+                        text_encoder_cls_2.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder_2",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer_2=tokenizer_2,
+                    text_encoder_3=text_encoder_3
+                    or (
+                        text_encoder_cls_3.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder_3",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer_3=tokenizer_3,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                )
+
+            else:
+                pipeline = StableDiffusionXLPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=(
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    text_encoder_2=(
+                        text_encoder_cls_2.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder_2",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    tokenizer_2=tokenizer_2,
+                    vae=StateTracker.get_vae()
+                    or AutoencoderKL.from_pretrained(
+                        vae_path,
+                        subfolder=(
+                            "vae"
+                            if args.pretrained_vae_model_name_or_path is None
+                            else None
+                        ),
+                        revision=args.revision,
+                        variant=args.variant,
+                        force_upcast=False,
+                    ),
+                    unet=unet,
                     revision=args.revision,
-                    variant=args.variant,
-                    force_upcast=False,
-                ),
-                unet=unet,
-                revision=args.revision,
-                add_watermarker=args.enable_watermark,
-                torch_dtype=weight_dtype,
-            )
-            pipeline.scheduler = SCHEDULER_NAME_MAP[
-                args.validation_noise_scheduler
-            ].from_pretrained(
-                args.pretrained_model_name_or_path,
-                revision=args.revision,
-                subfolder="scheduler",
-                prediction_type=args.prediction_type,
-                timestep_spacing=args.training_scheduler_timestep_spacing,
-                rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-            )
+                    add_watermarker=args.enable_watermark,
+                    torch_dtype=weight_dtype,
+                )
+                # Stable Diffusion 3 doesn't like when you muck with the scheduler.
+                # We only set this for SDXL models.
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    revision=args.revision,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.training_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )

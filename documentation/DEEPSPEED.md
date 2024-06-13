@@ -2,6 +2,7 @@
 
 SimpleTuner v0.7 includes preliminary support for training SDXL using DeepSpeed ZeRO stages 1 through 3.
 
+> ⚠️ Stable Diffusion 3 support for DeepSpeed is not tested, and will be unlikely to work without modification.
 
 **Training SDXL 1.0 on 9237MiB of VRAM**:
 ```

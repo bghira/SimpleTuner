@@ -19,6 +19,11 @@ from safetensors.torch import save_file
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
+try:
+    from diffusers import StableDiffusion3Pipeline
+except ImportError:
+    logger.error("This release requires the latest version of Diffusers.")
+
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
@@ -65,6 +70,7 @@ class SDXLSaveHook:
         self,
         args,
         unet,
+        transformer,
         ema_unet,
         text_encoder_1,
         text_encoder_2,
@@ -73,6 +79,7 @@ class SDXLSaveHook:
     ):
         self.args = args
         self.unet = unet
+        self.transformer = transformer
         self.text_encoder_1 = text_encoder_1
         self.text_encoder_2 = text_encoder_2
         self.ema_unet = ema_unet
@@ -85,9 +92,10 @@ class SDXLSaveHook:
             os.path.join(output_dir, "training_state.json")
         )
         if "lora" in self.args.model_type:
-            # there are only two options here. Either are just the unet attn processor layers
-            # or there are the unet and text encoder atten layers
+            # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
+            # or there are the unet and text encoder atten layers.
             unet_lora_layers_to_save = None
+            transformer_lora_layers_to_save = None
             text_encoder_1_lora_layers_to_save = None
             text_encoder_2_lora_layers_to_save = None
 
@@ -97,7 +105,7 @@ class SDXLSaveHook:
                         get_peft_model_state_dict(model)
                     )
                 elif isinstance(
-                    model, type(self.accelerator.unwrap_model(self.text_encoder_1))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
                 ):
                     text_encoder_1_lora_layers_to_save = (
                         convert_state_dict_to_diffusers(
@@ -105,13 +113,18 @@ class SDXLSaveHook:
                         )
                     )
                 elif isinstance(
-                    model, type(self.accelerator.unwrap_model(self.text_encoder_2))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
                 ):
                     text_encoder_2_lora_layers_to_save = (
                         convert_state_dict_to_diffusers(
                             get_peft_model_state_dict(model)
                         )
                     )
+                elif isinstance(
+                    model, type(unwrap_model(self.accelerator, self.transformer))
+                ):
+                    transformer_lora_layers_to_save = get_peft_model_state_dict(model)
+
                 elif not self.use_deepspeed_optimizer:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
@@ -119,12 +132,17 @@ class SDXLSaveHook:
                 if weights:
                     weights.pop()
 
-            StableDiffusionXLPipeline.save_lora_weights(
-                output_dir,
-                unet_lora_layers=unet_lora_layers_to_save,
-                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
-                text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
-            )
+            if self.args.sd3:
+                StableDiffusion3Pipeline.save_lora_weights(
+                    output_dir, transformer_lora_layers=transformer_lora_layers_to_save
+                )
+            else:
+                StableDiffusionXLPipeline.save_lora_weights(
+                    output_dir,
+                    unet_lora_layers=unet_lora_layers_to_save,
+                    text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
+                )
             return
 
         # Create a temporary directory for atomic saves
@@ -134,7 +152,12 @@ class SDXLSaveHook:
         if self.args.use_ema:
             self.ema_unet.save_pretrained(os.path.join(temporary_dir, "unet_ema"))
 
-        sub_dir = "unet" if not self.args.controlnet else "controlnet"
+        if self.unet is not None:
+            sub_dir = "unet"
+        if self.transformer is not None:
+            sub_dir = "transformer"
+        if self.args.controlnet:
+            sub_dir = "controlnet"
         for model in models:
             model.save_pretrained(os.path.join(temporary_dir, sub_dir))
             merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
@@ -166,6 +189,7 @@ class SDXLSaveHook:
         if "lora" in self.args.model_type:
             logger.info(f"Loading LoRA weights from Path: {input_dir}")
             unet_ = None
+            transformer_ = None
             text_encoder_one_ = None
             text_encoder_two_ = None
 
@@ -174,6 +198,10 @@ class SDXLSaveHook:
 
                 if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
                     unet_ = model
+                elif isinstance(
+                    model, type(unwrap_model(self.accelerator, self.transformer))
+                ):
+                    transformer_ = model
                 elif isinstance(
                     model, type(unwrap_model(self.accelerator, self.text_encoder_one))
                 ):
@@ -185,17 +213,34 @@ class SDXLSaveHook:
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
-            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
+            if self.args.sd3:
+                lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+                transformer_state_dict = {
+                    f'{k.replace("transformer.", "")}': v
+                    for k, v in lora_state_dict.items()
+                    if k.startswith("unet.")
+                }
+                transformer_state_dict = convert_unet_state_dict_to_peft(
+                    transformer_state_dict
+                )
+                incompatible_keys = set_peft_model_state_dict(
+                    transformer_, transformer_state_dict, adapter_name="default"
+                )
 
-            unet_state_dict = {
-                f'{k.replace("unet.", "")}': v
-                for k, v in lora_state_dict.items()
-                if k.startswith("unet.")
-            }
-            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-            incompatible_keys = set_peft_model_state_dict(
-                unet_ or self.unet, unet_state_dict, adapter_name="default"
-            )
+            else:
+                lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
+                    input_dir
+                )
+
+                unet_state_dict = {
+                    f'{k.replace("unet.", "")}': v
+                    for k, v in lora_state_dict.items()
+                    if k.startswith("unet.")
+                }
+                unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
+                incompatible_keys = set_peft_model_state_dict(
+                    unet_ or self.unet, unet_state_dict, adapter_name="default"
+                )
             if incompatible_keys is not None:
                 # check only for unexpected keys
                 unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
@@ -216,7 +261,7 @@ class SDXLSaveHook:
                 _set_state_dict_into_text_encoder(
                     lora_state_dict,
                     prefix="text_encoder_2.",
-                    text_encoder=text_encoder_one_,
+                    text_encoder=text_encoder_two_,
                 )
 
             logger.info("Completed loading LoRA weights.")
@@ -243,7 +288,19 @@ class SDXLSaveHook:
                         load_model = ControlNetModel.from_pretrained(
                             input_dir, subfolder="controlnet"
                         )
-                    else:
+                    elif self.args.sd3:
+                        # Load a stable diffusion 3 checkpoint
+                        try:
+                            from diffusers import SD3Transformer2DModel
+                        except Exception as e:
+                            logger.error(
+                                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
+                            )
+                            raise e
+                        load_model = SD3Transformer2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
+                    elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(
                             input_dir, subfolder="unet"

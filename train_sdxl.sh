@@ -29,7 +29,9 @@ fi
 export PURE_BF16_ARGS=""
 if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
     PURE_BF16_ARGS="--adam_bfloat16"
-    MIXED_PRECISION="bf16"
+    if [[ "$MIXED_PRECISION" != "no" ]]; then
+        MIXED_PRECISION="bf16"
+    fi
 fi
 
 if [ -z "${TRAINING_SEED}" ]; then
@@ -152,6 +154,9 @@ fi
 if [ -z "$METADATA_UPDATE_INTERVAL" ]; then
     printf "METADATA_UPDATE_INTERVAL not set, defaulting to 120 seconds.\n"
     export METADATA_UPDATE_INTERVAL=120
+fi
+if [ -n "$STABLE_DIFFUSION_3" ]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --sd3"
 fi
 
 export EMA_ARGS=""
@@ -298,7 +303,7 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     ${OPTIMIZER_ARG} --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
     --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
-    ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
+    ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
     --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
     --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \

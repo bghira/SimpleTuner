@@ -24,6 +24,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
   - Use the instructions in the below section [Example Environment File Explained](#example-environment-file-explained) to modify these values.
 5. Run the [train_sdxl.py](/train_sdxl.py) script.
 
+> **Note**: Stable Diffusion 3 is trained using `train_sdxl.py` and configured via `sdxl-env.sh`
+
 ## Advanced users: Kohya config conversion
 
 If you are accustomed to training on Kohya, you can convert your Kohya config to a command-line string for SimpleTuner by using `kohya_config.py --config_path=/path/to/kohya/config.json`.
@@ -247,6 +249,7 @@ Here's a breakdown of what each environment variable does:
 
 #### General Settings
 
+- `STABLE_DIFFUSION_3`: This needs to be set to `true` if you are training a Stable Diffusion 3 model. It needs to be set to `false` or unset in order to train SDXL models.
 - `DATALOADER_CONFIG`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
   - See [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
   - One or more datasets can be configured, but it's not necessary to use multiple.
