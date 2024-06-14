@@ -1519,11 +1519,16 @@ def parse_args(input_args=None):
         logger.info(f"Text Cache location: {args.cache_dir_text}")
     else:
         deepfloyd_pixel_alignment = 8
-        if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
+        if not args.sd3 and args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             logger.warning(
                 f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
+        elif args.sd3:
+            logger.warning(
+                "Stable Diffusion 3 requires a pixel alignment interval of 64px. Updating value."
+            )
+            args.aspect_bucket_alignment = 64
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
         logger.warning(
