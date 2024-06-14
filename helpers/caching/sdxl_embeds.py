@@ -585,7 +585,9 @@ class TextEmbeddingCache:
                             f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
                         )
                         should_encode = True
-                        raise Exception("This won't work. We cannot continue.")
+                        raise Exception(
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                        )
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
                     # self.debug_log(f"Encoding prompt: {prompt}")
@@ -704,7 +706,9 @@ class TextEmbeddingCache:
                             f"\n-> error: {e}"
                         )
                         should_encode = True
-                        raise Exception("This won't work. We cannot continue.")
+                        raise Exception(
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                        )
 
                 if should_encode:
                     # self.debug_log(f"Encoding prompt: {prompt}")
@@ -822,7 +826,9 @@ class TextEmbeddingCache:
                             f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
                         )
                         should_encode = True
-                        raise Exception("This won't work. We cannot continue.")
+                        raise Exception(
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                        )
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
                     self.debug_log(f"Encoding prompt: {prompt}")
