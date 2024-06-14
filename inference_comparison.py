@@ -146,14 +146,14 @@ for shortname, prompt in prompts.items():
         # Generate image with specified settings
         settings = pipeline_info.get("settings", {})
         image = pipeline(prompt, generator=manual_seed(420420420), **settings).images[0]
+        # Unload LoRA weights if they were loaded
+        if "lora" in pipeline_info:
+            pipeline.unload_lora_weights()
         del pipeline
         image.save(image_path, format="PNG")
 
         images_info.append((image, pipeline_info["label"]))
 
-        # Unload LoRA weights if they were loaded
-        if "lora" in pipeline_info:
-            pipeline.unload_lora_weights()
 
     # Combine and label images
     combine_and_label_images(images_info, f"{target_dir}/combined_image.png")
