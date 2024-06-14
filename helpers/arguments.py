@@ -1561,5 +1561,5 @@ def parse_args(input_args=None):
         args.validation_torch_compile = False
 
     if args.sd3:
-        args.pretrained_vae_model_name_or_path = args.pretrained_model_name_or_path
+        args.pretrained_vae_model_name_or_path = None
     return args
