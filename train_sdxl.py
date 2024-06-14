@@ -1431,14 +1431,6 @@ def main():
                                 1,
                                 device=latents.device,
                             )
-                    if args.input_perturbation:
-                        if (
-                            args.input_perturbation_probability == 1.0
-                            or random.random() < args.input_perturbation_probability
-                        ):
-                            noise = noise + args.input_perturbation * torch.randn_like(
-                                noise
-                            )
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
@@ -1451,11 +1443,11 @@ def main():
                             mean=args.logit_mean,
                             std=args.logit_std,
                             size=(bsz,),
-                            device=accelerator.device,
+                            device="cpu",
                         )
                         u = torch.nn.functional.sigmoid(u)
                     elif args.weighting_scheme == "mode":
-                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        u = torch.rand(size=(bsz,), device="cpu")
                         u = (
                             1
                             - u
@@ -1463,13 +1455,13 @@ def main():
                             * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
                         )
                     else:
-                        u = torch.rand(size=(bsz,), device=accelerator.device)
+                        u = torch.rand(size=(bsz,), device="cpu")
 
                     indices = (
                         u * noise_scheduler_copy.config.num_train_timesteps
                     ).long()
                     timesteps = noise_scheduler_copy.timesteps[indices].to(
-                        device=accelerator.device
+                        device=latents.device
                     )
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
@@ -1633,20 +1625,15 @@ def main():
 
                 if args.sd3:
                     # upstream TODO: weighting sceme needs to be experimented with :)
+                    # these weighting schemes use a uniform timestep sampling
+                    # and instead post-weight the loss
                     if args.weighting_scheme == "sigma_sqrt":
                         weighting = (sigmas**-2.0).float()
                     elif args.weighting_scheme == "cosmap":
                         bot = 1 - 2 * sigmas + 2 * sigmas**2
                         weighting = 2 / (math.pi * bot)
-                    elif args.weighting_scheme == "mode":
-                        # See sec 3.1 in the SD3 paper (20).
-                        u = torch.rand(size=(bsz,), device=accelerator.device)
-                        weighting = (
-                            1
-                            - u
-                            - args.mode_scale
-                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
-                        )
+                    else:
+                        weighting = torch.ones_like(sigmas)
                     loss = torch.mean(
                         (
                             weighting.float()
