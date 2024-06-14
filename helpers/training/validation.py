@@ -484,7 +484,7 @@ class Validation:
                     continue
                 break
             if self.args.validation_torch_compile:
-                if self.unet is not None and not is_compiled_module(self.pipeline.unet):
+                if self.unet is not None and not is_compiled_module(self.unet):
                     logger.warning(
                         f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
                     )
@@ -494,7 +494,7 @@ class Validation:
                         fullgraph=False,
                     )
                 if self.transformer is not None and not is_compiled_module(
-                    self.pipeline.transformer
+                    self.transformer
                 ):
                     logger.warning(
                         f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
