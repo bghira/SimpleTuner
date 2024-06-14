@@ -1304,7 +1304,9 @@ def main():
             for backend_id, backend in StateTracker.get_data_backends().items():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
                 if (
-                    "crop_aspect" in backend_config
+                    "crop" in backend_config
+                    and backend_config["crop"] is True
+                    and "crop_aspect" in backend_config
                     and backend_config["crop_aspect"] is not None
                     and backend_config["crop_aspect"] == "random"
                     and "metadata_backend" in backend
