@@ -157,7 +157,10 @@ if [ -z "$METADATA_UPDATE_INTERVAL" ]; then
 fi
 if [ -n "$STABLE_DIFFUSION_3" ] && [[ "$STABLE_DIFFUSION_3" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --sd3"
+    echo "Disabling Xformers for Stable Diffusion 3 (https://github.com/huggingface/diffusers/issues/8535)"
+    export XFORMERS_ARG=""
 fi
+
 
 export EMA_ARGS=""
 if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
