@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Pull the default config.
 source sdxl-env.sh.example
 # Pull config from env.sh

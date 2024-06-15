@@ -74,6 +74,7 @@ class SDXLSaveHook:
         ema_unet,
         text_encoder_1,
         text_encoder_2,
+        text_encoder_3,
         accelerator,
         use_deepspeed_optimizer,
     ):
@@ -82,6 +83,7 @@ class SDXLSaveHook:
         self.transformer = transformer
         self.text_encoder_1 = text_encoder_1
         self.text_encoder_2 = text_encoder_2
+        self.text_encoder_3 = text_encoder_3
         self.ema_unet = ema_unet
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
@@ -98,6 +100,7 @@ class SDXLSaveHook:
             transformer_lora_layers_to_save = None
             text_encoder_1_lora_layers_to_save = None
             text_encoder_2_lora_layers_to_save = None
+            text_encoder_3_lora_layers_to_save = None
 
             for model in models:
                 if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
@@ -121,6 +124,15 @@ class SDXLSaveHook:
                         )
                     )
                 elif isinstance(
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_3))
+                ):
+                    text_encoder_3_lora_layers_to_save = (
+                        convert_state_dict_to_diffusers(
+                            get_peft_model_state_dict(model)
+                        )
+                    )
+
+                elif isinstance(
                     model, type(unwrap_model(self.accelerator, self.transformer))
                 ):
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
@@ -134,7 +146,11 @@ class SDXLSaveHook:
 
             if self.args.sd3:
                 StableDiffusion3Pipeline.save_lora_weights(
-                    output_dir, transformer_lora_layers=transformer_lora_layers_to_save
+                    output_dir,
+                    transformer_lora_layers=transformer_lora_layers_to_save,
+                    text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
+                    text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
+                    text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
                 )
             else:
                 StableDiffusionXLPipeline.save_lora_weights(
@@ -192,6 +208,7 @@ class SDXLSaveHook:
             transformer_ = None
             text_encoder_one_ = None
             text_encoder_two_ = None
+            text_encoder_three_ = None
 
             while len(models) > 0:
                 model = models.pop()
@@ -203,13 +220,17 @@ class SDXLSaveHook:
                 ):
                     transformer_ = model
                 elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_one))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
                 ):
                     text_encoder_one_ = model
                 elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_two))
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
                 ):
                     text_encoder_two_ = model
+                elif isinstance(
+                    model, type(unwrap_model(self.accelerator, self.text_encoder_3))
+                ):
+                    text_encoder_three_ = model
                 else:
                     raise ValueError(f"unexpected save model: {model.__class__}")
 
@@ -263,7 +284,12 @@ class SDXLSaveHook:
                     prefix="text_encoder_2.",
                     text_encoder=text_encoder_two_,
                 )
-
+                if self.args.sd3:
+                    _set_state_dict_into_text_encoder(
+                        lora_state_dict,
+                        prefix="text_encoder_3.",
+                        text_encoder=text_encoder_three_,
+                    )
             logger.info("Completed loading LoRA weights.")
 
         if self.args.use_ema:
@@ -297,6 +323,15 @@ class SDXLSaveHook:
                                 f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
                             )
                             raise e
+                        if not self.args.train_text_encoder:
+                            logger.info(
+                                f"Unloading text encoders for full SD3 training without --train_text_encoder"
+                            )
+                            (
+                                self.text_encoder_1,
+                                self.text_encoder_2,
+                                self.text_encoder_3,
+                            ) = (None, None, None)
                         load_model = SD3Transformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )

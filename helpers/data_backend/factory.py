@@ -363,15 +363,19 @@ def configure_multi_databackend(
 
     if not text_embed_backends:
         raise ValueError(
-            "Must provide at least one text embed backend in the data backend config file."
+            "Your dataloader config must contain at least one image dataset AND at least one text_embed dataset."
+            " See this link for more information about dataset_type: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
     if not default_text_embed_backend_id and len(text_embed_backends) > 1:
         raise ValueError(
-            "Must provide a default text embed backend in the data backend config file. It requires 'default':true."
+            f"You have {len(text_embed_backends)} text_embed dataset{'s' if len(text_embed_backends) > 1 else ''}, but no default text embed was defined."
+            "\nPlease set default: true on one of the text_embed datasets, as this will be the location of global embeds (validation prompts, etc)."
+            "\nSee this link for more information on how to configure a default text embed dataset: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
     elif not default_text_embed_backend_id:
         logger.warning(
             f"No default text embed was defined, using {list(text_embed_backends.keys())[0]} as the default."
+            " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
         default_text_embed_backend_id = list(text_embed_backends.keys())[0]
     logger.info("Completed loading text embed services.")

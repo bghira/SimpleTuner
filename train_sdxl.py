@@ -339,7 +339,7 @@ def main():
         )
 
     # Load scheduler and models
-    if args.sd3:
+    if args.sd3 and not args.sd3_uses_diffusion:
         # Stable Diffusion 3 uses rectified flow.
         from diffusers import FlowMatchEulerDiscreteScheduler
 
@@ -349,6 +349,10 @@ def main():
         noise_scheduler_copy = copy.deepcopy(noise_scheduler)
 
     else:
+        if args.sd3 and args.sd3_uses_diffusion:
+            logger.warning(
+                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while."
+            )
         # SDXL uses the old style noise scheduler.
         noise_scheduler = DDPMScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -356,6 +360,10 @@ def main():
             prediction_type=args.prediction_type,
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             timestep_spacing=args.training_scheduler_timestep_spacing,
+        )
+    if args.sd3 and args.sd3_uses_diffusion:
+        logger.info(
+            f"Stable Diffusion 3 noise scheduler config: {noise_scheduler.config}"
         )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
@@ -592,7 +600,7 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel:
+    if not args.disable_compel and not args.sd3:
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
@@ -637,7 +645,7 @@ def main():
     # Grab GPU memory used:
     import gc
 
-    if args.model_type == "full":
+    if args.model_type == "full" or not args.train_text_encoder:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         if accelerator.is_main_process:
             logger.info(f"Unloading text encoders, as they are not being trained.")
@@ -645,24 +653,10 @@ def main():
         text_encoder_1 = None
         text_encoder_2 = None
         text_encoder_3 = None
+        text_encoders = []
         gc.collect()
-        torch.cuda.empty_cache()
-        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
-        memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            " The real memories were the friends we trained a model on along the way."
-        )
-    elif not args.train_text_encoder:
-        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
-        if accelerator.is_main_process:
-            logger.info(f"Moving text encoders back to CPU, to save VRAM.")
-        del text_encoder_1, text_encoder_2, text_encoder_3
-        text_encoder_1 = None
-        text_encoder_2 = None
-        text_encoder_3 = None
-        gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -734,6 +728,7 @@ def main():
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
+            text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
     extra_optimizer_args = {
@@ -1011,6 +1006,7 @@ def main():
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
+        text_encoder_3=text_encoder_3,
         use_deepspeed_optimizer=use_deepspeed_optimizer,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
@@ -1420,7 +1416,7 @@ def main():
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
-                if not args.sd3:
+                if not args.sd3 and not args.sd3_uses_diffusion:
                     if args.offset_noise:
                         if (
                             args.noise_offset_probability == 1.0
@@ -1436,7 +1432,7 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                if args.sd3:
+                if args.sd3 and not args.sd3_uses_diffusion:
                     # for weighting schemes where we sample timesteps non-uniformly
                     # thanks to @Slickytail who implemented this correctly via #8528
                     if args.weighting_scheme == "logit_normal":
@@ -1490,7 +1486,7 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                if args.sd3:
+                if args.sd3 and not args.sd3_uses_diffusion:
                     # Add noise according to flow matching.
                     sigmas = get_sd3_sigmas(
                         accelerator,
@@ -1517,11 +1513,16 @@ def main():
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
-                if args.sd3:
+                if args.sd3 and not args.sd3_uses_diffusion:
+                    # This is the flow-matching target for vanilla SD3.
+                    # If sd3_uses_diffusion, we will instead use v_prediction (see below)
                     target = latents
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
-                elif noise_scheduler.config.prediction_type == "v_prediction":
+                elif noise_scheduler.config.prediction_type == "v_prediction" or (
+                    args.sd3 and args.sd3_uses_diffusion
+                ):
+                    # When not using flow-matching, SD3 is trained on velocity prediction objective.
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 elif noise_scheduler.config.prediction_type == "sample":
                     # We set the target to latents here, but the model_pred will return the noise sample prediction.
@@ -1535,6 +1536,7 @@ def main():
 
                 # Predict the noise residual and compute loss
                 if args.sd3:
+                    # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
                 else:
                     added_cond_kwargs = {
@@ -1587,14 +1589,8 @@ def main():
                                 "ControlNet predictions for transformer models are not yet implemented."
                             )
                     elif args.sd3:
-                        # Rectified flow prediction.
-                        training_logger.debug(
-                            "SD3 inputs:"
-                            f"\n-> Noisy latents shape: {noisy_latents.shape if hasattr(noisy_latents, 'shape') else type(noisy_latents)}"
-                            f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else type(timesteps)}"
-                            f"\n-> Encoder hidden states shape: {encoder_hidden_states.shape if hasattr(encoder_hidden_states, 'shape') else type(encoder_hidden_states)}"
-                            f"\n-> Pooled embeds shape: {add_text_embeds.shape if hasattr(add_text_embeds, 'shape') else type(add_text_embeds)}"
-                        )
+                        # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
+                        #  image embeds are passed in with the TE-produced text embeds.
                         model_pred = transformer(
                             hidden_states=noisy_latents,
                             timestep=timesteps,
@@ -1604,12 +1600,10 @@ def main():
                             ),
                             return_dict=False,
                         )[0]
-                        training_logger.debug(
-                            f"Model prediction shape: {model_pred.shape}"
-                        )
-                        # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                        # Preconditioning of the model outputs.
-                        model_pred = model_pred * (-sigmas) + noisy_latents
+                        if not args.sd3_uses_diffusion:
+                            # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+                            # Preconditioning of the model outputs.
+                            model_pred = model_pred * (-sigmas) + noisy_latents
                     else:
                         model_pred = unet(
                             noisy_latents,
@@ -1622,10 +1616,14 @@ def main():
                     model_pred = torch.randn_like(noisy_latents)
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
-                if not args.sd3 and noise_scheduler.config.prediction_type == "sample":
+                if (
+                    hasattr(noise_scheduler, "config")
+                    and hasattr(noise_scheduler.config, "prediction_type")
+                    and noise_scheduler.config.prediction_type == "sample"
+                ):
                     model_pred = model_pred - noise
 
-                if args.sd3:
+                if args.sd3 and not args.sd3_uses_diffusion:
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     # these weighting schemes use a uniform timestep sampling
                     # and instead post-weight the loss
@@ -1657,7 +1655,9 @@ def main():
                     training_logger.debug(f"Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
                     snr_divisor = snr
-                    if noise_scheduler.config.prediction_type == "v_prediction":
+                    if noise_scheduler.config.prediction_type == "v_prediction" or (
+                        args.sd3 and args.sd3_uses_diffusion
+                    ):
                         snr_divisor = snr + 1
 
                     training_logger.debug(
@@ -1674,19 +1674,13 @@ def main():
                     # We first calculate the original loss. Then we mean over the non-batch dimensions and
                     # rebalance the sample-wise losses with their respective loss weights.
                     # Finally, we take the mean of the rebalanced loss.
-                    training_logger.debug(
-                        f"Calculating original MSE loss without reduction"
-                    )
                     loss = F.mse_loss(
                         model_pred.float(), target.float(), reduction="none"
                     )
-                    training_logger.debug(f"Calculating SNR-weighted MSE loss")
                     loss = (
                         loss.mean(dim=list(range(1, len(loss.shape))))
                         * mse_loss_weights
-                    )
-                    training_logger.debug(f"Reducing loss via mean")
-                    loss = loss.mean()
+                    ).mean()
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
@@ -2005,6 +1999,19 @@ def main():
                     ),
                     transformer=transformer,
                 )
+                if args.sd3_uses_diffusion:
+                    # Diffusion-based SD3 is currently fixed to a Euler v-prediction schedule.
+                    pipeline.scheduler = SCHEDULER_NAME_MAP["euler"].from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        revision=args.revision,
+                        subfolder="scheduler",
+                        prediction_type="v_prediction",
+                        timestep_spacing=args.training_scheduler_timestep_spacing,
+                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                    )
+                    logger.debug(
+                        f"Setting scheduler to Euler for SD3. Config: {pipeline.scheduler.config}"
+                    )
 
             else:
                 pipeline = StableDiffusionXLPipeline.from_pretrained(
@@ -2074,9 +2081,15 @@ def main():
 
 
 if __name__ == "__main__":
-    import multiprocessing
+    try:
+        import multiprocessing
 
-    multiprocessing.set_start_method("fork")
+        multiprocessing.set_start_method("fork")
+    except Exception as e:
+        logger.error(
+            "Failed to set the multiprocessing start method to 'fork'. Unexpected behaviour such as high memory overhead or poor performance may result."
+            f"\nError: {e}"
+        )
     try:
         main()
     except KeyboardInterrupt as e:

@@ -70,19 +70,34 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Stable Diffusion 3 model."),
     )
     parser.add_argument(
+        "--sd3_uses_diffusion",
+        action="store_true",
+        default=False,
+        help=(
+            "The rectified flow objective of stable diffusion 3 seems to hold few advantages, yet is very difficult to train with."
+            " If this option is supplied, a normal DDPM-based diffusion schedule will be used to train, instead of flow-matching."
+            " This will take a lot of data and even more compute to resolve. If possible, use a pretrained SD3 Diffusion model."
+        ),
+    )
+    parser.add_argument(
         "--weighting_scheme",
         type=str,
-        default="sigma_sqrt",
+        default="logit_normal",
         choices=["sigma_sqrt", "logit_normal", "mode"],
         help=(
-            "Stable Diffusion 3 uses a different weighting scheme from other models. This option only applies for Stable Diffusion 3 training."
+            "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
+            " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
+            " upstream Diffusers training examples use sigma_sqrt. The mode option is experimental,"
+            " as it is the most difficult to implement cleanly. In short experiments, logit_normal produced the best results."
         ),
     )
     parser.add_argument(
         "--logit_mean",
         type=float,
         default=0.0,
-        help=("Stable Diffusion 3-specific training parameters."),
+        help=(
+            "As outlined in the Stable Diffusion 3 paper, using a logit_mean of -0.5 produced the highest quality FID results. The default here is 0.0."
+        ),
     )
     parser.add_argument(
         "--logit_std",
@@ -1567,4 +1582,9 @@ def parse_args(input_args=None):
 
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
+        if not args.disable_compel:
+            logger.warning(
+                "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
+            )
+            args.disable_compel = True
     return args
