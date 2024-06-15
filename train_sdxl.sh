@@ -225,6 +225,9 @@ if ! [ -z "$USE_XFORMERS" ] && [[ "$USE_XFORMERS" == "false" ]]; then
 fi
 if [[ "$PLATFORM" == "Darwin" ]]; then
     export XFORMERS_ARG=""
+    export MIXED_PRECISION="no"
+    echo "Disabled Xformers on MacOS, as it is not yet supported."
+    echo "Overridden MIXED_PRECISION to 'no' for MacOS, as autocast is not supported by MPS."
 fi
 
 if [ -z "$DATALOADER_CONFIG" ]; then
