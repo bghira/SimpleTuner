@@ -369,6 +369,12 @@ class Validation:
         if self.accelerator.is_main_process:
             logger.debug("Starting validation process...")
             self.setup_pipeline(validation_type)
+            if self.pipeline is None:
+                logger.error(
+                    "Not able to run validations, we did not obtain a valid pipeline."
+                )
+                self.validation_images = None
+                return self
             self.setup_scheduler()
             self.process_prompts()
             self.finalize_validation(validation_type)
@@ -434,14 +440,17 @@ class Validation:
                 del extra_pipeline_kwargs["safety_checker"]
                 del extra_pipeline_kwargs["text_encoder"]
                 del extra_pipeline_kwargs["tokenizer"]
-                extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
-                    self.accelerator, self.text_encoder_1
-                )
-                extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                    self.accelerator, self.text_encoder_2
-                )
-                extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
-                extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+                if self.text_encoder_1 is not None:
+                    extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
+                        self.accelerator, self.text_encoder_1
+                    )
+                    extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
+                if self.text_encoder_2 is not None:
+                    extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                        self.accelerator, self.text_encoder_2
+                    )
+                    extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
                 extra_pipeline_kwargs["controlnet"] = unwrap_model(
@@ -451,23 +460,29 @@ class Validation:
                 extra_pipeline_kwargs["unet"] = unwrap_model(
                     self.accelerator, self.unet
                 )
+
             if self.transformer is not None:
                 extra_pipeline_kwargs["transformer"] = unwrap_model(
                     self.accelerator, self.transformer
                 )
-            if self.args.sd3:
-                extra_pipeline_kwargs["text_encoder"] = unwrap_model(
-                    self.accelerator, self.text_encoder_1
-                )
-                extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                    self.accelerator, self.text_encoder_2
-                )
-                extra_pipeline_kwargs["text_encoder_3"] = unwrap_model(
-                    self.accelerator, self.text_encoder_3
-                )
-                extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
-                extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
-                extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
+
+            if self.args.sd3 and self.args.train_text_encoder:
+                if self.text_encoder_1 is not None:
+                    extra_pipeline_kwargs["text_encoder"] = unwrap_model(
+                        self.accelerator, self.text_encoder_1
+                    )
+                    extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
+                if self.text_encoder_2 is not None:
+                    extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                        self.accelerator, self.text_encoder_2
+                    )
+                    extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+                if self.text_encoder_3 is not None:
+                    extra_pipeline_kwargs["text_encoder_3"] = unwrap_model(
+                        self.accelerator, self.text_encoder_3
+                    )
+                    extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
+
             if self.vae is None:
                 extra_pipeline_kwargs["vae"] = self.init_vae()
 
@@ -478,6 +493,7 @@ class Validation:
                 "torch_dtype": self.weight_dtype,
                 **extra_pipeline_kwargs,
             }
+            logger.debug(f"Initialising pipeline with kwargs: {pipeline_kwargs}")
             attempt = 0
             while attempt < 3:
                 attempt += 1
@@ -486,7 +502,7 @@ class Validation:
                 except Exception as e:
                     logger.error(e)
                     continue
-                break
+                return None
             if self.args.validation_torch_compile:
                 if self.unet is not None and not is_compiled_module(self.unet):
                     logger.warning(
