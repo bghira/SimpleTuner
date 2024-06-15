@@ -1582,4 +1582,9 @@ def parse_args(input_args=None):
 
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
+        if not args.disable_compel:
+            logger.warning(
+                "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
+            )
+            args.disable_compel = True
     return args
