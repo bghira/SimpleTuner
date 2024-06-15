@@ -611,7 +611,7 @@ class VAECache:
                 )
             filepaths.append(output_file)
             latents.append(latent_vector)
-        self.metadata_backend.save_image_metadata()
+
         self.data_backend.write_batch(filepaths, latents)
 
         return latents
@@ -749,12 +749,21 @@ class VAECache:
                         (pixel_values, filepath, aspect_bucket, is_final_sample)
                     )
                 # Update the crop_coordinates in the metadata document
-                self.metadata_backend.set_metadata_attribute_by_filepath(
-                    filepath=filepath,
-                    attribute="crop_coordinates",
-                    value=crop_coordinates,
-                    update_json=False,
-                )
+                # NOTE: This is currently a no-op because the metadata is now considered 'trustworthy'.
+                #       The VAE encode uses the preexisting metadata, and the TrainingSample class will not update.
+                #       However, we'll check that the values didn't change anyway, just in case.
+                if crop_coordinates:
+                    current_crop_coordinates = (
+                        self.metadata_backend.get_metadata_attribute_by_filepath(
+                            filepath=filepath,
+                            attribute="crop_coordinates",
+                        )
+                    )
+                    if current_crop_coordinates != crop_coordinates:
+                        logger.warning(
+                            f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't. File an issue report with debug logs at https://github.com/bghira/simpletuner/issues/new."
+                        )
+
             self.debug_log(
                 f"Completed processing gathered {len(output_values)} output values."
             )
