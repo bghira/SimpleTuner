@@ -541,7 +541,7 @@ def main():
         unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention:
+    if args.enable_xformers_memory_efficient_attention and not args.sd3:
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
             import xformers  # type: ignore
