@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
-    from diffusers import StableDiffusion3Pipeline, StableDiffusion3Img2ImgPipeline
+    from helpers.sd3.pipeline import (
+        StableDiffusion3Pipeline,
+        StableDiffusion3Img2ImgPipeline,
+    )
 except ImportError:
     logger.error(
         f"Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."

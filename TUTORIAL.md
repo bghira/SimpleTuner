@@ -250,6 +250,8 @@ Here's a breakdown of what each environment variable does:
 #### General Settings
 
 - `STABLE_DIFFUSION_3`: This needs to be set to `true` if you are training a Stable Diffusion 3 model. It needs to be set to `false` or unset in order to train SDXL models.
+  - The correct value for `MODEL_NAME` is `stabilityai/stable-diffusion-3-medium-diffusers` ([link](https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers) to the weights)
+  - `XFORMERS` must be disabled for SD3.
 - `DATALOADER_CONFIG`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
   - See [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
   - One or more datasets can be configured, but it's not necessary to use multiple.

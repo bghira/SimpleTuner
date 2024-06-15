@@ -58,3 +58,5 @@ vae_cache/
 vendor/
 inference/
 webhooks.json
+untracked/
+sd21-env*.sh

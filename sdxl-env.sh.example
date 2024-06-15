@@ -165,10 +165,6 @@ export TRAINER_EXTRA_ARGS=""
 # Not recommended for terminal SNR models.
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --offset_noise --noise_offset=0.02"
 
-## For noise input perturbation - adds extra noise, randomly. This is separate from offset noise, but can help stabilize it and reduce overfitting.
-# Not recommended for terminal SNR models.
-#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --input_perturbation=0.01"
-
 ## For terminal SNR training:
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --prediction_type=v_prediction --rescale_betas_zero_snr"
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --training_scheduler_timestep_spacing=trailing --inference_scheduler_timestep_spacing=trailing"

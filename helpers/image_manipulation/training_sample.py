@@ -369,13 +369,21 @@ class TrainingSample:
 
         However, the aspect ratio 1.0 needs special consideration for our base resolutions 512, 768, and 1024, because they typically result in 500x500, 750x750, and 1000x1000 images.
         """
+        logger.debug("Correcting intermediary square size.")
         if (
             self.aspect_ratio == 1.0
             and self.intermediary_size[0] < self.pixel_resolution
         ):
+            logger.debug(
+                f"Aspect ratio is 1.0 and intermediary size is {self.intermediary_size}, adjusting to {self.pixel_resolution}"
+            )
             self.intermediary_size = (
                 self.pixel_resolution,
                 self.pixel_resolution,
+            )
+        else:
+            logger.debug(
+                f"Aspect ratio is not 1.0 {self.aspect_ratio} or/and intermediary size is {self.intermediary_size}, no adjustment needed."
             )
         return self
 
@@ -386,7 +394,7 @@ class TrainingSample:
         This function corrects the intermediary size to the correct aspect ratio by calculating it again,
          using the original aspect ratio.
         """
-        if self.crop_aspect == "random":
+        if self.crop_aspect == "random" and self.crop_enabled:
             _, self.intermediary_size, _ = self.target_size_calculator(
                 self.original_aspect_ratio, self.resolution, self.original_size
             )
