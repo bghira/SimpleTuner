@@ -600,7 +600,7 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel:
+    if not args.disable_compel and not args.sd3:
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
@@ -645,7 +645,7 @@ def main():
     # Grab GPU memory used:
     import gc
 
-    if args.model_type == "full":
+    if args.model_type == "full" or not args.train_text_encoder:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         if accelerator.is_main_process:
             logger.info(f"Unloading text encoders, as they are not being trained.")
@@ -653,24 +653,10 @@ def main():
         text_encoder_1 = None
         text_encoder_2 = None
         text_encoder_3 = None
+        text_encoders = []
         gc.collect()
-        torch.cuda.empty_cache()
-        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
-        memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            " The real memories were the friends we trained a model on along the way."
-        )
-    elif not args.train_text_encoder:
-        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
-        if accelerator.is_main_process:
-            logger.info(f"Moving text encoders back to CPU, to save VRAM.")
-        del text_encoder_1, text_encoder_2, text_encoder_3
-        text_encoder_1 = None
-        text_encoder_2 = None
-        text_encoder_3 = None
-        gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -742,6 +728,7 @@ def main():
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
+            text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
     extra_optimizer_args = {
@@ -1019,6 +1006,7 @@ def main():
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
+        text_encoder_3=text_encoder_3,
         use_deepspeed_optimizer=use_deepspeed_optimizer,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
