@@ -759,7 +759,7 @@ class VAECache:
                             attribute="crop_coordinates",
                         )
                     )
-                    if current_crop_coordinates != crop_coordinates:
+                    if tuple(current_crop_coordinates) != tuple(crop_coordinates):
                         logger.warning(
                             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't. File an issue report with debug logs at https://github.com/bghira/simpletuner/issues/new."
                         )
