@@ -2085,9 +2085,15 @@ def main():
 
 
 if __name__ == "__main__":
-    import multiprocessing
+    try:
+        import multiprocessing
 
-    multiprocessing.set_start_method("fork")
+        multiprocessing.set_start_method("fork")
+    except Exception as e:
+        logger.error(
+            "Failed to set the multiprocessing start method to 'fork'. Unexpected behaviour such as high memory overhead or poor performance may result."
+            f"\nError: {e}"
+        )
     try:
         main()
     except KeyboardInterrupt as e:
