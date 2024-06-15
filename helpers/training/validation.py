@@ -399,8 +399,9 @@ class Validation:
             scheduler_args["variance_type"] = variance_type
         if "deepfloyd" in self.args.model_type:
             self.args.validation_noise_scheduler = "ddpm"
-        if self.args.sd3:
-            # NO TOUCHIE
+        if self.args.sd3 and not self.args.sd3_uses_diffusion:
+            # NO TOUCHIE FOR FLOW-MATCHING.
+            # Touchie for diffusion though.
             return
 
         self.pipeline.scheduler = SCHEDULER_NAME_MAP[
@@ -467,8 +468,8 @@ class Validation:
                 extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
                 extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
                 extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
-                if self.vae is None:
-                    extra_pipeline_kwargs["vae"] = self.init_vae()
+            if self.vae is None:
+                extra_pipeline_kwargs["vae"] = self.init_vae()
 
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
