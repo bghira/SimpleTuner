@@ -2,6 +2,8 @@
 
 ## Introduction
 
+For a more quick and to-the-point setup guide, see the [QUICKSTART](/documentation/QUICKSTART.md) document.
+
 You'll need to set up a Python environment and create an "env" file for SimpleTuner before it can be run.
 
 This document aims to get you set up and running with a basic training environment, including example data to use if you do not currently have any.

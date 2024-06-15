@@ -1,5 +1,7 @@
 # Quickstart Guide
 
+> ⚠️ This tutorial is a work-in-progress.
+
 **Note**: This tutorial is very basic, step-by-step guide to get a basic training run going without any real explanations for what you are configuring, or what any of the options will do.
 
 For extensive information on the configuration process, see the [tutorial](/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/OPTIONS.md) pages.
