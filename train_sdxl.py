@@ -349,6 +349,10 @@ def main():
         noise_scheduler_copy = copy.deepcopy(noise_scheduler)
 
     else:
+        if args.sd3 and args.sd3_uses_diffusion:
+            logger.warning(
+                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while."
+            )
         # SDXL uses the old style noise scheduler.
         noise_scheduler = DDPMScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -356,6 +360,10 @@ def main():
             prediction_type=args.prediction_type,
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             timestep_spacing=args.training_scheduler_timestep_spacing,
+        )
+    if args.sd3 and args.sd3_uses_diffusion:
+        logger.info(
+            f"Stable Diffusion 3 noise scheduler config: {noise_scheduler.config}"
         )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
