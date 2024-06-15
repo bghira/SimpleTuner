@@ -82,17 +82,22 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--weighting_scheme",
         type=str,
-        default="sigma_sqrt",
+        default="logit_normal",
         choices=["sigma_sqrt", "logit_normal", "mode"],
         help=(
-            "Stable Diffusion 3 uses a different weighting scheme from other models. This option only applies for Stable Diffusion 3 training."
+            "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
+            " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
+            " upstream Diffusers training examples use sigma_sqrt. The mode option is experimental,"
+            " as it is the most difficult to implement cleanly. In short experiments, logit_normal produced the best results."
         ),
     )
     parser.add_argument(
         "--logit_mean",
         type=float,
         default=0.0,
-        help=("Stable Diffusion 3-specific training parameters."),
+        help=(
+            "As outlined in the Stable Diffusion 3 paper, using a logit_mean of -0.5 produced the highest quality FID results. The default here is 0.0."
+        ),
     )
     parser.add_argument(
         "--logit_std",
