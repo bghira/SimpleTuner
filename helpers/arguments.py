@@ -1473,7 +1473,11 @@ def parse_args(input_args=None):
 
     if not args.adam_bfloat16 and not args.i_know_what_i_am_doing:
         raise ValueError(
-            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true."
+            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
+            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
+            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
+            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
+            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
         )
 
     if not args.i_know_what_i_am_doing and (
@@ -1483,7 +1487,11 @@ def parse_args(input_args=None):
         or args.use_8bit_adam
     ):
         raise ValueError(
-            "Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
+            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
+            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
+            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
+            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
+            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
         )
 
     if torch.backends.mps.is_available():
