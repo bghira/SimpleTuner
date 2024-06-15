@@ -70,6 +70,16 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Stable Diffusion 3 model."),
     )
     parser.add_argument(
+        "--sd3_uses_diffusion",
+        action="store_true",
+        default=False,
+        help=(
+            "The rectified flow objective of stable diffusion 3 seems to hold few advantages, yet is very difficult to train with."
+            " If this option is supplied, a normal DDPM-based diffusion schedule will be used to train, instead of flow-matching."
+            " This will take a lot of data and even more compute to resolve. If possible, use a pretrained SD3 Diffusion model."
+        ),
+    )
+    parser.add_argument(
         "--weighting_scheme",
         type=str,
         default="sigma_sqrt",
