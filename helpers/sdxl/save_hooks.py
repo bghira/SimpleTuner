@@ -148,9 +148,10 @@ class SDXLSaveHook:
                 StableDiffusion3Pipeline.save_lora_weights(
                     output_dir,
                     transformer_lora_layers=transformer_lora_layers_to_save,
-                    text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
-                    text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
-                    text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
+                    # SD3 doesn't support text encoder training.
+                    # text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
+                    # text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
+                    # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
                 )
             else:
                 StableDiffusionXLPipeline.save_lora_weights(
