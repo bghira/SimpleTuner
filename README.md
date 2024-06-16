@@ -4,13 +4,13 @@
 
 **SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions to its improvement are welcome.
 
-* Multi-GPU training
-* Aspect bucketing "just works"; fill a folder of images and let it rip
-* Multiple datasets can be used in a single training session, each with a different base resolution.
-* VRAM-saving techniques, such as pre-computing VAE and text encoder outputs
-* Full featured fine-tuning support
-  * Bias training (BitFit)
-* LoRA training support
+- Multi-GPU training
+- Aspect bucketing "just works"; fill a folder of images and let it rip
+- Multiple datasets can be used in a single training session, each with a different base resolution.
+- VRAM-saving techniques, such as pre-computing VAE and text encoder outputs
+- Full featured fine-tuning support
+  - Bias training (BitFit)
+- LoRA training support
 
 ## Table of Contents
 
@@ -35,6 +35,8 @@
 ## Tutorial
 
 Please fully explore this README before embarking on [the tutorial](/TUTORIAL.md), as it contains vital information that you might need to know first.
+
+For a quick start without reading the full documentation, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
 
 For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload.
 
@@ -84,32 +86,32 @@ EMA (exponential moving average) weights are a memory-heavy affair, but provide 
 
 ### GPU vendors
 
-* NVIDIA - pretty much anything 3090 and up is a safe bet. YMMV.
-* AMD - SDXL LoRA and UNet are verified working on a 7900 XTX 24GB. Lacking `xformers`, it will likely use more memory than Nvidia equivalents
-* Apple - LoRA and full u-net tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
-  * You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
+- NVIDIA - pretty much anything 3090 and up is a safe bet. YMMV.
+- AMD - SDXL LoRA and UNet are verified working on a 7900 XTX 24GB. Lacking `xformers`, it will likely use more memory than Nvidia equivalents
+- Apple - LoRA and full u-net tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
+  - You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
 
 ### SDXL, 1024px
 
-* A100-80G (EMA, large batches, LoRA @ insane batch sizes)
-* A6000-48G (EMA@768px, no EMA@1024px, LoRA @ high batch sizes)
-* A100-40G (no EMA@1024px, no EMA@768px, EMA@512px, LoRA @ high batch sizes)
-* 4090-24G (no EMA@1024px, batch size 1-4, LoRA @ medium-high batch sizes)
-* 4080-12G (LoRA @ low-medium batch sizes)
+- A100-80G (EMA, large batches, LoRA @ insane batch sizes)
+- A6000-48G (EMA@768px, no EMA@1024px, LoRA @ high batch sizes)
+- A100-40G (no EMA@1024px, no EMA@768px, EMA@512px, LoRA @ high batch sizes)
+- 4090-24G (no EMA@1024px, batch size 1-4, LoRA @ medium-high batch sizes)
+- 4080-12G (LoRA @ low-medium batch sizes)
 
 ### Stable Diffusion 2.x, 768px
 
-* A100-40, A40, A6000 or better (EMA, 1024px training)
-* NVIDIA RTX 4090 or better (24G, no EMA)
-* NVIDIA RTX 4080 or better (LoRA only)
+- A100-40, A40, A6000 or better (EMA, 1024px training)
+- NVIDIA RTX 4090 or better (24G, no EMA)
+- NVIDIA RTX 4080 or better (LoRA only)
 
 ## Scripts
 
-* `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance. It might not work for every single container image.
-* `train_sdxl.sh` - The main training script for SDXL.
-* `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
-* `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
-* `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
+- `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance. It might not work for every single container image.
+- `train_sdxl.sh` - The main training script for SDXL.
+- `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
+- `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
+- `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
 
 ## Toolkit
 
