@@ -73,7 +73,7 @@ There are a few more if using a Mac M-series machine:
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS` as well as more than `VAE_BATCH_SIZE`. The dataset will not be useable if it is too small.
 
-Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using two datasets: the `pseudo-camera-10k` dataset and a local dataset.
+Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using `pseudo-camera-10k` as the dataset.
 
 In your `BASE_DIR` directory, create a multidatabackend.json:
 
@@ -111,7 +111,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
 
 The, navigate to the `BASE_DIR` directory and create a `datasets` directory:
 
-````bash
+```bash
 Execute the following commands:
 
 ```bash
@@ -120,7 +120,7 @@ mkdir -p datasets
 pushd datasets
     git clone https://huggingface.co/datasets/ptx0/pseudo-camera-10k
 popd
-````
+```
 
 This will download about 10k photograph samples to your `datasets/pseudo-camera-10k` directory, which will be automatically created for you.
 
