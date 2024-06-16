@@ -2,136 +2,114 @@
 
 > ⚠️ This tutorial is a work-in-progress.
 
-**Note**: This tutorial is very basic, step-by-step guide to get a basic training run going without any real explanations for what you are configuring, or what any of the options will do.
-
-For extensive information on the configuration process, see the [tutorial](/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/OPTIONS.md) pages.
+**Note**: This tutorial is very basic, step-by-step guide to get a basic, minimal training run up and running. For more advanced configurations, see the [tutorial](/TUTORIAL.md), [dataloader configuration guide](/documentation/DATALOADER.md), and the [options breakdown](/OPTIONS.md) pages.
 
 ## Stable Diffusion 3
 
-### Configuration files
+In this example, we'll be training a Stable Diffusion 3 model using the SimpleTuner toolkit and will be using the `lora` model type.
 
-#### Environment file
+### Prerequisites
 
-Place the following in `SimpleTuner/sdxl-env.sh`
+Make sure that you have python installed. You can check this by running:
 
 ```bash
-#!/bin/bash
-
-# If you're adventurous, you can set this to 'full', but it is VERY VRAM-hungry.
-export MODEL_TYPE="lora"
-
-export STABLE_DIFFUSION_3=true
-export CONTROLNET=false
-export USE_DORA=false
-export USE_BITFIT=false
-
-# How often to checkpoint. Depending on your learning rate, you may wish to change this.
-# For the default settings with 10 gradient accumulations, more frequent checkpoints might be preferable at first.
-export CHECKPOINTING_STEPS=200
-export LEARNING_RATE=4e-5 #@param {type:"number"}
-export MODEL_NAME="stabilityai/stable-diffusion-3-medium-diffusers"
-
-# Make DEBUG_EXTRA_ARGS empty to disable wandb.
-# You'll want to use 'wandb login' on commandline to set this up.
-export DEBUG_EXTRA_ARGS="--report_to=wandb"
-export TRACKER_PROJECT_NAME="simpletuner-project-name"
-export CURRENT_TIME
-CURRENT_TIME=$(date +%s)
-export TRACKER_RUN_NAME="${CURRENT_TIME}"
-export VALIDATION_PROMPT="a studio portrait photograph of a teddy bear holding a sign that reads, 'Hello World'"
-export VALIDATION_GUIDANCE=5.5
-export VALIDATION_STEPS=100
-
-
-# Location of training data.
-export BASE_DIR="/path/to/outputs"
-export DATALOADER_CONFIG="multidatabackend.json"
-export INSTANCE_DIR="${BASE_DIR}/datasets/training_data"
-export OUTPUT_DIR="${BASE_DIR}/models"
-
-export PUSH_TO_HUB="false"
-export PUSH_CHECKPOINTS="false"
-# This is how many checkpoints we will keep. Two is safe, but three is safer.
-export CHECKPOINTING_LIMIT=10
-
-# By default, images will be resized so their SMALLER EDGE is 1024 pixels, maintaining aspect ratio.
-# Setting this value to 768px might result in more reasonable training data sizes for SDXL.
-export RESOLUTION=1
-export MINIMUM_RESOLUTION=$RESOLUTION
-export VALIDATION_RESOLUTION=1280x768
-export VALIDATION_NUM_INFERENCE_STEPS=50
-export RESOLUTION_TYPE="area"
-export ASPECT_BUCKET_ROUNDING=2
-
-# Adjust this for your GPU memory size. This, and resolution, are the biggest VRAM killers.
-export TRAIN_BATCH_SIZE=1
-export GRADIENT_ACCUMULATION_STEPS=1
-export MAX_NUM_STEPS=1000
-export NUM_EPOCHS=0
-
-# Set this to 'true' if you are using a patched Diffusers install.
-# Ignore this if you don't know what it does. Having it at 'false' uses more VRAM.
-export USE_GRADIENT_CHECKPOINTING=false
-
-export LR_SCHEDULE="constant"
-export LR_WARMUP_STEPS=0
-export CAPTION_DROPOUT_PROBABILITY=0.1
-export OPTIMIZER="adamw_bf16"
-
-
-# Reproducible training. Set to -1 to disable.
-export TRAINING_SEED=42
-export VALIDATION_SEED=2
-export MIXED_PRECISION="bf16"
-
-# This has to be changed if you're training with multiple GPUs.
-export TRAINING_NUM_PROCESSES=1
-
-# Leave this alone.
-export TRAINER_EXTRA_ARGS=""
-export ACCELERATE_EXTRA_ARGS=""
-export USE_XFORMERS=false
+python --version
 ```
 
-#### Dataloader
+### Installation
 
-Place the following in `SimpleTuner/multidatabackend.json`
+Clone the SimpleTuner repository and set up the python venv:
+
+```bash
+git clone --branch=release https://github.com/bghira/SimpleTuner.git
+
+cd SimpleTuner
+
+python -m venv .venv
+
+source .venv/bin/activate
+
+pip install -U poetry pip
+```
+
+Depending on your system, you will run one of 3 commands:
+
+```bash
+# MacOS
+poetry install --no-root -C install/apple
+
+# Linux
+poetry install --no-root
+
+# Linux with ROCM
+poetry install --no-root -C install/rocm
+```
+
+### Setting up the environment
+
+To run SimpleTuner, you will need to set up a configuration file, the dataset and model directories, and a dataloader configuration file.
+
+#### Configuration file
+
+Copy `sdxl-env.sh.example` to `sdxl-env.sh`:
+
+```bash
+cp sdxl-env.sh.example sdxl-env.sh
+```
+
+There, you will need to modify the following variables:
+
+- `MODEL_TYPE` - Set this to `lora`.
+- `STABLE_DIFFUSION_3` - Set this to `true`.
+- `MODEL_NAME` - Set this to `stabilityai/stable-diffusion-3-medium-diffusers`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
+- `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+
+There are a few more if using a Mac M-series machine:
+
+- `MIXED_PRECISION` should be set to `no`.
+- `USE_XFORMERS` should be set to `false`.
+
+#### Dataset considerations
+
+It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS` as well as more than `VAE_BATCH_SIZE`. The dataset will not be useable if it is too small.
+
+Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
+
+In your `BASE_DIR` directory, create a multidatabackend.json:
 
 ```json
 [
-    {
-        "id": "pseudo-camera-10k-sd3",
-        "type": "local",
-        "crop": true,
-        "crop_aspect": "square",
-        "crop_style": "center",
-        "resolution": 0.5,
-        "minimum_image_size": 0.25,
-        "maximum_image_size": 1.0,
-        "target_downsample_size": 1.0,
-        "resolution_type": "area",
-        "cache_dir_vae": "cache/vae/sd3/pseudo-camera-10k",
-        "instance_data_dir": "datasets/pseudo-camera-10k",
-        "disabled": false,
-        "skip_file_discovery": "",
-        "caption_strategy": "filename",
-        "metadata_backend": "json",
-    },
-    {
-        "id": "text-embeds",
-        "type": "local",
-        "dataset_type": "text_embeds",
-        "default": true,
-        "cache_dir": "cache/text/sd3/pseudo-camera-10k",
-        "disabled": false,
-        "write_batch_size": 128
-    }
+  {
+    "id": "pseudo-camera-10k-sd3",
+    "type": "local",
+    "crop": true,
+    "crop_aspect": "square",
+    "crop_style": "center",
+    "resolution": 0.5,
+    "minimum_image_size": 0.25,
+    "maximum_image_size": 1.0,
+    "target_downsample_size": 1.0,
+    "resolution_type": "area",
+    "cache_dir_vae": "cache/vae/sd3/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
+    "disabled": false,
+    "skip_file_discovery": "",
+    "caption_strategy": "filename",
+    "metadata_backend": "json"
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/sd3/pseudo-camera-10k",
+    "disabled": false,
+    "write_batch_size": 128
+  }
 ]
 ```
 
-#### Download dataset
-
-Execute the following commands:
+Then, navigate to the `BASE_DIR` directory and create a `datasets` directory:
 
 ```bash
 apt -y install git-lfs
@@ -147,13 +125,7 @@ This will download about 10k photograph samples to your `datasets/pseudo-camera-
 
 You'll want to login to WandB and HF Hub before beginning training, especially if you're using `PUSH_TO_HUB=true` and `--report_to=wandb`.
 
-If you're going to be pushing items to a Git LFS repository manually, you can run this command:
-
-Otherwise, skip this command and run the next ones.
-
-```bash
-git config --global credential.helper store
-```
+If you're going to be pushing items to a Git LFS repository manually, you should also run `git config --global credential.helper store`
 
 Run the following commands:
 
@@ -161,11 +133,13 @@ Run the following commands:
 wandb login
 ```
 
-If you didn't run the `git config` command earlier, you'll want to say `no` when it asks if you want to add the credentials to your Git credentials store:
+and
 
 ```bash
 huggingface-cli login
 ```
+
+Follow the instructions to log in to both services.
 
 ### Executing the training run
 

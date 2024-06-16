@@ -4,134 +4,150 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 ```json
 [
-    {
-        "id": "something-special-to-remember-by",
-        "type": "local",
-        "instance_data_dir": "/path/to/data/tree",
-        "crop": false,
-        "crop_style": "random|center|corner|face",
-        "crop_aspect": "square|preserve|random",
-        "crop_aspect_buckets": [
-            0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75
-        ],
-        "resolution": 1.0,
-        "resolution_type": "area|pixel",
-        "minimum_image_size": 1.0,
-        "prepend_instance_prompt": false,
-        "instance_prompt": "something to label every image",
-        "only_instance_prompt": false,
-        "caption_strategy": "filename|instanceprompt|parquet|textfile",
-        "cache_dir_vae": "/path/to/vaecache",
-        "vae_cache_clear_each_epoch": true,
-        "probability": 1.0,
-        "repeats": 5,
-        "text_embeds": "alt-embed-cache"
-    },
-    {
-        "id": "another-special-name-for-another-backend",
-        "type": "aws",
-        "aws_bucket_name": "something-yummy",
-        "aws_region_name": null,
-        "aws_endpoint_url": "https://foo.bar/",
-        "aws_access_key_id": "wpz-764e9734523434",
-        "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
-        "aws_data_prefix": "",
-        "cache_dir_vae": "s3prefix/for/vaecache",
-        "vae_cache_clear_each_epoch": true,
-        "repeats": 2
-    },
-    {
-        "id": "an example backend for text embeds.",
-        "dataset_type": "text_embeds",
-        "default": true,
-        "type": "aws",
-        "aws_bucket_name": "textembeds-something-yummy",
-        "aws_region_name": null,
-        "aws_endpoint_url": "https://foo.bar/",
-        "aws_access_key_id": "wpz-764e9734523434",
-        "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
-        "aws_data_prefix": "",
-        "cache_dir": ""
-    },
-    {
-        "id": "alt-embed-cache",
-        "dataset_type": "text_embeds",
-        "default": false,
-        "type": "local",
-        "cache_dir": "/path/to/textembed_cache"
-    }
+  {
+    "id": "something-special-to-remember-by",
+    "type": "local",
+    "instance_data_dir": "/path/to/data/tree",
+    "crop": false,
+    "crop_style": "random|center|corner|face",
+    "crop_aspect": "square|preserve|random",
+    "crop_aspect_buckets": [0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75],
+    "resolution": 1.0,
+    "resolution_type": "area|pixel",
+    "minimum_image_size": 1.0,
+    "prepend_instance_prompt": false,
+    "instance_prompt": "something to label every image",
+    "only_instance_prompt": false,
+    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "cache_dir_vae": "/path/to/vaecache",
+    "vae_cache_clear_each_epoch": true,
+    "probability": 1.0,
+    "repeats": 5,
+    "text_embeds": "alt-embed-cache"
+  },
+  {
+    "id": "another-special-name-for-another-backend",
+    "type": "aws",
+    "aws_bucket_name": "something-yummy",
+    "aws_region_name": null,
+    "aws_endpoint_url": "https://foo.bar/",
+    "aws_access_key_id": "wpz-764e9734523434",
+    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+    "aws_data_prefix": "",
+    "cache_dir_vae": "s3prefix/for/vaecache",
+    "vae_cache_clear_each_epoch": true,
+    "repeats": 2
+  },
+  {
+    "id": "an example backend for text embeds.",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "aws",
+    "aws_bucket_name": "textembeds-something-yummy",
+    "aws_region_name": null,
+    "aws_endpoint_url": "https://foo.bar/",
+    "aws_access_key_id": "wpz-764e9734523434",
+    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+    "aws_data_prefix": "",
+    "cache_dir": ""
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": false,
+    "type": "local",
+    "cache_dir": "/path/to/textembed_cache"
+  }
 ]
 ```
 
 ## Configuration Options
 
 ### `id`
+
 - **Description:** Unique identifier for the dataset. It should remain constant once set, as it links the dataset to its state tracking entries.
 
 ### `dataset_type`
+
 - **Values:** `image` | `text_embeds`
 - **Description:** Text embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 
 ### `default`
+
 - **Only applies to `dataset_type=text_embeds`**
 - If set `true`, this text embed dataset will be where SimpleTuner stores the text embed cache for eg. validation prompt embeds. As they do not pair to image data, there needs to be a specific location for them to end up.
 
 ### `text_embeds`
+
 - **Only applies to `dataset_type=image`**
 - If unset, the `default` text_embeds dataset will be used. If set to an existing `id` of a `text_embeds` dataset, it will use that instead. Allows specific text embed datasets to be associated with a given image dataset.
 
 ### `type`
+
 - **Values:** `aws` | `local`
 - **Description:** Determines the storage backend (local or cloud) used for this dataset.
 
 ### `instance_data_dir` / `aws_data_prefix`
+
 - **Local:** Path to the data on the filesystem.
 - **AWS:** S3 prefix for the data in the bucket.
 
 ### Cropping Options
+
 - `crop`: Enables or disables image cropping.
 - `crop_style`: Selects the cropping style (`random`, `center`, `corner`, `face`).
 - `crop_aspect`: Chooses the cropping aspect (`random`, `square` or `preserve`).
 - `crop_aspect_buckets`: When `crop_aspect` is set to `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
 
 ### `resolution`
+
 - **Area-Based:** Cropping/sizing is done by megapixel count.
 - **Pixel-Based:** Resizing or cropping uses the smaller edge as the basis for calculation.
 
 ### `minimum_image_size`
+
 - **Area Comparison:** Specified in megapixels. Considers the entire pixel area.
 - **Pixel Comparison:** Both image edges must exceed this value, specified in pixels.
 
 ### `maximum_image_size` and `target_downsample_size`
+
 - `maximum_image_size` specifies the maximum image size that will be considered croppable. It will downsample images before cropping if they are larger than this.
 - `target_downsample_size` specifies how large the image will be after resample and before it is cropped.
 - **Example**: A 20 megapixel image is too large to crop to 1 megapixel without losing context. Set `maximum_size_image=5.0` and `target_downsample_size=2.0` to resize any images larger than 5 megapixels down to 2 megapixels before cropping to 1 megapixel.
 
 ### `prepend_instance_prompt`
+
 - When enabled, all captions will include the `instance_prompt` value at the beginning.
 
 ### `only_instance_prompt`
+
 - In addition to `prepend_instance_prompt`, replaces all captions in the dataset with a single phrase or trigger word.
 
 ### `repeats`
+
 - Specifies the number of times all samples in the dataset are seen during an epoch. Useful for giving more impact to smaller datasets or maximizing the usage of VAE cache objects.
 
 ### `vae_cache_clear_each_epoch`
+
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
 
 ### `ignore_epochs`
-- When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets *without* this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
+
+- When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets _without_ this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
 
 ### `skip_file_discovery`
+
 - This allows specifying the commandline option `--skip_file_discovery` just for a particular dataset at a time. This is helpful if you have datasets you don't need the trainer to scan on every startup, eg. their latents/embeds are already cached fully. This allows quicker startup and resumption of training. This parameter accepts a comma or space separated list of values, eg. `vae metadata aspect text` to skip file discovery for one or more stages of the loader configuration.
 
 ### `preserve_data_cache_backend`
+
 - Like `skip_file_discovery`, this option can be set to prevent repeated lookups of file lists during startup. It takes a boolean value, and if set to be `true`, the generated cache file will not be removed at launch. This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times. Additionally, on S3, backend listing can add up in cost and should be avoided. **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
 
 ## Filtering captions
 
 ### `caption_filter_list`
-- **For text embed datasets only.** This may be a JSON list, a path to a txt file, or a path to a JSON document. Filter strings can be simple terms to remove from all captions, or they can be regular expressions. Additionally, sed-style `s/search/replace/` entries may be used to *replace* strings in the caption rather than simply remove it.
+
+- **For text embed datasets only.** This may be a JSON list, a path to a txt file, or a path to a JSON document. Filter strings can be simple terms to remove from all captions, or they can be regular expressions. Additionally, sed-style `s/search/replace/` entries may be used to _replace_ strings in the caption rather than simply remove it.
 
 #### Example filter list
 
@@ -169,43 +185,39 @@ Here is an example dataloader configuration that makes use of the captions and d
 
 ```json
 {
-    "id": "photo-concept-bucket",
-    "type": "local",
-    "instance_data_dir": "/models/training/datasets/photo-concept-bucket-downloads",
-    "caption_strategy": "parquet",
-    "metadata_backend": "parquet",
-    "parquet": {
-        "path": "photo-concept-bucket.parquet",
-        "filename_column": "id",
-        "caption_column": "cogvlm_caption",
-        "fallback_caption_column": "tags",
-        "width_column": "width",
-        "height_column": "height",
-        "identifier_includes_extension": false
-    },
-    "resolution": 1.0,
-    "minimum_image_size": 0.75,
-    "maximum_image_size": 2.0,
-    "target_downsample_size": 1.5,
-    "prepend_instance_prompt": false,
-    "instance_prompt": null,
-    "only_instance_prompt": false,
-    "disable": false,
-    "cache_dir_vae": "/models/training/vae_cache/photo-concept-bucket",
-    "probability": 1.0,
-    "skip_file_discovery": "",
-    "preserve_data_backend_cache": false,
-    "vae_cache_clear_each_epoch": true,
-    "repeats": 1,
-    "crop": true,
-    "crop_aspect": "random",
-    "crop_style": "random",
-    "crop_aspect_buckets": [
-        1.0,
-        0.75,
-        1.23
-    ],
-    "resolution_type": "area"
+  "id": "photo-concept-bucket",
+  "type": "local",
+  "instance_data_dir": "/models/training/datasets/photo-concept-bucket-downloads",
+  "caption_strategy": "parquet",
+  "metadata_backend": "parquet",
+  "parquet": {
+    "path": "photo-concept-bucket.parquet",
+    "filename_column": "id",
+    "caption_column": "cogvlm_caption",
+    "fallback_caption_column": "tags",
+    "width_column": "width",
+    "height_column": "height",
+    "identifier_includes_extension": false
+  },
+  "resolution": 1.0,
+  "minimum_image_size": 0.75,
+  "maximum_image_size": 2.0,
+  "target_downsample_size": 1.5,
+  "prepend_instance_prompt": false,
+  "instance_prompt": null,
+  "only_instance_prompt": false,
+  "disable": false,
+  "cache_dir_vae": "/models/training/vae_cache/photo-concept-bucket",
+  "probability": 1.0,
+  "skip_file_discovery": "",
+  "preserve_data_backend_cache": false,
+  "vae_cache_clear_each_epoch": true,
+  "repeats": 1,
+  "crop": true,
+  "crop_aspect": "random",
+  "crop_style": "random",
+  "crop_aspect_buckets": [1.0, 0.75, 1.23],
+  "resolution_type": "area"
 }
 ```
 
@@ -214,12 +226,12 @@ In this configuration:
 - `caption_strategy` is set to `parquet`.
 - `metadata_backend` is set to `parquet`.
 - A new section, `parquet` must be defined:
-    - `path` is the path to the parquet or JSONL file.
-    - `filename_column` is the name of the column in the table that contains the filenames. For this case, we are using the numeric `id` column (recommended).
-    - `caption_column` is the name of the column in the table that contains the captions. For this case, we are using the `cogvlm_caption` column. For LAION datasets, this would be the TEXT field.
-    - `width_column` and `height_column` can be a column containing strings, int, or even a single-entry Series data type, measuring the actual image's dimensions. This notably improves the dataset preparation time, as we don't need to access the real images to discover this information.
-    - `fallback_caption_column` is an optional name of a column in the table that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
-    - `identifier_includes_extension` should be set to `true` when your filename column contains the image extension. Otherwise, the extension will be assumed as `.png`. It is recommended to include filename extensions in your table filename column.
+  - `path` is the path to the parquet or JSONL file.
+  - `filename_column` is the name of the column in the table that contains the filenames. For this case, we are using the numeric `id` column (recommended).
+  - `caption_column` is the name of the column in the table that contains the captions. For this case, we are using the `cogvlm_caption` column. For LAION datasets, this would be the TEXT field.
+  - `width_column` and `height_column` can be a column containing strings, int, or even a single-entry Series data type, measuring the actual image's dimensions. This notably improves the dataset preparation time, as we don't need to access the real images to discover this information.
+  - `fallback_caption_column` is an optional name of a column in the table that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
+  - `identifier_includes_extension` should be set to `true` when your filename column contains the image extension. Otherwise, the extension will be assumed as `.png`. It is recommended to include filename extensions in your table filename column.
 
 > ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [toolkit/datasets](toolkit/datasets) directory for ideas.
 

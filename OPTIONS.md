@@ -31,6 +31,7 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: The name of the Huggingface Hub model and local results directory.
 - **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
+
 ---
 
 ### `--push_to_hub`
@@ -82,7 +83,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 ### `--caption_strategy`
 
-- **What**: Strategy for deriving image captions. __Choices__: `textfile`, `filename`, `parquet`, `instanceprompt`
+- **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
 - **Why**: Determines how captions are generated for training images.
   - `textfile` will use the contents of a `.txt` file with the same filename as the image
   - `filename` will apply some cleanup to the filename before using it as the caption.
