@@ -60,6 +60,7 @@ pip3 install --pre xformers torch torchvision torchaudio torchtriton --extra-ind
 ```
 
 ### Linux + AMD / ROCm
+
 Due to `xformers` not supporting the ROCm platform, memory requirements for training will likely be higher than otherwise stated.
 
 To install the ROCm-specific requirements:
@@ -67,7 +68,6 @@ To install the ROCm-specific requirements:
 ```bash
 poetry install --no-root -C install/rocm
 ```
-
 
 ### All platforms
 

@@ -431,10 +431,9 @@ def main():
         text_encoder_2.requires_grad_(False)
     if text_encoder_3 is not None:
         text_encoder_3.requires_grad_(False)
-    logger.info("Creating the U-net..")
     if webhook_handler is not None:
         webhook_handler.send(
-            message=f"Loading base U-net model: `{args.pretrained_model_name_or_path}`..."
+            message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
     pretrained_load_args = {
         "revision": args.revision,
@@ -456,7 +455,7 @@ def main():
             **pretrained_load_args,
         )
     else:
-        logger.info(f"Loading Stable Diffusion XL U-net..")
+        logger.info(f"Loading SDXL U-net..")
         transformer = None
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
@@ -541,7 +540,7 @@ def main():
         unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention:
+    if args.enable_xformers_memory_efficient_attention and not args.sd3:
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
             import xformers  # type: ignore

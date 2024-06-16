@@ -594,7 +594,7 @@ class Validation:
             extra_validation_kwargs = {}
             if not self.args.validation_randomize:
                 extra_validation_kwargs["generator"] = torch.Generator(
-                    device=self.accelerator.device
+                    device="cpu"
                 ).manual_seed(self.args.validation_seed or self.args.seed or 0)
                 logger.debug(
                     f"Using a generator? {extra_validation_kwargs['generator']}"

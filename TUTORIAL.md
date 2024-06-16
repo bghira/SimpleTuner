@@ -2,6 +2,8 @@
 
 ## Introduction
 
+For a more quick and to-the-point setup guide, see the [QUICKSTART](/documentation/QUICKSTART.md) document.
+
 You'll need to set up a Python environment and create an "env" file for SimpleTuner before it can be run.
 
 This document aims to get you set up and running with a basic training environment, including example data to use if you do not currently have any.
@@ -21,7 +23,9 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
 2. Install the required packages as per [INSTALL.md](/INSTALL.md).
 3. Follow the below section, [Training data](#training-data) to produce a set of valid training data, or to obtain example data.
 4. Modify the `sdxl-env.sh` file in the `SimpleTuner/` project root directory. These contain all of the settings that the trainer will use to process your data.
-  - Use the instructions in the below section [Example Environment File Explained](#example-environment-file-explained) to modify these values.
+
+- Use the instructions in the below section [Example Environment File Explained](#example-environment-file-explained) to modify these values.
+
 5. Run the [train_sdxl.py](/train_sdxl.py) script.
 
 > **Note**: Stable Diffusion 3 is trained using `train_sdxl.py` and configured via `sdxl-env.sh`
@@ -38,7 +42,7 @@ The script prints out many warnings and errors to help you get a better understa
 
 Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRA.
 
-**For full u-net tuning:** Although SimpleTuner has an option to `--fully_unload_text_encoder` and by default will unload the VAE during training, the base SDXL u-net consumes 12.5GB at idle. When the first forward pass runs, a 24G GPU will hit an Out of Memory condition, *even* with 128x128 training data.
+**For full u-net tuning:** Although SimpleTuner has an option to `--fully_unload_text_encoder` and by default will unload the VAE during training, the base SDXL u-net consumes 12.5GB at idle. When the first forward pass runs, a 24G GPU will hit an Out of Memory condition, _even_ with 128x128 training data.
 
 This occurs with Adafactor, AdamW8Bit, Prodigy, and D-adaptation due to a bug in PyTorch. Ensure you are using the **latest** 2.1.x release of PyTorch, which allows **full u-net tuning in ~22G of VRAM without DeepSpeed**.
 
@@ -108,7 +112,6 @@ Options:
 - CogVLM produces sterile but accurate captions and requires the most time/resources.
   - It still speculates, especially when given long instruct queries.
   - It does not follow instruct queries very well.
-
 
 Other tools are available from third-party sources, such as Captionr.
 
@@ -242,7 +245,6 @@ In each model checkpoint directory is a `tracker_state.json` file which contains
 
 Each dataset will have its own tracking state documents in this directory as well. This contains the step count, number of images seen, and other metadata required to resume completely.
 
-
 ### Example Environment File Explained
 
 Here's a breakdown of what each environment variable does:
@@ -281,6 +283,7 @@ Here's a breakdown of what each environment variable does:
   - Make sure the instance prompt you use is similar to your data, or you could actually end up doing harm to the model.
   - Each dataset entry in `multidatabackend.json` can have its own `instance_prompt` set in lieu of using this main variable.
 - `VALIDATION_PROMPT`: The prompt used for validation.
+
   - Optionally, a user prompt library or the built-in prompt library may be used to generate more than 84 images on each checkpoint across a large number of concepts.
   - See `--user_prompt_library` for more information.
 

@@ -88,7 +88,7 @@ def save_model_card(
     negative_prompt_text = str(StateTracker.get_args().validation_negative_prompt)
     if negative_prompt_text == "":
         negative_prompt_text = "''"
-    if images:
+    if images is not None and len(images) > 0:
         widget_str = "widget:"
         for image_list in images.values() if isinstance(images, dict) else images:
             if not isinstance(image_list, list):
