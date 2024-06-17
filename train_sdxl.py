@@ -431,17 +431,11 @@ def main():
             else:
                 text_encoder_path = (
                     args.pretrained_t5_model_name_or_path
-                    or args.pretrained_model_name_or_path
+                    if args.pretrained_t5_model_name_or_path is not None
+                    else args.pretrained_model_name_or_path
                 )
                 # Google's version of the T5 XXL model doesn't have a subfolder :()
-                text_encoder_subfolder = (
-                    None if "google/" in text_encoder_path.lower() else "text_encoder"
-                )
-                text_encoder_subfolder = (
-                    None
-                    if "deepfloyd/" in text_encoder_path.lower()
-                    else "text_encoder"
-                )
+                text_encoder_subfolder = "text_encoder"
                 logger.info(
                     f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
