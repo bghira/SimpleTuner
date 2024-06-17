@@ -752,17 +752,17 @@ class VAECache:
                 # NOTE: This is currently a no-op because the metadata is now considered 'trustworthy'.
                 #       The VAE encode uses the preexisting metadata, and the TrainingSample class will not update.
                 #       However, we'll check that the values didn't change anyway, just in case.
-                if crop_coordinates:
-                    current_crop_coordinates = (
-                        self.metadata_backend.get_metadata_attribute_by_filepath(
-                            filepath=filepath,
-                            attribute="crop_coordinates",
-                        )
-                    )
-                    if tuple(current_crop_coordinates) != tuple(crop_coordinates):
-                        logger.debug(
-                            f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
-                        )
+                # if crop_coordinates:
+                #     current_crop_coordinates = (
+                #         self.metadata_backend.get_metadata_attribute_by_filepath(
+                #             filepath=filepath,
+                #             attribute="crop_coordinates",
+                #         )
+                #     )
+                #     if tuple(current_crop_coordinates) != tuple(crop_coordinates):
+                #         logger.debug(
+                #             f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
+                #         )
 
             self.debug_log(
                 f"Completed processing gathered {len(output_values)} output values."

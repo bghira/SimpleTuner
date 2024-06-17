@@ -399,7 +399,9 @@ class TextEmbeddingCache:
         if tokenizer_max_length is not None:
             max_length = tokenizer_max_length
         else:
-            max_length = self.tokenizers[0].model_max_length
+            # prevent runaway token length sizes.
+            # huge captions aren't very helpful, and if you want them, use --tokenizer_max_length
+            max_length = 144
 
         text_inputs = self.tokenizers[0](
             prompt,
