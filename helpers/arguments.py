@@ -64,6 +64,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--pixart_sigma",
+        action="store_true",
+        default=False,
+        help=("This must be set when training a PixArt Sigma model."),
+    )
+    parser.add_argument(
         "--sd3",
         action="store_true",
         default=False,
@@ -184,6 +190,16 @@ def parse_args(input_args=None):
         default="madebyollin/sdxl-vae-fp16-fix",
         help="Path to an improved VAE to stabilize training. For more details check out: https://github.com/huggingface/diffusers/pull/4038.",
     )
+    parser.add_argument(
+        "--pretrained_t5_model_name_or_path",
+        type=str,
+        default=None,
+        help=(
+            "T5-XXL is a huge model, and starting from many different models will download a separate one each time."
+            " This option allows you to specify a specific location to retrieve T5-XXL v1.1 from, so that it only downloads once.."
+        ),
+    )
+
     parser.add_argument(
         "--prediction_type",
         type=str,
@@ -1534,6 +1550,7 @@ def parse_args(input_args=None):
         or args.pretrained_vae_model_name_or_path == "''"
     ):
         args.pretrained_vae_model_name_or_path = None
+
     if "deepfloyd" not in args.model_type and not args.sd3:
         logger.info(
             f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
