@@ -368,9 +368,22 @@ def main():
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoders = []
     tokenizers = []
+    if not args.pixart_sigma:
+        # sdxl and sd3 use the sd 1.5 encoder as number one.
+        logger.info("Load OpenAI CLIP-L/14 text encoder..")
+        text_encoder_path = args.pretrained_model_name_or_path
+        text_encoder_subfolder = "text_encoder"
+    else:
+        text_encoder_path = (
+            args.pretrained_t5_model_name_or_path
+            if args.pretrained_t5_model_name_or_path is not None
+            else args.pretrained_model_name_or_path
+        )
+        # Google's version of the T5 XXL model doesn't have a subfolder :()
+        text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-            args.pretrained_model_name_or_path, args.revision
+            text_encoder_path, args.revision, subfolder=text_encoder_subfolder
         )
     if tokenizer_2 is not None:
         text_encoder_cls_2 = import_model_class_from_model_name_or_path(
@@ -423,22 +436,9 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         if tokenizer_1 is not None:
-            if not args.pixart_sigma:
-                # sdxl and sd3 use the sd 1.5 encoder as number one.
-                logger.info("Load OpenAI CLIP-L/14 text encoder..")
-                text_encoder_path = args.pretrained_model_name_or_path
-                text_encoder_subfolder = "text_encoder"
-            else:
-                text_encoder_path = (
-                    args.pretrained_t5_model_name_or_path
-                    if args.pretrained_t5_model_name_or_path is not None
-                    else args.pretrained_model_name_or_path
-                )
-                # Google's version of the T5 XXL model doesn't have a subfolder :()
-                text_encoder_subfolder = "text_encoder"
-                logger.info(
-                    f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
+            logger.info(
+                f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+            )
             text_encoder_1 = text_encoder_cls_1.from_pretrained(
                 text_encoder_path,
                 subfolder=text_encoder_subfolder,
