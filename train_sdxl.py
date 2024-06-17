@@ -128,6 +128,91 @@ def import_model_class_from_model_name_or_path(
         raise ValueError(f"{model_class} is not supported.")
 
 
+def get_tokenizers(args):
+    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
+    if args.disable_text_encoder:
+        return tokenizer_1, tokenizer_2, tokenizer_3
+    try:
+        tokenizer_kwargs = {
+            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
+            "subfolder": "tokenizer",
+            "revision": args.revision,
+        }
+        if not args.pixart_sigma:
+            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
+        else:
+            from transformers import T5Tokenizer
+
+            text_encoder_path = (
+                args.pretrained_t5_model_name_or_path
+                or args.pretrained_model_name_or_path
+            )
+            # Google's version of the T5 XXL model doesn't have a subfolder :()
+            if "google/" in text_encoder_path.lower():
+                text_encoder_subfolder = None
+            if "deepfloyd/" in text_encoder_path.lower():
+                text_encoder_subfolder = None
+
+            tokenizer_1 = T5Tokenizer.from_pretrained(
+                args.pretrained_t5_model_name_or_path
+                or args.pretrained_model_name_or_path,
+                subfolder=text_encoder_subfolder,
+                revision=args.revision,
+                use_fast=False,
+            )
+    except Exception as e:
+        import traceback
+
+        logger.warning(
+            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
+            f"\nError: -> {e}"
+            f"\nTraceback: {traceback.format_exc()}"
+        )
+        if args.sd3:
+            raise e
+    if not args.pixart_sigma:
+        try:
+            tokenizer_2 = CLIPTokenizer.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer_2",
+                revision=args.revision,
+                use_fast=False,
+            )
+            if tokenizer_1 is None:
+                logger.info("Seems that we are training an SDXL refiner model.")
+                StateTracker.is_sdxl_refiner(True)
+                if args.validation_using_datasets is None:
+                    logger.warning(
+                        f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
+                    )
+                    args.validation_using_datasets = True
+        except:
+            logger.warning(
+                "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
+            )
+        if not tokenizer_1 and not tokenizer_2:
+            raise Exception("Failed to load tokenizer")
+    else:
+        if not tokenizer_1:
+            raise Exception("Failed to load tokenizer")
+
+    if args.sd3:
+        try:
+            from transformers import T5TokenizerFast
+
+            tokenizer_3 = T5TokenizerFast.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer_3",
+                revision=args.revision,
+                use_fast=True,
+            )
+        except:
+            raise ValueError(
+                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
+            )
+    return tokenizer_1, tokenizer_2, tokenizer_3
+
+
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
@@ -270,76 +355,11 @@ def main():
     logger.info("Load tokenizers")
     # SDXL style models use text encoder and tokenizer 1 and 2, while SD3 will use all three.
     # Pixart Sigma just uses one T5 XXL model.
-    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
+    # If --disable_text_encoder is provided, we will skip loading entirely.
+    tokenizer_1, tokenizer_2, tokenizer_3 = get_tokenizers(args)
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
-    try:
-        tokenizer_kwargs = {
-            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
-            "subfolder": "tokenizer",
-            "revision": args.revision,
-        }
-        if not args.pixart_sigma:
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
-        else:
-            from transformers import T5Tokenizer
-
-            tokenizer_1 = T5Tokenizer.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer",
-                revision=args.revision,
-                use_fast=False,
-            )
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
-            f"\nError: -> {e}"
-            f"\nTraceback: {traceback.format_exc()}"
-        )
-        if args.sd3:
-            raise e
-    if not args.pixart_sigma:
-        try:
-            tokenizer_2 = CLIPTokenizer.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_2",
-                revision=args.revision,
-                use_fast=False,
-            )
-            if tokenizer_1 is None:
-                logger.info("Seems that we are training an SDXL refiner model.")
-                StateTracker.is_sdxl_refiner(True)
-                if args.validation_using_datasets is None:
-                    logger.warning(
-                        f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
-                    )
-                    args.validation_using_datasets = True
-        except:
-            logger.warning(
-                "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
-            )
-        if not tokenizer_1 and not tokenizer_2:
-            raise Exception("Failed to load tokenizer")
-    else:
-        if not tokenizer_1:
-            raise Exception("Failed to load tokenizer")
-
-    if args.sd3:
-        try:
-            from transformers import T5TokenizerFast
-
-            tokenizer_3 = T5TokenizerFast.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_3",
-                revision=args.revision,
-                use_fast=True,
-            )
-        except:
-            raise ValueError(
-                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
-            )
-
+    text_encoders = []
+    tokenizers = []
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path, args.revision
@@ -455,8 +475,9 @@ def main():
         text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     if tokenizer_2 is not None:
         text_encoder_2.to(accelerator.device, dtype=weight_dtype)
-    tokenizers = [tokenizer_1, tokenizer_2]
-    text_encoders = [text_encoder_1, text_encoder_2]
+    if tokenizer_1 is not None or tokenizer_2 is not None:
+        tokenizers = [tokenizer_1, tokenizer_2]
+        text_encoders = [text_encoder_1, text_encoder_2]
 
     if tokenizer_3 is not None:
         text_encoder_3.to(accelerator.device, dtype=weight_dtype)
@@ -595,7 +616,11 @@ def main():
         unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention and not args.sd3:
+    if (
+        args.enable_xformers_memory_efficient_attention
+        and not args.sd3
+        and not args.pixart_sigma
+    ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
             import xformers  # type: ignore
