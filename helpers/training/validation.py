@@ -142,7 +142,10 @@ class Validation:
         self.validation_negative_pooled_embeds = validation_negative_pooled_embeds
         self.validation_negative_prompt_embeds = (
             validation_negative_prompt_embeds
-            if type(validation_negative_prompt_embeds) is not list
+            if (
+                type(validation_negative_prompt_embeds) is not list
+                and type(validation_negative_prompt_embeds) is not tuple
+            )
             else validation_negative_prompt_embeds[0]
         )
         self.ema_unet = ema_unet
@@ -224,9 +227,22 @@ class Validation:
             if self.args.validation_using_datasets:
                 return StableDiffusion3Img2ImgPipeline
             return StableDiffusion3Pipeline
+        elif model_type == "pixart_sigma":
+            if self.args.controlnet:
+                raise Exception(
+                    "PixArt Sigma ControlNet inference validation is not yet supported."
+                )
+            if self.args.validation_using_datasets:
+                raise Exception(
+                    "PixArt Sigma inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                )
+            from helpers.pixart.pipeline import PixArtSigmaPipeline
+
+            return PixArtSigmaPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
+        current_validation_prompt_mask = None
         if (
             StateTracker.get_model_type() == "sdxl"
             or StateTracker.get_model_type() == "sd3"
@@ -270,22 +286,41 @@ class Validation:
             prompt_embeds["negative_pooled_prompt_embeds"] = (
                 self.validation_negative_pooled_embeds
             )
-        elif StateTracker.get_model_type() == "legacy":
+        elif (
+            StateTracker.get_model_type() == "legacy"
+            or StateTracker.get_model_type() == "pixart_sigma"
+        ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
-            )[0]
-            logger.debug(
-                f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
-                f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
             )
-            logger.debug(
-                f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
-            )
+            if self.args.pixart_sigma:
+                current_validation_prompt_embeds, current_validation_prompt_mask = (
+                    current_validation_prompt_embeds
+                )
+                current_validation_prompt_embeds = current_validation_prompt_embeds[0]
+                if (
+                    type(self.validation_negative_prompt_embeds) is tuple
+                    or type(self.validation_negative_prompt_embeds) is list
+                ):
+                    (
+                        self.validation_negative_prompt_embeds,
+                        self.validation_negative_prompt_mask,
+                    ) = self.validation_negative_prompt_embeds[0]
+            else:
+                current_validation_prompt_embeds = current_validation_prompt_embeds[0]
+            # logger.debug(
+            #     f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
+            #     f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
+            # )
+            # logger.debug(
+            #     f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
+            # )
             if (
                 self.prompt_handler is not None
                 and "deepfloyd" not in self.args.model_type
+                and "pixart" not in self.args.model_type
             ):
                 for text_encoder in self.prompt_handler.text_encoders:
                     if text_encoder:
@@ -332,6 +367,8 @@ class Validation:
                 )
                 for key, value in prompt_embeds.items()
             }
+        prompt_embeds["prompt_mask"] = current_validation_prompt_mask
+        prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
 
         return prompt_embeds
 
@@ -636,8 +673,10 @@ class Validation:
             try:
                 extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
             except Exception as e:
+                import traceback
+
                 logger.error(
-                    f"Error gathering text embed for validation prompt {prompt}: {e}"
+                    f"Error gathering text embed for validation prompt {prompt}: {e}, traceback: {traceback.format_exc()}"
                 )
                 continue
             try:
@@ -663,6 +702,18 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
+                if StateTracker.get_model_type() == "pixart_sigma":
+                    if pipeline_kwargs.get("negative_prompt") is not None:
+                        del pipeline_kwargs["negative_prompt"]
+                    if pipeline_kwargs.get("prompt") is not None:
+                        del pipeline_kwargs["prompt"]
+                    pipeline_kwargs["prompt_attention_mask"] = pipeline_kwargs.pop(
+                        "prompt_mask"
+                    )[0].to(device=self.accelerator.device, dtype=self.weight_dtype)
+                    pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
+                        pipeline_kwargs.pop("negative_mask")[0], dim=0
+                    ).to(device=self.accelerator.device, dtype=self.weight_dtype)
+
                 validation_image_results = self.pipeline(**pipeline_kwargs).images
                 if self.args.controlnet:
                     validation_image_results = self.stitch_conditioning_images(

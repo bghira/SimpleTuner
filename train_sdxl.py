@@ -281,13 +281,13 @@ def main():
         if not args.pixart_sigma:
             tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
         else:
-            from transformers import T5TokenizerFast
+            from transformers import T5Tokenizer
 
-            tokenizer_1 = T5TokenizerFast.from_pretrained(
+            tokenizer_1 = T5Tokenizer.from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="tokenizer",
                 revision=args.revision,
-                use_fast=True,
+                use_fast=False,
             )
     except Exception as e:
         import traceback
