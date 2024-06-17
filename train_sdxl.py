@@ -1185,7 +1185,7 @@ def main():
 
     for backend_id, backend in StateTracker.get_data_backends().items():
         if "text_embed_cache" in backend:
-            del backend["text_embed_cache"].text_encoders
+            backend["text_embed_cache"].text_encoders = None
 
     # Train!
     total_batch_size = (
