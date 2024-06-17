@@ -180,8 +180,18 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl, is_sd3: bool = 
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
         )
+        if type(prompt_embeds) == tuple:
+            if StateTracker.get_args().pixart_sigma:
+                # PixArt requires the attn mask be returned, too.
+                prompt_embeds, attn_mask = prompt_embeds
+
+                return prompt_embeds, attn_mask
+            elif "deepfloyd" in StateTracker.get_args().model_type:
+                # DeepFloyd doesn't use the attn mask on the unet inputs, we discard it
+                prompt_embeds = prompt_embeds[0]
+            prompt_embeds = prompt_embeds[0]
         result = torch.squeeze(prompt_embeds[0])
-        debug_log(f"Torch shape: {result.shape}")
+        debug_log(f"Torch shape: {result}")
         return result, None  # Unpack and return None for the second element
 
 
@@ -199,6 +209,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     debug_log(" -> get embed from cache")
     is_sdxl = text_embed_cache.model_type == "sdxl"
     is_sd3 = text_embed_cache.model_type == "sd3"
+    is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
@@ -223,13 +234,35 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         prompt_embeds = [t[0] for t in embeddings]
         add_text_embeds = [t[1] for t in embeddings]
         return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
+    elif is_pixart_sigma:
+        # the tuples here are the text encoder hidden states and the attention masks
+        prompt_embeds, attn_masks = embeddings[0]
+        return (torch.stack(prompt_embeds), torch.stack(attn_masks))
     else:
         # Separate the tuples
         prompt_embeds = [t[0] for t in embeddings]
         return (torch.stack(prompt_embeds), None)
 
 
-def gather_conditional_size_features(examples, latents, weight_dtype):
+def gather_conditional_pixart_size_features(examples, latents, weight_dtype):
+    bsz = len(examples)
+    # 1/8th scale VAE
+    LATENT_COMPRESSION_F = 8
+    batch_height = latents.shape[2] * LATENT_COMPRESSION_F
+    batch_width = latents.shape[3] * LATENT_COMPRESSION_F
+    resolution = torch.tensor([batch_height, batch_width]).repeat(bsz, 1)
+    aspect_ratio = torch.tensor([float(batch_height / batch_width)]).repeat(bsz, 1)
+    resolution = resolution.to(
+        dtype=weight_dtype, device=StateTracker.get_accelerator().device
+    )
+    aspect_ratio = aspect_ratio.to(
+        dtype=weight_dtype, device=StateTracker.get_accelerator().device
+    )
+
+    return {"resolution": resolution, "aspect_ratio": aspect_ratio}
+
+
+def gather_conditional_sdxl_size_features(examples, latents, weight_dtype):
     batch_time_ids_list = []
     if len(examples) != len(latents):
         raise ValueError(
@@ -366,12 +399,19 @@ def collate_fn(batch):
         captions, text_embed_cache
     )
     batch_time_ids = None
-    if add_text_embeds_all is not None:
+    attn_mask = None
+    if StateTracker.get_model_type() == "sdxl":
         debug_log("Compute and stack SDXL time ids")
-        batch_time_ids = gather_conditional_size_features(
+        batch_time_ids = gather_conditional_sdxl_size_features(
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
         debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
+    elif StateTracker.get_model_type() == "pixart_sigma":
+        debug_log("Compute and stack PixArt time ids")
+        batch_time_ids = gather_conditional_pixart_size_features(
+            examples, latent_batch, StateTracker.get_weight_dtype()
+        )
+        attn_mask = add_text_embeds_all
 
     return {
         "latent_batch": latent_batch,
@@ -380,4 +420,5 @@ def collate_fn(batch):
         "batch_time_ids": batch_time_ids,
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_latents,
+        "encoder_attention_mask": attn_mask,
     }

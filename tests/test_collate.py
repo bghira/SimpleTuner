@@ -39,7 +39,7 @@ class TestCollateFn(unittest.TestCase):
 
     @patch("helpers.training.collate.compute_latents")
     @patch("helpers.training.collate.compute_prompt_embeddings")
-    @patch("helpers.training.collate.gather_conditional_size_features")
+    @patch("helpers.training.collate.gather_conditional_sdxl_size_features")
     def test_collate_fn(self, mock_gather, mock_compute_embeds, mock_compute_latents):
         # Mock the responses from the compute functions
         mock_compute_latents.return_value = torch.randn(
