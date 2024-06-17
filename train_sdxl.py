@@ -148,6 +148,9 @@ def get_tokenizers(args):
                 if args.pretrained_t5_model_name_or_path is not None
                 else args.pretrained_model_name_or_path
             )
+            logger.info(
+                f"Tokenizer path: {text_encoder_path}, revision: {args.revision}"
+            )
             try:
                 tokenizer_1 = T5Tokenizer.from_pretrained(
                     text_encoder_path,
@@ -156,6 +159,9 @@ def get_tokenizers(args):
                     use_fast=False,
                 )
             except Exception as e:
+                logger.warning(
+                    f"Failed to load tokenizer 1: {e}, attempting no subfolder"
+                )
                 tokenizer_1 = T5Tokenizer.from_pretrained(
                     text_encoder_path,
                     subfolder=None,
