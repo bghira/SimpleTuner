@@ -22,10 +22,23 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 **Note:** Stable Diffusion 3 uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
 
+### `--pixart_sigma`
+
+- **What**: Enable PixArt Sigma training quirks/overrides.
+- **Why**: PixArt is similar to SD3 and DeepFloyd in one way or another, and needs special treatment at validation, training, and inference time. Use this option to enable PixArt training support. PixArt does not support ControlNet, LoRA, or `--validation_using_datasets`
+
+**Note:** Like SDXL and SD3, PixArt Sigma **also** uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
 - **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository.
+
+### `--pretrained_t5_model_name_or_path`
+
+- **What**: Path to the pretrained T5 model or its identifier from huggingface.co/models.
+- **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
+
 
 ### `--hub_model_id`
 
