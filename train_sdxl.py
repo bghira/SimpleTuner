@@ -130,8 +130,6 @@ def import_model_class_from_model_name_or_path(
 
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
-    if args.disable_text_encoder:
-        return tokenizer_1, tokenizer_2, tokenizer_3
     try:
         tokenizer_kwargs = {
             "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
@@ -1184,6 +1182,10 @@ def main():
         logger.info(
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
+
+    for backend_id, backend in StateTracker.get_data_backends().items():
+        if "text_embed_cache" in backend:
+            del backend["text_embed_cache"].text_encoders
 
     # Train!
     total_batch_size = (
