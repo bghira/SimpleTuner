@@ -203,7 +203,7 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                      [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                     [--sd3]
+                     [--pixart_sigma] [--sd3] [--sd3_uses_diffusion]
                      [--weighting_scheme {sigma_sqrt,logit_normal,mode}]
                      [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
                      [--mode_scale MODE_SCALE] [--lora_type {Standard}]
@@ -214,6 +214,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      --pretrained_model_name_or_path
                      PRETRAINED_MODEL_NAME_OR_PATH
                      [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
+                     [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                      [--prediction_type {epsilon,v_prediction,sample}]
                      [--snr_weight SNR_WEIGHT]
                      [--training_scheduler_timestep_spacing {leading,linspace,trailing}]
@@ -356,14 +357,29 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.
+  --sd3_uses_diffusion  The rectified flow objective of stable diffusion 3
+                        seems to hold few advantages, yet is very difficult to
+                        train with. If this option is supplied, a normal DDPM-
+                        based diffusion schedule will be used to train,
+                        instead of flow-matching. This will take a lot of data
+                        and even more compute to resolve. If possible, use a
+                        pretrained SD3 Diffusion model.
   --weighting_scheme {sigma_sqrt,logit_normal,mode}
-                        Stable Diffusion 3 uses a different weighting scheme
-                        from other models. This option only applies for Stable
-                        Diffusion 3 training.
+                        Stable Diffusion 3 used either uniform sampling of
+                        timesteps with post-prediction loss weighting, or a
+                        weighted timestep selection by mode or log-normal
+                        distribution. The default for SD3 is logit_normal,
+                        though upstream Diffusers training examples use
+                        sigma_sqrt. The mode option is experimental, as it is
+                        the most difficult to implement cleanly. In short
+                        experiments, logit_normal produced the best results.
   --logit_mean LOGIT_MEAN
-                        Stable Diffusion 3-specific training parameters.
+                        As outlined in the Stable Diffusion 3 paper, using a
+                        logit_mean of -0.5 produced the highest quality FID
+                        results. The default here is 0.0.
   --logit_std LOGIT_STD
                         Stable Diffusion 3-specific training parameters.
   --mode_scale MODE_SCALE
@@ -405,6 +421,12 @@ options:
                         Path to an improved VAE to stabilize training. For
                         more details check out:
                         https://github.com/huggingface/diffusers/pull/4038.
+  --pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH
+                        T5-XXL is a huge model, and starting from many
+                        different models will download a separate one each
+                        time. This option allows you to specify a specific
+                        location to retrieve T5-XXL v1.1 from, so that it only
+                        downloads once..
   --prediction_type {epsilon,v_prediction,sample}
                         The type of prediction to use for the u-net. Choose
                         between ['epsilon', 'v_prediction', 'sample']. For SD
