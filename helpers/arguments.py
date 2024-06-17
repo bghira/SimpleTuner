@@ -669,15 +669,6 @@ def parse_args(input_args=None):
         action="store_true",
         help="(SD 2.x only) Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
-    parser.add_argument(
-        "--disable_text_encoder",
-        action="store_true",
-        default=False,
-        help=(
-            "When you've already cached your text encoder outputs, you may wish to entirely disable the loading of the text encoder(s)."
-            " This can save ample VRAM during training of SD3, DeepFloyd, and PixArt."
-        ),
-    )
     # DeepFloyd
     parser.add_argument(
         "--tokenizer_max_length",
