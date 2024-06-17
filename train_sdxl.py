@@ -145,21 +145,23 @@ def get_tokenizers(args):
 
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
-                or args.pretrained_model_name_or_path
+                if args.pretrained_t5_model_name_or_path is not None
+                else args.pretrained_model_name_or_path
             )
-            # Google's version of the T5 XXL model doesn't have a subfolder :()
-            if "google/" in text_encoder_path.lower():
-                text_encoder_subfolder = None
-            if "deepfloyd/" in text_encoder_path.lower():
-                text_encoder_subfolder = None
-
-            tokenizer_1 = T5Tokenizer.from_pretrained(
-                args.pretrained_t5_model_name_or_path
-                or args.pretrained_model_name_or_path,
-                subfolder=text_encoder_subfolder,
-                revision=args.revision,
-                use_fast=False,
-            )
+            try:
+                tokenizer_1 = T5Tokenizer.from_pretrained(
+                    text_encoder_path,
+                    subfolder="tokenizer",
+                    revision=args.revision,
+                    use_fast=False,
+                )
+            except Exception as e:
+                tokenizer_1 = T5Tokenizer.from_pretrained(
+                    text_encoder_path,
+                    subfolder=None,
+                    revision=args.revision,
+                    use_fast=False,
+                )
     except Exception as e:
         import traceback
 
