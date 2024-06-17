@@ -236,7 +236,10 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
     elif is_pixart_sigma:
         # the tuples here are the text encoder hidden states and the attention masks
-        prompt_embeds, attn_masks = embeddings[0]
+        prompt_embeds, attn_masks = [], []
+        for embed in embeddings:
+            prompt_embeds.append(embed[0][0])
+            attn_masks.append(embed[1][0])
         return (torch.stack(prompt_embeds), torch.stack(attn_masks))
     else:
         # Separate the tuples
