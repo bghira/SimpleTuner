@@ -671,19 +671,26 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
         # )
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
+
         self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
             ncols=125,
             disable=return_concat,
-            total=len(prompts or self.prompts),
+            total=len(local_caption_split),
             position=0,
         )
         with torch.no_grad():
             attention_mask = None
             attention_masks_all = []
             for prompt in tqdm(
-                prompts or self.prompts,
+                local_caption_split,
                 desc="Processing prompts",
                 leave=False,
                 ncols=125,
