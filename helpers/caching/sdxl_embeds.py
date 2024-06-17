@@ -695,6 +695,8 @@ class TextEmbeddingCache:
                 leave=False,
                 ncols=125,
                 disable=return_concat,
+                position=get_rank(),
+                position=get_rank() + self.accelerator.num_processes + 1,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
