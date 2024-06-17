@@ -149,7 +149,7 @@ def get_tokenizers(args):
                 else args.pretrained_model_name_or_path
             )
             logger.info(
-                f"Tokenizer path: {text_encoder_path}, revision: {args.revision}"
+                f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
             )
             try:
                 tokenizer_1 = T5Tokenizer.from_pretrained(
