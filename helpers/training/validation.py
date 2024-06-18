@@ -139,6 +139,7 @@ class Validation:
         self.validation_images = None
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
+        self.validation_negative_prompt_mask = None
         self.validation_negative_pooled_embeds = validation_negative_pooled_embeds
         self.validation_negative_prompt_embeds = (
             validation_negative_prompt_embeds
