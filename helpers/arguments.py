@@ -963,7 +963,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--validation_seed_source",
         type=str,
-        default="gpu",
+        default="cpu",
         choices=["gpu", "cpu"],
         help=(
             "Some systems may benefit from using CPU-based seeds for reproducibility. On other systems, this may cause a TypeError."

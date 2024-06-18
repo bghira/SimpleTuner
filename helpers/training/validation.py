@@ -171,6 +171,17 @@ class Validation:
         else:
             raise Exception("Unknown validation seed source. Options: cpu, gpu")
 
+    def clear_text_encoders(self):
+        """
+        Sets all text encoders to None.
+
+        Returns:
+            None
+        """
+        self.text_encoder_1 = None
+        self.text_encoder_2 = None
+        self.text_encoder_3 = None
+
     def init_vae(self):
         from diffusers import AutoencoderKL
 
@@ -487,16 +498,22 @@ class Validation:
                 del extra_pipeline_kwargs["safety_checker"]
                 del extra_pipeline_kwargs["text_encoder"]
                 del extra_pipeline_kwargs["tokenizer"]
-                if self.text_encoder_1 is not None:
-                    extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
-                        self.accelerator, self.text_encoder_1
-                    )
-                    extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
-                if self.text_encoder_2 is not None:
-                    extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
-                        self.accelerator, self.text_encoder_2
-                    )
-                    extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+                if validation_type == "final":
+                    if self.text_encoder_1 is not None:
+                        extra_pipeline_kwargs["text_encoder_1"] = unwrap_model(
+                            self.accelerator, self.text_encoder_1
+                        )
+                        extra_pipeline_kwargs["tokenizer_1"] = self.tokenizer_1
+                        if self.text_encoder_2 is not None:
+                            extra_pipeline_kwargs["text_encoder_2"] = unwrap_model(
+                                self.accelerator, self.text_encoder_2
+                            )
+                            extra_pipeline_kwargs["tokenizer_2"] = self.tokenizer_2
+                else:
+                    extra_pipeline_kwargs["text_encoder_1"] = None
+                    extra_pipeline_kwargs["tokenizer_1"] = None
+                    extra_pipeline_kwargs["text_encoder_2"] = None
+                    extra_pipeline_kwargs["tokenizer_2"] = None
 
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
