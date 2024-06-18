@@ -961,6 +961,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_seed_source",
+        type=str,
+        default="gpu",
+        choices=["gpu", "cpu"],
+        help=(
+            "Some systems may benefit from using CPU-based seeds for reproducibility. On other systems, this may cause a TypeError."
+            " Setting this option to 'cpu' may cause validation errors. If so, please set SIMPLETUNER_LOG_LEVEL=DEBUG"
+            " and submit debug.log to a new Github issue report."
+        ),
+    )
+    parser.add_argument(
         "--validation_torch_compile",
         type=str,
         default="false",

@@ -163,6 +163,14 @@ class Validation:
 
         self._update_state()
 
+    def _validation_seed_source(self):
+        if self.args.validation_seed_source == "gpu":
+            return self.accelerator.device
+        elif self.args.validation_seed_source == "cpu":
+            return "cpu"
+        else:
+            raise Exception("Unknown validation seed source. Options: cpu, gpu")
+
     def init_vae(self):
         from diffusers import AutoencoderKL
 
@@ -633,7 +641,7 @@ class Validation:
             extra_validation_kwargs = {}
             if not self.args.validation_randomize:
                 extra_validation_kwargs["generator"] = torch.Generator(
-                    device="cpu"
+                    device=self._validation_seed_source()
                 ).manual_seed(self.args.validation_seed or self.args.seed or 0)
                 logger.debug(
                     f"Using a generator? {extra_validation_kwargs['generator']}"
