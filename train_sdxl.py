@@ -808,7 +808,8 @@ def main():
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
-            text_encoder_3.gradient_checkpointing_enable()
+            if text_encoder_3:
+                text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
     extra_optimizer_args = {
@@ -1230,6 +1231,8 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
+    if not args.train_text_encoder:
+        validation.clear_text_encoders()
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
