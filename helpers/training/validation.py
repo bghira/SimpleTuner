@@ -437,6 +437,7 @@ class Validation:
             self.process_prompts()
             self.finalize_validation(validation_type)
             logger.debug("Validation process completed.")
+            self.clean_pipeline()
 
         return self
 
@@ -486,7 +487,7 @@ class Validation:
                 self.ema_unet.store(self.unet.parameters())
                 self.ema_unet.copy_to(self.unet.parameters())
 
-        if not self.pipeline:
+        if self.pipeline is None:
             pipeline_cls = self._pipeline_cls()
             extra_pipeline_kwargs = {
                 "text_encoder": self.text_encoder_1,
@@ -591,6 +592,12 @@ class Validation:
 
         self.pipeline = self.pipeline.to(self.accelerator.device)
         self.pipeline.set_progress_bar_config(disable=True)
+
+    def clean_pipeline(self):
+        """Remove the pipeline."""
+        if self.pipeline is not None:
+            del self.pipeline
+            self.pipeline = None
 
     def process_prompts(self):
         """Processes each validation prompt and logs the result."""
