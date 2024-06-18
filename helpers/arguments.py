@@ -1578,8 +1578,23 @@ def parse_args(input_args=None):
         args.aspect_bucket_alignment = 64
         args.resolution_type = "pixel"
 
+    validation_resolution_is_float = False
+    if "." in args.validation_resolution:
+        try:
+            # this makes handling for int() conversion easier later.
+            args.validation_resolution = float(args.validation_resolution)
+            validation_resolution_is_float = True
+        except ValueError:
+            pass
+    validation_resolution_is_digit = False
+    try:
+        int(args.validation_resolution)
+        validation_resolution_is_digit = True
+    except ValueError:
+        pass
+
     if (
-        args.validation_resolution.isdigit()
+        (validation_resolution_is_digit or validation_resolution_is_float)
         and int(args.validation_resolution) < 128
         and "deepfloyd" not in args.model_type
     ):
