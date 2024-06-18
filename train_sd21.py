@@ -900,6 +900,7 @@ def main():
         accelerator=accelerator,
         prompt_handler=prompt_handler,
         unet=unet,
+        transformer=None,
         args=args,
         validation_prompts=validation_prompts,
         validation_shortnames=validation_shortnames,
