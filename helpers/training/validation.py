@@ -368,8 +368,9 @@ class Validation:
                 )
                 for key, value in prompt_embeds.items()
             }
-        prompt_embeds["prompt_mask"] = current_validation_prompt_mask
-        prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
+        if StateTracker.get_model_type() == "pixart_sigma":
+            prompt_embeds["prompt_mask"] = current_validation_prompt_mask
+            prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
 
         return prompt_embeds
 
