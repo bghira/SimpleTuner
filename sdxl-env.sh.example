@@ -24,15 +24,15 @@ export USE_DORA=false
 
 # BitFit freeze strategy for the u-net causes everything but the biases to be frozen.
 # This may help retain the full model's underlying capabilities. LoRA is currently not tested/known to work.
-if [[ "$MODEL_TYPE" == "full" ]]; then
-    # When training a full model, we will rely on BitFit to keep the u-net intact.
-    export USE_BITFIT=true
-elif [[ "$MODEL_TYPE" == "lora" ]]; then
-    # As of v0.9.2 of SimpleTuner, LoRA can not use BitFit.
-    export USE_BITFIT=false
-elif [[ "$MODEL_TYPE" == "deepfloyd-full" ]]; then
-    export USE_BITFIT=true
-fi
+#if [[ "$MODEL_TYPE" == "full" ]]; then
+#    # When training a full model, we will rely on BitFit to keep the u-net intact.
+#    export USE_BITFIT=true
+#elif [[ "$MODEL_TYPE" == "lora" ]]; then
+#    # LoRA can not use BitFit.
+#    export USE_BITFIT=false
+#elif [[ "$MODEL_TYPE" == "deepfloyd-full" ]]; then
+#    export USE_BITFIT=true
+#fi
 
 # Restart where we left off. Change this to "checkpoint-1234" to start from a specific checkpoint.
 export RESUME_CHECKPOINT="latest"
@@ -80,7 +80,7 @@ export RESOLUTION=1024
 # If you want to have the training data resized by pixel area (Megapixels) rather than edge length,
 #  set this value to "area" instead of "pixel", and uncomment the next RESOLUTION declaration.
 export RESOLUTION_TYPE="pixel"
-#export RESOLUTION=1.0          # 1.0 Megapixel training sizes
+#export RESOLUTION=1          # 1.0 Megapixel training sizes
 # If RESOLUTION_TYPE="pixel", the minimum resolution specifies the smaller edge length, measured in pixels. Recommended: 1024.
 # If RESOLUTION_TYPE="area", the minimum resolution specifies the total image area, measured in megapixels. Recommended: 1.
 export MINIMUM_RESOLUTION=$RESOLUTION
