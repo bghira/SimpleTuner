@@ -8,5 +8,6 @@ def reclaim_memory():
 
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
+        torch.mps.synchronize()
 
     gc.collect()
