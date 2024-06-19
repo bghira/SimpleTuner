@@ -1936,7 +1936,10 @@ def main():
                                     ),
                                 )
 
-                if global_step % args.accelerator_cache_clear_interval == 0:
+                if (
+                    args.accelerator_cache_clear_interval is not None
+                    and global_step % args.accelerator_cache_clear_interval == 0
+                ):
                     reclaim_memory()
 
             logs = {
