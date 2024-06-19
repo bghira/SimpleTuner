@@ -274,7 +274,7 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
 fi
 
 export BITFIT_ARGS=""
-if [[ "$USE_BITFIT" != "false" ]]; then
+if [[ "$USE_BITFIT" == "true" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
 fi
