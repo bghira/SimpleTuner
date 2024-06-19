@@ -336,6 +336,18 @@ class SDXLSaveHook:
                         load_model = SD3Transformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
+                    elif self.args.pixart_sigma:
+                        # load pixart sigma checkpoint
+                        try:
+                            from diffusers.models import PixArtTransformer2DModel
+                        except Exception as e:
+                            logger.error(
+                                f"Can not load Pixart Sigma model class. This release requires the latest version of Diffusers: {e}"
+                            )
+                            raise e
+                        load_model = PixArtTransformer2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
                     elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(

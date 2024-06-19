@@ -128,11 +128,105 @@ def import_model_class_from_model_name_or_path(
         raise ValueError(f"{model_class} is not supported.")
 
 
+def get_tokenizers(args):
+    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
+    try:
+        tokenizer_kwargs = {
+            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
+            "subfolder": "tokenizer",
+            "revision": args.revision,
+        }
+        if not args.pixart_sigma:
+            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
+        else:
+            from transformers import T5Tokenizer
+
+            text_encoder_path = (
+                args.pretrained_t5_model_name_or_path
+                if args.pretrained_t5_model_name_or_path is not None
+                else args.pretrained_model_name_or_path
+            )
+            logger.info(
+                f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
+            )
+            try:
+                tokenizer_1 = T5Tokenizer.from_pretrained(
+                    text_encoder_path,
+                    subfolder="tokenizer",
+                    revision=args.revision,
+                    use_fast=False,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load tokenizer 1: {e}, attempting no subfolder"
+                )
+                tokenizer_1 = T5Tokenizer.from_pretrained(
+                    text_encoder_path,
+                    subfolder=None,
+                    revision=args.revision,
+                    use_fast=False,
+                )
+    except Exception as e:
+        import traceback
+
+        logger.warning(
+            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
+            f"\nError: -> {e}"
+            f"\nTraceback: {traceback.format_exc()}"
+        )
+        if args.sd3:
+            raise e
+    if not args.pixart_sigma:
+        try:
+            tokenizer_2 = CLIPTokenizer.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer_2",
+                revision=args.revision,
+                use_fast=False,
+            )
+            if tokenizer_1 is None:
+                logger.info("Seems that we are training an SDXL refiner model.")
+                StateTracker.is_sdxl_refiner(True)
+                if args.validation_using_datasets is None:
+                    logger.warning(
+                        f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
+                    )
+                    args.validation_using_datasets = True
+        except:
+            logger.warning(
+                "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
+            )
+        if not tokenizer_1 and not tokenizer_2:
+            raise Exception("Failed to load tokenizer")
+    else:
+        if not tokenizer_1:
+            raise Exception("Failed to load tokenizer")
+
+    if args.sd3:
+        try:
+            from transformers import T5TokenizerFast
+
+            tokenizer_3 = T5TokenizerFast.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer_3",
+                revision=args.revision,
+                use_fast=True,
+            )
+        except:
+            raise ValueError(
+                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
+            )
+    return tokenizer_1, tokenizer_2, tokenizer_3
+
+
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
     if args.sd3:
         StateTracker.set_model_type("sd3")
+    if args.pixart_sigma:
+        StateTracker.set_model_type("pixart_sigma")
+
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
         StateTracker.delete_cache_files(
@@ -266,64 +360,28 @@ def main():
     # Load scheduler, tokenizer and models.
     logger.info("Load tokenizers")
     # SDXL style models use text encoder and tokenizer 1 and 2, while SD3 will use all three.
-    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
+    # Pixart Sigma just uses one T5 XXL model.
+    # If --disable_text_encoder is provided, we will skip loading entirely.
+    tokenizer_1, tokenizer_2, tokenizer_3 = get_tokenizers(args)
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
-    try:
-        tokenizer_kwargs = {
-            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
-            "subfolder": "tokenizer",
-            "revision": args.revision,
-        }
-        tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
-            f"\nError: -> {e}"
-            f"\nTraceback: {traceback.format_exc()}"
+    text_encoders = []
+    tokenizers = []
+    if not args.pixart_sigma:
+        # sdxl and sd3 use the sd 1.5 encoder as number one.
+        logger.info("Load OpenAI CLIP-L/14 text encoder..")
+        text_encoder_path = args.pretrained_model_name_or_path
+        text_encoder_subfolder = "text_encoder"
+    else:
+        text_encoder_path = (
+            args.pretrained_t5_model_name_or_path
+            if args.pretrained_t5_model_name_or_path is not None
+            else args.pretrained_model_name_or_path
         )
-        if args.sd3:
-            raise e
-    try:
-        tokenizer_2 = CLIPTokenizer.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer_2",
-            revision=args.revision,
-            use_fast=False,
-        )
-        if tokenizer_1 is None:
-            logger.info("Seems that we are training an SDXL refiner model.")
-            StateTracker.is_sdxl_refiner(True)
-            if args.validation_using_datasets is None:
-                logger.warning(
-                    f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
-                )
-                args.validation_using_datasets = True
-    except:
-        logger.warning(
-            "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
-        )
-    if not tokenizer_1 and not tokenizer_2:
-        raise Exception("Failed to load tokenizer")
-    if args.sd3:
-        try:
-            from transformers import T5TokenizerFast
-
-            tokenizer_3 = T5TokenizerFast.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_3",
-                revision=args.revision,
-                use_fast=True,
-            )
-        except:
-            raise ValueError(
-                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
-            )
-
+        # Google's version of the T5 XXL model doesn't have a subfolder :()
+        text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-            args.pretrained_model_name_or_path, args.revision
+            text_encoder_path, args.revision, subfolder=text_encoder_subfolder
         )
     if tokenizer_2 is not None:
         text_encoder_cls_2 = import_model_class_from_model_name_or_path(
@@ -376,13 +434,16 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         if tokenizer_1 is not None:
-            logger.info("Load OpenAI CLIP-L/14 text encoder..")
+            logger.info(
+                f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+            )
             text_encoder_1 = text_encoder_cls_1.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="text_encoder",
+                text_encoder_path,
+                subfolder=text_encoder_subfolder,
                 revision=args.revision,
                 variant=args.variant,
             )
+
         if tokenizer_2 is not None:
             logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
             text_encoder_2 = text_encoder_cls_2.from_pretrained(
@@ -414,8 +475,9 @@ def main():
         text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     if tokenizer_2 is not None:
         text_encoder_2.to(accelerator.device, dtype=weight_dtype)
-    tokenizers = [tokenizer_1, tokenizer_2]
-    text_encoders = [text_encoder_1, text_encoder_2]
+    if tokenizer_1 is not None or tokenizer_2 is not None:
+        tokenizers = [tokenizer_1, tokenizer_2]
+        text_encoders = [text_encoder_1, text_encoder_2]
 
     if tokenizer_3 is not None:
         text_encoder_3.to(accelerator.device, dtype=weight_dtype)
@@ -454,6 +516,15 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.pixart_sigma:
+        from diffusers.models import PixArtTransformer2DModel
+
+        unet = None
+        transformer = PixArtTransformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
     else:
         logger.info(f"Loading SDXL U-net..")
         transformer = None
@@ -461,17 +532,19 @@ def main():
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
 
-    model_type_label = (
-        "DeepFloyd"
-        if not StateTracker.is_sdxl_refiner()
-        else (
-            "SDXL Refiner"
-            if StateTracker.is_sdxl_refiner()
-            else "Stable Diffusion 3" if args.sd3 else "SDXL"
-        )
-    )
+    model_type_label = "SDXL"
+    if StateTracker.is_sdxl_refiner():
+        model_type_label = "SDXL Refiner"
+    if args.sd3:
+        model_type_label = "Stable Diffusion 3"
+    if args.pixart_sigma:
+        model_type_label = "PixArt Sigma"
 
     if args.controlnet:
+        if args.pixart_sigma:
+            raise ValueError(
+                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
+            )
         if (
             "deepfloyd" in StateTracker.get_args().model_type
             or StateTracker.is_sdxl_refiner()
@@ -490,6 +563,9 @@ def main():
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
     elif "lora" in args.model_type:
+        if args.pixart_sigma:
+            raise Exception("PixArt does not support LoRA model training.")
+
         logger.info("Using LoRA training mode.")
         if webhook_handler is not None:
             webhook_handler.send(message="Using LoRA training mode.")
@@ -540,7 +616,11 @@ def main():
         unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention and not args.sd3:
+    if (
+        args.enable_xformers_memory_efficient_attention
+        and not args.sd3
+        and not args.pixart_sigma
+    ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
             import xformers  # type: ignore
@@ -599,7 +679,8 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel and not args.sd3:
+    if not args.disable_compel and not args.sd3 and not args.pixart_sigma:
+        # SD3 and PixArt don't really work with prompt weighting.
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
@@ -727,7 +808,8 @@ def main():
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
-            text_encoder_3.gradient_checkpointing_enable()
+            if text_encoder_3:
+                text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
     extra_optimizer_args = {
@@ -915,17 +997,8 @@ def main():
             )
         if args.train_text_encoder:
             if args.sd3:
-                params_to_optimize = (
-                    params_to_optimize
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_1.parameters())
-                    )
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_2.parameters())
-                    )
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_3.parameters())
-                    )
+                raise ValueError(
+                    "Stable Diffusion 3 does not support finetuning the text encoders, as it is a multimodal transformer model that does not benefit from it."
                 )
             else:
                 params_to_optimize = (
@@ -1111,6 +1184,10 @@ def main():
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
 
+    for backend_id, backend in StateTracker.get_data_backends().items():
+        if "text_embed_cache" in backend:
+            backend["text_embed_cache"].text_encoders = None
+
     # Train!
     total_batch_size = (
         args.train_batch_size
@@ -1154,6 +1231,8 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
+    if not args.train_text_encoder:
+        validation.clear_text_encoders()
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -1537,7 +1616,7 @@ def main():
                 if args.sd3:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
-                else:
+                elif StateTracker.get_model_type() == "sdxl":
                     added_cond_kwargs = {
                         "text_embeds": add_text_embeds.to(
                             device=accelerator.device, dtype=weight_dtype
@@ -1546,7 +1625,14 @@ def main():
                             device=accelerator.device, dtype=weight_dtype
                         ),
                     }
-                    training_logger.debug("Predicting noise residual.")
+                elif args.pixart_sigma:
+                    # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
+                    added_cond_kwargs = batch["batch_time_ids"]
+                    batch["encoder_attention_mask"] = batch[
+                        "encoder_attention_mask"
+                    ].to(device=accelerator.device, dtype=weight_dtype)
+
+                training_logger.debug("Predicting noise residual.")
 
                 if args.controlnet:
                     training_logger.debug(
@@ -1603,13 +1689,27 @@ def main():
                             # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                             # Preconditioning of the model outputs.
                             model_pred = model_pred * (-sigmas) + noisy_latents
-                    else:
+                    elif args.pixart_sigma:
+                        model_pred = transformer(
+                            noisy_latents,
+                            encoder_hidden_states=encoder_hidden_states,
+                            encoder_attention_mask=batch["encoder_attention_mask"],
+                            timestep=timesteps,
+                            added_cond_kwargs=added_cond_kwargs,
+                            return_dict=False,
+                        )[0]
+                        model_pred = model_pred.chunk(2, dim=1)[0]
+                    elif unet is not None:
                         model_pred = unet(
                             noisy_latents,
                             timesteps,
                             encoder_hidden_states,
                             added_cond_kwargs=added_cond_kwargs,
                         ).sample
+                    else:
+                        raise Exception(
+                            "Unknown error occurred, no prediction could be made."
+                        )
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)

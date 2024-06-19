@@ -395,11 +395,13 @@ class TextEmbeddingCache:
                 self.text_encoders[0], self.tokenizers[0], prompt
             )
 
-    def tokenize_deepfloyd_prompt(self, prompt, tokenizer_max_length=None):
+    def tokenize_t5_prompt(self, prompt, tokenizer_max_length=None):
         if tokenizer_max_length is not None:
             max_length = tokenizer_max_length
         else:
-            max_length = self.tokenizers[0].model_max_length
+            # prevent runaway token length sizes.
+            # huge captions aren't very helpful, and if you want them, use --tokenizer_max_length
+            max_length = 144
 
         text_inputs = self.tokenizers[0](
             prompt,
@@ -411,7 +413,7 @@ class TextEmbeddingCache:
 
         return text_inputs
 
-    def encode_deepfloyd_prompt(self, input_ids, attention_mask):
+    def encode_t5_prompt(self, input_ids, attention_mask):
         text_input_ids = input_ids.to(self.text_encoders[0].device)
         attention_mask = attention_mask.to(self.text_encoders[0].device)
         prompt_embeds = self.text_encoders[0](
@@ -423,18 +425,19 @@ class TextEmbeddingCache:
 
         return prompt_embeds
 
-    def compute_deepfloyd_prompt(self, prompt: str):
+    def compute_t5_prompt(self, prompt: str):
         logger.debug(f"Computing deepfloyd prompt for: {prompt}")
-        text_inputs = self.tokenize_deepfloyd_prompt(
+        text_inputs = self.tokenize_t5_prompt(
             prompt, tokenizer_max_length=StateTracker.get_args().tokenizer_max_length
         )
-        result = self.encode_deepfloyd_prompt(
+        result = self.encode_t5_prompt(
             text_inputs.input_ids,
             text_inputs.attention_mask,
         )
+        attn_mask = text_inputs.attention_mask
         del text_inputs
 
-        return result
+        return result, attn_mask
 
     def compute_embeddings_for_prompts(
         self,
@@ -490,7 +493,8 @@ class TextEmbeddingCache:
                 is_validation=is_validation,
                 load_from_cache=load_from_cache,
             )
-        elif self.model_type == "legacy":
+        elif self.model_type == "legacy" or self.model_type == "pixart_sigma":
+            # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(
                 raw_prompts,
                 return_concat=return_concat,
@@ -669,21 +673,31 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_legacy_prompts received list of prompts: {list(prompts)[:5]}"
         # )
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
+
         self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
             ncols=125,
             disable=return_concat,
-            total=len(prompts or self.prompts),
+            total=len(local_caption_split),
             position=0,
         )
         with torch.no_grad():
+            attention_mask = None
+            attention_masks_all = []
             for prompt in tqdm(
-                prompts or self.prompts,
+                local_caption_split,
                 desc="Processing prompts",
                 leave=False,
                 ncols=125,
                 disable=return_concat,
+                position=get_rank() + self.accelerator.num_processes + 1,
             ):
                 filename = os.path.join(
                     self.cache_dir, self.create_hash(prompt) + ".pt"
@@ -696,6 +710,9 @@ class TextEmbeddingCache:
                         # We attempt to load.
                         logging.debug("Loading embed from cache.")
                         prompt_embeds = self.load_from_cache(filename)
+                        if type(prompt_embeds) is tuple and len(prompt_embeds) == 2:
+                            # we have an attention mask stored with the embed.
+                            prompt_embeds, attention_mask = prompt_embeds
                         logging.debug(f"Loaded embeds: {prompt_embeds.shape}")
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
@@ -723,15 +740,27 @@ class TextEmbeddingCache:
                         while self.write_queue.qsize() > 100:
                             logger.debug(f"Waiting for write thread to catch up.")
                             time.sleep(5)
-                    if "deepfloyd" in StateTracker.get_args().model_type:
+                    if (
+                        "deepfloyd" in StateTracker.get_args().model_type
+                        or StateTracker.get_model_type() == "pixart_sigma"
+                    ):
                         # TODO: Batch this
-                        prompt_embeds = self.compute_deepfloyd_prompt(prompt)
+                        prompt_embeds, attention_mask = self.compute_t5_prompt(prompt)
+                        if self.model_type == "pixart_sigma":
+                            # we have to store the attn mask with the embed for pixart.
+                            prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(
                             self.text_encoders[0], self.tokenizers[0], [prompt]
                         )
                     if return_concat:
-                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                        if type(prompt_embeds) is tuple:
+                            prompt_embeds = (
+                                prompt_embeds[0].to(self.accelerator.device),
+                                prompt_embeds[1].to(self.accelerator.device),
+                            )
+                        else:
+                            prompt_embeds = prompt_embeds.to(self.accelerator.device)
 
                     self.save_to_cache(filename, prompt_embeds)
 
@@ -741,6 +770,8 @@ class TextEmbeddingCache:
 
                 if return_concat:
                     prompt_embeds_all.append(prompt_embeds)
+                    if attention_mask is not None:
+                        attention_masks_all.append(attention_mask)
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
@@ -755,6 +786,8 @@ class TextEmbeddingCache:
                 return
 
         logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
+        if len(attention_masks_all) > 0:
+            return prompt_embeds_all, attention_masks_all
         return prompt_embeds_all
 
     def compute_embeddings_for_sd3_prompts(

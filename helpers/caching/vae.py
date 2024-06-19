@@ -701,7 +701,7 @@ class VAECache:
                                 and result.aspect_ratio != first_aspect_ratio
                             ):
                                 raise ValueError(
-                                    f"Image {filepath} has a different aspect ratio ({result.aspect_ratio}) than the first image in the batch ({first_aspect_ratio})."
+                                    f"({type(result)}) Image {filepath} has a different aspect ratio ({result.aspect_ratio}) than the first image in the batch ({first_aspect_ratio})."
                                 )
                             elif (
                                 type(result) is tuple
@@ -710,7 +710,7 @@ class VAECache:
                                 and result[2] != first_aspect_ratio
                             ):
                                 raise ValueError(
-                                    f"Image {filepath} has a different aspect ratio ({result[2]}) than the first image in the batch ({first_aspect_ratio})."
+                                    f"({type(result)}) Image {filepath} has a different aspect ratio ({result[2]}) than the first image in the batch ({first_aspect_ratio})."
                                 )
 
                     except Exception as e:
@@ -760,8 +760,8 @@ class VAECache:
                         )
                     )
                     if tuple(current_crop_coordinates) != tuple(crop_coordinates):
-                        logger.warning(
-                            f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't. File an issue report with debug logs at https://github.com/bghira/simpletuner/issues/new."
+                        logger.debug(
+                            f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
                         )
 
             self.debug_log(
