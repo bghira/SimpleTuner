@@ -109,6 +109,15 @@ tokenizer = None
 check_min_version("0.27.0.dev0")
 
 
+def garbage_collection():
+    import gc
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+    gc.collect()
+
+
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
@@ -876,8 +885,7 @@ def main():
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
                 backend["vaecache"].vae = None
-        gc.collect()
-        torch.cuda.empty_cache()
+        garbage_collection()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -1562,7 +1570,7 @@ def main():
             )
 
             del text_encoder_lora_layers
-            torch.cuda.empty_cache()
+            garbage_collection()
 
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())

@@ -219,6 +219,15 @@ def get_tokenizers(args):
     return tokenizer_1, tokenizer_2, tokenizer_3
 
 
+import gc
+
+
+def garbage_collection():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+    gc.collect()
+
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
@@ -723,7 +732,6 @@ def main():
         )
     accelerator.wait_for_everyone()
     # Grab GPU memory used:
-    import gc
 
     if args.model_type == "full" or not args.train_text_encoder:
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
@@ -734,9 +742,7 @@ def main():
         text_encoder_2 = None
         text_encoder_3 = None
         text_encoders = []
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        garbage_collection()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -1176,8 +1182,7 @@ def main():
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
                 backend["vaecache"].vae = None
-        gc.collect()
-        torch.cuda.empty_cache()
+        garbage_collection()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -1939,6 +1944,9 @@ def main():
                                     ),
                                 )
 
+                if global_step % args.cuda_clear_cache == 0:
+                    garbage_collection()
+
             logs = {
                 "step_loss": loss.detach().item(),
                 "lr": lr,
@@ -2034,7 +2042,7 @@ def main():
             del transformer
             del text_encoder_lora_layers
             del text_encoder_2_lora_layers
-            torch.cuda.empty_cache()
+            garbage_collection()
         elif args.use_ema:
             if unet is not None:
                 ema_unet.copy_to(unet.parameters())

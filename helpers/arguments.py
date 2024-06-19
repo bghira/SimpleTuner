@@ -1427,6 +1427,14 @@ def parse_args(input_args=None):
             " This is a safety feature to prevent accidental use of an unsupported optimizer, as weights are stored in bfloat16."
         ),
     )
+    parser.add_argument(
+        "--cuda_clear_cache_steps",
+        default=None,
+        type=int,
+        help=(
+            "Clear the CUDA cache every X steps. This can help prevent memory leaks, but may slow down training."
+        ),
+    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
