@@ -21,6 +21,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from pathlib import Path
 from helpers.arguments import parse_args
+from helpers.caching.memory import reclaim_memory
 from helpers.legacy.validation import prepare_validation_prompt_list
 from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
@@ -876,8 +877,7 @@ def main():
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
                 backend["vaecache"].vae = None
-        gc.collect()
-        torch.cuda.empty_cache()
+        reclaim_memory()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
@@ -1562,7 +1562,7 @@ def main():
             )
 
             del text_encoder_lora_layers
-            torch.cuda.empty_cache()
+            reclaim_memory()
 
         if args.use_ema:
             ema_unet.copy_to(unet.parameters())
