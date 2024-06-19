@@ -1428,11 +1428,11 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--cuda_clear_cache_steps",
+        "--accelerator_cache_clear_interval",
         default=None,
         type=int,
         help=(
-            "Clear the CUDA cache every X steps. This can help prevent memory leaks, but may slow down training."
+            "Clear the cache from VRAM every X steps. This can help prevent memory leaks, but may slow down training."
         ),
     )
 
