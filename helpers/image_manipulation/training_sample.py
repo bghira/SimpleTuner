@@ -88,8 +88,8 @@ class TrainingSample:
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
     def save_debug_image(self, path: str):
-        if self.image:
-            self.image.save(path)
+        # if self.image:
+        #     self.image.save(path)
         return self
 
     @staticmethod
