@@ -1936,7 +1936,7 @@ def main():
                                     ),
                                 )
 
-                if global_step % args.cuda_clear_cache == 0:
+                if global_step % args.accelerator_cache_clear_interval == 0:
                     reclaim_memory()
 
             logs = {
