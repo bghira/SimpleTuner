@@ -88,8 +88,8 @@ class TrainingSample:
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
     def save_debug_image(self, path: str):
-        # if self.image:
-        #     self.image.save(path)
+        if self.image and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
+            self.image.save(path)
         return self
 
     @staticmethod
@@ -419,6 +419,8 @@ class TrainingSample:
                 target_size = (self.intermediary_size[0], self.current_size[1] + diff_w)
             elif diff_h > diff_w:
                 target_size = (self.current_size[0] + diff_h, self.intermediary_size[1])
+            else:
+                target_size = self.intermediary_size
             logger.debug(
                 f"Upsampling image from {self.current_size} to {target_size} before cropping."
             )
@@ -724,15 +726,6 @@ class PreparedSample:
         else:
             self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
-        from time import time as current_time
-
-        if hasattr(image, "save") and os.environ.get(
-            "SIMPLETUNER_DEBUG_IMAGE_PREP", False
-        ):
-            image.save(f"inference/images/{str(int(current_time()))}.png")
-            import time
-
-            time.sleep(1)
 
     def __str__(self):
         return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"
