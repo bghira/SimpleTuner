@@ -494,7 +494,9 @@ class TrainingSample:
             if self.crop_aspect == "square" and not downsample_before_crop:
                 self.aspect_ratio = 1.0
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
-                # self.intermediary_size = (self.pixel_resolution, self.pixel_resolution)
+                _, self.intermediary_size, _ = self.target_size_calculator(
+                    self.aspect_ratio, self.resolution, self.original_size
+                )
                 return self.target_size, self.intermediary_size, self.aspect_ratio
         if self.crop_enabled and self.crop_aspect == "random":
             # Grab a random aspect ratio from a list.
