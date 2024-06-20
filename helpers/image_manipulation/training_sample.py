@@ -339,8 +339,8 @@ class TrainingSample:
             return False
         if self.data_backend_config.get("resolution_type") == "pixel":
             return (
-                self.image.size[0] > self.pixel_resolution
-                or self.image.size[1] > self.pixel_resolution
+                self.current_size[0] > self.pixel_resolution
+                or self.current_size[1] > self.pixel_resolution
             )
         elif self.data_backend_config.get("resolution_type") == "area":
             logger.debug(
