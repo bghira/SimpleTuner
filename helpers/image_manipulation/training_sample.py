@@ -88,8 +88,8 @@ class TrainingSample:
         logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
     def save_debug_image(self, path: str):
-        # if self.image:
-        #     self.image.save(path)
+        if self.image and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
+            self.image.save(path)
         return self
 
     @staticmethod
@@ -339,8 +339,8 @@ class TrainingSample:
             return False
         if self.data_backend_config.get("resolution_type") == "pixel":
             return (
-                self.image.size[0] > self.pixel_resolution
-                or self.image.size[1] > self.pixel_resolution
+                self.current_size[0] > self.pixel_resolution
+                or self.current_size[1] > self.pixel_resolution
             )
         elif self.data_backend_config.get("resolution_type") == "area":
             logger.debug(
@@ -419,6 +419,8 @@ class TrainingSample:
                 target_size = (self.intermediary_size[0], self.current_size[1] + diff_w)
             elif diff_h > diff_w:
                 target_size = (self.current_size[0] + diff_h, self.intermediary_size[1])
+            else:
+                target_size = self.intermediary_size
             logger.debug(
                 f"Upsampling image from {self.current_size} to {target_size} before cropping."
             )
@@ -492,7 +494,9 @@ class TrainingSample:
             if self.crop_aspect == "square" and not downsample_before_crop:
                 self.aspect_ratio = 1.0
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
-                # self.intermediary_size = (self.pixel_resolution, self.pixel_resolution)
+                _, self.intermediary_size, _ = self.target_size_calculator(
+                    self.aspect_ratio, self.resolution, self.original_size
+                )
                 return self.target_size, self.intermediary_size, self.aspect_ratio
         if self.crop_enabled and self.crop_aspect == "random":
             # Grab a random aspect ratio from a list.
@@ -724,15 +728,6 @@ class PreparedSample:
         else:
             self.aspect_ratio = aspect_ratio
         self.crop_coordinates = crop_coordinates
-        from time import time as current_time
-
-        if hasattr(image, "save") and os.environ.get(
-            "SIMPLETUNER_DEBUG_IMAGE_PREP", False
-        ):
-            image.save(f"inference/images/{str(int(current_time()))}.png")
-            import time
-
-            time.sleep(1)
 
     def __str__(self):
         return f"PreparedSample(image={self.image}, original_size={self.original_size}, intermediary_size={self.intermediary_size}, target_size={self.target_size}, aspect_ratio={self.aspect_ratio}, crop_coordinates={self.crop_coordinates})"
