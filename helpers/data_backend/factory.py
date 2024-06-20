@@ -59,7 +59,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
     else:
-        output["config"]["crop"] = args.crop
+        output["config"]["crop"] = False
     if "crop_aspect" in backend:
         choices = ["square", "preserve", "random"]
         if backend.get("crop_aspect", None) not in choices:
