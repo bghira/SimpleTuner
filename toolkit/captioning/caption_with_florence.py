@@ -28,10 +28,12 @@ def load_input_parquet(parquet_path: str):
 # Load Florence model
 def load_model(model_name_or_path="microsoft/Florence-2-large-ft"):
     model = AutoModelForCausalLM.from_pretrained(
-        model_name_or_path, trust_remote_code=True
+        model_name_or_path,
+        trust_remote_code=True,  # cache_dir="/home/user/storage/hf_cache"
     )
     processor = AutoProcessor.from_pretrained(
-        model_name_or_path, trust_remote_code=True
+        model_name_or_path,
+        trust_remote_code=True,  # cache_dir="/home/user/storage/hf_cache"
     )
     return (
         model.to("mps" if torch.backends.mps.is_available() else "cuda"),
@@ -40,12 +42,14 @@ def load_model(model_name_or_path="microsoft/Florence-2-large-ft"):
 
 
 # Function to evaluate BLIP3 model
-def eval_model(args, image, model, processor):
-    inputs = processor(text=args.query_str, images=image, return_tensors="pt")
+def eval_model(args, image, model, processor, task="<MORE_DETAILED_CAPTION>"):
+    inputs = processor(
+        text=f"{task}{args.query_str}", images=image, return_tensors="pt"
+    )
 
     generated_ids = model.generate(
-        input_ids=inputs["input_ids"],
-        pixel_values=inputs["pixel_values"],
+        input_ids=inputs["input_ids"].to(model.device),
+        pixel_values=inputs["pixel_values"].to(model.device, dtype=model.dtype),
         max_new_tokens=args.max_new_tokens,
         do_sample=args.do_sample,
         num_beams=3,
@@ -53,7 +57,9 @@ def eval_model(args, image, model, processor):
     generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
 
     prediction = processor.post_process_generation(
-        generated_text, task="<OD>", image_size=(image.width, image.height)
+        generated_text,
+        task="<MORE_DETAILED_CAPTION>",
+        image_size=(image.width, image.height),
     )
 
     # If it doesn't end on a complete sentence, remove everything after the final '.'
@@ -61,7 +67,7 @@ def eval_model(args, image, model, processor):
     #     # Remove everything after the final '.'
     #     prediction = re.sub(r"\.[^.]*$", ".", prediction)
 
-    return prediction
+    return prediction[task]
 
 
 def process_and_evaluate_image(args, image_path: str, model, image_processor):
@@ -200,8 +206,8 @@ def parse_args():
     parser.add_argument(
         "--query_str",
         type=str,
-        default="Provide the most detailed caption.",
-        help="The query string to use for captioning. This instructs the model how to behave.",
+        default="",
+        help="The query string to use for captioning. This instructs the model how to behave. Not normally needed for Florence",
     )
     parser.add_argument(
         "--precision",
