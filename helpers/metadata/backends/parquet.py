@@ -382,8 +382,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 logger.debug(
                     f"Image {image_path_str} was not found on the backend. Skipping image."
                 )
-                statistics.setdefault("skipped", {}).setdefault("not_found", 0)
-                statistics["skipped"]["not_found"] += 1
+                statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
+                statistics["skipped"]["metadata_missing"] += 1
                 return aspect_ratio_bucket_indices
 
             width_column = self.parquet_config.get("width_column")
