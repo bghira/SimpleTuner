@@ -90,7 +90,7 @@ class ParquetMetadataBackend(MetadataBackend):
             len(bucket) // self.batch_size
             for bucket in self.aspect_ratio_bucket_indices.values()
             if len(bucket) >= self.batch_size
-        )
+        ) * (self.config.get("repeats", 0) + 1)
 
     def _discover_new_files(
         self, for_metadata: bool = False, ignore_existing_cache: bool = False

@@ -1378,7 +1378,7 @@ class StableDiffusionXLPipeline(
                 if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
                     added_cond_kwargs["image_embeds"] = image_embeds
                 noise_pred = self.unet(
-                    latent_model_input,
+                    latent_model_input.to(self.unet.device),
                     t,
                     encoder_hidden_states=prompt_embeds,
                     timestep_cond=timestep_cond,
