@@ -446,6 +446,7 @@ class TrainingSample:
                 self.pixel_resolution,
                 self.pixel_resolution,
             )
+            self.crop_coordinates = (0, 0)
         else:
             logger.debug(
                 f"Aspect ratio is not 1.0 {self.aspect_ratio} or/and intermediary size is {self.intermediary_size}, no adjustment needed."
@@ -497,6 +498,7 @@ class TrainingSample:
                 _, self.intermediary_size, _ = self.target_size_calculator(
                     self.aspect_ratio, self.resolution, self.original_size
                 )
+                self.correct_intermediary_square_size()
                 return self.target_size, self.intermediary_size, self.aspect_ratio
         if self.crop_enabled and self.crop_aspect == "random":
             # Grab a random aspect ratio from a list.
