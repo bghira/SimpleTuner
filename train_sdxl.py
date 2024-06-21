@@ -1357,6 +1357,7 @@ def main():
     # Some values that are required to be initialised later.
     timesteps_buffer = []
     train_loss = 0.0
+    grad_norm = None
     step = global_step
     training_luminance_values = []
     current_epoch_step = None
@@ -1796,13 +1797,14 @@ def main():
                             f"NaNs detected. Loss: {loss}, Model prediction: {model_pred}, Target: {target}"
                         )
                     accelerator.backward(loss)
+                    grad_norm = None
                     if (
                         accelerator.sync_gradients
                         and not args.use_adafactor_optimizer
                         and args.max_grad_norm > 0
                     ):
                         # Adafactor shouldn't have gradient clipping applied.
-                        accelerator.clip_grad_norm_(
+                        grad_norm = accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
                     training_logger.debug(f"Stepping components forward.")
@@ -1829,6 +1831,8 @@ def main():
                     "learning_rate": lr,
                     "epoch": epoch,
                 }
+                if grad_norm is not None:
+                    logs["grad_norm"] = grad_norm
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
