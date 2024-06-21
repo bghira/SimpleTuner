@@ -164,6 +164,9 @@ ARG_MAPPING = {
     "reg_data_dir": {
         "warning": "--reg_data_dir: use multidatabackend.json to configure datasets. Regularization data is recommended to be added as a separate dataset with a low probability value."
     },
+    "repeats": {
+        "warning": "In SimpleTuner, repeats is a dataset-specific configuration with a notable difference that Kohya's scripts treat repeats as how many times the whole dataset is seen, but SimpleTuner treats this value as how many *additional* times the dataset will be seen. Subtract 1 from your Kohya repeats value to determine the correct value for SimpleTuner."
+    },
     "resume": {"warning": "SimpleTuner can not resume from Kohya training states."},
     "sample_every_n_epochs": {
         "warning": "sample_every_n_epochs is not currently supported."
