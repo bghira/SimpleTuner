@@ -306,6 +306,11 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
             raise ValueError(error_msg)
     for idx, latent in enumerate(latents):
         # Are there any inf or nan positions?
+        if latent is None:
+            logger.debug(f"Error batch: {batch}")
+            error_msg = f"(id={data_backend_id}) File {filepaths[idx]} latent is None. Filepath: {filepaths[idx]}, data_backend_id: {data_backend_id}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         if torch.isnan(latent).any() or torch.isinf(latent).any():
             # get the data_backend
             data_backend = StateTracker.get_data_backend(data_backend_id)
