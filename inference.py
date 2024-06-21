@@ -113,7 +113,7 @@ for checkpoint in checkpoints:
             pipeline.to(
                 "cuda"
                 if torch.cuda.is_available()
-                else "mps" if torch.mps.is_available() else "cpu"
+                else "mps" if torch.backends.mps.is_available() else "cpu"
             )
         except Exception as e:
             logging.info(
