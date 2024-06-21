@@ -383,6 +383,17 @@ class TrainingSample:
             else:
                 new_width = int(self.current_size[0] * scale_factor)
                 new_height = int(self.current_size[1] * scale_factor)
+
+            # if we're smaller, we have to adjust. this helps us avoid a double-resize later.
+            w_diff = self.target_size[0] - new_width
+            h_diff = self.target_size[1] - new_height
+            if w_diff > 0 and w_diff > h_diff:
+                new_width += w_diff
+                new_height += w_diff
+            elif h_diff > 0 and h_diff > w_diff:
+                new_width += h_diff
+                new_height += h_diff
+
             intermediary_size = (new_width, new_height)
             logger.debug(
                 f"Downsampling image from {self.image.size if self.image is not None else self.current_size} to {intermediary_size} before cropping."
