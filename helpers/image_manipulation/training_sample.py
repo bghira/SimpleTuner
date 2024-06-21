@@ -515,7 +515,7 @@ class TrainingSample:
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
             if self.crop_aspect != "random" or not self.valid_metadata:
                 logger.debug(
-                    f"We had {'non-random crops' if self.crop_aspect != 'random' else 'invalid metadata: '} {self.image_metadata} and calculated intermediary size {calculated_intermediary_size}"
+                    f"We had {'non-random crops' if self.crop_aspect != 'random' else 'invalid metadata'} and calculated intermediary size {calculated_intermediary_size}"
                 )
                 self.intermediary_size = calculated_intermediary_size
             logger.debug(
