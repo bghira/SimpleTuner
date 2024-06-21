@@ -22,7 +22,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
     "cache_dir_vae": "/path/to/vaecache",
     "vae_cache_clear_each_epoch": true,
     "probability": 1.0,
-    "repeats": 5,
+    "repeats": 0,
     "text_embeds": "alt-embed-cache"
   },
   {
@@ -36,7 +36,7 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
     "aws_data_prefix": "",
     "cache_dir_vae": "s3prefix/for/vaecache",
     "vae_cache_clear_each_epoch": true,
-    "repeats": 2
+    "repeats": 0
   },
   {
     "id": "an example backend for text embeds.",
@@ -126,6 +126,8 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 ### `repeats`
 
 - Specifies the number of times all samples in the dataset are seen during an epoch. Useful for giving more impact to smaller datasets or maximizing the usage of VAE cache objects.
+
+> ℹ️ This value behaves differently to the same option in Kohya's scripts, where a value of 1 means no repeats. **For SimpleTuner, a value of 0 means no repeats**. Subtract one from your Kohya config value to obtain the equivalent for SimpleTuner.
 
 ### `vae_cache_clear_each_epoch`
 
