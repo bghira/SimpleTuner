@@ -46,8 +46,8 @@ def eval_model(args, image, model, processor):
     generated_ids = model.generate(
         input_ids=inputs["input_ids"],
         pixel_values=inputs["pixel_values"],
-        max_new_tokens=1024,
-        do_sample=False,
+        max_new_tokens=args.max_new_tokens,
+        do_sample=args.do_sample,
         num_beams=3,
     )
     generated_text = processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
@@ -221,6 +221,21 @@ def parse_args():
         type=str,
         default="title",
         help="When set, the column to use as a hint for the input query str placement value. Default: title",
+    )
+    parser.add_argument(
+        "--max_new_tokens",
+        type=int,
+        default=1024,
+        help="The maximum number of tokens to generate. Default: 1024",
+    )
+    parser.add_argument(
+        "--do_sample",
+        action="store_true",
+        default=False,
+        help=(
+            "Whether to use sampling for generation. Makes model more responsive to input prompts."
+            " If not set, greedy decoding is used. Default: False"
+        ),
     )
     args = parser.parse_args()
     return args
