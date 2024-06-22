@@ -112,7 +112,7 @@ class Validation:
         validation_negative_prompt_embeds,
         text_encoder_2,
         tokenizer_2,
-        ema_unet,
+        ema_model,
         vae,
         controlnet=None,
         text_encoder_3=None,
@@ -149,7 +149,7 @@ class Validation:
             )
             else validation_negative_prompt_embeds[0]
         )
-        self.ema_unet = ema_unet
+        self.ema_model = ema_model
         self.vae = vae
         self.pipeline = None
         self._discover_validation_input_samples()
@@ -484,8 +484,14 @@ class Validation:
     def setup_pipeline(self, validation_type):
         if validation_type == "intermediary" and self.args.use_ema:
             if self.unet is not None:
-                self.ema_unet.store(self.unet.parameters())
-                self.ema_unet.copy_to(self.unet.parameters())
+                self.ema_model.store(self.unet.parameters())
+                self.ema_model.copy_to(self.unet.parameters())
+            if self.transformer is not None:
+                self.ema_model.store(self.transformer.parameters())
+                self.ema_model.copy_to(self.transformer.parameters())
+            if self.args.ema_device != "accelerator":
+                logger.info("Moving EMA weights to GPU for inference.")
+                self.ema_model.to(self.accelerator.device)
 
         if self.pipeline is None:
             pipeline_cls = self._pipeline_cls()
@@ -826,7 +832,11 @@ class Validation:
         """Cleans up and restores original state if necessary."""
         if validation_type == "intermediary" and self.args.use_ema:
             if self.unet is not None:
-                self.ema_unet.restore(self.unet.parameters())
+                self.ema_model.restore(self.unet.parameters())
+            if self.transformer is not None:
+                self.ema_model.restore(self.transformer.parameters())
+            if self.args.ema_device != "accelerator":
+                self.ema_model.to(self.args.ema_device)
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None
         self.pipeline = None

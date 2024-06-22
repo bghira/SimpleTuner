@@ -789,6 +789,43 @@ def parse_args(input_args=None):
         help="Whether to use EMA (exponential moving average) model.",
     )
     parser.add_argument(
+        "--ema_device",
+        choices=["cpu", "accelerator"],
+        default="cpu",
+        help=(
+            "The device to use for the EMA model. If set to 'accelerator', the EMA model will be placed on the accelerator."
+            " This provides the fastest EMA update times, but is not ultimately necessary for EMA to function."
+        ),
+    )
+    parser.add_argument(
+        "--ema_cpu_only",
+        action="store_true",
+        default=False,
+        help=(
+            "When using EMA, the shadow model is moved to the accelerator before we update its parameters."
+            " When provided, this option will disable the moving of the EMA model to the accelerator."
+            " This will save a lot of VRAM at the cost of a lot of time for updates. It is recommended to also supply"
+            " --ema_update_interval to reduce the number of updates to eg. every 100 steps."
+        ),
+    )
+    parser.add_argument(
+        "--ema_foreach_disable",
+        action="store_true",
+        default=True,
+        help=(
+            "By default, we use torch._foreach functions for updating the shadow parameters, which should be fast."
+            " When provided, this option will disable the foreach methods and use vanilla EMA updates."
+        ),
+    )
+    parser.add_argument(
+        "--ema_update_interval",
+        type=int,
+        default=None,
+        help=(
+            "The number of optimization steps between EMA updates. If not provided, EMA network will update on every step."
+        ),
+    )
+    parser.add_argument(
         "--ema_decay",
         type=float,
         default=0.995,
@@ -1646,4 +1683,14 @@ def parse_args(input_args=None):
                 "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
             )
             args.disable_compel = True
+
+    if args.use_ema and args.ema_cpu_only:
+        args.ema_device = "cpu"
+
+    if args.pixart_sigma and not args.i_know_what_i_am_doing:
+        if args.max_grad_norm != 0.01:
+            logger.warning(
+                f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+            )
+            args.max_grad_norm = 0.01
     return args
