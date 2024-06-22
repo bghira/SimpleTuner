@@ -141,6 +141,27 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 ## 🛠 Advanced Optimizations
 
+### `--use_ema`
+
+- **What**: Keeping an exponential moving average of your weights over the models' training lifetime is like periodically back-merging the model into itself.
+- **Why**: It can improve training stability at the cost of more system resources, and a slight increase in training runtime.
+
+## `--ema_device`
+
+- **Choices**: `cpu`, `accelerator`, default: `cpu`
+- **What**: Place the EMA weights on the accelerator instead of CPU.
+- **Why**: The default location of CPU for EMA weights might result in a substantial slowdown on some systems. However, `--ema_cpu_only` will override this value if provided.
+
+### `--ema_cpu_only`
+
+- **What**: Keeps EMA weights on the CPU. The default behaviour is to move the EMA weights to the GPU before updating them.
+- **Why**: Moving the EMA weights to the GPU is unnecessary, as the update on CPU can be nearly just as quick. However, some systems may experience a substantial slowdown, so EMA weights will remain on GPU by default.
+
+### `--ema_update_interval`
+
+- **What**: Reduce the update interval of your EMA shadow parameters.
+- **Why**: Updating the EMA weights on every step could be an unnecessary waste of resources. Providing `--ema_update_interval=100` will update the EMA weights only once every 100 optimizer steps.
+
 ### `--gradient_accumulation_steps`
 
 - **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.

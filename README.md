@@ -82,7 +82,9 @@ Simply point your base model to a Stable Diffusion 3 checkpoint and set `STABLE_
 
 ## Hardware Requirements
 
-EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Without it, training can still be done, but more care must be taken not to drastically change the model leading to "catastrophic forgetting".
+EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Options like `--ema_cpu_only` can improve this situation by loading EMA weights onto the CPU and then keeping them there.
+
+Without EMA, more care must be taken not to drastically change the model leading to "catastrophic forgetting" through the use of regularisation data.
 
 ### GPU vendors
 
