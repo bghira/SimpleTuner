@@ -2,14 +2,10 @@ import torch
 import copy
 import contextlib
 from typing import Any, Dict, Iterable, Optional, Union
-from diffusers import is_transformers_available
 import transformers
-from diffusers.utils.versions import deprecate
+from diffusers.utils.deprecation_utils import deprecate
 from diffusers.models import UNet2DConditionModel
-from diffusers.utils import (
-    deprecate,
-    is_transformers_available,
-)
+from diffusers.utils import is_transformers_available
 
 
 def should_update_ema(args, step):
