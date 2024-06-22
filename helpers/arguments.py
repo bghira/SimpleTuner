@@ -1686,4 +1686,11 @@ def parse_args(input_args=None):
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
+
+    if args.pixart_sigma and not args.i_know_what_i_am_doing:
+        if args.max_grad_norm != 0.01:
+            logger.warning(
+                f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+            )
+            args.max_grad_norm = 0.01
     return args
