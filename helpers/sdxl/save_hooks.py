@@ -24,6 +24,14 @@ try:
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
 
+try:
+    from diffusers.models import PixArtTransformer2DModel
+except Exception as e:
+    logger.error(
+        f"Can not load Pixart Sigma model class. This release requires the latest version of Diffusers: {e}"
+    )
+    raise e
+
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
@@ -71,7 +79,7 @@ class SDXLSaveHook:
         args,
         unet,
         transformer,
-        ema_unet,
+        ema_model,
         text_encoder_1,
         text_encoder_2,
         text_encoder_3,
@@ -84,9 +92,20 @@ class SDXLSaveHook:
         self.text_encoder_1 = text_encoder_1
         self.text_encoder_2 = text_encoder_2
         self.text_encoder_3 = text_encoder_3
-        self.ema_unet = ema_unet
+        self.ema_model = ema_model
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
+        self.ema_model_cls = None
+        self.ema_model_subdir = None
+        if unet is not None:
+            self.ema_model_subdir = "unet_ema"
+            self.ema_model_cls = UNet2DConditionModel
+        if transformer is not None:
+            self.ema_model_subdir = "transformer_ema"
+            if self.args.sd3:
+                self.ema_model_cls = SD3Transformer2DModel
+            elif self.args.pixart_sigma:
+                self.ema_model_cls = PixArtTransformer2DModel
 
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
@@ -168,8 +187,9 @@ class SDXLSaveHook:
 
         if self.args.use_ema:
             tqdm.write("Saving EMA model")
-            self.ema_unet.save_pretrained(
-                os.path.join(temporary_dir, "unet_ema"), max_shard_size="10G"
+            self.ema_model.save_pretrained(
+                os.path.join(temporary_dir, self.ema_model_subdir),
+                max_shard_size="10GB",
             )
 
         if self.unet is not None:
@@ -180,7 +200,7 @@ class SDXLSaveHook:
             sub_dir = "controlnet"
         for model in models:
             model.save_pretrained(
-                os.path.join(temporary_dir, sub_dir), max_shard_size="10G"
+                os.path.join(temporary_dir, sub_dir), max_shard_size="10GB"
             )
             merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
             if weights:
@@ -300,10 +320,10 @@ class SDXLSaveHook:
 
         if self.args.use_ema:
             load_model = EMAModel.from_pretrained(
-                os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
+                os.path.join(input_dir, self.ema_model_subdir), self.ema_model_cls
             )
-            self.ema_unet.load_state_dict(load_model.state_dict())
-            self.ema_unet.to(self.accelerator.device)
+            self.ema_model.load_state_dict(load_model.state_dict())
+            self.ema_model.to(self.accelerator.device)
             del load_model
         if self.args.model_type == "full":
             return_exception = False
@@ -343,13 +363,6 @@ class SDXLSaveHook:
                         )
                     elif self.args.pixart_sigma:
                         # load pixart sigma checkpoint
-                        try:
-                            from diffusers.models import PixArtTransformer2DModel
-                        except Exception as e:
-                            logger.error(
-                                f"Can not load Pixart Sigma model class. This release requires the latest version of Diffusers: {e}"
-                            )
-                            raise e
                         load_model = PixArtTransformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )

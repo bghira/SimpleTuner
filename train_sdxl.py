@@ -1090,7 +1090,7 @@ def main():
         args=args,
         unet=unet,
         transformer=transformer,
-        ema_unet=ema_model,
+        ema_model=ema_model,
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
