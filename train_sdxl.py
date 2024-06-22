@@ -84,7 +84,7 @@ from diffusers import (
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 from diffusers.optimization import get_scheduler
-from helpers.training.ema import EMAModel
+from helpers.training.ema import EMAModel, should_update_ema
 from diffusers.utils import (
     check_min_version,
     convert_state_dict_to_diffusers,
@@ -1863,7 +1863,7 @@ def main():
 
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
-                    if ema_model is not None:
+                    if ema_model is not None and should_update_ema(args, global_step):
                         if args.ema_device == "cpu":
                             # Move to GPU for update.
                             ema_model.to(device=accelerator.device, non_blocking=True)
