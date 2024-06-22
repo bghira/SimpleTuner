@@ -772,12 +772,12 @@ def main():
     accelerator.wait_for_everyone()
 
     # Create EMA for the unet.
-    ema_unet = None
+    ema_model = None
     if args.use_ema:
         logger.info("Using EMA. Creating EMAModel.")
         if accelerator.is_main_process and webhook_handler is not None:
             webhook_handler.send(message="Creating EMA model.")
-        ema_unet = EMAModel(
+        ema_model = EMAModel(
             unet.parameters(),
             model_cls=UNet2DConditionModel,
             model_config=unet.config,
@@ -791,7 +791,7 @@ def main():
         text_encoder,
         text_encoder_cls,
         use_deepspeed_optimizer,
-        ema_unet,
+        ema_model,
         controlnet=controlnet,
     )
 
@@ -838,9 +838,9 @@ def main():
 
     # Conditionally prepare the EMA model if required
     if args.use_ema:
-        ema_unet = accelerator.prepare(ema_unet)
+        ema_model = accelerator.prepare(ema_model)
         logger.info("Moving EMA model weights to accelerator...")
-        ema_unet.to(accelerator.device, dtype=weight_dtype)
+        ema_model.to(accelerator.device, dtype=weight_dtype)
 
     idx_count = 0
     for _, backend in StateTracker.get_data_backends().items():
@@ -913,7 +913,7 @@ def main():
         validation_negative_prompt_embeds=validation_negative_prompt_embeds,
         text_encoder_2=None,
         tokenizer_2=None,
-        ema_unet=ema_unet,
+        ema_model=ema_model,
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
@@ -1386,10 +1386,10 @@ def main():
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
                     training_logger.debug(f"Stepping EMA unet forward")
-                    ema_unet.step(unet.parameters())
+                    ema_model.step(unet.parameters())
                     # There seems to be an issue with EMAmodel not keeping proper track of itself.
-                    ema_unet.optimization_step = global_step
-                    ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
+                    ema_model.optimization_step = global_step
+                    ema_decay_value = ema_model.get_decay(ema_model.optimization_step)
                     logs["ema_decay_value"] = ema_decay_value
 
                 # Log scatter plot to wandb
@@ -1565,7 +1565,7 @@ def main():
             reclaim_memory()
 
         if args.use_ema:
-            ema_unet.copy_to(unet.parameters())
+            ema_model.copy_to(unet.parameters())
 
         if StateTracker.get_vae() is None and "deepfloyd" not in args.model_type:
             if webhook_handler is not None:
