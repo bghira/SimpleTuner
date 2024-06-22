@@ -789,6 +789,32 @@ def parse_args(input_args=None):
         help="Whether to use EMA (exponential moving average) model.",
     )
     parser.add_argument(
+        "--ema_device",
+        choices=["cpu", "accelerator"],
+        default="cpu",
+        help=(
+            "The device to use for the EMA model. If set to 'accelerator', the EMA model will be placed on the accelerator."
+            " This provides the fastest EMA update times, but is not ultimately necessary for EMA to function."
+        ),
+    )
+    parser.add_argument(
+        "--ema_foreach_disable",
+        action="store_true",
+        default=True,
+        help=(
+            "By default, we use torch._foreach functions for updating the shadow parameters, which should be fast."
+            " When provided, this option will disable the foreach methods and use vanilla EMA updates."
+        ),
+    )
+    parser.add_argument(
+        "--ema_update_interval",
+        type=int,
+        default=None,
+        help=(
+            "The number of optimization steps between EMA updates. If not provided, EMA network will update on every step."
+        ),
+    )
+    parser.add_argument(
         "--ema_decay",
         type=float,
         default=0.995,
