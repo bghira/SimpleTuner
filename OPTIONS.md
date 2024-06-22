@@ -200,7 +200,9 @@ A lot of settings are instead set through the [dataloader config](/documentation
 ### `--resume_from_checkpoint`
 
 - **What**: Specifies if and from where to resume training.
-- **Why**: Allows you to continue training from a saved state, either manually specified or the latest available. A checkpoint is composed of a `unet` and optionally, an `ema_unet`. The `unet` may be dropped into any Diffusers layout SDXL model, allowing it to be used as a normal model would.
+- **Why**: Allows you to continue training from a saved state, either manually specified or the latest available. A checkpoint is composed of a `unet` and optionally, a `unet_ema` subfolder. The `unet` may be dropped into any Diffusers layout SDXL model, allowing it to be used as a normal model would.
+
+> ℹ️ Transformer models such as PixArt, SD3, or Hunyuan, use the `transformer` and `transformer_ema` subfolder names.
 
 ---
 

@@ -835,8 +835,8 @@ class Validation:
                 self.ema_model.restore(self.unet.parameters())
             if self.transformer is not None:
                 self.ema_model.restore(self.transformer.parameters())
-            if self.ema_model.device == self.accelerator.device:
-                self.ema_model.to("cpu")
+            if self.args.ema_device != "accelerator":
+                self.ema_model.to(self.args.ema_device)
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None
         self.pipeline = None

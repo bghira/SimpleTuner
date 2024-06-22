@@ -1252,7 +1252,7 @@ def main():
         tokenizer_2=tokenizer_2,
         text_encoder_3=text_encoder_3,
         tokenizer_3=tokenizer_3,
-        ema_unet=ema_model,
+        ema_model=ema_model,
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
