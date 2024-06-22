@@ -316,16 +316,14 @@ class EMAModel:
         ]
 
     def _tensor_entropy(self, tensor: torch.Tensor) -> float:
-        """Calculate the entropy of a tensor."""
-        tensor = tensor.flatten()  # Flatten the tensor
-        min_val = tensor.min()  # Find the minimum value to shift the data
-        tensor = tensor - min_val + 1e-5  # Make all elements positive and avoid log(0)
-        p_tensor = (
-            tensor / tensor.sum()
-        )  # Normalize to make the elements of tensor sum to 1
-        entropy = -torch.sum(p_tensor * torch.log(p_tensor))  # Compute entropy
-
-        return entropy
+        """Calculate the entropy of a tensor where values are treated as probabilities."""
+        tensor = tensor.flatten()
+        total = tensor.sum()
+        if total == 0:
+            return torch.tensor(0.0)  # If the tensor is all zeros, entropy is zero.
+        p_tensor = tensor / total
+        p_tensor = p_tensor[p_tensor > 0]  # Remove zero probabilities to avoid log(0)
+        return -(p_tensor * torch.log(p_tensor)).sum()
 
     def entropy(self, parameters) -> float:
         """Calculate the average entropy of the parameters."""
