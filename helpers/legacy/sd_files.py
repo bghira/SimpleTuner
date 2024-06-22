@@ -52,7 +52,7 @@ def register_file_hooks(
     text_encoder,
     text_encoder_cls,
     use_deepspeed_optimizer,
-    ema_unet=None,
+    ema_model=None,
     controlnet=None,
 ):
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
@@ -127,7 +127,7 @@ def register_file_hooks(
             weights.pop()
 
         if args.use_ema:
-            ema_unet.save_pretrained(os.path.join(output_dir, "ema_unet"))
+            ema_model.save_pretrained(os.path.join(output_dir, "ema_model"))
 
     def load_model_hook(models, input_dir):
         training_state_path = os.path.join(input_dir, "training_state.json")
@@ -184,10 +184,10 @@ def register_file_hooks(
 
         if args.use_ema:
             load_model = EMAModel.from_pretrained(
-                os.path.join(input_dir, "ema_unet"), UNet2DConditionModel
+                os.path.join(input_dir, "ema_model"), UNet2DConditionModel
             )
-            ema_unet.load_state_dict(load_model.state_dict())
-            ema_unet.to(accelerator.device)
+            ema_model.load_state_dict(load_model.state_dict())
+            ema_model.to(accelerator.device)
             del load_model
         if args.model_type == "full":
             return_exception = False

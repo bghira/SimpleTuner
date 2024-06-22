@@ -84,7 +84,7 @@ from diffusers import (
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel
+from helpers.training.ema import EMAModel, should_update_ema
 from diffusers.utils import (
     check_min_version,
     convert_state_dict_to_diffusers,
@@ -1049,7 +1049,7 @@ def main():
     accelerator.wait_for_everyone()
 
     # Create EMA for the unet.
-    ema_unet = None
+    ema_model = None
     if args.use_ema:
         if args.sd3:
             raise ValueError(
@@ -1057,14 +1057,32 @@ def main():
             )
         if "lora" in args.model_type:
             raise ValueError("Using EMA is not currently supported for LoRA training.")
-        logger.info("Using EMA. Creating EMAModel.")
-        ema_unet = EMAModel(
-            unet.parameters(),
-            model_cls=UNet2DConditionModel,
-            model_config=unet.config,
-            decay=args.ema_decay,
-        )
-        logger.info("EMA model creation complete.")
+        if accelerator.is_main_process:
+            logger.info("Using EMA. Creating EMAModel.")
+
+            ema_model = EMAModel(
+                args,
+                accelerator,
+                unet.parameters() if unet is not None else transformer.parameters(),
+                model_cls=(
+                    UNet2DConditionModel
+                    if unet is not None
+                    else (
+                        SD3Transformer2DModel
+                        if args.sd3
+                        else PixArtTransformer2DModel if args.pixart_sigma else None
+                    )
+                ),
+                model_config=(
+                    unet.config
+                    if unet is not None
+                    else transformer.config if transformer is not None else None
+                ),
+                decay=args.ema_decay,
+                foreach=not args.ema_foreach_disable,
+            )
+            logger.info("EMA model creation complete.")
+        accelerator.wait_for_everyone()
 
     from helpers.sdxl.save_hooks import SDXLSaveHook
 
@@ -1072,7 +1090,7 @@ def main():
         args=args,
         unet=unet,
         transformer=transformer,
-        ema_unet=ema_unet,
+        ema_model=ema_model,
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
@@ -1125,9 +1143,19 @@ def main():
         optimizer = results[2]
         # The rest of the entries are dataloaders:
         train_dataloaders = [results[3:]]
-        if args.use_ema:
+        if args.use_ema and ema_model is not None:
             logger.info("Moving EMA model weights to accelerator...")
-            ema_unet.to(accelerator.device, dtype=weight_dtype)
+            ema_model.to(
+                accelerator.device if args.ema_device == "accelerator" else "cpu",
+                dtype=weight_dtype,
+            )
+
+            if args.ema_device == "cpu" and not args.ema_cpu_only:
+                logger.info("Pinning EMA model weights to CPU...")
+                try:
+                    ema_model.pin_memory()
+                except Exception as e:
+                    logger.error(f"Failed to pin EMA model to CPU: {e}")
 
     idx_count = 0
     for _, backend in StateTracker.get_data_backends().items():
@@ -1224,7 +1252,7 @@ def main():
         tokenizer_2=tokenizer_2,
         text_encoder_3=text_encoder_3,
         tokenizer_3=tokenizer_3,
-        ema_unet=ema_unet,
+        ema_unet=ema_model,
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
@@ -1840,16 +1868,18 @@ def main():
 
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
-                    if unet is not None:
-                        training_logger.debug(f"Stepping EMA unet forward")
-                        ema_unet.step(unet.parameters())
-                    if transformer is not None:
-                        training_logger.debug(f"Stepping EMA transformer forward")
-                        ema_unet.step(transformer.parameters())
-                    # There seems to be an issue with EMAmodel not keeping proper track of itself.
-                    ema_unet.optimization_step = global_step
-                    ema_decay_value = ema_unet.get_decay(ema_unet.optimization_step)
-                    logs["ema_decay_value"] = ema_decay_value
+                    if ema_model is not None:
+                        training_logger.debug(f"Stepping EMA forward")
+                        ema_model.step(
+                            parameters=(
+                                unet.parameters()
+                                if unet is not None
+                                else transformer.parameters()
+                            ),
+                            global_step=global_step,
+                        )
+                        logs["ema_decay_value"] = ema_model.get_decay()
+                    accelerator.wait_for_everyone()
 
                 # Log scatter plot to wandb
                 if args.report_to == "wandb" and accelerator.is_main_process:
@@ -2044,9 +2074,9 @@ def main():
             reclaim_memory()
         elif args.use_ema:
             if unet is not None:
-                ema_unet.copy_to(unet.parameters())
+                ema_model.copy_to(unet.parameters())
             if transformer is not None:
-                ema_unet.copy_to(transformer.parameters())
+                ema_model.copy_to(transformer.parameters())
 
         if args.model_type == "full":
             # Now we build a full SDXL Pipeline to export the model with.
