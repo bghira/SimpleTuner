@@ -809,17 +809,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--ema_log_entropy",
-        action="store_true",
-        default=False,
-        help=(
-            "When using EMA, the entropy of the model is logged to the training logs. This can be useful for debugging,"
-            " but is not generally necessary as it will increase the training loop by 1.5 to 5 seconds, depending on the model."
-            " To save on compute time, this is only calculated when an EMA step occurs. Using --ema_update_interval"
-            " can substantially reduce the burden of EMA updates on each update step duration."
-        ),
-    )
-    parser.add_argument(
         "--ema_foreach_disable",
         action="store_true",
         default=True,
@@ -1694,4 +1683,7 @@ def parse_args(input_args=None):
                 "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
             )
             args.disable_compel = True
+
+    if args.use_ema and args.ema_cpu_only:
+        args.ema_device = "cpu"
     return args

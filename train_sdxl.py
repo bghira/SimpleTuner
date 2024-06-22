@@ -1062,6 +1062,7 @@ def main():
 
             ema_model = EMAModel(
                 args,
+                accelerator,
                 unet.parameters() if unet is not None else transformer.parameters(),
                 model_cls=(
                     UNet2DConditionModel
@@ -1143,10 +1144,13 @@ def main():
         # The rest of the entries are dataloaders:
         train_dataloaders = [results[3:]]
         if args.use_ema and ema_model is not None:
-            if args.ema_device == "accelerator":
-                logger.info("Moving EMA model weights to accelerator...")
-                ema_model.to(accelerator.device, dtype=weight_dtype)
-            else:
+            logger.info("Moving EMA model weights to accelerator...")
+            ema_model.to(
+                accelerator.device if args.ema_device == "accelerator" else "cpu",
+                dtype=weight_dtype,
+            )
+
+            if args.ema_device == "cpu" and not args.ema_cpu_only:
                 logger.info("Pinning EMA model weights to CPU...")
                 try:
                     ema_model.pin_memory()
@@ -1875,22 +1879,6 @@ def main():
                             global_step=global_step,
                         )
                         logs["ema_decay_value"] = ema_model.get_decay()
-                        if args.ema_log_entropy and should_update_ema(
-                            args, global_step
-                        ):
-                            logs["ema_entropy"] = ema_model.entropy(
-                                parameters=ema_model.shadow_params
-                            )
-                            logs["entropy"] = ema_model.entropy(
-                                parameters=(
-                                    unet.parameters()
-                                    if unet is not None
-                                    else transformer.parameters()
-                                )
-                            )
-                            tqdm.write(
-                                f"EMA Entropy: {logs['ema_entropy']}, Entropy: {logs['entropy']}"
-                            )
                     accelerator.wait_for_everyone()
 
                 # Log scatter plot to wandb

@@ -14,7 +14,7 @@ from helpers.training.state_tracker import StateTracker
 import os, logging, shutil, torch, json
 from safetensors import safe_open
 from safetensors.torch import save_file
-
+from tqdm import tqdm
 
 logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -167,7 +167,10 @@ class SDXLSaveHook:
         os.makedirs(temporary_dir, exist_ok=True)
 
         if self.args.use_ema:
-            self.ema_unet.save_pretrained(os.path.join(temporary_dir, "unet_ema"))
+            tqdm.write("Saving EMA model")
+            self.ema_unet.save_pretrained(
+                os.path.join(temporary_dir, "unet_ema"), max_shard_size="10G"
+            )
 
         if self.unet is not None:
             sub_dir = "unet"
@@ -176,7 +179,9 @@ class SDXLSaveHook:
         if self.args.controlnet:
             sub_dir = "controlnet"
         for model in models:
-            model.save_pretrained(os.path.join(temporary_dir, sub_dir))
+            model.save_pretrained(
+                os.path.join(temporary_dir, sub_dir), max_shard_size="10G"
+            )
             merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
             if weights:
                 weights.pop()  # Pop the last weight

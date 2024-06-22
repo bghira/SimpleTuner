@@ -29,6 +29,7 @@ class EMAModel:
     def __init__(
         self,
         args,
+        accelerator,
         parameters: Iterable[torch.nn.Parameter],
         decay: float = 0.9999,
         min_decay: float = 0.0,
@@ -115,6 +116,7 @@ class EMAModel:
         self.model_cls = model_cls
         self.model_config = model_config
         self.args = args
+        self.accelerator = accelerator
 
     @classmethod
     def from_pretrained(cls, path, model_cls) -> "EMAModel":
@@ -128,7 +130,7 @@ class EMAModel:
         ema_model.load_state_dict(ema_kwargs)
         return ema_model
 
-    def save_pretrained(self, path):
+    def save_pretrained(self, path, max_shard_size: str = "10GB"):
         if self.model_cls is None:
             raise ValueError(
                 "`save_pretrained` can only be used if `model_cls` was defined at __init__."
@@ -145,7 +147,7 @@ class EMAModel:
 
         model.register_to_config(**state_dict)
         self.copy_to(model.parameters())
-        model.save_pretrained(path)
+        model.save_pretrained(path, max_shard_size=max_shard_size)
 
     def get_decay(self, optimization_step: int = None) -> float:
         """
@@ -177,7 +179,7 @@ class EMAModel:
 
         if self.args.ema_device == "cpu" and not self.args.ema_cpu_only:
             # Move EMA to accelerator for faster update.
-            self.to(device=self.args.ema_device, non_blocking=True)
+            self.to(device=self.accelerator.device, non_blocking=True)
         if isinstance(parameters, torch.nn.Module):
             deprecation_message = (
                 "Passing a `torch.nn.Module` to `ExponentialMovingAverage.step` is deprecated. "
@@ -257,7 +259,9 @@ class EMAModel:
 
                 with context_manager():
                     if param.requires_grad:
-                        s_param.sub_(one_minus_decay * (s_param - param))
+                        s_param.sub_(
+                            one_minus_decay * (s_param - param.to(s_param.device))
+                        )
                     else:
                         s_param.copy_(param)
         if self.args.ema_device == "cpu" and not self.args.ema_cpu_only:
@@ -292,11 +296,13 @@ class EMAModel:
         offloading EMA params to the host.
         """
         if torch.backends.mps.is_available():
-            logger.warning(
-                f"Apple silicon does not support pinned memory from bf16 or fp16 tensors. Skipping."
-            )
+            logger.warning(f"Apple silicon does not support pinned memory. Skipping.")
             return
 
+        if self.args.ema_cpu_only:
+            return
+
+        # This probably won't work, but we'll do it anyway.
         self.shadow_params = [p.pin_memory() for p in self.shadow_params]
 
     def to(self, device=None, dtype=None, non_blocking=False) -> None:
@@ -314,33 +320,6 @@ class EMAModel:
             )
             for p in self.shadow_params
         ]
-
-    def _tensor_entropy(self, tensor: torch.Tensor) -> float:
-        """Calculate the entropy of a tensor where values are treated as probabilities."""
-        tensor = tensor.flatten()
-        total = tensor.sum()
-        if total == 0:
-            return torch.tensor(0.0)  # If the tensor is all zeros, entropy is zero.
-        p_tensor = tensor / total
-        p_tensor = p_tensor[p_tensor > 0]  # Remove zero probabilities to avoid log(0)
-        return -(p_tensor * torch.log(p_tensor)).sum()
-
-    def entropy(self, parameters) -> float:
-        """Calculate the average entropy of the parameters."""
-        time_begin = time()
-        entropies = []
-        for param in parameters:
-            if (
-                type(parameters) is list or param.requires_grad and param.numel() > 1
-            ):  # Only consider trainable and non-scalar parameters
-                entropies.append(self._tensor_entropy(param))
-
-        average_entropy = sum(entropies) / len(entropies)
-
-        time_end = time()
-        logger.debug(f"Entropy calculation took {time_end - time_begin:.2f} seconds.")
-
-        return average_entropy
 
     def state_dict(self) -> dict:
         r"""
