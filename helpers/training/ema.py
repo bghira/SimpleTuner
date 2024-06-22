@@ -2,7 +2,8 @@ import torch
 import copy
 import contextlib
 from typing import Any, Dict, Iterable, Optional, Union
-from diffusers import is_transformers_available, transformers
+from diffusers import is_transformers_available
+import transformers
 from diffusers.utils.versions import deprecate
 from diffusers.models import UNet2DConditionModel
 from diffusers.utils import (
