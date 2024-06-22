@@ -196,10 +196,10 @@ class EMAModel:
         parameters = list(parameters)
 
         if global_step is not None:
+            # When we're updating the EMA periodically, we can't trust the counter.
             self.optimization_step = global_step
         else:
             self.optimization_step += 1
-        tqdm.write(f"EMA Optimization step: {self.optimization_step}")
 
         # Compute the decay factor for the exponential moving average.
         decay = self.get_decay(self.optimization_step)
