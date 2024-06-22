@@ -1061,6 +1061,7 @@ def main():
             logger.info("Using EMA. Creating EMAModel.")
 
             ema_model = EMAModel(
+                args,
                 unet.parameters() if unet is not None else transformer.parameters(),
                 model_cls=(
                     UNet2DConditionModel
@@ -1863,25 +1864,33 @@ def main():
 
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
-                    if ema_model is not None and should_update_ema(args, global_step):
-                        if args.ema_device == "cpu":
-                            # Move to GPU for update.
-                            ema_model.to(device=accelerator.device, non_blocking=True)
-                        if unet is not None:
-                            training_logger.debug(f"Stepping EMA unet forward")
-                            ema_model.step(unet.parameters())
-                        if transformer is not None:
-                            training_logger.debug(f"Stepping EMA transformer forward")
-                            ema_model.step(transformer.parameters())
-                        if args.ema_device == "cpu":
-                            # Move back to CPU for safe-keeping.
-                            ema_model.to(device=args.ema_device, non_blocking=True)
-                        # There seems to be an issue with EMAmodel not keeping proper track of itself.
-                        ema_model.optimization_step = global_step
-                        ema_decay_value = ema_model.get_decay(
-                            ema_model.optimization_step
+                    if ema_model is not None:
+                        training_logger.debug(f"Stepping EMA forward")
+                        ema_model.step(
+                            parameters=(
+                                unet.parameters()
+                                if unet is not None
+                                else transformer.parameters()
+                            ),
+                            global_step=global_step,
                         )
-                        logs["ema_decay_value"] = ema_decay_value
+                        logs["ema_decay_value"] = ema_model.get_decay()
+                        if args.ema_log_entropy and should_update_ema(
+                            args, global_step
+                        ):
+                            logs["ema_entropy"] = ema_model.entropy(
+                                parameters=ema_model.shadow_params
+                            )
+                            logs["entropy"] = ema_model.entropy(
+                                parameters=(
+                                    unet.parameters()
+                                    if unet is not None
+                                    else transformer.parameters()
+                                )
+                            )
+                            tqdm.write(
+                                f"EMA Entropy: {logs['ema_entropy']}, Entropy: {logs['entropy']}"
+                            )
                     accelerator.wait_for_everyone()
 
                 # Log scatter plot to wandb

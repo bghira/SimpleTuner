@@ -798,6 +798,28 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--ema_cpu_only",
+        action="store_true",
+        default=False,
+        help=(
+            "When using EMA, the shadow model is moved to the accelerator before we update its parameters."
+            " When provided, this option will disable the moving of the EMA model to the accelerator."
+            " This will save a lot of VRAM at the cost of a lot of time for updates. It is recommended to also supply"
+            " --ema_update_interval to reduce the number of updates to eg. every 100 steps."
+        ),
+    )
+    parser.add_argument(
+        "--ema_log_entropy",
+        action="store_true",
+        default=False,
+        help=(
+            "When using EMA, the entropy of the model is logged to the training logs. This can be useful for debugging,"
+            " but is not generally necessary as it will increase the training loop by 1.5 to 5 seconds, depending on the model."
+            " To save on compute time, this is only calculated when an EMA step occurs. Using --ema_update_interval"
+            " can substantially reduce the burden of EMA updates on each update step duration."
+        ),
+    )
+    parser.add_argument(
         "--ema_foreach_disable",
         action="store_true",
         default=True,

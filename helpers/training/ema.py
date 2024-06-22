@@ -1,11 +1,13 @@
-import torch
-import copy
-import contextlib
+import torch, copy, logging, os, contextlib, transformers
+from time import time
 from typing import Any, Dict, Iterable, Optional, Union
-import transformers
 from diffusers.utils.deprecation_utils import deprecate
 from diffusers.models import UNet2DConditionModel
 from diffusers.utils import is_transformers_available
+from tqdm import tqdm
+
+logger = logging.getLogger("EMAModel")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def should_update_ema(args, step):
@@ -13,7 +15,10 @@ def should_update_ema(args, step):
         # If the EMA update interval is not set, always update the EMA.
         return True
     else:
-        return step % args.ema_update_interval == 0
+        should_update = step % args.ema_update_interval == 0
+        if should_update:
+            logger.debug(f"Updating EMA weights...")
+        return should_update
 
 
 class EMAModel:
@@ -23,6 +28,7 @@ class EMAModel:
 
     def __init__(
         self,
+        args,
         parameters: Iterable[torch.nn.Parameter],
         decay: float = 0.9999,
         min_decay: float = 0.0,
@@ -108,6 +114,7 @@ class EMAModel:
 
         self.model_cls = model_cls
         self.model_config = model_config
+        self.args = args
 
     @classmethod
     def from_pretrained(cls, path, model_cls) -> "EMAModel":
@@ -140,10 +147,13 @@ class EMAModel:
         self.copy_to(model.parameters())
         model.save_pretrained(path)
 
-    def get_decay(self, optimization_step: int) -> float:
+    def get_decay(self, optimization_step: int = None) -> float:
         """
         Compute the decay factor for the exponential moving average.
         """
+        if optimization_step is None:
+            optimization_step = self.optimization_step
+
         step = max(0, optimization_step - self.update_after_step - 1)
 
         if step <= 0:
@@ -160,7 +170,14 @@ class EMAModel:
         return cur_decay_value
 
     @torch.no_grad()
-    def step(self, parameters: Iterable[torch.nn.Parameter]):
+    def step(self, parameters: Iterable[torch.nn.Parameter], global_step: int = None):
+        if not should_update_ema(self.args, global_step):
+
+            return
+
+        if self.args.ema_device == "cpu" and not self.args.ema_cpu_only:
+            # Move EMA to accelerator for faster update.
+            self.to(device=self.args.ema_device, non_blocking=True)
         if isinstance(parameters, torch.nn.Module):
             deprecation_message = (
                 "Passing a `torch.nn.Module` to `ExponentialMovingAverage.step` is deprecated. "
@@ -176,7 +193,11 @@ class EMAModel:
 
         parameters = list(parameters)
 
-        self.optimization_step += 1
+        if global_step is not None:
+            self.optimization_step = global_step
+        else:
+            self.optimization_step += 1
+        tqdm.write(f"EMA Optimization step: {self.optimization_step}")
 
         # Compute the decay factor for the exponential moving average.
         decay = self.get_decay(self.optimization_step)
@@ -239,6 +260,9 @@ class EMAModel:
                         s_param.sub_(one_minus_decay * (s_param - param))
                     else:
                         s_param.copy_(param)
+        if self.args.ema_device == "cpu" and not self.args.ema_cpu_only:
+            # Move back to CPU for safe-keeping.
+            self.to(device=self.args.ema_device, non_blocking=True)
 
     def copy_to(self, parameters: Iterable[torch.nn.Parameter]) -> None:
         """
@@ -267,6 +291,11 @@ class EMAModel:
         Move internal buffers of the ExponentialMovingAverage to pinned memory. Useful for non-blocking transfers for
         offloading EMA params to the host.
         """
+        if torch.backends.mps.is_available():
+            logger.warning(
+                f"Apple silicon does not support pinned memory from bf16 or fp16 tensors. Skipping."
+            )
+            return
 
         self.shadow_params = [p.pin_memory() for p in self.shadow_params]
 
@@ -285,6 +314,35 @@ class EMAModel:
             )
             for p in self.shadow_params
         ]
+
+    def _tensor_entropy(self, tensor: torch.Tensor) -> float:
+        """Calculate the entropy of a tensor."""
+        tensor = tensor.flatten()  # Flatten the tensor
+        min_val = tensor.min()  # Find the minimum value to shift the data
+        tensor = tensor - min_val + 1e-5  # Make all elements positive and avoid log(0)
+        p_tensor = (
+            tensor / tensor.sum()
+        )  # Normalize to make the elements of tensor sum to 1
+        entropy = -torch.sum(p_tensor * torch.log(p_tensor))  # Compute entropy
+
+        return entropy
+
+    def entropy(self, parameters) -> float:
+        """Calculate the average entropy of the parameters."""
+        time_begin = time()
+        entropies = []
+        for param in parameters:
+            if (
+                type(parameters) is list or param.requires_grad and param.numel() > 1
+            ):  # Only consider trainable and non-scalar parameters
+                entropies.append(self._tensor_entropy(param))
+
+        average_entropy = sum(entropies) / len(entropies)
+
+        time_end = time()
+        logger.debug(f"Entropy calculation took {time_end - time_begin:.2f} seconds.")
+
+        return average_entropy
 
     def state_dict(self) -> dict:
         r"""
