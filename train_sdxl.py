@@ -1144,7 +1144,8 @@ def main():
         # The rest of the entries are dataloaders:
         train_dataloaders = [results[3:]]
         if args.use_ema and ema_model is not None:
-            logger.info("Moving EMA model weights to accelerator...")
+            if args.ema_device == "accelerator":
+                logger.info("Moving EMA model weights to accelerator...")
             ema_model.to(
                 accelerator.device if args.ema_device == "accelerator" else "cpu",
                 dtype=weight_dtype,
