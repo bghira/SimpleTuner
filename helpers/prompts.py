@@ -211,6 +211,13 @@ class PromptHandler:
                     "Instance prompt is required when instance_prompt_only is enabled."
                 )
             return instance_prompt
+        metadata_backend = StateTracker.get_data_backend(sampler_backend_id)[
+            "metadata_backend"
+        ]
+        if metadata_backend is None:
+            raise ValueError(
+                f"Could not find metadata backend for sampler {sampler_backend_id}: {StateTracker.get_data_backend(sampler_backend_id)}"
+            )
         (
             parquet_db,
             filename_column,
@@ -230,40 +237,7 @@ class PromptHandler:
 
         if not identifier_includes_extension:
             image_filename_stem = os.path.splitext(image_filename_stem)[0]
-
-        logger.debug(
-            f"for image_path: {image_path} we have image_filename_stem: {image_filename_stem}"
-        )
-        # parquet_db is a dataframe. let's find the row that matches the image filename.
-        if parquet_db is None:
-            raise ValueError(
-                f"Parquet database not found for sampler {sampler_backend_id}."
-            )
-        image_caption = ""
-        # Are the types incorrect, eg. the column is int64 vs str stem?
-        if "int" in str(parquet_db[filename_column].dtype):
-            if image_filename_stem.isdigit():
-                image_filename_stem = int(image_filename_stem)
-        item = parquet_db[parquet_db[filename_column] == image_filename_stem]
-        # Did we find the item?
-        if len(item) == 0 and instance_prompt is None:
-            logger.error(
-                f"Could not locate image {image_path} via stem {image_filename_stem} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries. Using filename as prompt."
-            )
-            return image_filename_stem
-        if (
-            caption_column in item.columns
-            and len(item) != 0
-            and len(item[caption_column].values) > 0
-        ):
-            image_caption = item[caption_column].values[0]
-        if not image_caption and fallback_caption_column:
-            if (
-                fallback_caption_column in item.columns
-                and len(item) != 0
-                and len(item[fallback_caption_column].values) > 0
-            ):
-                image_caption = item[fallback_caption_column].values[0]
+        image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
         if instance_prompt is None and fallback_caption_column and not image_caption:
             raise ValueError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."

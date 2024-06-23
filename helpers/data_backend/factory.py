@@ -649,6 +649,9 @@ def configure_multi_databackend(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
 
+        # Update the backend registration here so the metadata backend can be found.
+        StateTracker.register_data_backend(init_backend)
+
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
         if "text" not in args.skip_file_discovery and "text" not in backend.get(
             "skip_file_discovery", ""

@@ -56,6 +56,7 @@ class ParquetMetadataBackend(MetadataBackend):
             cache_file_suffix=cache_file_suffix,
         )
         self.load_parquet_database()
+        self.caption_cache = self._extract_captions_to_fast_list()
 
     def load_parquet_database(self):
         """
@@ -80,6 +81,48 @@ class ParquetMetadataBackend(MetadataBackend):
             raise FileNotFoundError(
                 f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
             )
+
+    def _extract_captions_to_fast_list(self):
+        """
+        Pull the captions from the parquet table into a dict with the format {filename: caption}.
+
+        This helps because parquet's columnar format sucks for searching.
+
+        Returns:
+            dict: A dictionary of captions.
+        """
+        if self.parquet_database is None:
+            raise ValueError("Parquet database is not loaded.")
+        filename_column = self.parquet_config.get("filename_column")
+        caption_column = self.parquet_config.get("caption_column")
+        fallback_caption_column = self.parquet_config.get("fallback_caption_column")
+        captions = {}
+        for index, row in self.parquet_database.iterrows():
+            if filename_column in row:
+                filename = str(row[filename_column])
+            else:
+                filename = str(index)
+            caption = row[caption_column]
+            if not caption and fallback_caption_column:
+                caption = row[fallback_caption_column]
+            if not caption:
+                raise ValueError(
+                    f"Could not locate caption for image {filename} in sampler_backend {self.id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(self.parquet_database)} entries."
+                )
+            if type(caption) == bytes:
+                caption = caption.decode("utf-8")
+            elif type(caption) == list:
+                # selecting the first caption. see issue #476 on github
+                caption = caption[0]
+            if caption:
+                caption = caption.strip()
+            captions[filename] = caption
+        return captions
+
+    def caption_cache_entry(self, index: str):
+        result = self.caption_cache.get(str(index), None)
+
+        return result
 
     def __len__(self):
         """
@@ -452,19 +495,19 @@ class ParquetMetadataBackend(MetadataBackend):
                     ),
                 }
             )
-            logger.debug(
-                f"Data types for metadata: {[type(v) for v in image_metadata.values()]}"
-            )
+            # logger.debug(
+            #     f"Data types for metadata: {[type(v) for v in image_metadata.values()]}"
+            # )
             # print the types of any iterable values
-            for key, value in image_metadata.items():
-                if hasattr(value, "__iter__"):
-                    logger.debug(f"Key {key} has type {type(value)}: {value}")
-                    for v in value:
-                        logger.debug(f"Value has type {type(v)}: {v}")
+            # for key, value in image_metadata.items():
+            # if hasattr(value, "__iter__"):
+            # logger.debug(f"Key {key} has type {type(value)}: {value}")
+            # for v in value:
+            # logger.debug(f"Value has type {type(v)}: {v}")
 
-            logger.debug(
-                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
-            )
+            # logger.debug(
+            #     f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
+            # )
 
             # Create a new bucket if it doesn't exist
             aspect_ratio_key = str(prepared_sample.aspect_ratio)

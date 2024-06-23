@@ -17,7 +17,10 @@ class TestPromptHandler(unittest.TestCase):
         self.data_backend = MagicMock()
 
     @patch("helpers.training.state_tracker.StateTracker.get_parquet_database")
-    def test_prepare_instance_prompt_from_parquet(self, mock_get_parquet_database):
+    @patch("helpers.training.state_tracker.StateTracker.get_data_backend")
+    def test_prepare_instance_prompt_from_parquet(
+        self, mock_get_data_backend, mock_get_parquet_database
+    ):
         # Setup
         image_path = "image_3.jpg"
         use_captions = True
@@ -27,6 +30,14 @@ class TestPromptHandler(unittest.TestCase):
         sampler_backend_id = "sampler1"
         filename_column = "filename"
         caption_column = "caption"
+        mock_metadata_backend = MagicMock()
+        mock_metadata_backend.caption_cache_entry = MagicMock()
+        mock_metadata_backend.caption_cache_entry.return_value = (
+            "a giant arcade game type claw..."
+        )
+        mock_get_data_backend.return_value = {
+            "metadata_backend": mock_metadata_backend,
+        }
 
         # Simulate the DataFrame structure and the expected row
         fallback_caption_column = "tags"
