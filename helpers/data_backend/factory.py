@@ -705,7 +705,7 @@ def configure_multi_databackend(
                 target_downsample_size=backend.get(
                     "target_downsample_size",
                     args.target_downsample_size
-                    or backend.get("resolution", args.resolution) * 1.5,
+                    or backend.get("resolution", args.resolution) * 1.25,
                 ),
                 minimum_image_size=backend.get(
                     "minimum_image_size",
