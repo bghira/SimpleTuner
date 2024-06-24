@@ -20,7 +20,7 @@ logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
-    from diffusers import StableDiffusion3Pipeline
+    from diffusers import StableDiffusion3Pipeline, SD3Transformer2DModel
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
 
@@ -342,13 +342,6 @@ class SDXLSaveHook:
                         )
                     elif self.args.sd3:
                         # Load a stable diffusion 3 checkpoint
-                        try:
-                            from diffusers import SD3Transformer2DModel
-                        except Exception as e:
-                            logger.error(
-                                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-                            )
-                            raise e
                         if not self.args.train_text_encoder:
                             logger.info(
                                 f"Unloading text encoders for full SD3 training without --train_text_encoder"
