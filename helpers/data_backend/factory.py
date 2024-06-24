@@ -505,7 +505,7 @@ def configure_multi_databackend(
             **metadata_backend_args,
         )
 
-        if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
+        if "aspect" not in args.skip_file_discovery and "aspect" not in backend.get(
             "skip_file_discovery", ""
         ):
             if accelerator.is_local_main_process:
