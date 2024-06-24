@@ -793,7 +793,7 @@ class TextEmbeddingCache:
                 gc.collect()
                 return
 
-        logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
+        # logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
         if len(attention_masks_all) > 0:
             return prompt_embeds_all, attention_masks_all
         return prompt_embeds_all
