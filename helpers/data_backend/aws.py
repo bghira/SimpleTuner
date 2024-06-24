@@ -290,7 +290,7 @@ class S3DataBackend(BaseDataBackend):
         for i in range(self.read_retry_limit):
             try:
                 obj = torch.load(BytesIO(self.read(s3_key)), map_location="cpu")
-                logger.debug(f"torch.load found: {obj}")
+                # logger.debug(f"torch.load found: {obj}")
                 if type(obj) is tuple:
                     obj = tuple(o.to(torch.float32) for o in obj)
                 elif type(obj) is Tensor:
