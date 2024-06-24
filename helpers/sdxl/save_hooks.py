@@ -20,7 +20,7 @@ logger = logging.getLogger("SDXLSaveHook")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
-    from diffusers import StableDiffusion3Pipeline
+    from diffusers import StableDiffusion3Pipeline, SD3Transformer2DModel
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
 
