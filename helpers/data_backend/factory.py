@@ -709,8 +709,7 @@ def configure_multi_databackend(
                 ),
                 minimum_image_size=backend.get(
                     "minimum_image_size",
-                    args.minimum_image_size
-                    or backend.get("resolution", args.resolution),
+                    args.minimum_image_size,
                 ),
                 vae_batch_size=args.vae_batch_size,
                 write_batch_size=args.write_batch_size,
