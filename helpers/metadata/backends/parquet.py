@@ -122,6 +122,7 @@ class ParquetMetadataBackend(MetadataBackend):
     def caption_cache_entry(self, index: str):
         result = self.caption_cache.get(str(index), None)
 
+        logger.debug(f"Caption cache entry for idx {str(index)}: {result}")
         return result
 
     def __len__(self):
