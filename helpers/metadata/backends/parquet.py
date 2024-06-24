@@ -32,6 +32,7 @@ class ParquetMetadataBackend(MetadataBackend):
         resolution_type: str,
         parquet_config: dict,
         delete_problematic_images: bool = False,
+        delete_unwanted_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
@@ -51,6 +52,7 @@ class ParquetMetadataBackend(MetadataBackend):
             resolution=resolution,
             resolution_type=resolution_type,
             delete_problematic_images=delete_problematic_images,
+            delete_unwanted_images=delete_unwanted_images,
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
             cache_file_suffix=cache_file_suffix,
@@ -464,11 +466,18 @@ class ParquetMetadataBackend(MetadataBackend):
 
             logger.debug("Checking minimum resolution size vs image size...")
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
-                logger.debug(
-                    f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
-                )
+                if not self.delete_unwanted_images:
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
+                    )
+                else:
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum image size requirements. Deleting image."
+                    )
+                    self.data_backend.delete(image_path_str)
                 statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1
+
                 return aspect_ratio_bucket_indices
 
             logger.debug("Collecting aspect ratio data...")

@@ -30,6 +30,7 @@ class MetadataBackend:
         resolution: float,
         resolution_type: str,
         delete_problematic_images: bool = False,
+        delete_unwanted_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
@@ -56,6 +57,7 @@ class MetadataBackend:
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
+        self.delete_unwanted_images = delete_unwanted_images
         self.metadata_update_interval = metadata_update_interval
         self.minimum_image_size = minimum_image_size
         self.image_metadata_loaded = False

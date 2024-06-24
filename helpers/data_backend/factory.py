@@ -498,6 +498,9 @@ def configure_multi_databackend(
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
+            delete_unwanted_images=backend.get(
+                "delete_unwanted_images", args.delete_unwanted_images
+            ),
             cache_file_suffix=backend.get("cache_file_suffix", None),
             **metadata_backend_args,
         )
