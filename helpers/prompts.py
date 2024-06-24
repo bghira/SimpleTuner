@@ -431,7 +431,8 @@ class PromptHandler:
                 raise ValueError(
                     f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
                 )
-            captions.append(caption)
+            if caption:
+                captions.append(caption)
 
         return captions
 
@@ -522,6 +523,11 @@ class PromptHandler:
             modified_caption = caption
             # Apply each filter to the caption
             logger.debug(f"Filtering caption: {modified_caption}")
+            if modified_caption is None:
+                logger.error(
+                    f"Encountered a None caption in the list, data backend: {data_backend.id}"
+                )
+                continue
             for filter_item in caption_filter_list:
                 # Check for special replace pattern 's/replace/entry/'
                 if filter_item.startswith("s/") and filter_item.count("/") == 2:
@@ -541,7 +547,10 @@ class PromptHandler:
                 try:
                     # Assume all filters as regex patterns for flexibility
                     pattern = re.compile(filter_item)
-                    regex_modified_caption = pattern.sub("", modified_caption)
+                    try:
+                        regex_modified_caption = pattern.sub("", modified_caption)
+                    except:
+                        regex_modified_caption = modified_caption
                     if regex_modified_caption != modified_caption:
                         # logger.debug(
                         #     f"Applying regex FILTER {filter_item} to caption: {modified_caption}"
