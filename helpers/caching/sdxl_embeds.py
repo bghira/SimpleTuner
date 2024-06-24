@@ -635,6 +635,10 @@ class TextEmbeddingCache:
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
 
+            logger.debug(
+                f"Exiting text cache write busy-loop, {self.write_queue.qsize()} items remaining."
+            )
+
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
             self.process_write_batches = False
@@ -775,6 +779,10 @@ class TextEmbeddingCache:
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            logger.debug(
+                f"Exiting text cache write busy-loop, {self.write_queue.qsize()} items remaining."
+            )
 
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
