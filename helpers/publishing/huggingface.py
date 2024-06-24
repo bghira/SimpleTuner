@@ -191,7 +191,7 @@ class HubManager:
                 if type(validation_images) is dict
                 else validation_images
             ):
-                print(f"Shortname {shortname} images: {images}")
+                # print(f"Shortname {shortname} images: {images}")
                 if type(images) is not list:
                     images = [images]
                 sub_idx = 0

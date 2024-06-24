@@ -136,11 +136,16 @@ class ParquetMetadataBackend(MetadataBackend):
                 filename = str(row[filename_column])
             else:
                 filename = str(index)
-
             if not identifier_includes_extension:
                 filename = os.path.splitext(filename)[0]
 
-            caption = row[caption_column]
+            if type(caption_column) == list:
+                caption = None
+                if len(caption_column) > 0:
+                    caption = [row[c] for c in caption_column]
+            else:
+                caption = row[caption_column]
+
             if not caption and fallback_caption_column:
                 caption = row[fallback_caption_column]
             if not caption:
@@ -150,8 +155,7 @@ class ParquetMetadataBackend(MetadataBackend):
             if type(caption) == bytes:
                 caption = caption.decode("utf-8")
             elif type(caption) == list:
-                # selecting the first caption. see issue #476 on github
-                caption = caption[0]
+                caption = [c.strip() for c in caption if c.strip()]
             if caption:
                 caption = caption.strip()
             captions[filename] = caption

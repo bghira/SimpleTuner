@@ -160,6 +160,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 prepend_instance_prompt=self.prepend_instance_prompt,
                 instance_prompt=self.instance_prompt,
             )
+            if type(validation_prompt) == list:
+                validation_prompt = random.choice(validation_prompt)
+                self.debug_log(
+                    f"Selecting random prompt from list: {validation_prompt}"
+                )
             results.append(
                 (validation_shortname, validation_prompt, training_sample.image)
             )
@@ -380,7 +385,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata["image_path"] = image_path
 
             # Use the magic prompt handler to retrieve the captions.
-            image_metadata["instance_prompt_text"] = PromptHandler.magic_prompt(
+            instance_prompt = PromptHandler.magic_prompt(
                 sampler_backend_id=self.id,
                 data_backend=self.data_backend,
                 image_path=image_metadata["image_path"],
@@ -389,6 +394,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 prepend_instance_prompt=self.prepend_instance_prompt,
                 instance_prompt=self.instance_prompt,
             )
+            if type(instance_prompt) == list:
+                instance_prompt = random.choice(instance_prompt)
+                self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
+            image_metadata["instance_prompt_text"] = instance_prompt
 
             to_yield.append(image_metadata)
         return to_yield
