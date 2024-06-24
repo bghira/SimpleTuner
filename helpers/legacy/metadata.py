@@ -7,10 +7,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 def _model_imports(args):
     output = "import torch\n"
-    if args.sd3:
-        output += f"from diffusers import StableDiffusion3Pipeline\n"
-    else:
-        output += f"from diffusers import DiffusionPipeline\n"
+    output += "from diffusers import DiffusionPipeline\n"
 
     return f"{output}\n"
 
