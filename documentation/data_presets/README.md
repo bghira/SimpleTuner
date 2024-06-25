@@ -5,5 +5,4 @@ For various large-scale datasets on Hugging Face Hub, configuration details are 
 To add a new preset, use [this template](/documentation/data_presets/preset.md) to submit a new pull-request.
 
 - [DALLE-3 1M](/documentation/data_presets/preset_dalle3.md)
-
-
+- [ptx0/photo-concept-bucket](/documentation/data_presets/preset_pexels.md)
