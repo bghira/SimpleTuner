@@ -307,8 +307,8 @@ class StateTracker:
             cls.all_text_cache_files[data_backend_id] = {}
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
-            for image in files:
-                cls.all_text_cache_files[data_backend_id][path.basename(image)] = False
+            for text_embed_path in files:
+                cls.all_text_cache_files[data_backend_id][text_embed_path] = False
         cls._save_to_disk(
             "all_text_cache_files_{}".format(data_backend_id),
             cls.all_text_cache_files[data_backend_id],

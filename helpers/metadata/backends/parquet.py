@@ -59,6 +59,11 @@ class ParquetMetadataBackend(MetadataBackend):
         )
         self.load_parquet_database()
         self.caption_cache = self._extract_captions_to_fast_list()
+        self.missing_captions = self._locate_missing_caption_from_fast_list()
+        if self.missing_captions:
+            logger.warning(
+                f"Missing captions for {len(self.missing_captions)} images: {self.missing_captions}"
+            )
 
     def load_parquet_database(self):
         """
@@ -84,6 +89,30 @@ class ParquetMetadataBackend(MetadataBackend):
                 f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
             )
 
+    def _locate_missing_caption_from_fast_list(self):
+        """
+        Check the fast list keys vs the filenames in our aspect ratio bucket indices.
+        """
+        missing_captions = []
+        identifier_includes_extension = self.parquet_config.get(
+            "identifier_includes_extension", False
+        )
+        # currently we just don't do this.
+        identifier_includes_path = False
+        for key in self.aspect_ratio_bucket_indices.keys():
+            for filename in self.aspect_ratio_bucket_indices[key]:
+                if not identifier_includes_extension:
+                    filename = os.path.splitext(filename)[0]
+                if not identifier_includes_path:
+                    # strip out self.instance_data_root
+                    filename = filename.replace(self.instance_data_root, "")
+                    # any leading /
+                    if filename.startswith("/"):
+                        filename = filename[1:]
+                if filename not in self.caption_cache:
+                    missing_captions.append(filename)
+        return missing_captions
+
     def _extract_captions_to_fast_list(self):
         """
         Pull the captions from the parquet table into a dict with the format {filename: caption}.
@@ -98,12 +127,19 @@ class ParquetMetadataBackend(MetadataBackend):
         filename_column = self.parquet_config.get("filename_column")
         caption_column = self.parquet_config.get("caption_column")
         fallback_caption_column = self.parquet_config.get("fallback_caption_column")
+        identifier_includes_extension = self.parquet_config.get(
+            "identifier_includes_extension", False
+        )
         captions = {}
         for index, row in self.parquet_database.iterrows():
             if filename_column in row:
                 filename = str(row[filename_column])
             else:
                 filename = str(index)
+
+            if not identifier_includes_extension:
+                filename = os.path.splitext(filename)[0]
+
             caption = row[caption_column]
             if not caption and fallback_caption_column:
                 caption = row[fallback_caption_column]

@@ -343,6 +343,9 @@ def configure_multi_databackend(
             model_type=StateTracker.get_model_type(),
             write_batch_size=backend.get("write_batch_size", 1),
         )
+        with accelerator.main_process_first():
+            init_backend["text_embed_cache"].discover_all_files()
+        accelerator.wait_for_everyone()
 
         if backend.get("default", False):
             # The default embed cache will be used for eg. validation prompts.
