@@ -215,6 +215,10 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
     is_aura_flow = text_embed_cache.model_type == "aura_flow"
+    is_hunyuan_dit = text_embed_cache.model_type == "hunyuan_dit"
+
+    if is_hunyuan_dit:
+        raise ValueError("`compute_prompt_embeddings()` is not yet supported for 'hunyuan_dit'.")
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:

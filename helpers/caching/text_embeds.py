@@ -761,6 +761,8 @@ class TextEmbeddingCache:
                         )
 
                 if should_encode:
+                    if StateTracker.get_model_type() == "hunyuan_dit":
+                        raise ValueError("Prompt encoding scheme has not been implemented for the 'hunyuan_dit' model yet.'")
                     # self.debug_log(f"Encoding prompt: {prompt}")
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()

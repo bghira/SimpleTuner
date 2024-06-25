@@ -246,6 +246,8 @@ def main():
         StateTracker.set_model_type("aura_flow")
     if args.legacy:
         StateTracker.set_model_type("legacy")
+    if args.hunyuan_dit:
+        StateTracker.set_model_type("hunyuan_dit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
