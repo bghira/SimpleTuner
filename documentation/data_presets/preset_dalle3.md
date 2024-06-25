@@ -153,7 +153,7 @@ The following configuration entry will correctly locate the filenames and captio
     {
         "id": "dalle3",
         "type": "local",
-        "instance_data_dir": "/home/ubuntu/training/data/dalle3/data",
+        "instance_data_dir": "/home/user/training/data/dalle3/data",
         "resolution": 1.0,
         "maximum_image_size": 2.0,
         "minimum_image_size": 0.75,
@@ -163,7 +163,7 @@ The following configuration entry will correctly locate the filenames and captio
         "caption_strategy": "textfile",
         "metadata_backend": "parquet",
         "parquet": {
-            "path": "/home/ubuntu/training/data/dalle3/dalle3.parquet",
+            "path": "/home/user/training/data/dalle3/dalle3.parquet",
             "caption_column": "caption",
             "filename_column": "filename",
             "width_column": "width",
