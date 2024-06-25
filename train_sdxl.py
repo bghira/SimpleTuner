@@ -227,6 +227,8 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
+    if args.hunyuan_dit:
+        StateTracker.set_model_type("hunyuan_dit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:

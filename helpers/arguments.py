@@ -85,6 +85,12 @@ def parse_args(input_args=None):
         help=("This must be set when training a PixArt Sigma model."),
     )
     parser.add_argument(
+        "--hunyuan_dit",
+        action="store_true",
+        default=False,
+        help=("This must be set when training a Hunyuan DiT model."),
+    )
+    parser.add_argument(
         "--sd3",
         action="store_true",
         default=False,
@@ -1518,6 +1524,9 @@ def parse_args(input_args=None):
 
     if args.cache_dir is None or args.cache_dir == "":
         args.cache_dir = os.path.join(args.output_dir, "cache")
+
+    if args.pixart_sigma and args.hunyuan_dit and args.sd3:
+        raise ValueError("Cannot have all of '--pixart_sigma', '--hunyuan_dit', and, '--sd3' set to True.")
 
     if args.maximum_image_size is not None and not args.target_downsample_size:
         raise ValueError(
