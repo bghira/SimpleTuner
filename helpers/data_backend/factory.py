@@ -16,6 +16,8 @@ import json, os, torch, logging, io, time, threading, queue
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+prefetch_log = logging.getLogger(f"{rank_info()} DataBackendPrefetch")
+prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
 
 # For prefetching.
 data_queue = queue.Queue(maxsize=10)
@@ -989,13 +991,13 @@ def random_dataloader_iterator(backends: dict):
 def prefetch_data(backends):
     global step
     if step is None:
-        logger.debug("Retrieving epoch step from StateTracker.")
+        prefetch_log.debug("Retrieving epoch step from StateTracker.")
         step = StateTracker.get_epoch_step()
     else:
         step = 0
     while not stop_prefetch.is_set():
         if backends == {}:
-            logger.debug(
+            prefetch_log.debug(
                 "All dataloaders exhausted. Moving to next epoch in main training loop."
             )
             StateTracker.clear_exhausted_buckets()
@@ -1003,7 +1005,7 @@ def prefetch_data(backends):
             data_queue.put((step, None))
             break
         else:
-            logger.debug(f"Active dataloaders: {backends}")
+            prefetch_log.debug(f"Active dataloaders: {backends}")
 
         step += 1
         gradient_accumulation_steps = (
@@ -1014,14 +1016,14 @@ def prefetch_data(backends):
 
         chosen_backend_id = select_dataloader_index(step, backends)
         if chosen_backend_id is None:
-            logger.debug("No dataloader iterators were available.")
+            prefetch_log.debug("No dataloader iterators were available.")
             break
-        logger.debug(f"Selected: {chosen_backend_id}")
+        prefetch_log.debug(f"Selected: {chosen_backend_id}")
 
         chosen_iter = iter(backends[chosen_backend_id])
 
         try:
-            logger.debug(f"Adding data to queue.")
+            prefetch_log.debug(f"Adding data to queue.")
             data_queue.put((step, next(chosen_iter)))
         except MultiDatasetExhausted:
             repeats = StateTracker.get_data_backend_config(chosen_backend_id).get(
@@ -1033,17 +1035,19 @@ def prefetch_data(backends):
                 and StateTracker.get_repeats(chosen_backend_id) < repeats
             ):
                 StateTracker.increment_repeats(chosen_backend_id)
-                logger.debug(
+                prefetch_log.debug(
                     f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
                 )
                 continue
-            logger.debug(
+            prefetch_log.debug(
                 f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
             )
             del backends[chosen_backend_id]
             StateTracker.backend_exhausted(chosen_backend_id)
             StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
-            logger.debug(f"Ending retrieval. Moving onto next sample for queueing.")
+            prefetch_log.debug(
+                f"Ending retrieval. Moving onto next sample for queueing."
+            )
         finally:
             if not backends or all(
                 [
@@ -1053,7 +1057,7 @@ def prefetch_data(backends):
                     for backend_id in backends
                 ]
             ):
-                logger.debug(
+                prefetch_log.debug(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()
@@ -1063,7 +1067,7 @@ def prefetch_data(backends):
 
 def start_prefetch_thread(backends):
     global prefetch_thread, stop_prefetch, step
-    logger.debug(f"Beginning prefetch thread. Step: {step}")
+    prefetch_log.debug(f"Beginning prefetch thread. Step: {step}")
     # step = None  # Reset step for new epoch
     stop_prefetch.clear()
     prefetch_thread = threading.Thread(target=prefetch_data, args=(backends,))
