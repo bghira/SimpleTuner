@@ -12,10 +12,15 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, io, time
+import json, os, torch, logging, io, time, threading, queue
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
+# For prefetching.
+data_queue = queue.Queue(maxsize=10)
+prefetch_thread = None
+stop_prefetch = threading.Event()
 
 
 def info_log(message):
@@ -979,3 +984,100 @@ def random_dataloader_iterator(backends: dict):
                 )
                 StateTracker.clear_exhausted_buckets()
                 return (step, None)
+
+
+def prefetch_data(backends):
+    global step
+    if step is None:
+        step = StateTracker.get_epoch_step()
+    else:
+        step = 0
+    while not stop_prefetch.is_set():
+        if backends == {}:
+            logger.debug(
+                "All dataloaders exhausted. Moving to next epoch in main training loop."
+            )
+            StateTracker.clear_exhausted_buckets()
+            StateTracker.set_repeats(repeats=0)
+            data_queue.put((step, None))
+            break
+
+        step += 1
+        gradient_accumulation_steps = (
+            StateTracker.get_args().gradient_accumulation_steps
+        )
+        epoch_step = int(step / gradient_accumulation_steps)
+        StateTracker.set_epoch_step(epoch_step)
+
+        chosen_backend_id = select_dataloader_index(step, backends)
+        if chosen_backend_id is None:
+            logger.debug("No dataloader iterators were available.")
+            break
+
+        chosen_iter = iter(backends[chosen_backend_id])
+
+        try:
+            data_queue.put((step, next(chosen_iter)))
+        except MultiDatasetExhausted:
+            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get(
+                "repeats", False
+            )
+            if (
+                repeats
+                and repeats > 0
+                and StateTracker.get_repeats(chosen_backend_id) < repeats
+            ):
+                StateTracker.increment_repeats(chosen_backend_id)
+                logger.debug(
+                    f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
+                )
+                continue
+            logger.debug(
+                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
+            )
+            del backends[chosen_backend_id]
+            StateTracker.backend_exhausted(chosen_backend_id)
+            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
+        finally:
+            if not backends or all(
+                [
+                    StateTracker.get_data_backend_config(backend_id).get(
+                        "ignore_epochs", False
+                    )
+                    for backend_id in backends
+                ]
+            ):
+                logger.debug(
+                    "All dataloaders exhausted. Moving to next epoch in main training loop."
+                )
+                StateTracker.clear_exhausted_buckets()
+                data_queue.put((step, None))
+                break
+
+
+def start_prefetch_thread(backends):
+    global prefetch_thread, stop_prefetch, step
+    step = None  # Reset step for new epoch
+    stop_prefetch.clear()
+    prefetch_thread = threading.Thread(target=prefetch_data, args=(backends,))
+    prefetch_thread.start()
+
+
+def stop_prefetch_thread():
+    global stop_prefetch, prefetch_thread
+    stop_prefetch.set()
+    if prefetch_thread is not None:
+        prefetch_thread.join()
+
+
+def random_dataloader_iterator_with_prefetch(backends: dict):
+    global step
+    start_prefetch_thread(backends)
+    try:
+        while True:
+            step, data = data_queue.get()
+            if data is None:
+                break
+            yield (step, data)
+    finally:
+        stop_prefetch_thread()
