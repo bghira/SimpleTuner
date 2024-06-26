@@ -531,6 +531,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--dataloader_prefetch",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, the dataloader will read-ahead and attempt to retrieve latents, text embeds, and other metadata"
+            " ahead of the time when the batch is required, so that it can be immediately available."
+        ),
+    )
+    parser.add_argument(
         "--aspect_bucket_worker_count",
         type=int,
         default=12,

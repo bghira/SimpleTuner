@@ -29,7 +29,10 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
-from helpers.data_backend.factory import random_dataloader_iterator
+from helpers.data_backend.factory import (
+    random_dataloader_iterator,
+    random_dataloader_iterator_with_prefetch,
+)
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
@@ -1390,6 +1393,9 @@ def main():
     step = global_step
     training_luminance_values = []
     current_epoch_step = None
+    iterator_fn = random_dataloader_iterator
+    if args.dataloader_prefetch:
+        iterator_fn = random_dataloader_iterator_with_prefetch
 
     for epoch in range(first_epoch, args.num_train_epochs + 1):
         if current_epoch > args.num_train_epochs + 1:
@@ -1488,7 +1494,7 @@ def main():
                 continue
             train_backends[backend_id] = backend["train_dataloader"]
 
-        for step, batch in random_dataloader_iterator(train_backends):
+        for step, batch in iterator_fn(train_backends):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
 
