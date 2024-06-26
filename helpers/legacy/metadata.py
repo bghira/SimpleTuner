@@ -146,6 +146,7 @@ tags:
   - {'stable-diffusion-diffusers' if 'deepfloyd' not in StateTracker.get_args().model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
+  - simpletuner
   - {StateTracker.get_args().model_type}
 {'  - template:sd-lora' if 'lora' in StateTracker.get_args().model_type else ''}
 inference: true
