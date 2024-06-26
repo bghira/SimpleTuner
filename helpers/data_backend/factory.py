@@ -305,7 +305,7 @@ def configure_multi_databackend(
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
-                accelerator, init_backend["id"]
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
             init_backend["cache_dir"] = backend["cache_dir"]
         elif backend["type"] == "aws":
@@ -427,7 +427,7 @@ def configure_multi_databackend(
 
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
-                accelerator, init_backend["id"]
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
             init_backend["instance_data_root"] = backend["instance_data_dir"]
             # Remove trailing slash
@@ -445,6 +445,7 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                compress_cache=args.compress_disk_cache,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             init_backend["instance_data_root"] = backend["aws_data_prefix"]
@@ -807,7 +808,9 @@ def configure_multi_databackend(
     return StateTracker.get_data_backends()
 
 
-def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
+def get_local_backend(
+    accelerator, identifier: str, compress_cache: bool = False
+) -> LocalDataBackend:
     """
     Get a local disk backend.
 
@@ -817,7 +820,9 @@ def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
     Returns:
         LocalDataBackend: A LocalDataBackend object.
     """
-    return LocalDataBackend(accelerator=accelerator, id=identifier)
+    return LocalDataBackend(
+        accelerator=accelerator, id=identifier, compress_cache=compress_cache
+    )
 
 
 def check_aws_config(backend: dict) -> None:
@@ -849,6 +854,7 @@ def get_aws_backend(
     aws_secret_access_key: str,
     accelerator,
     identifier: str,
+    compress_cache: bool = False,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -858,6 +864,7 @@ def get_aws_backend(
         endpoint_url=aws_endpoint_url,
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
+        compress_cache=compress_cache,
     )
 
 

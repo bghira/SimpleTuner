@@ -396,6 +396,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--compress_disk_cache",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will gzip-compress the disk cache for Pytorch files. This will save substantial disk space, but may slow down the training process."
+        ),
+    )
+    parser.add_argument(
         "--aspect_bucket_disable_rebuild",
         action="store_true",
         default=False,
