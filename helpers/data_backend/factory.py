@@ -112,6 +112,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         "instance_data_dir", backend.get("aws_data_prefix", "")
     )
 
+    # check if caption_strategy=parquet with metadata_backend=json
+    if (
+        output["config"]["caption_strategy"] == "parquet"
+        and backend.get("metadata_backend", "json") == "json"
+    ):
+        raise ValueError(
+            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json."
+        )
+
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
         "target_downsample_size", args.target_downsample_size
