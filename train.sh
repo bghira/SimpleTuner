@@ -168,6 +168,8 @@ if [ -n "$AURA_FLOW" ] && [[ "$AURA_FLOW" == "true" ]]; then
 fi
 if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
+if [ -n "$HUNYUAN_DIT" ] && [[ "$HUNYUAN_DIT" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --hunyuan_dit"
 fi
 
 
