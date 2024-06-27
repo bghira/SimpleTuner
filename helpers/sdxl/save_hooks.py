@@ -116,7 +116,7 @@ class SDXLSaveHook:
             elif self.args.hunyuan_dit:
                 self.ema_model_cls = HunyuanDiT2DModel
 
-    def handle_lora(self, models, weights, output_dir):
+    def save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
         unet_lora_layers_to_save = None
@@ -191,7 +191,7 @@ class SDXLSaveHook:
             os.path.join(output_dir, "training_state.json")
         )
         if "lora" in self.args.model_type:
-            self.handle_lora(models=model, weights=weights, output_dir=output_dir)
+            self.save_lora(models=model, weights=weights, output_dir=output_dir)
             return
 
         # Create a temporary directory for atomic saves
@@ -231,6 +231,96 @@ class SDXLSaveHook:
         # Remove the temporary directory
         shutil.rmtree(temporary_dir)
 
+    def load_lora(self, models, input_dir):
+        logger.info(f"Loading LoRA weights from Path: {input_dir}")
+        unet_ = None
+        transformer_ = None
+        text_encoder_one_ = None
+        text_encoder_two_ = None
+        text_encoder_three_ = None
+
+        while len(models) > 0:
+            model = models.pop()
+
+            if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
+                unet_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.transformer))
+            ):
+                transformer_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_1))
+            ):
+                text_encoder_one_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_2))
+            ):
+                text_encoder_two_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_3))
+            ):
+                text_encoder_three_ = model
+            else:
+                raise ValueError(f"unexpected save model: {model.__class__}")
+
+        if self.args.sd3:
+            lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+            transformer_state_dict = {
+                f'{k.replace("transformer.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
+            }
+            transformer_state_dict = convert_unet_state_dict_to_peft(
+                transformer_state_dict
+            )
+            incompatible_keys = set_peft_model_state_dict(
+                transformer_, transformer_state_dict, adapter_name="default"
+            )
+
+        else:
+            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
+                input_dir
+            )
+
+            unet_state_dict = {
+                f'{k.replace("unet.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
+            }
+            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
+            incompatible_keys = set_peft_model_state_dict(
+                unet_ or self.unet, unet_state_dict, adapter_name="default"
+            )
+        if incompatible_keys is not None:
+            # check only for unexpected keys
+            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+            if unexpected_keys:
+                logger.warning(
+                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+                    f" {unexpected_keys}. "
+                )
+
+        if self.args.train_text_encoder:
+            # Do we need to call `scale_lora_layers()` here?
+            _set_state_dict_into_text_encoder(
+                lora_state_dict,
+                prefix="text_encoder.",
+                text_encoder=text_encoder_one_,
+            )
+
+            _set_state_dict_into_text_encoder(
+                lora_state_dict,
+                prefix="text_encoder_2.",
+                text_encoder=text_encoder_two_,
+            )
+            if self.args.sd3:
+                _set_state_dict_into_text_encoder(
+                    lora_state_dict,
+                    prefix="text_encoder_3.",
+                    text_encoder=text_encoder_three_,
+                )
+        logger.info("Completed loading LoRA weights.")
+
     def load_model_hook(self, models, input_dir):
         # Check the checkpoint dir for a "training_state.json" file to load
         training_state_path = os.path.join(input_dir, "training_state.json")
@@ -242,95 +332,8 @@ class SDXLSaveHook:
             )
 
         if "lora" in self.args.model_type:
-            logger.info(f"Loading LoRA weights from Path: {input_dir}")
-            unet_ = None
-            transformer_ = None
-            text_encoder_one_ = None
-            text_encoder_two_ = None
-            text_encoder_three_ = None
-
-            while len(models) > 0:
-                model = models.pop()
-
-                if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
-                    unet_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.transformer))
-                ):
-                    transformer_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
-                ):
-                    text_encoder_one_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
-                ):
-                    text_encoder_two_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_3))
-                ):
-                    text_encoder_three_ = model
-                else:
-                    raise ValueError(f"unexpected save model: {model.__class__}")
-
-            if self.args.sd3:
-                lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
-                transformer_state_dict = {
-                    f'{k.replace("transformer.", "")}': v
-                    for k, v in lora_state_dict.items()
-                    if k.startswith("unet.")
-                }
-                transformer_state_dict = convert_unet_state_dict_to_peft(
-                    transformer_state_dict
-                )
-                incompatible_keys = set_peft_model_state_dict(
-                    transformer_, transformer_state_dict, adapter_name="default"
-                )
-
-            else:
-                lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
-                    input_dir
-                )
-
-                unet_state_dict = {
-                    f'{k.replace("unet.", "")}': v
-                    for k, v in lora_state_dict.items()
-                    if k.startswith("unet.")
-                }
-                unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-                incompatible_keys = set_peft_model_state_dict(
-                    unet_ or self.unet, unet_state_dict, adapter_name="default"
-                )
-            if incompatible_keys is not None:
-                # check only for unexpected keys
-                unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-                if unexpected_keys:
-                    logger.warning(
-                        f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                        f" {unexpected_keys}. "
-                    )
-
-            if self.args.train_text_encoder:
-                # Do we need to call `scale_lora_layers()` here?
-                _set_state_dict_into_text_encoder(
-                    lora_state_dict,
-                    prefix="text_encoder.",
-                    text_encoder=text_encoder_one_,
-                )
-
-                _set_state_dict_into_text_encoder(
-                    lora_state_dict,
-                    prefix="text_encoder_2.",
-                    text_encoder=text_encoder_two_,
-                )
-                if self.args.sd3:
-                    _set_state_dict_into_text_encoder(
-                        lora_state_dict,
-                        prefix="text_encoder_3.",
-                        text_encoder=text_encoder_three_,
-                    )
-            logger.info("Completed loading LoRA weights.")
-
+            self.load_lora(models=models, input_dir=input_dir)
+        
         if self.args.use_ema:
             load_model = EMAModel.from_pretrained(
                 os.path.join(input_dir, self.ema_model_subdir), self.ema_model_cls
