@@ -30,11 +30,7 @@ from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
-from helpers.data_backend.factory import (
-    random_dataloader_iterator,
-    random_dataloader_iterator_with_prefetch,
-    initialise_prefetch,
-)
+from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
