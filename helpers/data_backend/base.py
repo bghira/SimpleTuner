@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from io import BytesIO
+import gzip, torch
 
 
 class BaseDataBackend(ABC):
@@ -85,3 +87,24 @@ class BaseDataBackend(ABC):
         Write a batch of files to the specified identifiers.
         """
         pass
+
+    def _decompress_torch(self, gzip_data):
+        """
+        We've read the gzip from disk. Just decompress it.
+        """
+        with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
+            decompressed_data = file.read()
+        return BytesIO(decompressed_data)
+
+    def _compress_torch(self, data):
+        """
+        Compress the torch data before writing it to disk.
+        """
+        output_data_container = BytesIO()
+        torch.save(data, output_data_container)
+        output_data_container.seek(0)
+
+        with BytesIO() as compressed_output:
+            with gzip.GzipFile(fileobj=compressed_output, mode="wb") as file:
+                file.write(output_data_container.getvalue())
+            return compressed_output.getvalue()

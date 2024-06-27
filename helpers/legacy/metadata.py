@@ -12,6 +12,29 @@ def _model_imports(args):
     return f"{output}\n"
 
 
+def _model_load(args, repo_id: str = None):
+    if "lora" in args.model_type:
+        output = (
+            f"\nmodel_id = '{args.pretrained_model_name_or_path}'"
+            f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
+            f"\nprompt = '{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}'"
+            f"\nnegative_prompt = '{args.validation_negative_prompt}'"
+            f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
+            f"\pipeline.load_adapter(adapter_id)"
+            f"\npipeline.to({_torch_device()})"
+        )
+    else:
+        output = (
+            f"\nmodel_id = '{repo_id if repo_id else os.path.join(args.output_dir, 'pipeline')}'"
+            f"\nprompt = '{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}'"
+            f"\nnegative_prompt = '{args.validation_negative_prompt}'"
+            f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
+            f"\npipeline.to({_torch_device()})"
+        )
+
+    return output
+
+
 def _torch_device():
     return """'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'"""
 
@@ -22,9 +45,10 @@ def code_example(args, repo_id: str = None):
 ```python
 {_model_imports(args)}
 
-model_id = "{repo_id if repo_id else '/path/to/repository'}"
+{_model_load(args, repo_id)}
+
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
-negative_prompt = "malformed, disgusting, overexposed, washed-out"
+negative_prompt = "{args.validation_negative_prompt}"
 
 pipeline = DiffusionPipeline.from_pretrained(model_id)
 pipeline.to({_torch_device()})
@@ -122,6 +146,7 @@ tags:
   - {'stable-diffusion-diffusers' if 'deepfloyd' not in StateTracker.get_args().model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
+  - simpletuner
   - {StateTracker.get_args().model_type}
 {'  - template:sd-lora' if 'lora' in StateTracker.get_args().model_type else ''}
 inference: true

@@ -12,10 +12,18 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, io, time
+import json, os, torch, logging, io, time, threading, queue
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+prefetch_log = logging.getLogger(f"DataBackendPrefetch")
+prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+
+# For prefetching.
+
+
+def prefetch_log_debug(message):
+    prefetch_log.debug(f"{rank_info()} {message}")
 
 
 def info_log(message):
@@ -111,6 +119,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["instance_data_root"] = backend.get(
         "instance_data_dir", backend.get("aws_data_prefix", "")
     )
+
+    # check if caption_strategy=parquet with metadata_backend=json
+    if (
+        output["config"]["caption_strategy"] == "parquet"
+        and backend.get("metadata_backend", "json") == "json"
+    ):
+        raise ValueError(
+            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json."
+        )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
@@ -305,7 +322,7 @@ def configure_multi_databackend(
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
-                accelerator, init_backend["id"]
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
             init_backend["cache_dir"] = backend["cache_dir"]
         elif backend["type"] == "aws":
@@ -427,7 +444,7 @@ def configure_multi_databackend(
 
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
-                accelerator, init_backend["id"]
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
             init_backend["instance_data_root"] = backend["instance_data_dir"]
             # Remove trailing slash
@@ -445,6 +462,7 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                compress_cache=args.compress_disk_cache,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             init_backend["instance_data_root"] = backend["aws_data_prefix"]
@@ -807,7 +825,9 @@ def configure_multi_databackend(
     return StateTracker.get_data_backends()
 
 
-def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
+def get_local_backend(
+    accelerator, identifier: str, compress_cache: bool = False
+) -> LocalDataBackend:
     """
     Get a local disk backend.
 
@@ -817,7 +837,9 @@ def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
     Returns:
         LocalDataBackend: A LocalDataBackend object.
     """
-    return LocalDataBackend(accelerator=accelerator, id=identifier)
+    return LocalDataBackend(
+        accelerator=accelerator, id=identifier, compress_cache=compress_cache
+    )
 
 
 def check_aws_config(backend: dict) -> None:
@@ -849,6 +871,7 @@ def get_aws_backend(
     aws_secret_access_key: str,
     accelerator,
     identifier: str,
+    compress_cache: bool = False,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -858,6 +881,7 @@ def get_aws_backend(
         endpoint_url=aws_endpoint_url,
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
+        compress_cache=compress_cache,
     )
 
 
@@ -963,3 +987,181 @@ def random_dataloader_iterator(backends: dict):
                 )
                 StateTracker.clear_exhausted_buckets()
                 return (step, None)
+
+
+def prefetch_data(backends, data_queue, stop_prefetch):
+    global step
+    if step is None or step == 0:
+        prefetch_log_debug("Retrieving epoch step from StateTracker.")
+        step = StateTracker.get_epoch_step()
+    else:
+        step = 0
+    while not stop_prefetch.is_set():
+        if backends == {}:
+            prefetch_log_debug(
+                "All dataloaders exhausted. Moving to next epoch in main training loop."
+            )
+            StateTracker.clear_exhausted_buckets()
+            StateTracker.set_repeats(repeats=0)
+            data_queue.put((step, None))
+            break
+        else:
+            prefetch_log_debug(f"Active dataloaders: {len(backends)}")
+
+        step += 1
+        gradient_accumulation_steps = (
+            StateTracker.get_args().gradient_accumulation_steps
+        )
+        epoch_step = int(step / gradient_accumulation_steps)
+        StateTracker.set_epoch_step(epoch_step)
+
+        chosen_backend_id = select_dataloader_index(step, backends)
+        if chosen_backend_id is None:
+            prefetch_log_debug("No dataloader iterators were available.")
+            break
+        prefetch_log_debug(f"Selected: {chosen_backend_id}")
+
+        chosen_iter = iter(backends[chosen_backend_id])
+        batch = None
+        try:
+            prefetch_log_debug(f"Adding data to queue.")
+            batch = next(chosen_iter)
+        except MultiDatasetExhausted:
+            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get(
+                "repeats", False
+            )
+            if (
+                repeats
+                and repeats > 0
+                and StateTracker.get_repeats(chosen_backend_id) < repeats
+            ):
+                StateTracker.increment_repeats(chosen_backend_id)
+                prefetch_log_debug(
+                    f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
+                )
+                continue
+            prefetch_log_debug(
+                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
+            )
+            del backends[chosen_backend_id]
+            StateTracker.backend_exhausted(chosen_backend_id)
+            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
+            prefetch_log_debug(
+                f"Ending retrieval. Moving onto next sample for queueing."
+            )
+        finally:
+            if not backends or all(
+                [
+                    StateTracker.get_data_backend_config(backend_id).get(
+                        "ignore_epochs", False
+                    )
+                    for backend_id in backends
+                ]
+            ):
+                prefetch_log_debug(
+                    "All dataloaders exhausted. Moving to next epoch in main training loop."
+                )
+                StateTracker.clear_exhausted_buckets()
+                data_queue.put((step, None))
+                break
+            data_queue.put((step, batch))
+
+
+def initialise_prefetch(backends: dict, data_queue_size: int = 10):
+    prefetch_data_queue = queue.Queue(maxsize=data_queue_size)
+    stop_prefetch = threading.Event()
+    prefetch_thread = start_prefetch_thread(
+        backends, prefetch_data_queue, stop_prefetch
+    )
+
+    return (prefetch_data_queue, prefetch_thread, stop_prefetch)
+
+
+def start_prefetch_thread(backends, prefetch_data_queue, stop_prefetch):
+    global step
+    if step is None:
+        prefetch_log_debug("Retrieving epoch step from StateTracker.")
+        step = StateTracker.get_epoch_step()
+    else:
+        step = 0
+    prefetch_log_debug(f"Beginning prefetch thread. Step: {step}")
+    # step = None  # Reset step for new epoch
+    stop_prefetch.clear()
+    prefetch_thread = threading.Thread(
+        target=prefetch_data,
+        args=(
+            backends,
+            prefetch_data_queue,
+            stop_prefetch,
+        ),
+    )
+    prefetch_thread.start()
+
+    return prefetch_thread
+
+
+def stop_prefetch_thread(prefetch_thread, stop_prefetch):
+    stop_prefetch.set()
+    if prefetch_thread is not None:
+        prefetch_thread.join()
+
+
+def random_dataloader_iterator_with_prefetch(
+    backends: dict, prefetch_data_queue, prefetch_thread, prefetch_stop_thread_event
+):
+    global step
+    try:
+        while True:
+            prefetch_log_debug(
+                f"Retrieving data from queue with {len(backends)} backends and # items: {prefetch_data_queue.qsize()}"
+            )
+            if prefetch_data_queue.empty():
+                prefetch_log_debug("Queue is empty. Waiting for data.")
+                time.sleep(0.1)
+                continue
+            step, data = prefetch_data_queue.get()
+            prefetch_log_debug(
+                f"Retrieved data from queue. Step: {step}, data: {type(data)}"
+            )
+            yield (step, data)
+    except Exception as e:
+        logger.error(f"Error while gathering batch: {e}")
+        raise e
+
+
+class BatchFetcher:
+    def __init__(self, max_size=10, datasets={}):
+        self.queue = queue.Queue(max_size)
+        self.datasets = datasets
+        self.keep_running = True
+
+    def start_fetching(self):
+        thread = threading.Thread(target=self.fetch_responses)
+        thread.start()
+        return thread
+
+    def fetch_responses(self):
+        while self.keep_running:
+            if self.queue.qsize() < self.queue.maxsize:
+                prefetch_log_debug(
+                    f"Queue size: {self.queue.qsize()}. Fetching more data."
+                )
+                self.queue.put(random_dataloader_iterator(self.datasets))
+            else:
+                prefetch_log_debug(
+                    f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
+                )
+                time.sleep(0.5)  # Sleep to prevent constant queue size checking
+
+    def next_response(self):
+        while self.queue.empty():
+            prefetch_log_debug("Queue is empty. Waiting for data.")
+            time.sleep(0.5)
+            continue
+        prefetch_log_debug("Queue is ready. Retrieving data from queue.")
+        result = self.queue.get()
+        prefetch_log_debug(f"Retrieved data from queue: {result}")
+        return result
+
+    def stop_fetching(self):
+        self.keep_running = False

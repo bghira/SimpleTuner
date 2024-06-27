@@ -402,6 +402,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--compress_disk_cache",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will gzip-compress the disk cache for Pytorch files. This will save substantial disk space, but may slow down the training process."
+        ),
+    )
+    parser.add_argument(
         "--aspect_bucket_disable_rebuild",
         action="store_true",
         default=False,
@@ -527,6 +535,21 @@ def parse_args(input_args=None):
             " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
             " Use this option with caution, and monitor your system's memory usage."
         ),
+    )
+    parser.add_argument(
+        "--dataloader_prefetch",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, the dataloader will read-ahead and attempt to retrieve latents, text embeds, and other metadata"
+            " ahead of the time when the batch is required, so that it can be immediately available."
+        ),
+    )
+    parser.add_argument(
+        "--dataloader_prefetch_qlen",
+        type=int,
+        default=10,
+        help=("Set the number of prefetched batches."),
     )
     parser.add_argument(
         "--aspect_bucket_worker_count",
@@ -1711,10 +1734,11 @@ def parse_args(input_args=None):
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
 
-    if args.pixart_sigma and not args.i_know_what_i_am_doing:
-        if args.max_grad_norm != 0.01:
-            warning_log(
-                f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
-            )
-            args.max_grad_norm = 0.01
+    if not args.i_know_what_i_am_doing:
+        if args.pixart_sigma or args.sd3:
+            if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
+                warning_log(
+                    f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+                )
+                args.max_grad_norm = 0.01
     return args

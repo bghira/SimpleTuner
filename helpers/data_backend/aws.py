@@ -57,6 +57,7 @@ class S3DataBackend(BaseDataBackend):
         write_retry_limit: int = 5,
         read_retry_interval: int = 5,
         write_retry_interval: int = 5,
+        compress_cache: bool = False,
     ):
         self.id = id
         self.accelerator = accelerator
@@ -65,6 +66,11 @@ class S3DataBackend(BaseDataBackend):
         self.read_retry_interval = read_retry_interval
         self.write_retry_limit = write_retry_limit
         self.write_retry_interval = write_retry_interval
+        self.compress_cache = compress_cache
+        if compress_cache:
+            logging.warning(
+                f"Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."
+            )
         # AWS buckets might use a region.
         extra_args = {
             "region_name": region_name,
@@ -289,12 +295,22 @@ class S3DataBackend(BaseDataBackend):
         # Retry the torch load within the retry limit
         for i in range(self.read_retry_limit):
             try:
-                obj = torch.load(BytesIO(self.read(s3_key)), map_location="cpu")
+                stored_tensor = BytesIO(self.read(s3_key))
+                if self.compress_cache:
+                    try:
+                        stored_tensor = self._decompress_torch(stored_tensor)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to decompress torch file, falling back to passthrough: {e}"
+                        )
+
+                obj = torch.load(stored_tensor, map_location="cpu")
                 # logger.debug(f"torch.load found: {obj}")
                 if type(obj) is tuple:
                     obj = tuple(o.to(torch.float32) for o in obj)
                 elif type(obj) is Tensor:
                     obj = obj.to(torch.float32)
+
                 return obj
             except Exception as e:
                 if not self.exists(s3_key):
@@ -320,6 +336,8 @@ class S3DataBackend(BaseDataBackend):
         for i in range(self.write_retry_limit):
             try:
                 buffer = BytesIO()
+                if self.compress_cache:
+                    data = self._compress_torch(data)
                 torch.save(data, buffer)
                 logger.debug(f"Writing torch file: {s3_key}")
                 result = self.write(s3_key, buffer.getvalue())
