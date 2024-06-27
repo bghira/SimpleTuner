@@ -1006,7 +1006,7 @@ def prefetch_data(backends, data_queue, stop_prefetch):
             data_queue.put((step, None))
             break
         else:
-            prefetch_log_debug(f"Active dataloaders: {backends}")
+            prefetch_log_debug(f"Active dataloaders: {len(backends)}")
 
         step += 1
         gradient_accumulation_steps = (
@@ -1120,7 +1120,9 @@ def random_dataloader_iterator_with_prefetch(
                 time.sleep(0.1)
                 continue
             step, data = prefetch_data_queue.get()
-            prefetch_log_debug(f"Retrieved data from queue. Step: {step}, data: {data}")
+            prefetch_log_debug(
+                f"Retrieved data from queue. Step: {step}, data: {type(data)}"
+            )
             yield (step, data)
     finally:
         yield (step, None)
