@@ -991,7 +991,7 @@ def random_dataloader_iterator(backends: dict):
 
 def prefetch_data(backends, data_queue, stop_prefetch):
     global step
-    if step is None:
+    if step is None or step == 0:
         prefetch_log_debug("Retrieving epoch step from StateTracker.")
         step = StateTracker.get_epoch_step()
     else:
@@ -1115,6 +1115,10 @@ def random_dataloader_iterator_with_prefetch(
             prefetch_log_debug(
                 f"Retrieving data from queue with {len(backends)} backends and # items: {prefetch_data_queue.qsize()}"
             )
+            if prefetch_data_queue.empty():
+                prefetch_log_debug("Queue is empty. Waiting for data.")
+                time.sleep(0.1)
+                continue
             step, data = prefetch_data_queue.get()
             prefetch_log_debug(f"Retrieved data from queue. Step: {step}, data: {data}")
             yield (step, data)
