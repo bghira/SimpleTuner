@@ -1116,8 +1116,10 @@ def random_dataloader_iterator_with_prefetch(
                 f"Retrieving data from queue with {len(backends)} backends and # items: {prefetch_data_queue.qsize()}"
             )
             step, data = prefetch_data_queue.get()
+            prefetch_log_debug(f"Retrieved data from queue. Step: {step}, data: {data}")
             if data is None:
                 break
             yield (step, data)
     finally:
         stop_prefetch_thread(prefetch_thread, prefetch_stop_thread_event)
+        yield (step, None)
