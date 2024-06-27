@@ -211,6 +211,13 @@ class PromptHandler:
                     "Instance prompt is required when instance_prompt_only is enabled."
                 )
             return instance_prompt
+        metadata_backend = StateTracker.get_data_backend(sampler_backend_id)[
+            "metadata_backend"
+        ]
+        if metadata_backend is None:
+            raise ValueError(
+                f"Could not find metadata backend for sampler {sampler_backend_id}: {StateTracker.get_data_backend(sampler_backend_id)}"
+            )
         (
             parquet_db,
             filename_column,
@@ -230,40 +237,7 @@ class PromptHandler:
 
         if not identifier_includes_extension:
             image_filename_stem = os.path.splitext(image_filename_stem)[0]
-
-        logger.debug(
-            f"for image_path: {image_path} we have image_filename_stem: {image_filename_stem}"
-        )
-        # parquet_db is a dataframe. let's find the row that matches the image filename.
-        if parquet_db is None:
-            raise ValueError(
-                f"Parquet database not found for sampler {sampler_backend_id}."
-            )
-        image_caption = ""
-        # Are the types incorrect, eg. the column is int64 vs str stem?
-        if "int" in str(parquet_db[filename_column].dtype):
-            if image_filename_stem.isdigit():
-                image_filename_stem = int(image_filename_stem)
-        item = parquet_db[parquet_db[filename_column] == image_filename_stem]
-        # Did we find the item?
-        if len(item) == 0 and instance_prompt is None:
-            logger.error(
-                f"Could not locate image {image_path} via stem {image_filename_stem} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries. Using filename as prompt."
-            )
-            return image_filename_stem
-        if (
-            caption_column in item.columns
-            and len(item) != 0
-            and len(item[caption_column].values) > 0
-        ):
-            image_caption = item[caption_column].values[0]
-        if not image_caption and fallback_caption_column:
-            if (
-                fallback_caption_column in item.columns
-                and len(item) != 0
-                and len(item[fallback_caption_column].values) > 0
-            ):
-                image_caption = item[fallback_caption_column].values[0]
+        image_caption = metadata_backend.caption_cache_entry(image_filename_stem)
         if instance_prompt is None and fallback_caption_column and not image_caption:
             raise ValueError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
@@ -440,21 +414,25 @@ class PromptHandler:
                     data_backend=data_backend,
                 )
             elif caption_strategy == "parquet":
-                caption = PromptHandler.prepare_instance_prompt_from_parquet(
-                    image_path,
-                    use_captions=use_captions,
-                    prepend_instance_prompt=prepend_instance_prompt,
-                    instance_prompt=instance_prompt,
-                    data_backend=data_backend,
-                    sampler_backend_id=data_backend.id,
-                )
+                try:
+                    caption = PromptHandler.prepare_instance_prompt_from_parquet(
+                        image_path,
+                        use_captions=use_captions,
+                        prepend_instance_prompt=prepend_instance_prompt,
+                        instance_prompt=instance_prompt,
+                        data_backend=data_backend,
+                        sampler_backend_id=data_backend.id,
+                    )
+                except:
+                    continue
             elif caption_strategy == "instanceprompt":
                 return [instance_prompt]
             else:
                 raise ValueError(
                     f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
                 )
-            captions.append(caption)
+            if caption:
+                captions.append(caption)
 
         return captions
 
@@ -545,6 +523,11 @@ class PromptHandler:
             modified_caption = caption
             # Apply each filter to the caption
             logger.debug(f"Filtering caption: {modified_caption}")
+            if modified_caption is None:
+                logger.error(
+                    f"Encountered a None caption in the list, data backend: {data_backend.id}"
+                )
+                continue
             for filter_item in caption_filter_list:
                 # Check for special replace pattern 's/replace/entry/'
                 if filter_item.startswith("s/") and filter_item.count("/") == 2:
@@ -564,7 +547,10 @@ class PromptHandler:
                 try:
                     # Assume all filters as regex patterns for flexibility
                     pattern = re.compile(filter_item)
-                    regex_modified_caption = pattern.sub("", modified_caption)
+                    try:
+                        regex_modified_caption = pattern.sub("", modified_caption)
+                    except:
+                        regex_modified_caption = modified_caption
                     if regex_modified_caption != modified_caption:
                         # logger.debug(
                         #     f"Applying regex FILTER {filter_item} to caption: {modified_caption}"

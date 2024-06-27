@@ -12,10 +12,23 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, io, time
+import json, os, torch, logging, io, time, threading, queue
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+prefetch_log = logging.getLogger(f"DataBackendPrefetch")
+prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+
+# For prefetching.
+
+
+def prefetch_log_debug(message):
+    prefetch_log.debug(f"{rank_info()} {message}")
+
+
+def info_log(message):
+    if StateTracker.get_accelerator().is_main_process:
+        logger.info(message)
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
@@ -106,6 +119,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["instance_data_root"] = backend.get(
         "instance_data_dir", backend.get("aws_data_prefix", "")
     )
+
+    # check if caption_strategy=parquet with metadata_backend=json
+    if (
+        output["config"]["caption_strategy"] == "parquet"
+        and backend.get("metadata_backend", "json") == "json"
+    ):
+        raise ValueError(
+            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json."
+        )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
     target_downsample_size = backend.get(
@@ -242,7 +264,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
             identifier_includes_extension,
         ),
     )
-    logger.info(
+    info_log(
         f"Configured parquet database for backend {backend['id']}. Caption column: {caption_column}. Filename column: {filename_column}."
     )
 
@@ -266,7 +288,7 @@ def configure_multi_databackend(
         raise FileNotFoundError(
             f"Data backend config file {args.data_backend_config} not found."
         )
-    logger.info(f"Loading data backend config from {args.data_backend_config}")
+    info_log(f"Loading data backend config from {args.data_backend_config}")
     with open(args.data_backend_config, "r") as f:
         data_backend_config = json.load(f)
     if len(data_backend_config) == 0:
@@ -284,12 +306,10 @@ def configure_multi_databackend(
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
         ):
-            logger.info(
-                f"Skipping disabled data backend {backend['id']} in config file."
-            )
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
             continue
 
-        logger.info(f'Configuring text embed backend: {backend["id"]}')
+        info_log(f'Configuring text embed backend: {backend["id"]}')
         if backend.get("default", None):
             if default_text_embed_backend_id is not None:
                 raise ValueError(
@@ -302,7 +322,7 @@ def configure_multi_databackend(
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
-                accelerator, init_backend["id"]
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
             init_backend["cache_dir"] = backend["cache_dir"]
         elif backend["type"] == "aws":
@@ -340,13 +360,16 @@ def configure_multi_databackend(
             model_type=StateTracker.get_model_type(),
             write_batch_size=backend.get("write_batch_size", 1),
         )
+        with accelerator.main_process_first():
+            init_backend["text_embed_cache"].discover_all_files()
+        accelerator.wait_for_everyone()
 
         if backend.get("default", False):
             # The default embed cache will be used for eg. validation prompts.
             StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
             logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
             # We will compute the null embedding for caption dropout here.
-            logger.info("Pre-computing null embedding")
+            info_log("Pre-computing null embedding")
             with accelerator.main_process_first():
                 init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                     [""], return_concat=False, load_from_cache=False
@@ -378,7 +401,7 @@ def configure_multi_databackend(
             " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
         )
         default_text_embed_backend_id = list(text_embed_backends.keys())[0]
-    logger.info("Completed loading text embed services.")
+    info_log("Completed loading text embed services.")
 
     all_captions = []
     for backend in data_backend_config:
@@ -391,9 +414,7 @@ def configure_multi_databackend(
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
         ):
-            logger.info(
-                f"Skipping disabled data backend {backend['id']} in config file."
-            )
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
             continue
         # For each backend, we will create a dict to store all of its components in.
         if (
@@ -402,10 +423,10 @@ def configure_multi_databackend(
             or backend["id"] in StateTracker.get_data_backends()
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
-        logger.info(f"Configuring data backend: {backend['id']}")
+        info_log(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
-        logger.info(f"Configured backend: {init_backend}")
+        info_log(f"Configured backend: {init_backend}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],
@@ -423,7 +444,7 @@ def configure_multi_databackend(
 
         if backend["type"] == "local":
             init_backend["data_backend"] = get_local_backend(
-                accelerator, init_backend["id"]
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
             init_backend["instance_data_root"] = backend["instance_data_dir"]
             # Remove trailing slash
@@ -441,6 +462,7 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                compress_cache=args.compress_disk_cache,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             init_backend["instance_data_root"] = backend["aws_data_prefix"]
@@ -456,7 +478,7 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
             )
-        logger.info(f"(id={init_backend['id']}) Loading bucket manager.")
+        info_log(f"(id={init_backend['id']}) Loading bucket manager.")
         metadata_backend_args = {}
         metadata_backend = backend.get("metadata_backend", "json")
         if metadata_backend == "json":
@@ -497,21 +519,24 @@ def configure_multi_databackend(
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
+            delete_unwanted_images=backend.get(
+                "delete_unwanted_images", args.delete_unwanted_images
+            ),
             cache_file_suffix=backend.get("cache_file_suffix", None),
             **metadata_backend_args,
         )
 
-        if "aspect" not in args.skip_file_discovery or "aspect" not in backend.get(
+        if "aspect" not in args.skip_file_discovery and "aspect" not in backend.get(
             "skip_file_discovery", ""
         ):
             if accelerator.is_local_main_process:
-                logger.info(
+                info_log(
                     f"(id={init_backend['id']}) Refreshing aspect buckets on main process."
                 )
                 init_backend["metadata_backend"].refresh_buckets(rank_info())
         accelerator.wait_for_everyone()
         if not accelerator.is_main_process:
-            logger.info(
+            info_log(
                 f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses."
             )
             init_backend["metadata_backend"].reload_cache()
@@ -563,7 +588,7 @@ def configure_multi_databackend(
                         )
                         prev_config[key] = backend[key]
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        logger.info(f"Configured backend: {init_backend}")
+        info_log(f"Configured backend: {init_backend}")
 
         print_bucket_info(init_backend["metadata_backend"])
         if len(init_backend["metadata_backend"]) == 0:
@@ -649,11 +674,14 @@ def configure_multi_databackend(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
 
+        # Update the backend registration here so the metadata backend can be found.
+        StateTracker.register_data_backend(init_backend)
+
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
         if "text" not in args.skip_file_discovery and "text" not in backend.get(
             "skip_file_discovery", ""
         ):
-            logger.info(f"(id={init_backend['id']}) Collecting captions.")
+            info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions = PromptHandler.get_all_captions(
                 data_backend=init_backend["data_backend"],
                 instance_data_root=init_backend["instance_data_root"],
@@ -666,13 +694,13 @@ def configure_multi_databackend(
                 f"Pre-computing text embeds / updating cache. We have {len(captions)} captions to process, though these will be filtered next."
             )
             caption_strategy = backend.get("caption_strategy", args.caption_strategy)
-            logger.info(
+            info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 captions, return_concat=False, load_from_cache=False
             )
-            logger.info(
+            info_log(
                 f"(id={init_backend['id']}) Completed processing {len(captions)} captions."
             )
 
@@ -680,7 +708,7 @@ def configure_multi_databackend(
         StateTracker.register_data_backend(init_backend)
 
         if "deepfloyd" not in StateTracker.get_args().model_type:
-            logger.info(f"(id={init_backend['id']}) Creating VAE latent cache.")
+            info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 vae=StateTracker.get_vae(),
@@ -701,12 +729,11 @@ def configure_multi_databackend(
                 target_downsample_size=backend.get(
                     "target_downsample_size",
                     args.target_downsample_size
-                    or backend.get("resolution", args.resolution) * 1.5,
+                    or backend.get("resolution", args.resolution) * 1.25,
                 ),
                 minimum_image_size=backend.get(
                     "minimum_image_size",
-                    args.minimum_image_size
-                    or backend.get("resolution", args.resolution),
+                    args.minimum_image_size,
                 ),
                 vae_batch_size=args.vae_batch_size,
                 write_batch_size=args.write_batch_size,
@@ -717,7 +744,7 @@ def configure_multi_databackend(
             )
 
             if args.vae_cache_preprocess:
-                logger.info(f"(id={init_backend['id']}) Discovering cache objects..")
+                info_log(f"(id={init_backend['id']}) Discovering cache objects..")
                 if accelerator.is_local_main_process:
                     init_backend["vaecache"].discover_all_files()
                 accelerator.wait_for_everyone()
@@ -731,7 +758,7 @@ def configure_multi_databackend(
             and backend.get("scan_for_errors", False)
             and "deepfloyd" not in StateTracker.get_args().model_type
         ):
-            logger.info(
+            info_log(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
             )
             init_backend["metadata_backend"].handle_vae_cache_inconsistencies(
@@ -775,9 +802,7 @@ def configure_multi_databackend(
         if ("disabled" in backend and backend["disabled"]) or (
             "disable" in backend and backend["disable"]
         ):
-            logger.info(
-                f"Skipping disabled data backend {backend['id']} in config file."
-            )
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
             continue
         if "conditioning_data" in backend and backend[
             "conditioning_data"
@@ -789,7 +814,7 @@ def configure_multi_databackend(
             StateTracker.set_conditioning_dataset(
                 backend["id"], backend["conditioning_data"]
             )
-            logger.info(
+            info_log(
                 f"Successfully configured conditioning image dataset for {backend['id']}"
             )
 
@@ -800,7 +825,9 @@ def configure_multi_databackend(
     return StateTracker.get_data_backends()
 
 
-def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
+def get_local_backend(
+    accelerator, identifier: str, compress_cache: bool = False
+) -> LocalDataBackend:
     """
     Get a local disk backend.
 
@@ -810,7 +837,9 @@ def get_local_backend(accelerator, identifier: str) -> LocalDataBackend:
     Returns:
         LocalDataBackend: A LocalDataBackend object.
     """
-    return LocalDataBackend(accelerator=accelerator, id=identifier)
+    return LocalDataBackend(
+        accelerator=accelerator, id=identifier, compress_cache=compress_cache
+    )
 
 
 def check_aws_config(backend: dict) -> None:
@@ -842,6 +871,7 @@ def get_aws_backend(
     aws_secret_access_key: str,
     accelerator,
     identifier: str,
+    compress_cache: bool = False,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -851,6 +881,7 @@ def get_aws_backend(
         endpoint_url=aws_endpoint_url,
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
+        compress_cache=compress_cache,
     )
 
 
@@ -956,3 +987,41 @@ def random_dataloader_iterator(backends: dict):
                 )
                 StateTracker.clear_exhausted_buckets()
                 return (step, None)
+
+
+class BatchFetcher:
+    def __init__(self, max_size=10, datasets={}):
+        self.queue = queue.Queue(max_size)
+        self.datasets = datasets
+        self.keep_running = True
+
+    def start_fetching(self):
+        thread = threading.Thread(target=self.fetch_responses)
+        thread.start()
+        return thread
+
+    def fetch_responses(self):
+        while self.keep_running:
+            if self.queue.qsize() < self.queue.maxsize:
+                prefetch_log_debug(
+                    f"Queue size: {self.queue.qsize()}. Fetching more data."
+                )
+                self.queue.put(random_dataloader_iterator(self.datasets))
+            else:
+                prefetch_log_debug(
+                    f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
+                )
+                time.sleep(0.5)  # Sleep to prevent constant queue size checking
+
+    def next_response(self):
+        while self.queue.empty():
+            prefetch_log_debug("Queue is empty. Waiting for data.")
+            time.sleep(0.5)
+            continue
+        prefetch_log_debug("Queue is ready. Retrieving data from queue.")
+        result = self.queue.get()
+        prefetch_log_debug(f"Retrieved data from queue: {result}")
+        return result
+
+    def stop_fetching(self):
+        self.keep_running = False

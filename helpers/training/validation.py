@@ -481,17 +481,22 @@ class Validation:
             **scheduler_args,
         )
 
-    def setup_pipeline(self, validation_type):
+    def setup_pipeline(self, validation_type, enable_ema_model: bool = True):
         if validation_type == "intermediary" and self.args.use_ema:
-            if self.unet is not None:
-                self.ema_model.store(self.unet.parameters())
-                self.ema_model.copy_to(self.unet.parameters())
-            if self.transformer is not None:
-                self.ema_model.store(self.transformer.parameters())
-                self.ema_model.copy_to(self.transformer.parameters())
-            if self.args.ema_device != "accelerator":
-                logger.info("Moving EMA weights to GPU for inference.")
-                self.ema_model.to(self.accelerator.device)
+            if enable_ema_model:
+                if self.unet is not None:
+                    self.ema_model.store(self.unet.parameters())
+                    self.ema_model.copy_to(self.unet.parameters())
+                if self.transformer is not None:
+                    self.ema_model.store(self.transformer.parameters())
+                    self.ema_model.copy_to(self.transformer.parameters())
+                if self.args.ema_device != "accelerator":
+                    logger.info("Moving EMA weights to GPU for inference.")
+                    self.ema_model.to(self.accelerator.device)
+            else:
+                logger.debug(
+                    f"Skipping EMA model setup for validation, as enable_ema_model=False."
+                )
 
         if self.pipeline is None:
             pipeline_cls = self._pipeline_cls()
@@ -828,15 +833,20 @@ class Validation:
                     {"Validation Gallery": table}, step=StateTracker.get_global_step()
                 )
 
-    def finalize_validation(self, validation_type):
+    def finalize_validation(self, validation_type, enable_ema_model: bool = True):
         """Cleans up and restores original state if necessary."""
         if validation_type == "intermediary" and self.args.use_ema:
-            if self.unet is not None:
-                self.ema_model.restore(self.unet.parameters())
-            if self.transformer is not None:
-                self.ema_model.restore(self.transformer.parameters())
-            if self.args.ema_device != "accelerator":
-                self.ema_model.to(self.args.ema_device)
+            if enable_ema_model:
+                if self.unet is not None:
+                    self.ema_model.restore(self.unet.parameters())
+                if self.transformer is not None:
+                    self.ema_model.restore(self.transformer.parameters())
+                if self.args.ema_device != "accelerator":
+                    self.ema_model.to(self.args.ema_device)
+            else:
+                logger.debug(
+                    f"Skipping EMA model restoration for validation, as enable_ema_model=False."
+                )
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None
         self.pipeline = None

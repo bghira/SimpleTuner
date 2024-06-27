@@ -73,6 +73,23 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Configure the behaviour of the integrity scan check.
 - **Why**: A dataset could have incorrect settings applied at multiple points of training, eg. if you accidentally delete the `.json` cache files from your dataset and switch the data backend config to use square images rather than aspect-crops. This will result in an inconsistent data cache, which can be corrected by setting `scan_for_errors` to `true` in your `multidatabackend.json` configuration file. When this scan runs, it relies on the setting of `--vae_cache_scan_behaviour` to determine how to resolve the inconsistency: `recreate` (the default) will remove the offending cache entry so that it can be recreated, and `sync` will update the bucket metadata to reflect the reality of the real training sample. Recommended value: `recreate`.
 
+### `--dataloader_prefetch`
+
+- **What**: Retrieve batches ahead-of-time.
+- **Why**: Especially when using large batch sizes, training will "pause" while samples are retrieved from disk (even NVMe), impacting GPU utilisation metrics. Enabling dataloader prefetch will keep a buffer full of entire batches, so that they can be loaded instantly.
+
+### `--dataloader_prefetch_qlen`
+
+- **What**: Increase or reduce the number of batches held in memory.
+- **Why**: When using dataloader prefetch, a default of 10 entries are kept in memory per GPU/process. This may be too much or too little. This value can be adjusted to increase the number of batches prepared in advance.
+
+### `--compress_disk_cache`
+
+- **What**: Compress the VAE and text embed caches on-disk.
+- **Why**: The T5 encoder used by DeepFloyd, SD3, and PixArt, produces very-large text embeds that end up being mostly empty space for shorter or redundant captions. Enabling `--compress_disk_cache` can reduce space consumed by up to 75%, with average savings of 40%.
+
+> ⚠️ You will need to manually remove the existing cache directories so they can be recreated with compression by the trainer.
+
 ---
 
 ## 🌈 Image and Text Processing
@@ -254,7 +271,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--vae_dtype {default,fp16,fp32,bf16}]
                      [--vae_batch_size VAE_BATCH_SIZE]
                      [--vae_cache_scan_behaviour {recreate,sync}]
-                     [--vae_cache_preprocess]
+                     [--vae_cache_preprocess] [--compress_disk_cache]
                      [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
                      [--skip_file_discovery SKIP_FILE_DISCOVERY]
                      [--revision REVISION] [--variant VARIANT]
@@ -263,7 +280,8 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
-                     [--enable_multiprocessing]
+                     [--enable_multiprocessing] [--dataloader_prefetch]
+                     [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
                      [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                      [--cache_dir CACHE_DIR]
                      [--cache_clear_validation_prompts]
@@ -295,7 +313,10 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                      [--lr_warmup_steps LR_WARMUP_STEPS]
                      [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                     [--use_ema] [--ema_decay EMA_DECAY]
+                     [--use_ema] [--ema_device {cpu,accelerator}]
+                     [--ema_cpu_only] [--ema_foreach_disable]
+                     [--ema_update_interval EMA_UPDATE_INTERVAL]
+                     [--ema_decay EMA_DECAY]
                      [--non_ema_revision NON_EMA_REVISION]
                      [--offload_param_path OFFLOAD_PARAM_PATH]
                      [--use_8bit_adam] [--use_adafactor_optimizer]
@@ -315,6 +336,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
                      [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
                      [--logging_dir LOGGING_DIR]
+                     [--validation_seed_source {gpu,cpu}]
                      [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                      [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
                      [--allow_tf32] [--validation_using_datasets]
@@ -360,6 +382,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--delete_unwanted_images] [--delete_problematic_images]
                      [--offset_noise] [--lr_end LR_END]
                      [--i_know_what_i_am_doing]
+                     [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
 
 The following SimpleTuner command-line options are available:
 
@@ -561,6 +584,10 @@ options:
                         some situations, pre-processing may be desired. To
                         revert to the old behaviour, supply
                         --vae_cache_preprocess=false.
+  --compress_disk_cache
+                        If set, will gzip-compress the disk cache for Pytorch
+                        files. This will save substantial disk space, but may
+                        slow down the training process.
   --aspect_bucket_disable_rebuild
                         When using a randomised aspect bucket list, the VAE
                         and aspect cache are rebuilt on each epoch. With a
@@ -637,6 +664,13 @@ options:
                         multiprocessing may be faster than threading, but will
                         consume a lot more memory. Use this option with
                         caution, and monitor your system's memory usage.
+  --dataloader_prefetch
+                        When provided, the dataloader will read-ahead and
+                        attempt to retrieve latents, text embeds, and other
+                        metadata ahead of the time when the batch is required,
+                        so that it can be immediately available.
+  --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
+                        Set the number of prefetched batches.
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers
@@ -788,6 +822,28 @@ options:
                         cosine_with_restarts scheduler.
   --lr_power LR_POWER   Power factor of the polynomial scheduler.
   --use_ema             Whether to use EMA (exponential moving average) model.
+  --ema_device {cpu,accelerator}
+                        The device to use for the EMA model. If set to
+                        'accelerator', the EMA model will be placed on the
+                        accelerator. This provides the fastest EMA update
+                        times, but is not ultimately necessary for EMA to
+                        function.
+  --ema_cpu_only        When using EMA, the shadow model is moved to the
+                        accelerator before we update its parameters. When
+                        provided, this option will disable the moving of the
+                        EMA model to the accelerator. This will save a lot of
+                        VRAM at the cost of a lot of time for updates. It is
+                        recommended to also supply --ema_update_interval to
+                        reduce the number of updates to eg. every 100 steps.
+  --ema_foreach_disable
+                        By default, we use torch._foreach functions for
+                        updating the shadow parameters, which should be fast.
+                        When provided, this option will disable the foreach
+                        methods and use vanilla EMA updates.
+  --ema_update_interval EMA_UPDATE_INTERVAL
+                        The number of optimization steps between EMA updates.
+                        If not provided, EMA network will update on every
+                        step.
   --ema_decay EMA_DECAY
                         The closer to 0.9999 this gets, the less updates will
                         occur over time. Setting it to a lower value, such as
@@ -869,6 +925,13 @@ options:
                         [TensorBoard](https://www.tensorflow.org/tensorboard)
                         log directory. Will default to
                         *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***.
+  --validation_seed_source {gpu,cpu}
+                        Some systems may benefit from using CPU-based seeds
+                        for reproducibility. On other systems, this may cause
+                        a TypeError. Setting this option to 'cpu' may cause
+                        validation errors. If so, please set
+                        SIMPLETUNER_LOG_LEVEL=DEBUG and submit debug.log to a
+                        new Github issue report.
   --validation_torch_compile VALIDATION_TORCH_COMPILE
                         Supply `--validation_torch_compile=true` to enable the
                         use of torch.compile() on the validation pipeline. For
@@ -1116,4 +1179,7 @@ options:
                         must set this flag to continue. This is a safety
                         feature to prevent accidental use of an unsupported
                         optimizer, as weights are stored in bfloat16.
+  --accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL
+                        Clear the cache from VRAM every X steps. This can help
+                        prevent memory leaks, but may slow down training.
 ```

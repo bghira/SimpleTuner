@@ -32,6 +32,7 @@ class ParquetMetadataBackend(MetadataBackend):
         resolution_type: str,
         parquet_config: dict,
         delete_problematic_images: bool = False,
+        delete_unwanted_images: bool = False,
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
@@ -51,11 +52,18 @@ class ParquetMetadataBackend(MetadataBackend):
             resolution=resolution,
             resolution_type=resolution_type,
             delete_problematic_images=delete_problematic_images,
+            delete_unwanted_images=delete_unwanted_images,
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
             cache_file_suffix=cache_file_suffix,
         )
         self.load_parquet_database()
+        self.caption_cache = self._extract_captions_to_fast_list()
+        self.missing_captions = self._locate_missing_caption_from_fast_list()
+        if self.missing_captions:
+            logger.warning(
+                f"Missing captions for {len(self.missing_captions)} images: {self.missing_captions}"
+            )
 
     def load_parquet_database(self):
         """
@@ -80,6 +88,80 @@ class ParquetMetadataBackend(MetadataBackend):
             raise FileNotFoundError(
                 f"Parquet could not be loaded from {self.parquet_path}: database file does not exist (path={self.parquet_path})."
             )
+
+    def _locate_missing_caption_from_fast_list(self):
+        """
+        Check the fast list keys vs the filenames in our aspect ratio bucket indices.
+        """
+        missing_captions = []
+        identifier_includes_extension = self.parquet_config.get(
+            "identifier_includes_extension", False
+        )
+        # currently we just don't do this.
+        identifier_includes_path = False
+        for key in self.aspect_ratio_bucket_indices.keys():
+            for filename in self.aspect_ratio_bucket_indices[key]:
+                if not identifier_includes_extension:
+                    filename = os.path.splitext(filename)[0]
+                if not identifier_includes_path:
+                    # strip out self.instance_data_root
+                    filename = filename.replace(self.instance_data_root, "")
+                    # any leading /
+                    if filename.startswith("/"):
+                        filename = filename[1:]
+                if filename not in self.caption_cache:
+                    missing_captions.append(filename)
+        return missing_captions
+
+    def _extract_captions_to_fast_list(self):
+        """
+        Pull the captions from the parquet table into a dict with the format {filename: caption}.
+
+        This helps because parquet's columnar format sucks for searching.
+
+        Returns:
+            dict: A dictionary of captions.
+        """
+        if self.parquet_database is None:
+            raise ValueError("Parquet database is not loaded.")
+        filename_column = self.parquet_config.get("filename_column")
+        caption_column = self.parquet_config.get("caption_column")
+        fallback_caption_column = self.parquet_config.get("fallback_caption_column")
+        identifier_includes_extension = self.parquet_config.get(
+            "identifier_includes_extension", False
+        )
+        captions = {}
+        for index, row in self.parquet_database.iterrows():
+            if filename_column in row:
+                filename = str(row[filename_column])
+            else:
+                filename = str(index)
+
+            if not identifier_includes_extension:
+                filename = os.path.splitext(filename)[0]
+
+            caption = row[caption_column]
+            if not caption and fallback_caption_column:
+                caption = row[fallback_caption_column]
+            if not caption:
+                raise ValueError(
+                    f"Could not locate caption for image {filename} in sampler_backend {self.id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(self.parquet_database)} entries."
+                )
+            if type(caption) == bytes:
+                caption = caption.decode("utf-8")
+            elif type(caption) == list:
+                # selecting the first caption. see issue #476 on github
+                caption = caption[0]
+            if caption:
+                caption = caption.strip()
+            captions[filename] = caption
+        return captions
+
+    def caption_cache_entry(self, index: str):
+        result = self.caption_cache.get(str(index), None)
+
+        logger.debug(f"Caption cache entry for idx {str(index)}: {result}")
+        return result
 
     def __len__(self):
         """
@@ -420,11 +502,18 @@ class ParquetMetadataBackend(MetadataBackend):
 
             logger.debug("Checking minimum resolution size vs image size...")
             if not self.meets_resolution_requirements(image_metadata=image_metadata):
-                logger.debug(
-                    f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
-                )
+                if not self.delete_unwanted_images:
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum image size requirements. Skipping image."
+                    )
+                else:
+                    logger.debug(
+                        f"Image {image_path_str} does not meet minimum image size requirements. Deleting image."
+                    )
+                    self.data_backend.delete(image_path_str)
                 statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1
+
                 return aspect_ratio_bucket_indices
 
             logger.debug("Collecting aspect ratio data...")
@@ -452,19 +541,19 @@ class ParquetMetadataBackend(MetadataBackend):
                     ),
                 }
             )
-            logger.debug(
-                f"Data types for metadata: {[type(v) for v in image_metadata.values()]}"
-            )
+            # logger.debug(
+            #     f"Data types for metadata: {[type(v) for v in image_metadata.values()]}"
+            # )
             # print the types of any iterable values
-            for key, value in image_metadata.items():
-                if hasattr(value, "__iter__"):
-                    logger.debug(f"Key {key} has type {type(value)}: {value}")
-                    for v in value:
-                        logger.debug(f"Value has type {type(v)}: {v}")
+            # for key, value in image_metadata.items():
+            # if hasattr(value, "__iter__"):
+            # logger.debug(f"Key {key} has type {type(value)}: {value}")
+            # for v in value:
+            # logger.debug(f"Value has type {type(v)}: {v}")
 
-            logger.debug(
-                f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
-            )
+            # logger.debug(
+            #     f"Image {image_path_str} has aspect ratio {prepared_sample.aspect_ratio}, intermediary size {image_metadata['intermediary_size']}, target size {image_metadata['target_size']}."
+            # )
 
             # Create a new bucket if it doesn't exist
             aspect_ratio_key = str(prepared_sample.aspect_ratio)

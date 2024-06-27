@@ -16,6 +16,21 @@ if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
 
 
+def info_log(message):
+    if is_primary_process:
+        logger.info(message)
+
+
+def warning_log(message):
+    if is_primary_process:
+        logger.warning(message)
+
+
+def error_log(message):
+    if is_primary_process:
+        logger.error(message)
+
+
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(
         description="The following SimpleTuner command-line options are available:"
@@ -381,6 +396,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--compress_disk_cache",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will gzip-compress the disk cache for Pytorch files. This will save substantial disk space, but may slow down the training process."
+        ),
+    )
+    parser.add_argument(
         "--aspect_bucket_disable_rebuild",
         action="store_true",
         default=False,
@@ -506,6 +529,21 @@ def parse_args(input_args=None):
             " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
             " Use this option with caution, and monitor your system's memory usage."
         ),
+    )
+    parser.add_argument(
+        "--dataloader_prefetch",
+        action="store_true",
+        default=False,
+        help=(
+            "When provided, the dataloader will read-ahead and attempt to retrieve latents, text embeds, and other metadata"
+            " ahead of the time when the batch is required, so that it can be immediately available."
+        ),
+    )
+    parser.add_argument(
+        "--dataloader_prefetch_qlen",
+        type=int,
+        default=10,
+        help=("Set the number of prefetched batches."),
     )
     parser.add_argument(
         "--aspect_bucket_worker_count",
@@ -1568,25 +1606,25 @@ def parse_args(input_args=None):
 
     if torch.backends.mps.is_available():
         if not args.unet_attention_slice and StateTracker.get_model_type() != "legacy":
-            logger.warning(
+            warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
         if args.train_batch_size > 16:
-            logger.error(
+            error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
                 "\nPlease reduce the batch size to 12 or lower."
             )
             sys.exit(1)
         if args.lora_init_type == "loftq":
-            logger.error(
+            error_log(
                 "Because MacOS is not yet supported by Bits and Bytes, we cannot use LoftQ for weight initialisation."
                 " Use 'gaussian' or 'default' instead."
             )
             sys.exit(1)
 
     if args.max_train_steps is not None and args.num_train_epochs > 0:
-        logger.error(
+        error_log(
             "When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0."
         )
         sys.exit(1)
@@ -1597,7 +1635,7 @@ def parse_args(input_args=None):
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
-        logger.error(
+        error_log(
             f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
         )
         args.pretrained_vae_model_name_or_path = None
@@ -1608,26 +1646,26 @@ def parse_args(input_args=None):
         args.pretrained_vae_model_name_or_path = None
 
     if "deepfloyd" not in args.model_type and not args.sd3:
-        logger.info(
+        info_log(
             f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
         )
-        logger.info(f"Default VAE Cache location: {args.cache_dir_vae}")
-        logger.info(f"Text Cache location: {args.cache_dir_text}")
+        info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
+        info_log(f"Text Cache location: {args.cache_dir_text}")
     else:
         deepfloyd_pixel_alignment = 8
         if not args.sd3 and args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
-            logger.warning(
+            warning_log(
                 f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
         elif args.sd3:
-            logger.warning(
+            warning_log(
                 "Stable Diffusion 3 requires a pixel alignment interval of 64px. Updating value."
             )
             args.aspect_bucket_alignment = 64
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
-        logger.warning(
+        warning_log(
             "DeepFloyd Stage II requires a resolution of at least 256. Setting to 256."
         )
         args.resolution = 256
@@ -1662,7 +1700,7 @@ def parse_args(input_args=None):
             args.validation_resolution = int(int(args.validation_resolution) * 1e3)
             # Make it divisible by 8:
             args.validation_resolution = int(int(args.validation_resolution) / 8) * 8
-        logger.info(f"{log_msg} {int(args.validation_resolution)}px")
+        info_log(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
 
@@ -1679,7 +1717,7 @@ def parse_args(input_args=None):
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
         if not args.disable_compel:
-            logger.warning(
+            warning_log(
                 "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
             )
             args.disable_compel = True
@@ -1687,10 +1725,11 @@ def parse_args(input_args=None):
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
 
-    if args.pixart_sigma and not args.i_know_what_i_am_doing:
-        if args.max_grad_norm != 0.01:
-            logger.warning(
-                f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
-            )
-            args.max_grad_norm = 0.01
+    if not args.i_know_what_i_am_doing:
+        if args.pixart_sigma or args.sd3:
+            if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
+                warning_log(
+                    f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+                )
+                args.max_grad_norm = 0.01
     return args

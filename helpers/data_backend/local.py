@@ -1,7 +1,7 @@
 from helpers.data_backend.base import BaseDataBackend
 from pathlib import Path
 from io import BytesIO
-import os, logging, torch
+import os, logging, torch, gzip
 from typing import Any
 from PIL import Image
 
@@ -10,9 +10,10 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 class LocalDataBackend(BaseDataBackend):
-    def __init__(self, accelerator, id: str):
+    def __init__(self, accelerator, id: str, compress_cache: bool = False):
         self.accelerator = accelerator
         self.id = id
+        self.compress_cache = compress_cache
 
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
@@ -166,19 +167,40 @@ class LocalDataBackend(BaseDataBackend):
         os.makedirs(directory_path, exist_ok=True)
 
     def torch_load(self, filename):
-        # Check if file exists:
+        """
+        Load a torch tensor from a file.
+        """
         if not self.exists(filename):
             raise FileNotFoundError(f"{filename} not found.")
-        return torch.load(self.read(filename, as_byteIO=True), map_location="cpu")
+
+        stored_tensor = self.read(filename, as_byteIO=True)
+
+        if self.compress_cache:
+            try:
+                stored_tensor = self._decompress_torch(stored_tensor)
+                stored_tensor.seek(0)
+            except Exception as e:
+                logger.error(
+                    f"Failed to decompress torch file, falling back to passthrough: {e}"
+                )
+        loaded_tensor = torch.load(stored_tensor, map_location="cpu")
+        return loaded_tensor
 
     def torch_save(self, data, original_location):
-        if type(original_location) == str:
-            # A file path was given. Open it.
+        """
+        Save a torch tensor to a file.
+        """
+        if isinstance(original_location, str):
             location = self.open_file(original_location, "wb")
         else:
-            # A file object was given. Use it.
             location = original_location
-        torch.save(data, location)
+
+        if self.compress_cache:
+            compressed_data = self._compress_torch(data)
+            location.write(compressed_data)
+        else:
+            torch.save(data, location)
+        location.close()
 
     def write_batch(self, filepaths: list, data_list: list) -> None:
         """Write a batch of data to the specified filepaths."""

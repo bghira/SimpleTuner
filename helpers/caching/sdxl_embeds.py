@@ -128,8 +128,6 @@ class TextEmbeddingCache:
             daemon=True,
         )
         self.batch_write_thread.start()
-        # Ensure the cache has the currently-existing file list.
-        self.discover_all_files()
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
@@ -148,6 +146,9 @@ class TextEmbeddingCache:
         result = md5_hash.hexdigest() + hash_format
         # logger.debug(f"-> {result}")
         return result
+
+    def hash_prompt_with_path(self, caption):
+        return os.path.join(self.cache_dir, self.create_hash(caption) + ".pt")
 
     def hash_prompt(self, caption):
         return self.create_hash(caption) + ".pt"
@@ -460,7 +461,9 @@ class TextEmbeddingCache:
 
         # Parallel processing for hashing
         with ThreadPoolExecutor() as executor:
-            all_cache_filenames = list(executor.map(self.hash_prompt, all_prompts))
+            all_cache_filenames = list(
+                executor.map(self.hash_prompt_with_path, all_prompts)
+            )
 
         # Create a set for faster lookups
         existing_cache_filenames_set = set(existing_cache_filenames)
@@ -568,9 +571,7 @@ class TextEmbeddingCache:
                 ncols=125,
                 position=get_rank(),
             ):
-                filename = os.path.join(
-                    self.cache_dir, self.create_hash(prompt) + ".pt"
-                )
+                filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
                 debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
@@ -634,6 +635,10 @@ class TextEmbeddingCache:
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            logger.debug(
+                f"Exiting text cache write busy-loop, {self.write_queue.qsize()} items remaining."
+            )
 
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
@@ -699,9 +704,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 position=get_rank() + self.accelerator.num_processes + 1,
             ):
-                filename = os.path.join(
-                    self.cache_dir, self.create_hash(prompt) + ".pt"
-                )
+                filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 if prompt != "":
                     prompt = PromptHandler.filter_caption(self.data_backend, prompt)
 
@@ -776,6 +779,10 @@ class TextEmbeddingCache:
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
 
+            logger.debug(
+                f"Exiting text cache write busy-loop, {self.write_queue.qsize()} items remaining."
+            )
+
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
             self.process_write_batches = False
@@ -785,7 +792,7 @@ class TextEmbeddingCache:
                 gc.collect()
                 return
 
-        logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
+        # logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
         if len(attention_masks_all) > 0:
             return prompt_embeds_all, attention_masks_all
         return prompt_embeds_all
@@ -835,9 +842,7 @@ class TextEmbeddingCache:
                 ncols=125,
                 position=get_rank(),
             ):
-                filename = os.path.join(
-                    self.cache_dir, self.create_hash(prompt) + ".pt"
-                )
+                filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
                 debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"

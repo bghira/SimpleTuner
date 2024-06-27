@@ -26,10 +26,15 @@ from helpers.caching.memory import reclaim_memory
 from helpers.legacy.validation import prepare_validation_prompt_list
 from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
+from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
-from helpers.data_backend.factory import random_dataloader_iterator
+from helpers.data_backend.factory import (
+    random_dataloader_iterator,
+    random_dataloader_iterator_with_prefetch,
+    initialise_prefetch,
+)
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
@@ -1390,6 +1395,8 @@ def main():
     step = global_step
     training_luminance_values = []
     current_epoch_step = None
+    bf, fetch_thread = None, None
+    iterator_fn = random_dataloader_iterator
 
     for epoch in range(first_epoch, args.num_train_epochs + 1):
         if current_epoch > args.num_train_epochs + 1:
@@ -1487,8 +1494,20 @@ def main():
                 )
                 continue
             train_backends[backend_id] = backend["train_dataloader"]
+        # Begin dataloader prefetch, if enabled.
+        iterator_args = [train_backends]
+        if args.dataloader_prefetch:
+            iterator_args = []
+            if bf is None:
+                bf = BatchFetcher(
+                    datasets=train_backends, max_size=args.dataloader_prefetch_qlen
+                )
+            if fetch_thread is not None:
+                fetch_thread.join()
+            fetch_thread = bf.start_fetching()
+            iterator_fn = bf.next_response
 
-        for step, batch in random_dataloader_iterator(train_backends):
+        for step, batch in iterator_fn(*iterator_args):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
 
