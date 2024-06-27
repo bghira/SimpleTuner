@@ -1143,15 +1143,25 @@ class BatchFetcher:
     def fetch_responses(self):
         while self.keep_running:
             if self.queue.qsize() < self.queue.maxsize:
+                prefetch_log_debug(
+                    f"Queue size: {self.queue.qsize()}. Fetching more data."
+                )
                 self.queue.put(random_dataloader_iterator(self.datasets))
             else:
+                prefetch_log_debug(
+                    f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
+                )
                 time.sleep(0.5)  # Sleep to prevent constant queue size checking
 
     def next_response(self):
         while self.queue.empty():
+            prefetch_log_debug("Queue is empty. Waiting for data.")
             time.sleep(0.5)
             continue
-        return self.queue.get()
+        prefetch_log_debug("Queue is ready. Retrieving data from queue.")
+        result = self.queue.get()
+        prefetch_log_debug(f"Retrieved data from queue: {result}")
+        return result
 
     def stop_fetching(self):
         self.keep_running = False
