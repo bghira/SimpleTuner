@@ -1148,9 +1148,10 @@ class BatchFetcher:
                 time.sleep(0.5)  # Sleep to prevent constant queue size checking
 
     def next_response(self):
-        if not self.queue.empty():
-            return self.queue.get()
-        return StateTracker.get_epoch_step(), None
+        while self.queue.empty():
+            time.sleep(0.5)
+            continue
+        return self.queue.get()
 
     def stop_fetching(self):
         self.keep_running = False
