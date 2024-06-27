@@ -32,6 +32,7 @@ from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import (
     random_dataloader_iterator,
     random_dataloader_iterator_with_prefetch,
+    initialise_prefetch,
 )
 from helpers.training.custom_schedule import (
     get_polynomial_decay_schedule_with_warmup,
@@ -1493,8 +1494,17 @@ def main():
                 )
                 continue
             train_backends[backend_id] = backend["train_dataloader"]
+        # Begin dataloader prefetch, if enabled.
+        extra_iterator_args = {}
+        if args.dataloader_prefetch:
+            prefetch_data_queue, prefetch_start_thread, prefetch_stop_thread = (
+                initialise_prefetch(train_backends, args.dataloader_prefetch_qlen)
+            )
+            extra_iterator_args["prefetch_data_queue"] = prefetch_data_queue
+            extra_iterator_args["prefetch_thread"] = prefetch_start_thread
+            extra_iterator_args["prefetch_stop_thread_event"] = prefetch_stop_thread
 
-        for step, batch in iterator_fn(train_backends):
+        for step, batch in iterator_fn(train_backends, **extra_iterator_args):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
 

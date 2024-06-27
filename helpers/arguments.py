@@ -540,6 +540,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--dataloader_prefetch_qlen",
+        type=int,
+        default=10,
+        help=("Set the number of prefetched batches."),
+    )
+    parser.add_argument(
         "--aspect_bucket_worker_count",
         type=int,
         default=12,

@@ -20,9 +20,6 @@ prefetch_log = logging.getLogger(f"{rank_info()} DataBackendPrefetch")
 prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
 
 # For prefetching.
-data_queue = queue.Queue(maxsize=10)
-prefetch_thread = None
-stop_prefetch = threading.Event()
 
 
 def info_log(message):
@@ -988,7 +985,7 @@ def random_dataloader_iterator(backends: dict):
                 return (step, None)
 
 
-def prefetch_data(backends):
+def prefetch_data(backends, data_queue, stop_prefetch):
     global step
     if step is None:
         prefetch_log.debug("Retrieving epoch step from StateTracker.")
@@ -1021,10 +1018,10 @@ def prefetch_data(backends):
         prefetch_log.debug(f"Selected: {chosen_backend_id}")
 
         chosen_iter = iter(backends[chosen_backend_id])
-
+        batch = None
         try:
             prefetch_log.debug(f"Adding data to queue.")
-            data_queue.put((step, next(chosen_iter)))
+            batch = next(chosen_iter)
         except MultiDatasetExhausted:
             repeats = StateTracker.get_data_backend_config(chosen_backend_id).get(
                 "repeats", False
@@ -1063,35 +1060,60 @@ def prefetch_data(backends):
                 StateTracker.clear_exhausted_buckets()
                 data_queue.put((step, None))
                 break
+            data_queue.put((step, batch))
 
 
-def start_prefetch_thread(backends):
-    global prefetch_thread, stop_prefetch, step
+def initialise_prefetch(backends: dict, data_queue_size: int = 10):
+    prefetch_data_queue = queue.Queue(maxsize=data_queue_size)
+    stop_prefetch = threading.Event()
+    prefetch_thread = start_prefetch_thread(
+        backends, prefetch_data_queue, stop_prefetch
+    )
+
+    return (prefetch_data_queue, prefetch_thread, stop_prefetch)
+
+
+def start_prefetch_thread(backends, prefetch_data_queue, stop_prefetch):
+    global step
+    if step is None:
+        prefetch_log.debug("Retrieving epoch step from StateTracker.")
+        step = StateTracker.get_epoch_step()
+    else:
+        step = 0
     prefetch_log.debug(f"Beginning prefetch thread. Step: {step}")
     # step = None  # Reset step for new epoch
     stop_prefetch.clear()
-    prefetch_thread = threading.Thread(target=prefetch_data, args=(backends,))
+    prefetch_thread = threading.Thread(
+        target=prefetch_data,
+        args=(
+            backends,
+            prefetch_data_queue,
+            stop_prefetch,
+        ),
+    )
     prefetch_thread.start()
 
+    return prefetch_thread
 
-def stop_prefetch_thread():
-    global stop_prefetch, prefetch_thread
+
+def stop_prefetch_thread(prefetch_thread, stop_prefetch):
     stop_prefetch.set()
     if prefetch_thread is not None:
         prefetch_thread.join()
 
 
-def random_dataloader_iterator_with_prefetch(backends: dict):
+def random_dataloader_iterator_with_prefetch(
+    backends: dict, prefetch_data_queue, prefetch_thread, prefetch_stop_thread_event
+):
     global step
-    start_prefetch_thread(backends)
     try:
         while True:
             prefetch_log.debug(
-                f"Retrieving data from queue with {len(backends)} backends and # items: {data_queue.qsize()}"
+                f"Retrieving data from queue with {len(backends)} backends and # items: {prefetch_data_queue.qsize()}"
             )
-            step, data = data_queue.get()
+            step, data = prefetch_data_queue.get()
             if data is None:
                 break
             yield (step, data)
     finally:
-        stop_prefetch_thread()
+        stop_prefetch_thread(prefetch_thread, prefetch_stop_thread_event)
