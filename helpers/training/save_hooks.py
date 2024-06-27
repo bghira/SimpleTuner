@@ -132,6 +132,8 @@ class SaveHookManager:
                 self.ema_model_cls = PixArtTransformer2DModel
             elif self.args.aura_flow:
                 self.ema_model_cls = AuraFlowTransformer2DModel
+            elif self.args.hunyuan_dit:
+                self.ema_model_cls = HunyuanDiT2DModel
 
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers

@@ -573,6 +573,15 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.hunyuan_dit:
+        from diffusers import HunyuanDiT2DModel
+
+        unet = None
+        transformer = HunyuanDiT2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
     else:
         logger.info("Loading U-net..")
         transformer = None
@@ -593,6 +602,9 @@ def main():
         model_type_label = "Stable Diffusion 1.x/2.x"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
+    if args.hunyuan_dit:
+        model_type_label = "Hunyuan DiT"
+
     AURA_DIT_BLOCKS_REGEX = (
         r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
     )
@@ -602,6 +614,9 @@ def main():
 
     if args.controlnet:
         if args.pixart_sigma or args.aura_flow:
+
+    if args.controlnet:
+        if args.pixart_sigma or args.hunyuan_dit:
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
