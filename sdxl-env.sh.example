@@ -12,6 +12,10 @@ export STABLE_DIFFUSION_3=false
 # Use MODEL_NAME="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
 export PIXART_SIGMA=false
 
+# Or if you are training Hunyuan DiT, then these are for that. 
+# Use MODEL_NAME="Tencent-Hunyuan/HunyuanDiT-Diffusers"
+export HUNYUAN_DIT=false
+
 # ControlNet model training is only supported when MODEL_TYPE='full'
 # See this document for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md
 # DeepFloyd, PixArt, and SD3 do not currently support ControlNet model training.
