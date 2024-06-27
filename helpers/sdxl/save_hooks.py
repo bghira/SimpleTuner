@@ -32,6 +32,13 @@ except Exception as e:
     )
     raise e
 
+try:
+    from diffusers.models import HunyuanDiT2DModel
+except Exception as e:
+    logger.error(
+        f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
+    )
+    raise e
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
@@ -106,6 +113,77 @@ class SDXLSaveHook:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
+            elif self.args.hunyuan_dit:
+                self.ema_model_cls = HunyuanDiT2DModel
+
+    def handle_lora(self, models, weights, output_dir):
+        # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
+        # or there are the unet and text encoder atten layers.
+        unet_lora_layers_to_save = None
+        transformer_lora_layers_to_save = None
+        text_encoder_1_lora_layers_to_save = None
+        text_encoder_2_lora_layers_to_save = None
+        text_encoder_3_lora_layers_to_save = None
+
+        for model in models:
+            if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
+                unet_lora_layers_to_save = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(model)
+                )
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_1))
+            ):
+                text_encoder_1_lora_layers_to_save = (
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
+                    )
+                )
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_2))
+            ):
+                text_encoder_2_lora_layers_to_save = (
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
+                    )
+                )
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_3))
+            ):
+                text_encoder_3_lora_layers_to_save = (
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
+                    )
+                )
+
+            elif not isinstance(model, type(unwrap_model(self.accelerator, HunyuanDiT2DModel))):
+                if isinstance(
+                    model, type(unwrap_model(self.accelerator, self.transformer))
+                ):
+                    transformer_lora_layers_to_save = get_peft_model_state_dict(model)
+
+            elif not self.use_deepspeed_optimizer:
+                raise ValueError(f"unexpected save model: {model.__class__}")
+
+            # make sure to pop weight so that corresponding model is not saved again
+            if weights:
+                weights.pop()
+
+        if self.args.sd3:
+            StableDiffusion3Pipeline.save_lora_weights(
+                output_dir,
+                transformer_lora_layers=transformer_lora_layers_to_save,
+                # SD3 doesn't support text encoder training.
+                # text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
+                # text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
+                # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
+            )
+        else:
+            StableDiffusionXLPipeline.save_lora_weights(
+                output_dir,
+                unet_lora_layers=unet_lora_layers_to_save,
+                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+                text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
+            )
 
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
@@ -113,72 +191,7 @@ class SDXLSaveHook:
             os.path.join(output_dir, "training_state.json")
         )
         if "lora" in self.args.model_type:
-            # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
-            # or there are the unet and text encoder atten layers.
-            unet_lora_layers_to_save = None
-            transformer_lora_layers_to_save = None
-            text_encoder_1_lora_layers_to_save = None
-            text_encoder_2_lora_layers_to_save = None
-            text_encoder_3_lora_layers_to_save = None
-
-            for model in models:
-                if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
-                    unet_lora_layers_to_save = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(model)
-                    )
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
-                ):
-                    text_encoder_1_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
-                    )
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
-                ):
-                    text_encoder_2_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
-                    )
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_3))
-                ):
-                    text_encoder_3_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
-                    )
-
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.transformer))
-                ):
-                    transformer_lora_layers_to_save = get_peft_model_state_dict(model)
-
-                elif not self.use_deepspeed_optimizer:
-                    raise ValueError(f"unexpected save model: {model.__class__}")
-
-                # make sure to pop weight so that corresponding model is not saved again
-                if weights:
-                    weights.pop()
-
-            if self.args.sd3:
-                StableDiffusion3Pipeline.save_lora_weights(
-                    output_dir,
-                    transformer_lora_layers=transformer_lora_layers_to_save,
-                    # SD3 doesn't support text encoder training.
-                    # text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
-                    # text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
-                    # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
-                )
-            else:
-                StableDiffusionXLPipeline.save_lora_weights(
-                    output_dir,
-                    unet_lora_layers=unet_lora_layers_to_save,
-                    text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
-                    text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
-                )
+            self.handle_lora(models=model, weights=weights, output_dir=output_dir)
             return
 
         # Create a temporary directory for atomic saves
@@ -364,6 +377,10 @@ class SDXLSaveHook:
                     elif self.args.pixart_sigma:
                         # load pixart sigma checkpoint
                         load_model = PixArtTransformer2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
+                    elif self.args.hunyuan_dit:
+                        load_model = HunyuanDiT2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
                     elif self.unet is not None:
