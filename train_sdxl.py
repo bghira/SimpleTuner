@@ -26,6 +26,7 @@ from helpers.caching.memory import reclaim_memory
 from helpers.legacy.validation import prepare_validation_prompt_list
 from helpers.training.validation import Validation
 from helpers.training.state_tracker import StateTracker
+from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
@@ -1394,9 +1395,8 @@ def main():
     step = global_step
     training_luminance_values = []
     current_epoch_step = None
+    bf, fetch_thread = None, None
     iterator_fn = random_dataloader_iterator
-    if args.dataloader_prefetch:
-        iterator_fn = random_dataloader_iterator_with_prefetch
 
     for epoch in range(first_epoch, args.num_train_epochs + 1):
         if current_epoch > args.num_train_epochs + 1:
@@ -1495,16 +1495,19 @@ def main():
                 continue
             train_backends[backend_id] = backend["train_dataloader"]
         # Begin dataloader prefetch, if enabled.
-        extra_iterator_args = {}
+        iterator_args = [train_backends]
         if args.dataloader_prefetch:
-            prefetch_data_queue, prefetch_start_thread, prefetch_stop_thread = (
-                initialise_prefetch(train_backends, args.dataloader_prefetch_qlen)
-            )
-            extra_iterator_args["prefetch_data_queue"] = prefetch_data_queue
-            extra_iterator_args["prefetch_thread"] = prefetch_start_thread
-            extra_iterator_args["prefetch_stop_thread_event"] = prefetch_stop_thread
+            iterator_args = []
+            if bf is None:
+                bf = BatchFetcher(
+                    datasets=train_backends, max_size=args.dataloader_prefetch_qlen
+                )
+            if fetch_thread is not None:
+                fetch_thread.join()
+            fetch_thread = bf.start_fetching()
+            iterator_fn = bf.next_response
 
-        for step, batch in iterator_fn(train_backends, **extra_iterator_args):
+        for step, batch in iterator_fn(*iterator_args):
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
 
