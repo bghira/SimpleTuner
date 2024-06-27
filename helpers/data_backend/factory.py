@@ -1124,5 +1124,33 @@ def random_dataloader_iterator_with_prefetch(
                 f"Retrieved data from queue. Step: {step}, data: {type(data)}"
             )
             yield (step, data)
-    finally:
-        yield (step, None)
+    except Exception as e:
+        logger.error(f"Error while gathering batch: {e}")
+        raise e
+
+
+class BatchFetcher:
+    def __init__(self, max_size=10, datasets={}):
+        self.queue = queue.Queue(max_size)
+        self.datasets = datasets
+        self.keep_running = True
+
+    def start_fetching(self):
+        thread = threading.Thread(target=self.fetch_responses)
+        thread.start()
+        return thread
+
+    def fetch_responses(self):
+        while self.keep_running:
+            if self.queue.qsize() < self.queue.maxsize:
+                self.queue.put(random_dataloader_iterator(self.datasets))
+            else:
+                time.sleep(0.5)  # Sleep to prevent constant queue size checking
+
+    def next_response(self):
+        if not self.queue.empty():
+            return self.queue.get()
+        return StateTracker.get_epoch_step(), None
+
+    def stop_fetching(self):
+        self.keep_running = False
