@@ -994,7 +994,6 @@ class BatchFetcher:
         self.queue = queue.Queue(max_size)
         self.datasets = datasets
         self.keep_running = True
-        self.max_size = max_size
 
     def start_fetching(self):
         thread = threading.Thread(target=self.fetch_responses)
@@ -1005,16 +1004,14 @@ class BatchFetcher:
         global step
         prefetch_log_debug("Launching retrieval thread.")
         while self.keep_running:
-            if self.queue.qsize() < self.max_size:
+            if self.queue.qsize() < self.queue.maxsize:
                 prefetch_log_debug(
                     f"Queue size: {self.queue.qsize()}. Fetching more data."
                 )
-                for step, data in random_dataloader_iterator(self.datasets):
-                    prefetch_log_debug(f"Adding data for step {step} to the queue.")
-                    self.queue.put((step, data))
-                    if self.queue.qsize() >= self.max_size:
-                        prefetch_log_debug("Completed fetching data. Queue is full.")
-                        break
+                self.queue.put(random_dataloader_iterator(self.datasets))
+                if self.queue.qsize() >= self.max_size:
+                    prefetch_log_debug("Completed fetching data. Queue is full.")
+                    break
             else:
                 time.sleep(0.5)
         prefetch_log_debug("Exiting retrieval thread.")
@@ -1025,6 +1022,7 @@ class BatchFetcher:
                 prefetch_log_debug("Queue is empty. Waiting for data.")
             while self.queue.empty():
                 continue
+            prefetch_log_debug("Queue has data. Yielding next item.")
             yield self.queue.get()
 
     def stop_fetching(self):
