@@ -1014,18 +1014,23 @@ class BatchFetcher:
                 if self.high_water:
                     if self.queue.qsize() >= self.low_water_mark:
                         prefetch_log_debug(
-                            f"Queue size: {self.queue.qsize()}, we are not yet back to our low water mark."
+                            f"Queue size: {self.queue.qsize()}, we are not yet back to our low water mark ({int(self.low_water_mark)})."
                         )
                         time.sleep(0.5)
                         continue
+                    prefetch_log_debug(
+                        "Resetting high water mark, as our queue has reduced in size."
+                    )
                     self.high_water = False
 
                 prefetch_log_debug(
                     f"Queue size: {self.queue.qsize()}. Fetching more data."
                 )
                 for step, data in random_dataloader_iterator(self.datasets):
+                    prefetch_log_debug(f"Adding data for step {step} to the queue.")
                     self.queue.put((step, data))
                     if self.queue.qsize() >= self.max_size:
+                        prefetch_log_debug("Completed fetching data. Queue is full.")
                         break
             else:
                 if not self.high_water:
@@ -1034,11 +1039,13 @@ class BatchFetcher:
                     f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
                 )
                 time.sleep(0.5)
+            prefetch_log_debug("Completed queue monitor loop.")
         prefetch_log_debug("Exiting retrieval thread.")
 
     def next_response(self):
         while True:
             while self.queue.empty():
+                prefetch_log_debug("Queue is empty. Waiting for data.")
                 continue
             yield self.queue.get()
 
