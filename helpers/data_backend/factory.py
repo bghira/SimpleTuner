@@ -994,12 +994,7 @@ class BatchFetcher:
         self.queue = queue.Queue(max_size)
         self.datasets = datasets
         self.keep_running = True
-        self.high_water = False
-        self.low_water_mark = 0.25 * max_size  # 25% of the max_size
         self.max_size = max_size
-
-    def mark_high_water(self):
-        self.high_water = True
 
     def start_fetching(self):
         thread = threading.Thread(target=self.fetch_responses)
@@ -1011,18 +1006,6 @@ class BatchFetcher:
         prefetch_log_debug("Launching retrieval thread.")
         while self.keep_running:
             if self.queue.qsize() < self.max_size:
-                if self.high_water:
-                    if self.queue.qsize() >= self.low_water_mark:
-                        prefetch_log_debug(
-                            f"Queue size: {self.queue.qsize()}, we are not yet back to our low water mark ({int(self.low_water_mark)})."
-                        )
-                        time.sleep(0.5)
-                        continue
-                    prefetch_log_debug(
-                        "Resetting high water mark, as our queue has reduced in size."
-                    )
-                    self.high_water = False
-
                 prefetch_log_debug(
                     f"Queue size: {self.queue.qsize()}. Fetching more data."
                 )
@@ -1033,8 +1016,6 @@ class BatchFetcher:
                         prefetch_log_debug("Completed fetching data. Queue is full.")
                         break
             else:
-                if not self.high_water:
-                    self.mark_high_water()
                 prefetch_log_debug(
                     f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
                 )
@@ -1044,8 +1025,9 @@ class BatchFetcher:
 
     def next_response(self):
         while True:
-            while self.queue.empty():
+            if self.queue.empty():
                 prefetch_log_debug("Queue is empty. Waiting for data.")
+            while self.queue.empty():
                 continue
             yield self.queue.get()
 
