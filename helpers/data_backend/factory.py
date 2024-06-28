@@ -1011,7 +1011,7 @@ class BatchFetcher:
                 self.queue.put(random_dataloader_iterator(self.datasets))
                 if self.queue.qsize() >= self.queue.maxsize:
                     prefetch_log_debug("Completed fetching data. Queue is full.")
-                    break
+                    continue
             else:
                 time.sleep(0.5)
         prefetch_log_debug("Exiting retrieval thread.")
