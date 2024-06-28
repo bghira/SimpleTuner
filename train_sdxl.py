@@ -223,6 +223,7 @@ def get_tokenizers(args):
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
+    torch.set_num_threads(args.torch_num_threads)
     if args.sd3:
         StateTracker.set_model_type("sd3")
     if args.pixart_sigma:
