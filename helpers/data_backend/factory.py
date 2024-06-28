@@ -936,7 +936,7 @@ def random_dataloader_iterator(backends: dict):
         )
         StateTracker.clear_exhausted_buckets()
         StateTracker.set_repeats(repeats=0)
-        return step, None
+        yield (step, False)
     while backends:
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
@@ -986,7 +986,7 @@ def random_dataloader_iterator(backends: dict):
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()
-                return (step, None)
+                yield (step, False)
 
 
 class BatchFetcher:
@@ -994,6 +994,12 @@ class BatchFetcher:
         self.queue = queue.Queue(max_size)
         self.datasets = datasets
         self.keep_running = True
+        self.high_water = False
+        self.low_water_mark = 0.25 * max_size  # 25% of the max_size
+        self.max_size = max_size
+
+    def mark_high_water(self):
+        self.high_water = True
 
     def start_fetching(self):
         thread = threading.Thread(target=self.fetch_responses)
@@ -1001,27 +1007,40 @@ class BatchFetcher:
         return thread
 
     def fetch_responses(self):
+        global step
+        prefetch_log_debug("Launching retrieval thread.")
         while self.keep_running:
-            if self.queue.qsize() < self.queue.maxsize:
+            if self.queue.qsize() < self.max_size:
+                if self.high_water:
+                    if self.queue.qsize() >= self.low_water_mark:
+                        prefetch_log_debug(
+                            f"Queue size: {self.queue.qsize()}, we are not yet back to our low water mark."
+                        )
+                        time.sleep(0.5)
+                        continue
+                    self.high_water = False
+
                 prefetch_log_debug(
                     f"Queue size: {self.queue.qsize()}. Fetching more data."
                 )
-                self.queue.put(random_dataloader_iterator(self.datasets))
+                for step, data in random_dataloader_iterator(self.datasets):
+                    self.queue.put((step, data))
+                    if self.queue.qsize() >= self.max_size:
+                        break
             else:
+                if not self.high_water:
+                    self.mark_high_water()
                 prefetch_log_debug(
                     f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
                 )
-                time.sleep(0.5)  # Sleep to prevent constant queue size checking
+                time.sleep(0.5)
+        prefetch_log_debug("Exiting retrieval thread.")
 
     def next_response(self):
-        while self.queue.empty():
-            prefetch_log_debug("Queue is empty. Waiting for data.")
-            time.sleep(0.5)
-            continue
-        prefetch_log_debug("Queue is ready. Retrieving data from queue.")
-        result = self.queue.get()
-        prefetch_log_debug(f"Retrieved data from queue: {result}")
-        return result
+        while True:
+            while self.queue.empty():
+                continue
+            yield self.queue.get()
 
     def stop_fetching(self):
         self.keep_running = False

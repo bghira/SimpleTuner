@@ -32,7 +32,6 @@ from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
 from helpers.training.custom_schedule import (
-    get_polynomial_decay_schedule_with_warmup,
     generate_timestep_weights,
     segmented_timestep_selection,
 )
@@ -1403,7 +1402,7 @@ def main():
             break
         if first_epoch != epoch:
             logger.debug(
-                f"Just completed epoch {current_epoch}. Beginning epoch {epoch}. Final epoch will be {args.num_train_epochs}"
+                f"Just completed epoch {current_epoch}. Beginning epoch {epoch}. Starting epoch was {first_epoch}. Final epoch will be {args.num_train_epochs}"
             )
             for backend_id, backend in StateTracker.get_data_backends().items():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
@@ -1494,10 +1493,11 @@ def main():
         iterator_args = [train_backends]
         if args.dataloader_prefetch:
             iterator_args = []
-            if bf is None:
-                bf = BatchFetcher(
-                    datasets=train_backends, max_size=args.dataloader_prefetch_qlen
-                )
+            if bf is not None:
+                bf.stop_fetching()
+            bf = BatchFetcher(
+                datasets=train_backends, max_size=args.dataloader_prefetch_qlen
+            )
             if fetch_thread is not None:
                 fetch_thread.join()
             fetch_thread = bf.start_fetching()
