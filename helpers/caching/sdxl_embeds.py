@@ -513,7 +513,7 @@ class TextEmbeddingCache:
             raise ValueError(
                 f"No such text encoding backend for model type '{self.model_type}'"
             )
-        logger.debug(f"Returning output: {output}")
+        # logger.debug(f"Returning output: {output}")
         return output
 
     def split_captions_between_processes(self, all_captions: list):

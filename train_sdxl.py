@@ -1391,6 +1391,7 @@ def main():
     step = global_step
     training_luminance_values = []
     current_epoch_step = None
+    global bf
     bf, fetch_thread = None, None
     iterator_fn = random_dataloader_iterator
 
@@ -1504,7 +1505,9 @@ def main():
             fetch_thread = bf.start_fetching()
             iterator_fn = bf.next_response
 
-        for step, batch in iterator_fn(*iterator_args):
+        while True:
+            step, batch = iterator_fn(*iterator_args)
+            training_logger.debug(f"Iterator: {iterator_fn}")
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
 
@@ -2246,6 +2249,9 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt as e:
+        global bf, fetch_thread
+        if bf is not None:
+            bf.stop_fetching()
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message="Training has been interrupted by user action (lost terminal, or ctrl+C)."
