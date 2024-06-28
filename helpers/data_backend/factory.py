@@ -1016,11 +1016,7 @@ class BatchFetcher:
                         prefetch_log_debug("Completed fetching data. Queue is full.")
                         break
             else:
-                prefetch_log_debug(
-                    f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
-                )
                 time.sleep(0.5)
-            prefetch_log_debug("Completed queue monitor loop.")
         prefetch_log_debug("Exiting retrieval thread.")
 
     def next_response(self):
