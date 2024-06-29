@@ -510,7 +510,10 @@ class ParquetMetadataBackend(MetadataBackend):
                     logger.debug(
                         f"Image {image_path_str} does not meet minimum image size requirements. Deleting image."
                     )
-                    self.data_backend.delete(image_path_str)
+                    try:
+                        self.data_backend.delete(image_path_str)
+                    except:
+                        pass
                 statistics.setdefault("skipped", {}).setdefault("too_small", 0)
                 statistics["skipped"]["too_small"] += 1
 

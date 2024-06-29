@@ -922,6 +922,7 @@ def get_backend_weight(backend_id, backend, step):
 
 
 def random_dataloader_iterator(backends: dict):
+    prefetch_log_debug("Random dataloader iterator launched.")
     global step
     if step is None:
         step = StateTracker.get_epoch_step()
@@ -936,7 +937,7 @@ def random_dataloader_iterator(backends: dict):
         )
         StateTracker.clear_exhausted_buckets()
         StateTracker.set_repeats(repeats=0)
-        return step, None
+        return (step, False)
     while backends:
         step += 1
         epoch_step = int(step / gradient_accumulation_steps)
@@ -950,7 +951,7 @@ def random_dataloader_iterator(backends: dict):
         chosen_iter = iter(backends[chosen_backend_id])
 
         try:
-            yield (step, next(chosen_iter))
+            return (step, next(chosen_iter))
         except MultiDatasetExhausted:
             # We may want to repeat the same dataset multiple times in a single epoch.
             # If so, we can just reset the iterator and keep going.
@@ -986,7 +987,7 @@ def random_dataloader_iterator(backends: dict):
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()
-                return (step, None)
+                return (step, False)
 
 
 class BatchFetcher:
@@ -1001,27 +1002,28 @@ class BatchFetcher:
         return thread
 
     def fetch_responses(self):
+        global step
+        prefetch_log_debug("Launching retrieval thread.")
         while self.keep_running:
             if self.queue.qsize() < self.queue.maxsize:
                 prefetch_log_debug(
                     f"Queue size: {self.queue.qsize()}. Fetching more data."
                 )
                 self.queue.put(random_dataloader_iterator(self.datasets))
+                if self.queue.qsize() >= self.queue.maxsize:
+                    prefetch_log_debug("Completed fetching data. Queue is full.")
+                    continue
             else:
-                prefetch_log_debug(
-                    f"Queue is full. Waiting for data. Size: {self.queue.qsize()}"
-                )
-                time.sleep(0.5)  # Sleep to prevent constant queue size checking
+                time.sleep(0.5)
+        prefetch_log_debug("Exiting retrieval thread.")
 
     def next_response(self):
-        while self.queue.empty():
+        if self.queue.empty():
             prefetch_log_debug("Queue is empty. Waiting for data.")
-            time.sleep(0.5)
+        while self.queue.empty():
             continue
-        prefetch_log_debug("Queue is ready. Retrieving data from queue.")
-        result = self.queue.get()
-        prefetch_log_debug(f"Retrieved data from queue: {result}")
-        return result
+        prefetch_log_debug("Queue has data. Yielding next item.")
+        return self.queue.get()
 
     def stop_fetching(self):
         self.keep_running = False

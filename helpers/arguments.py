@@ -531,6 +531,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--torch_num_threads",
+        type=int,
+        default=8,
+        help=(
+            "The number of threads to use for PyTorch operations. This is not the same as the number of workers."
+            " Default: 8."
+        ),
+    )
+    parser.add_argument(
         "--dataloader_prefetch",
         action="store_true",
         default=False,
