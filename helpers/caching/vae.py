@@ -1106,8 +1106,6 @@ class VAECache:
                         futures.append(future_to_write)
 
                     futures = self._process_futures(futures, executor)
-                    import json
-
                     log_msg = (
                         f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
                     )
