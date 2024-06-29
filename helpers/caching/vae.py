@@ -1108,7 +1108,11 @@ class VAECache:
                     futures = self._process_futures(futures, executor)
                     import json
 
-                    logger.info(f"Bucket {bucket} caching results: {statistics}")
+                    log_msg = (
+                        f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
+                    )
+                    logger.debug(log_msg)
+                    tqdm.write(log_msg)
                     self.debug_log(
                         "Completed process_buckets, all futures have been returned."
                     )
