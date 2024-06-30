@@ -164,7 +164,6 @@ class PromptHandler:
         sampler_backend_id: str,
     ) -> str:
         parquetdb = StateTracker.get_parquet_database(sampler_backend_id)
-        print(f"Parquet DB: {parquetdb}")
         dataframe = parquetdb[0]
         if dataframe is None:
             raise ValueError(
@@ -255,7 +254,10 @@ class PromptHandler:
         if image_caption:
             image_caption = image_caption.strip()
         if prepend_instance_prompt:
-            image_caption = instance_prompt + " " + image_caption
+            if type(image_caption) == list:
+                image_caption = [instance_prompt + " " + x for x in image_caption]
+            else:
+                image_caption = instance_prompt + " " + image_caption
         return image_caption
 
     @staticmethod
@@ -300,10 +302,18 @@ class PromptHandler:
             # Convert from bytes to str:
             if type(image_caption) == bytes:
                 image_caption = image_caption.decode("utf-8")
-            else:
-                image_caption = image_caption
+
+            # any newlines? split into array
+            if "\n" in image_caption:
+                image_caption = image_caption.split("\n")
+                # Remove any empty strings
+                image_caption = [x for x in image_caption if x]
+
             if prepend_instance_prompt:
-                image_caption = instance_prompt + " " + image_caption
+                if type(image_caption) is list:
+                    image_caption = [instance_prompt + " " + x for x in image_caption]
+                else:
+                    image_caption = instance_prompt + " " + image_caption
 
             return image_caption
         except Exception as e:
@@ -341,6 +351,7 @@ class PromptHandler:
                 instance_prompt=instance_prompt,
             )
         elif caption_strategy == "textfile":
+            # Can return multiple captions, if the file has newlines.
             instance_prompt = PromptHandler.prepare_instance_prompt_from_textfile(
                 image_path,
                 use_captions=use_captions,
@@ -349,6 +360,7 @@ class PromptHandler:
                 data_backend=data_backend,
             )
         elif caption_strategy == "parquet":
+            # Can return multiple captions, if the field is a list.
             instance_prompt = PromptHandler.prepare_instance_prompt_from_parquet(
                 image_path,
                 use_captions=use_captions,
@@ -363,6 +375,13 @@ class PromptHandler:
             raise ValueError(
                 f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
             )
+
+        if type(instance_prompt) is list:
+            instance_prompt = instance_prompt[0]
+            logger.debug(
+                f"Multiple captions found for image {image_path}. Using just the first caption: {instance_prompt}"
+            )
+
         return instance_prompt
 
     @staticmethod
@@ -431,8 +450,12 @@ class PromptHandler:
                 raise ValueError(
                     f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
                 )
-            if caption:
+
+            if type(caption) not in [tuple, list, dict]:
                 captions.append(caption)
+            else:
+                # allow caching of multiple captions, if returned by the backend.
+                captions.extend(caption)
 
         return captions
 
