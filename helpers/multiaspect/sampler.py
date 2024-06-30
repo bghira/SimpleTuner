@@ -228,7 +228,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
-                image
+                os.path.join(self.metadata_backend.instance_data_root, image)
                 for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
                 if not self.metadata_backend.is_seen(image)
             ]
@@ -237,7 +237,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             for b, images in self.metadata_backend.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
                     [
-                        image
+                        os.path.join(self.metadata_backend.instance_data_root, image)
                         for image in images
                         if not self.metadata_backend.is_seen(image)
                     ]

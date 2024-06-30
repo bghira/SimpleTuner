@@ -183,7 +183,11 @@ class LocalDataBackend(BaseDataBackend):
                 logger.error(
                     f"Failed to decompress torch file, falling back to passthrough: {e}"
                 )
-        loaded_tensor = torch.load(stored_tensor, map_location="cpu")
+        try:
+            loaded_tensor = torch.load(stored_tensor, map_location="cpu")
+        except Exception as e:
+            logger.error(f"Failed to load torch file '{filename}': {e}")
+            raise e
         return loaded_tensor
 
     def torch_save(self, data, original_location):
