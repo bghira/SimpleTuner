@@ -1,9 +1,9 @@
 from helpers.data_backend.base import BaseDataBackend
+from helpers.image_manipulation.load import load_image
 from pathlib import Path
 from io import BytesIO
 import os, logging, torch, gzip
 from typing import Any
-from PIL import Image
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -114,7 +114,7 @@ class LocalDataBackend(BaseDataBackend):
         # Remove embedded null byte:
         filepath = filepath.replace("\x00", "")
         try:
-            image = Image.open(filepath)
+            image = load_image(filepath)
             return image
         except Exception as e:
             import traceback

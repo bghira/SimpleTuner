@@ -3,10 +3,10 @@ from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
+from helpers.image_manipulation.load import load_image
 from pathlib import Path
 import json, logging, os, traceback
 from multiprocessing import Manager
-from PIL import Image
 from tqdm import tqdm
 from multiprocessing import Process, Queue
 import numpy as np
@@ -220,7 +220,7 @@ class JsonMetadataBackend(MetadataBackend):
                 statistics["skipped"]["not_found"] += 1
                 return aspect_ratio_bucket_indices
 
-            with Image.open(BytesIO(image_data)) as image:
+            with load_image(BytesIO(image_data)) as image:
                 if not self.meets_resolution_requirements(image=image):
                     if not self.delete_unwanted_images:
                         logger.debug(
