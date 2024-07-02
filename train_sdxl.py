@@ -228,6 +228,8 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
+    if args.hunyuan_dit:
+        StateTracker.set_model_type("hunyuan_dit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -532,6 +534,15 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.hunyuan_dit:
+        from diffusers import HunyuanDiT2DModel
+
+        unet = None
+        transformer = HunyuanDiT2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
     else:
         logger.info(f"Loading SDXL U-net..")
         transformer = None
@@ -546,9 +557,11 @@ def main():
         model_type_label = "Stable Diffusion 3"
     if args.pixart_sigma:
         model_type_label = "PixArt Sigma"
+    if args.hunyuan_dit:
+        model_type_label = "Hunyuan DiT"
 
     if args.controlnet:
-        if args.pixart_sigma:
+        if args.pixart_sigma or args.hunyuan_dit:
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
