@@ -601,16 +601,13 @@ class VAECache:
             else:
                 output_file, filepath, latent_vector = self.write_queue.get()
             file_extension = os.path.splitext(output_file)[1]
-            if (
-                file_extension == ".png"
-                or file_extension == ".jpg"
-                or file_extension == ".jpeg"
-            ):
+            if file_extension != ".pt":
                 raise ValueError(
                     f"Cannot write a latent embedding to an image path, {output_file}"
                 )
             filepaths.append(output_file)
-            latents.append(latent_vector)
+            # pytorch will hold onto all of the tensors in the list if we do not use clone()
+            latents.append(latent_vector.clone())
 
         self.data_backend.write_batch(filepaths, latents)
 
