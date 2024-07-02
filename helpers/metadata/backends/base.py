@@ -448,9 +448,10 @@ class MetadataBackend:
             bucket in self.aspect_ratio_bucket_indices
             and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
         ):
+            bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
             del self.aspect_ratio_bucket_indices[bucket]
             logger.warning(
-                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={len(self.aspect_ratio_bucket_indices[bucket])})."
+                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={bucket_sample_count})."
             )
 
     def _enforce_resolution_constraints(self, bucket):
