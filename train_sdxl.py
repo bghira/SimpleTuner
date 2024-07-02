@@ -2269,7 +2269,5 @@ if __name__ == "__main__":
             )
         print(e)
         print(traceback.format_exc())
-    finally:
-        global bf, fetch_thread
-        if bf is not None:
-            bf.stop_fetching()
+    if bf is not None:
+        bf.stop_fetching()
