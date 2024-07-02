@@ -2242,6 +2242,7 @@ def main():
 
 
 if __name__ == "__main__":
+    bf = None
     try:
         import multiprocessing
 
