@@ -80,6 +80,10 @@ Simply point your base model to a Stable Diffusion 3 checkpoint and set `STABLE_
 
 > ⚠️ In the current source release of Diffusers, gradient checkpointing is broken for Stable Diffusion 3 models. This will result in much, much higher memory use.
 
+### Aura Diffusion
+
+<!-- Placeholder text -->
+
 ## Hardware Requirements
 
 EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Options like `--ema_cpu_only` can improve this situation by loading EMA weights onto the CPU and then keeping them there.
