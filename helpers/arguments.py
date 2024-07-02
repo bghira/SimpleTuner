@@ -79,6 +79,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--aura_diffusion",
+        action="store_true",
+        default=False,
+        help=("This must be set when training an Aura Diffusion model."),
+    )
+    parser.add_argument(
         "--pixart_sigma",
         action="store_true",
         default=False,
@@ -1735,7 +1741,7 @@ def parse_args(input_args=None):
         args.ema_device = "cpu"
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3:
+        if args.pixart_sigma or args.sd3 or args.aura_diffusion:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
