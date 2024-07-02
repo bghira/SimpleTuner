@@ -476,9 +476,10 @@ class MetadataBackend:
             ]
             total_after = len(self.aspect_ratio_bucket_indices[bucket])
             total_lost = total_before - total_after
-            logger.info(
-                f"Had {total_before} samples before and {total_after} that did not meet the minimum image size requirement ({self.minimum_image_size})."
-            )
+            if total_lost > 0:
+                logger.info(
+                    f"Had {total_before} samples before and {total_lost} that did not meet the minimum image size requirement ({self.minimum_image_size})."
+                )
 
     def meets_resolution_requirements(
         self,
