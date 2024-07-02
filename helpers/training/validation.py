@@ -171,6 +171,13 @@ class Validation:
         else:
             raise Exception("Unknown validation seed source. Options: cpu, gpu")
 
+    def _get_generator(self):
+        _validation_seed_source = self._validation_seed_source()
+        _generator = torch.Generator(device=_validation_seed_source).manual_seed(
+            self.args.validation_seed or self.args.seed or 0
+        )
+        return _generator
+
     def clear_text_encoders(self):
         """
         Sets all text encoders to None.
@@ -675,9 +682,7 @@ class Validation:
         for resolution in self.validation_resolutions:
             extra_validation_kwargs = {}
             if not self.args.validation_randomize:
-                extra_validation_kwargs["generator"] = torch.Generator(
-                    device=self._validation_seed_source()
-                ).manual_seed(self.args.validation_seed or self.args.seed or 0)
+                extra_validation_kwargs["generator"] = self._get_generator()
                 logger.debug(
                     f"Using a generator? {extra_validation_kwargs['generator']}"
                 )

@@ -47,6 +47,12 @@ def resize_for_condition_image(input_image, resolution):
 def retrieve_object(s3_client, bucket_name, object_key):
     try:
         response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+        if ".parquet" in object_key or ".json" in object_key:
+            # save file as is
+            with open(object_key, "wb") as f:
+                f.write(response["Body"].read())
+            return
+
         logger.info(f"Retrieved: {object_key}")
         # create PIL Image
         image = Image.open(response["Body"])

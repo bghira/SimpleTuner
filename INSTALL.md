@@ -100,3 +100,7 @@ bash train_sdxl.sh > /path/to/training-$(date +%s).log 2>&1
 ```
 
 > ⚠️ At this point, the commands will work, but further configuration is required. See [the tutorial](/TUTORIAL.md) for more information.
+
+### Run unit tests
+
+To run unit tests to ensure that installation has completed successfully, execute the command `poetry run python -m unittest discover tests/`.

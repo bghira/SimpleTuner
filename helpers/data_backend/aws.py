@@ -10,7 +10,7 @@ from pathlib import PosixPath
 import concurrent.futures
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
-from PIL import Image
+from helpers.image_manipulation.load import load_image
 from io import BytesIO
 
 loggers_to_silence = [
@@ -247,7 +247,7 @@ class S3DataBackend(BaseDataBackend):
         return results
 
     def read_image(self, s3_key):
-        return Image.open(BytesIO(self.read(s3_key)))
+        return load_image(BytesIO(self.read(s3_key)))
 
     def read_image_batch(self, s3_keys: list, delete_problematic_images: bool = False):
         """
@@ -265,7 +265,7 @@ class S3DataBackend(BaseDataBackend):
         available_keys = []
         for s3_key, data in zip(s3_keys, batch):
             try:
-                image_data = Image.open(BytesIO(data))
+                image_data = load_image(BytesIO(data))
                 if image_data is None:
                     logger.warning(f"Unable to load image '{s3_key}', skipping.")
                     continue

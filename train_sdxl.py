@@ -436,9 +436,14 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         if tokenizer_1 is not None:
-            logger.info(
-                f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-            )
+            if args.pixart_sigma or args.sd3:
+                logger.info(
+                    f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                )
+            else:
+                logger.info(
+                    f"Loading OpenAI CLIP-L/14 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                )
             text_encoder_1 = text_encoder_cls_1.from_pretrained(
                 text_encoder_path,
                 subfolder=text_encoder_subfolder,
@@ -2237,6 +2242,8 @@ def main():
 
 
 if __name__ == "__main__":
+    global bf
+    bf = None
     try:
         import multiprocessing
 
@@ -2249,9 +2256,6 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt as e:
-        global bf, fetch_thread
-        if bf is not None:
-            bf.stop_fetching()
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message="Training has been interrupted by user action (lost terminal, or ctrl+C)."
@@ -2265,3 +2269,5 @@ if __name__ == "__main__":
             )
         print(e)
         print(traceback.format_exc())
+    if bf is not None:
+        bf.stop_fetching()

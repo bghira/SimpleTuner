@@ -297,7 +297,7 @@ class MetadataBackend:
         logger.info(f"Image processing statistics: {aggregated_statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
-        logger.info("Completed aspect bucket update.")
+        logger.info(f"Completed aspect bucket update.")
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1):
         """
@@ -320,6 +320,11 @@ class MetadataBackend:
             num_batches = len(images) // effective_batch_size
             trimmed_images = images[: num_batches * effective_batch_size]
             logger.debug(f"Trimmed from {len(images)} to {len(trimmed_images)}")
+            if len(trimmed_images) == 0:
+                logger.error(
+                    f"Bucket {bucket} has no images after trimming because {len(images)} images are not enough to satisfy an effective batch size of {effective_batch_size}."
+                    " Lower your batch size, increase repeat count, or increase data pool size."
+                )
 
             with self.accelerator.split_between_processes(
                 trimmed_images, apply_padding=False
@@ -430,9 +435,10 @@ class MetadataBackend:
         ):  # Safe iteration over keys
             # Prune the smaller buckets so that we don't enforce resolution constraints on them unnecessarily.
             self._prune_small_buckets(bucket)
-            self._enforce_resolution_constraints(bucket)
-            # We do this twice in case there were any new contenders for being too small.
-            self._prune_small_buckets(bucket)
+            if self.minimum_image_size is not None:
+                self._enforce_resolution_constraints(bucket)
+                # We do this twice in case there were any new contenders for being too small.
+                self._prune_small_buckets(bucket)
 
     def _prune_small_buckets(self, bucket):
         """
@@ -442,8 +448,11 @@ class MetadataBackend:
             bucket in self.aspect_ratio_bucket_indices
             and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
         ):
+            bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
             del self.aspect_ratio_bucket_indices[bucket]
-            logger.warning(f"Removed bucket {bucket} due to insufficient samples.")
+            logger.warning(
+                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={bucket_sample_count})."
+            )
 
     def _enforce_resolution_constraints(self, bucket):
         """
@@ -456,6 +465,7 @@ class MetadataBackend:
                 )
                 return
             images = self.aspect_ratio_bucket_indices[bucket]
+            total_before = len(images)
             self.aspect_ratio_bucket_indices[bucket] = [
                 img
                 for img in images
@@ -464,6 +474,12 @@ class MetadataBackend:
                     image=None,
                 )
             ]
+            total_after = len(self.aspect_ratio_bucket_indices[bucket])
+            total_lost = total_before - total_after
+            if total_lost > 0:
+                logger.info(
+                    f"Had {total_before} samples before and {total_lost} that did not meet the minimum image size requirement ({self.minimum_image_size})."
+                )
 
     def meets_resolution_requirements(
         self,
@@ -502,7 +518,7 @@ class MetadataBackend:
             # We receive megapixel integer value, and then have to compare here by converting minimum_image_size MP to pixels.
             if self.minimum_image_size > 5:
                 raise ValueError(
-                    f"--minimum_image_size was given with a value of {minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
+                    f"--minimum_image_size was given with a value of {self.minimum_image_size} but resolution_type is area, which means this value is most likely too large. Please use a value less than 5."
                 )
             # We need to find the square image length if crop_style = square.
             minimum_image_size = self.minimum_image_size * 1_000_000
