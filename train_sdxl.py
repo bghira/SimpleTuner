@@ -539,10 +539,10 @@ def main():
             "Loading Aura Diffusion models is not yet implemented."
         )
 
-        # from diffusers.models import AuraTransformer2DModel
+        # from diffusers.models import AuraMMDiT2DModel
 
         # unet = None
-        # transformer = AuraTransformer2DModel.from_pretrained(
+        # transformer = AuraMMDiT2DModel.from_pretrained(
         #     args.pretrained_model_name_or_path,
         #     subfolder="transformer",
         #     **pretrained_load_args,
@@ -1109,7 +1109,7 @@ def main():
                         else (
                             PixArtTransformer2DModel
                             if args.pixart_sigma
-                            else AuraTransformer2DModel if args.aura_diffusion else None
+                            else AuraMMDiT2DModel if args.aura_diffusion else None
                         )
                     )
                 ),
