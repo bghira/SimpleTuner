@@ -1030,9 +1030,9 @@ def main():
                 filter(lambda p: p.requires_grad, transformer.parameters())
             )
         if args.train_text_encoder:
-            if args.sd3:
+            if args.sd3 or args.aura_diffusion or args.pixart_sigma:
                 raise ValueError(
-                    "Stable Diffusion 3 does not support finetuning the text encoders, as it is a multimodal transformer model that does not benefit from it."
+                    f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
             else:
                 params_to_optimize = (
