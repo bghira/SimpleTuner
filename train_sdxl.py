@@ -401,8 +401,8 @@ def main():
         )
 
     # Load scheduler and models
-    if args.sd3 and not args.sd3_uses_diffusion:
-        # Stable Diffusion 3 uses rectified flow.
+    if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+        # Stable Diffusion 3 and Aura Diffusion use rectified flow.
         from diffusers import FlowMatchEulerDiscreteScheduler
 
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -1591,7 +1591,7 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
                     # for weighting schemes where we sample timesteps non-uniformly
                     # thanks to @Slickytail who implemented this correctly via #8528
                     if args.weighting_scheme == "logit_normal":
@@ -1645,8 +1645,9 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
                     # Add noise according to flow matching.
+                    # TODO: Determine whether Aura Diffusion benefits from this.
                     sigmas = get_sd3_sigmas(
                         accelerator,
                         noise_scheduler_copy,
@@ -1672,7 +1673,7 @@ def main():
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
                     # This is the flow-matching target for vanilla SD3.
                     # If sd3_uses_diffusion, we will instead use v_prediction (see below)
                     target = latents
@@ -1694,7 +1695,7 @@ def main():
                     )
 
                 # Predict the noise residual and compute loss
-                if args.sd3:
+                if args.sd3 or args.aura_diffusion:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
                 elif StateTracker.get_model_type() == "sdxl":
@@ -1774,6 +1775,17 @@ def main():
                             # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                             # Preconditioning of the model outputs.
                             model_pred = model_pred * (-sigmas) + noisy_latents
+                    elif args.aura_diffusion:
+                        # Aura Diffusion also uses a MM-DiT model where the VAE-produced
+                        #  image embeds are passed in with the TE-produced text embeds.
+                        raise NotImplementedError(
+                            "Aura Diffusion prediction is not currently implemented."
+                        )
+                        model_pred = transformer(
+                            hidden_states=noisy_latents,
+                            encoder_hidden_states=encoder_hidden_states,
+                            return_dict=False,
+                        )[0]
                     elif args.pixart_sigma:
                         model_pred = transformer(
                             noisy_latents,
@@ -2086,7 +2098,7 @@ def main():
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
-            if args.sd3:
+            if args.sd3 or args.pixart_sigma or args.aura_diffusion:
                 transformer_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(transformer)
                 )
@@ -2099,15 +2111,16 @@ def main():
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_1)
                 )
-                text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
-                text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(text_encoder_2)
-                )
-                if args.sd3:
-                    text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
-                    text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(text_encoder_3)
+                if not args.aura_diffusion and not args.pixart_sigma:
+                    text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
+                    text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(text_encoder_2)
                     )
+                    if args.sd3:
+                        text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
+                        text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
+                            get_peft_model_state_dict(text_encoder_3)
+                        )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
