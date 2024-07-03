@@ -266,6 +266,24 @@ class Validation:
             from helpers.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
+        elif model_type == "aura_diffusion":
+            if self.args.controlnet:
+                raise Exception(
+                    "Aura Diffusion ControlNet inference validation is not yet supported."
+                )
+            if self.args.validation_using_datasets:
+                raise Exception(
+                    "Aura Diffusion inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                )
+            try:
+                from helpers.aura_diffusion.pipeline import AuraDiffusionPipeline
+            except Exception as e:
+                logger.error(
+                    f"Could not import Aura Diffusion pipeline. Perhaps you need a git-source version of Diffusers."
+                )
+                raise NotImplementedError("Aura Diffusion pipeline not available.")
+
+            return AuraDiffusionPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
@@ -316,6 +334,7 @@ class Validation:
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
+            or StateTracker.get_model_type() == "aura_diffusion"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
@@ -335,6 +354,10 @@ class Validation:
                         self.validation_negative_prompt_embeds,
                         self.validation_negative_prompt_mask,
                     ) = self.validation_negative_prompt_embeds[0]
+            elif self.args.aura_diffusion:
+                raise NotImplementedError(
+                    "Aura Diffusion validation prompt gathering is not yet implemented."
+                )
             else:
                 current_validation_prompt_embeds = current_validation_prompt_embeds[0]
             # logger.debug(
@@ -397,6 +420,11 @@ class Validation:
         if StateTracker.get_model_type() == "pixart_sigma":
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
+
+        if StateTracker.get_model_type() == "aura_diffusion":
+            raise NotImplementedError(
+                "Aura Diffusion text embed gathering is not yet fully implemented."
+            )
 
         return prompt_embeds
 
@@ -766,6 +794,10 @@ class Validation:
                     pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.accelerator.device, dtype=self.weight_dtype)
+                if StateTracker.get_model_type() == "aura_diffusion":
+                    raise NotImplementedError(
+                        "Aura Diffusion validation image generation is not yet implemented."
+                    )
 
                 validation_image_results = self.pipeline(**pipeline_kwargs).images
                 if self.args.controlnet:

@@ -137,7 +137,7 @@ def get_tokenizers(args):
             "subfolder": "tokenizer",
             "revision": args.revision,
         }
-        if not args.pixart_sigma:
+        if not args.pixart_sigma and not args.aura_diffusion:
             tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
         else:
             from transformers import T5Tokenizer
@@ -177,7 +177,7 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
-    if not args.pixart_sigma:
+    if not args.pixart_sigma and not args.aura_diffusion:
         try:
             tokenizer_2 = CLIPTokenizer.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -228,6 +228,8 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
+    if args.aura_diffusion:
+        StateTracker.set_model_type("aura_diffusion")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -368,7 +370,7 @@ def main():
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoders = []
     tokenizers = []
-    if not args.pixart_sigma:
+    if not args.pixart_sigma and not args.aura_diffusion:
         # sdxl and sd3 use the sd 1.5 encoder as number one.
         logger.info("Load OpenAI CLIP-L/14 text encoder..")
         text_encoder_path = args.pretrained_model_name_or_path
@@ -436,7 +438,7 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         if tokenizer_1 is not None:
-            if args.pixart_sigma or args.sd3:
+            if args.pixart_sigma or args.sd3 or args.aura_diffusion:
                 logger.info(
                     f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
@@ -532,6 +534,19 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.aura_diffusion:
+        raise NotImplementedError(
+            "Loading Aura Diffusion models is not yet implemented."
+        )
+
+        # from diffusers.models import AuraTransformer2DModel
+
+        # unet = None
+        # transformer = AuraTransformer2DModel.from_pretrained(
+        #     args.pretrained_model_name_or_path,
+        #     subfolder="transformer",
+        #     **pretrained_load_args,
+        # )
     else:
         logger.info(f"Loading SDXL U-net..")
         transformer = None
@@ -546,9 +561,11 @@ def main():
         model_type_label = "Stable Diffusion 3"
     if args.pixart_sigma:
         model_type_label = "PixArt Sigma"
+    if args.aura_diffusion:
+        model_type_label = "Aura Diffusion"
 
     if args.controlnet:
-        if args.pixart_sigma:
+        if args.pixart_sigma or args.aura_diffusion:
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
@@ -570,8 +587,8 @@ def main():
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
     elif "lora" in args.model_type:
-        if args.pixart_sigma:
-            raise Exception("PixArt does not support LoRA model training.")
+        if args.pixart_sigma or args.aura_diffusion:
+            raise Exception(f"{model_type_label} does not support LoRA model training.")
 
         logger.info("Using LoRA training mode.")
         if webhook_handler is not None:
@@ -627,6 +644,7 @@ def main():
         args.enable_xformers_memory_efficient_attention
         and not args.sd3
         and not args.pixart_sigma
+        and not args.aura_diffusion
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
@@ -642,6 +660,10 @@ def main():
             raise ValueError(
                 "xformers is not available. Make sure it is installed correctly"
             )
+    elif args.enable_xformers_memory_attention:
+        logger.warning(
+            "xformers is not enabled, as it is incompatible with this model type."
+        )
 
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
@@ -686,7 +708,12 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel and not args.sd3 and not args.pixart_sigma:
+    if (
+        not args.disable_compel
+        and not args.sd3
+        and not args.pixart_sigma
+        and not args.aura_diffusion
+    ):
         # SD3 and PixArt don't really work with prompt weighting.
         prompt_handler = PromptHandler(
             args=args,
@@ -1079,7 +1106,11 @@ def main():
                     else (
                         SD3Transformer2DModel
                         if args.sd3
-                        else PixArtTransformer2DModel if args.pixart_sigma else None
+                        else (
+                            PixArtTransformer2DModel
+                            if args.pixart_sigma
+                            else AuraTransformer2DModel if args.aura_diffusion else None
+                        )
                     )
                 ),
                 model_config=(
@@ -1681,6 +1712,10 @@ def main():
                     batch["encoder_attention_mask"] = batch[
                         "encoder_attention_mask"
                     ].to(device=accelerator.device, dtype=weight_dtype)
+                elif args.aura_diffusion:
+                    raise NotImplementedError(
+                        "Aura Diffusion noise residual predictions are not yet implemented."
+                    )
 
                 training_logger.debug("Predicting noise residual.")
 

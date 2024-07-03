@@ -11,6 +11,9 @@ export STABLE_DIFFUSION_3=false
 # Similarly, this is to train PixArt Sigma (1K or 2K) models.
 # Use MODEL_NAME="PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
 export PIXART_SIGMA=false
+# Similarly, this is to train Aura Diffusion family of models.
+# Use MODEL_NAME="internal-models/aura-diffusion-400B"
+export AURA_DIFFUSION=false
 
 # ControlNet model training is only supported when MODEL_TYPE='full'
 # See this document for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md

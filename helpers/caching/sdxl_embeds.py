@@ -496,7 +496,11 @@ class TextEmbeddingCache:
                 is_validation=is_validation,
                 load_from_cache=load_from_cache,
             )
-        elif self.model_type == "legacy" or self.model_type == "pixart_sigma":
+        elif (
+            self.model_type == "legacy"
+            or self.model_type == "pixart_sigma"
+            or self.model_type == "aura_diffusion"
+        ):
             # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(
                 raw_prompts,
@@ -746,6 +750,7 @@ class TextEmbeddingCache:
                     if (
                         "deepfloyd" in StateTracker.get_args().model_type
                         or StateTracker.get_model_type() == "pixart_sigma"
+                        or StateTracker.get_model_type() == "aura_diffusion"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(prompt)

@@ -220,6 +220,10 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
+        elif model_type == "aura_diffusion":
+            raise NotImplementedError(
+                "Aura Diffusion validation prompt preparation is not yet implemented."
+            )
         else:
             raise ValueError(f"Unknown model type '{model_type}'")
 
