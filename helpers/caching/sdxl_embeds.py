@@ -749,13 +749,14 @@ class TextEmbeddingCache:
                             time.sleep(5)
                     if (
                         "deepfloyd" in StateTracker.get_args().model_type
-                        or StateTracker.get_model_type() == "pixart_sigma"
-                        or StateTracker.get_model_type() == "aura_diffusion"
+                        or self.model_type == "pixart_sigma"
+                        or self.model_type == "aura_diffusion"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(prompt)
-                        if self.model_type == "pixart_sigma":
+                        if "deepfloyd" not in StateTracker.get_args().model_type:
                             # we have to store the attn mask with the embed for pixart.
+                            # does aura diffusion require the attn mask be available? oh well.
                             prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(
