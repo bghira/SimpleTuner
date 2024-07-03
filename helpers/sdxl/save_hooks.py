@@ -44,7 +44,7 @@ try:
     from diffusers.models import AuraMMDiT2DModel
 except Exception as e:
     logger.error(
-        f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
+        f"Can not load AuraMMDiT2DModel class. This release requires the latest version of Diffusers: {e}"
     )
     raise e
 
