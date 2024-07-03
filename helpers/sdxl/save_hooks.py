@@ -117,7 +117,7 @@ class SDXLSaveHook:
             elif self.args.hunyuan_dit:
                 self.ema_model_cls = HunyuanDiT2DModel
 
-    def save_lora(self, models, weights, output_dir):
+    def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
         unet_lora_layers_to_save = None
@@ -186,15 +186,7 @@ class SDXLSaveHook:
                 text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
             )
 
-    def save_model_hook(self, models, weights, output_dir):
-        # Write "training_state.json" to the output directory containing the training state
-        StateTracker.save_training_state(
-            os.path.join(output_dir, "training_state.json")
-        )
-        if "lora" in self.args.model_type:
-            self.save_lora(models=model, weights=weights, output_dir=output_dir)
-            return
-
+    def _save_full_model(self, models, weights, output_dir):
         # Create a temporary directory for atomic saves
         temporary_dir = output_dir.replace("checkpoint", "temporary")
         os.makedirs(temporary_dir, exist_ok=True)
@@ -232,7 +224,18 @@ class SDXLSaveHook:
         # Remove the temporary directory
         shutil.rmtree(temporary_dir)
 
-    def load_lora(self, models, input_dir):
+    def save_model_hook(self, models, weights, output_dir):
+        # Write "training_state.json" to the output directory containing the training state
+        StateTracker.save_training_state(
+            os.path.join(output_dir, "training_state.json")
+        )
+        if "lora" in self.args.model_type:
+            self._save_lora(models=models, weights=weights, output_dir=output_dir)
+            return
+        else:
+            self._save_full_model(models=models, weights=weights, output_dir=output_dir)
+
+    def _load_lora(self, models, input_dir):
         logger.info(f"Loading LoRA weights from Path: {input_dir}")
         unet_ = None
         transformer_ = None
@@ -322,19 +325,7 @@ class SDXLSaveHook:
                 )
         logger.info("Completed loading LoRA weights.")
 
-    def load_model_hook(self, models, input_dir):
-        # Check the checkpoint dir for a "training_state.json" file to load
-        training_state_path = os.path.join(input_dir, "training_state.json")
-        if os.path.exists(training_state_path):
-            StateTracker.load_training_state(training_state_path)
-        else:
-            logger.warning(
-                f"Could not find training_state.json in checkpoint dir {input_dir}"
-            )
-
-        if "lora" in self.args.model_type:
-            self.load_lora(models=models, input_dir=input_dir)
-        
+    def _load_full_model(self, models, input_dir):
         if self.args.use_ema:
             load_model = EMAModel.from_pretrained(
                 os.path.join(input_dir, self.ema_model_subdir), self.ema_model_cls
@@ -403,3 +394,20 @@ class SDXLSaveHook:
 
             if return_exception:
                 raise Exception(return_exception)
+
+    def load_model_hook(self, models, input_dir):
+        # Check the checkpoint dir for a "training_state.json" file to load
+        training_state_path = os.path.join(input_dir, "training_state.json")
+        if os.path.exists(training_state_path):
+            StateTracker.load_training_state(training_state_path)
+        else:
+            logger.warning(
+                f"Could not find training_state.json in checkpoint dir {input_dir}"
+            )
+
+        if "lora" in self.args.model_type:
+            self._load_lora(models=models, input_dir=input_dir)
+        else:
+            self._load_full_model(models=models, input_dir=input_dir)
+        
+        
