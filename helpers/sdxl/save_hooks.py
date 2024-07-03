@@ -1,4 +1,3 @@
-
 from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
 from helpers.training.wrappers import unwrap_model
 from diffusers.loaders import LoraLoaderMixin
@@ -40,6 +39,15 @@ except Exception as e:
         f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
     )
     raise e
+
+try:
+    from diffusers.models import AuraMMDiT2DModel
+except Exception as e:
+    logger.error(
+        f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
+    )
+    raise e
+
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
@@ -116,6 +124,8 @@ class SDXLSaveHook:
                 self.ema_model_cls = PixArtTransformer2DModel
             elif self.args.hunyuan_dit:
                 self.ema_model_cls = HunyuanDiT2DModel
+            elif self.args.aura_diffusion:
+                self.ema_model_cls = AuraMMDiT2DModel
 
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
@@ -134,29 +144,25 @@ class SDXLSaveHook:
             elif isinstance(
                 model, type(unwrap_model(self.accelerator, self.text_encoder_1))
             ):
-                text_encoder_1_lora_layers_to_save = (
-                    convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(model)
-                    )
+                text_encoder_1_lora_layers_to_save = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(model)
                 )
             elif isinstance(
                 model, type(unwrap_model(self.accelerator, self.text_encoder_2))
             ):
-                text_encoder_2_lora_layers_to_save = (
-                    convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(model)
-                    )
+                text_encoder_2_lora_layers_to_save = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(model)
                 )
             elif isinstance(
                 model, type(unwrap_model(self.accelerator, self.text_encoder_3))
             ):
-                text_encoder_3_lora_layers_to_save = (
-                    convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(model)
-                    )
+                text_encoder_3_lora_layers_to_save = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(model)
                 )
 
-            elif not isinstance(model, type(unwrap_model(self.accelerator, HunyuanDiT2DModel))):
+            elif not isinstance(
+                model, type(unwrap_model(self.accelerator, HunyuanDiT2DModel))
+            ):
                 if isinstance(
                     model, type(unwrap_model(self.accelerator, self.transformer))
                 ):
@@ -282,9 +288,7 @@ class SDXLSaveHook:
             )
 
         else:
-            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
-                input_dir
-            )
+            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
 
             unet_state_dict = {
                 f'{k.replace("unet.", "")}': v
@@ -378,6 +382,10 @@ class SDXLSaveHook:
                         load_model = HunyuanDiT2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
+                    elif self.args.aura_diffusion:
+                        load_model = AuraMMDiT2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
                     elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(
@@ -409,5 +417,3 @@ class SDXLSaveHook:
             self._load_lora(models=models, input_dir=input_dir)
         else:
             self._load_full_model(models=models, input_dir=input_dir)
-        
-        
