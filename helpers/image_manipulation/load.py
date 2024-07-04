@@ -39,28 +39,28 @@ def decode_image_with_pil(img_data: bytes) -> Image.Image:
 
         # For transparent images, add a white background as this is correct
         # most of the time.
-        if img_pil.mode == 'RGBA':
+        if img_pil.mode == "RGBA":
             canvas = Image.new("RGBA", img_pil.size, (255, 255, 255))
             canvas.alpha_composite(img_pil)
             img_pil = canvas.convert("RGB")
         else:
-            img_pil = img_pil.convert('RGB')
+            img_pil = img_pil.convert("RGB")
     except (OSError, Image.DecompressionBombError, ValueError) as e:
-        logger.warning(f'Error decoding image: {e}')
+        logger.warning(f"Error decoding image: {e}")
         raise
     return img_pil
 
 
 def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
-    '''
+    """
     Load an image using CV2. If that fails, fall back to PIL.
 
     The image is returned as a PIL object.
-    '''
+    """
     if isinstance(img_data, str):
-        with open(img_data, 'rb') as file:
+        with open(img_data, "rb") as file:
             img_data = file.read()
-    elif hasattr(img_data, 'read'):
+    elif hasattr(img_data, "read"):
         # Check if it's file-like object.
         img_data = img_data.read()
 
@@ -70,7 +70,11 @@ def load_image(img_data: Union[bytes, IO[Any], str]) -> Image.Image:
     nparr = np.frombuffer(img_data, np.uint8)
     image_preload = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
     has_alpha = False
-    if image_preload is not None and image_preload.shape[2] == 4:
+    if (
+        image_preload is not None
+        and len(image_preload.shape) >= 3
+        and image_preload.shape[2] == 4
+    ):
         has_alpha = True
     del image_preload
 
