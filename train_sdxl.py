@@ -2216,18 +2216,17 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-                # Stable Diffusion 3 doesn't like when you muck with the scheduler.
-                # We only set this for SDXL models.
-                pipeline.scheduler = SCHEDULER_NAME_MAP[
-                    args.validation_noise_scheduler
-                ].from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    revision=args.revision,
-                    subfolder="scheduler",
-                    prediction_type=args.prediction_type,
-                    timestep_spacing=args.training_scheduler_timestep_spacing,
-                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-                )
+                if args.validation_noise_scheduler is not None:
+                    pipeline.scheduler = SCHEDULER_NAME_MAP[
+                        args.validation_noise_scheduler
+                    ].from_pretrained(
+                        args.pretrained_model_name_or_path,
+                        revision=args.revision,
+                        subfolder="scheduler",
+                        prediction_type=args.prediction_type,
+                        timestep_spacing=args.training_scheduler_timestep_spacing,
+                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                    )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )

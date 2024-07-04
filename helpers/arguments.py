@@ -1204,12 +1204,12 @@ def parse_args(input_args=None):
         "--validation_noise_scheduler",
         type=str,
         choices=["ddim", "ddpm", "euler", "euler-a", "unipc"],
-        default="euler",
+        default=None,
         help=(
             "When validating the model at inference time, a different scheduler may be chosen."
             " UniPC can offer better speed, and Euler A can put up with instabilities a bit better."
             " For zero-terminal SNR models, DDIM is the best choice. Choices: ['ddim', 'ddpm', 'euler', 'euler-a', 'unipc'],"
-            " Default: ddim"
+            " Default: None (use the model default)"
         ),
     )
     parser.add_argument(

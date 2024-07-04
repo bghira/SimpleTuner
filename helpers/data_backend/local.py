@@ -120,15 +120,16 @@ class LocalDataBackend(BaseDataBackend):
             import traceback
 
             logger.error(
-                f"Encountered error opening image: {e}, traceback: {traceback.format_exc()}"
+                f"Encountered error opening image {filepath}: {e}, traceback: {traceback.format_exc()}"
             )
             if delete_problematic_images:
                 logger.error(
                     f"Deleting image, because --delete_problematic_images is provided."
                 )
                 self.delete(filepath)
-            exit(1)
-            raise e
+            else:
+                exit(1)
+                raise e
 
     def read_image_batch(
         self, filepaths: list, delete_problematic_images: bool = False

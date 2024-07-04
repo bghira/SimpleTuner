@@ -1,3 +1,4 @@
+
 from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
 from helpers.training.wrappers import unwrap_model
 from diffusers.loaders import LoraLoaderMixin
@@ -32,6 +33,13 @@ except Exception as e:
     )
     raise e
 
+try:
+    from diffusers.models import HunyuanDiT2DModel
+except Exception as e:
+    logger.error(
+        f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
+    )
+    raise e
 
 def merge_safetensors_files(directory):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
@@ -106,81 +114,79 @@ class SDXLSaveHook:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
+            elif self.args.hunyuan_dit:
+                self.ema_model_cls = HunyuanDiT2DModel
 
-    def save_model_hook(self, models, weights, output_dir):
-        # Write "training_state.json" to the output directory containing the training state
-        StateTracker.save_training_state(
-            os.path.join(output_dir, "training_state.json")
-        )
-        if "lora" in self.args.model_type:
-            # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
-            # or there are the unet and text encoder atten layers.
-            unet_lora_layers_to_save = None
-            transformer_lora_layers_to_save = None
-            text_encoder_1_lora_layers_to_save = None
-            text_encoder_2_lora_layers_to_save = None
-            text_encoder_3_lora_layers_to_save = None
+    def _save_lora(self, models, weights, output_dir):
+        # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
+        # or there are the unet and text encoder atten layers.
+        unet_lora_layers_to_save = None
+        transformer_lora_layers_to_save = None
+        text_encoder_1_lora_layers_to_save = None
+        text_encoder_2_lora_layers_to_save = None
+        text_encoder_3_lora_layers_to_save = None
 
-            for model in models:
-                if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
-                    unet_lora_layers_to_save = convert_state_dict_to_diffusers(
+        for model in models:
+            if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
+                unet_lora_layers_to_save = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(model)
+                )
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_1))
+            ):
+                text_encoder_1_lora_layers_to_save = (
+                    convert_state_dict_to_diffusers(
                         get_peft_model_state_dict(model)
                     )
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
-                ):
-                    text_encoder_1_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
+                )
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_2))
+            ):
+                text_encoder_2_lora_layers_to_save = (
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
                     )
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
-                ):
-                    text_encoder_2_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
+                )
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_3))
+            ):
+                text_encoder_3_lora_layers_to_save = (
+                    convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(model)
                     )
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_3))
-                ):
-                    text_encoder_3_lora_layers_to_save = (
-                        convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(model)
-                        )
-                    )
+                )
 
-                elif isinstance(
+            elif not isinstance(model, type(unwrap_model(self.accelerator, HunyuanDiT2DModel))):
+                if isinstance(
                     model, type(unwrap_model(self.accelerator, self.transformer))
                 ):
                     transformer_lora_layers_to_save = get_peft_model_state_dict(model)
 
-                elif not self.use_deepspeed_optimizer:
-                    raise ValueError(f"unexpected save model: {model.__class__}")
+            elif not self.use_deepspeed_optimizer:
+                raise ValueError(f"unexpected save model: {model.__class__}")
 
-                # make sure to pop weight so that corresponding model is not saved again
-                if weights:
-                    weights.pop()
+            # make sure to pop weight so that corresponding model is not saved again
+            if weights:
+                weights.pop()
 
-            if self.args.sd3:
-                StableDiffusion3Pipeline.save_lora_weights(
-                    output_dir,
-                    transformer_lora_layers=transformer_lora_layers_to_save,
-                    # SD3 doesn't support text encoder training.
-                    # text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
-                    # text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
-                    # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
-                )
-            else:
-                StableDiffusionXLPipeline.save_lora_weights(
-                    output_dir,
-                    unet_lora_layers=unet_lora_layers_to_save,
-                    text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
-                    text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
-                )
-            return
+        if self.args.sd3:
+            StableDiffusion3Pipeline.save_lora_weights(
+                output_dir,
+                transformer_lora_layers=transformer_lora_layers_to_save,
+                # SD3 doesn't support text encoder training.
+                # text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
+                # text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
+                # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
+            )
+        else:
+            StableDiffusionXLPipeline.save_lora_weights(
+                output_dir,
+                unet_lora_layers=unet_lora_layers_to_save,
+                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+                text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
+            )
 
+    def _save_full_model(self, models, weights, output_dir):
         # Create a temporary directory for atomic saves
         temporary_dir = output_dir.replace("checkpoint", "temporary")
         os.makedirs(temporary_dir, exist_ok=True)
@@ -218,106 +224,108 @@ class SDXLSaveHook:
         # Remove the temporary directory
         shutil.rmtree(temporary_dir)
 
-    def load_model_hook(self, models, input_dir):
-        # Check the checkpoint dir for a "training_state.json" file to load
-        training_state_path = os.path.join(input_dir, "training_state.json")
-        if os.path.exists(training_state_path):
-            StateTracker.load_training_state(training_state_path)
+    def save_model_hook(self, models, weights, output_dir):
+        # Write "training_state.json" to the output directory containing the training state
+        StateTracker.save_training_state(
+            os.path.join(output_dir, "training_state.json")
+        )
+        if "lora" in self.args.model_type:
+            self._save_lora(models=models, weights=weights, output_dir=output_dir)
+            return
         else:
-            logger.warning(
-                f"Could not find training_state.json in checkpoint dir {input_dir}"
+            self._save_full_model(models=models, weights=weights, output_dir=output_dir)
+
+    def _load_lora(self, models, input_dir):
+        logger.info(f"Loading LoRA weights from Path: {input_dir}")
+        unet_ = None
+        transformer_ = None
+        text_encoder_one_ = None
+        text_encoder_two_ = None
+        text_encoder_three_ = None
+
+        while len(models) > 0:
+            model = models.pop()
+
+            if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
+                unet_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.transformer))
+            ):
+                transformer_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_1))
+            ):
+                text_encoder_one_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_2))
+            ):
+                text_encoder_two_ = model
+            elif isinstance(
+                model, type(unwrap_model(self.accelerator, self.text_encoder_3))
+            ):
+                text_encoder_three_ = model
+            else:
+                raise ValueError(f"unexpected save model: {model.__class__}")
+
+        if self.args.sd3:
+            lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+            transformer_state_dict = {
+                f'{k.replace("transformer.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
+            }
+            transformer_state_dict = convert_unet_state_dict_to_peft(
+                transformer_state_dict
+            )
+            incompatible_keys = set_peft_model_state_dict(
+                transformer_, transformer_state_dict, adapter_name="default"
             )
 
-        if "lora" in self.args.model_type:
-            logger.info(f"Loading LoRA weights from Path: {input_dir}")
-            unet_ = None
-            transformer_ = None
-            text_encoder_one_ = None
-            text_encoder_two_ = None
-            text_encoder_three_ = None
+        else:
+            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
+                input_dir
+            )
 
-            while len(models) > 0:
-                model = models.pop()
+            unet_state_dict = {
+                f'{k.replace("unet.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
+            }
+            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
+            incompatible_keys = set_peft_model_state_dict(
+                unet_ or self.unet, unet_state_dict, adapter_name="default"
+            )
+        if incompatible_keys is not None:
+            # check only for unexpected keys
+            unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
+            if unexpected_keys:
+                logger.warning(
+                    f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
+                    f" {unexpected_keys}. "
+                )
 
-                if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
-                    unet_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.transformer))
-                ):
-                    transformer_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_1))
-                ):
-                    text_encoder_one_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_2))
-                ):
-                    text_encoder_two_ = model
-                elif isinstance(
-                    model, type(unwrap_model(self.accelerator, self.text_encoder_3))
-                ):
-                    text_encoder_three_ = model
-                else:
-                    raise ValueError(f"unexpected save model: {model.__class__}")
+        if self.args.train_text_encoder:
+            # Do we need to call `scale_lora_layers()` here?
+            _set_state_dict_into_text_encoder(
+                lora_state_dict,
+                prefix="text_encoder.",
+                text_encoder=text_encoder_one_,
+            )
 
+            _set_state_dict_into_text_encoder(
+                lora_state_dict,
+                prefix="text_encoder_2.",
+                text_encoder=text_encoder_two_,
+            )
             if self.args.sd3:
-                lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
-                transformer_state_dict = {
-                    f'{k.replace("transformer.", "")}': v
-                    for k, v in lora_state_dict.items()
-                    if k.startswith("unet.")
-                }
-                transformer_state_dict = convert_unet_state_dict_to_peft(
-                    transformer_state_dict
-                )
-                incompatible_keys = set_peft_model_state_dict(
-                    transformer_, transformer_state_dict, adapter_name="default"
-                )
-
-            else:
-                lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(
-                    input_dir
-                )
-
-                unet_state_dict = {
-                    f'{k.replace("unet.", "")}': v
-                    for k, v in lora_state_dict.items()
-                    if k.startswith("unet.")
-                }
-                unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-                incompatible_keys = set_peft_model_state_dict(
-                    unet_ or self.unet, unet_state_dict, adapter_name="default"
-                )
-            if incompatible_keys is not None:
-                # check only for unexpected keys
-                unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
-                if unexpected_keys:
-                    logger.warning(
-                        f"Loading adapter weights from state_dict led to unexpected keys not found in the model: "
-                        f" {unexpected_keys}. "
-                    )
-
-            if self.args.train_text_encoder:
-                # Do we need to call `scale_lora_layers()` here?
                 _set_state_dict_into_text_encoder(
                     lora_state_dict,
-                    prefix="text_encoder.",
-                    text_encoder=text_encoder_one_,
+                    prefix="text_encoder_3.",
+                    text_encoder=text_encoder_three_,
                 )
+        logger.info("Completed loading LoRA weights.")
 
-                _set_state_dict_into_text_encoder(
-                    lora_state_dict,
-                    prefix="text_encoder_2.",
-                    text_encoder=text_encoder_two_,
-                )
-                if self.args.sd3:
-                    _set_state_dict_into_text_encoder(
-                        lora_state_dict,
-                        prefix="text_encoder_3.",
-                        text_encoder=text_encoder_three_,
-                    )
-            logger.info("Completed loading LoRA weights.")
-
+    def _load_full_model(self, models, input_dir):
         if self.args.use_ema:
             load_model = EMAModel.from_pretrained(
                 os.path.join(input_dir, self.ema_model_subdir), self.ema_model_cls
@@ -366,6 +374,10 @@ class SDXLSaveHook:
                         load_model = PixArtTransformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
+                    elif self.args.hunyuan_dit:
+                        load_model = HunyuanDiT2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
                     elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(
@@ -382,3 +394,20 @@ class SDXLSaveHook:
 
             if return_exception:
                 raise Exception(return_exception)
+
+    def load_model_hook(self, models, input_dir):
+        # Check the checkpoint dir for a "training_state.json" file to load
+        training_state_path = os.path.join(input_dir, "training_state.json")
+        if os.path.exists(training_state_path):
+            StateTracker.load_training_state(training_state_path)
+        else:
+            logger.warning(
+                f"Could not find training_state.json in checkpoint dir {input_dir}"
+            )
+
+        if "lora" in self.args.model_type:
+            self._load_lora(models=models, input_dir=input_dir)
+        else:
+            self._load_full_model(models=models, input_dir=input_dir)
+        
+        
