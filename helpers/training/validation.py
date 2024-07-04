@@ -461,6 +461,9 @@ class Validation:
         ) and self.accelerator.is_main_process
 
     def setup_scheduler(self):
+        if self.args.validation_noise_scheduler is None:
+            return
+
         scheduler_args = {}
         if "variance_type" in self.pipeline.scheduler.config:
             variance_type = self.pipeline.scheduler.config.variance_type

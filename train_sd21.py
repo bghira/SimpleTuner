@@ -1605,16 +1605,17 @@ def main():
                 variant=args.variant,
                 safety_checker=None,
             )
-            pipeline.scheduler = SCHEDULER_NAME_MAP[
-                args.validation_noise_scheduler
-            ].from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="scheduler",
-                prediction_type=args.prediction_type,
-                timestep_spacing="trailing",
-                rescale_betas_zero_snr=True,
-                revision=args.revision,
-            )
+            if args.validation_noise_scheduler is not None:
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing="trailing",
+                    rescale_betas_zero_snr=True,
+                    revision=args.revision,
+                )
         if "full" in args.model_type:
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, args.hub_model_id or "pipeline"),
