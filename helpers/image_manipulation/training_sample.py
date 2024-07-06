@@ -21,9 +21,9 @@ class TrainingSample:
         Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
 
         Args:
-        image (Image.Image): A PIL Image object.
-        data_backend_id (str): Identifier for the data backend used for additional operations.
-        metadata (dict): Optional metadata associated with the image.
+            image (Image.Image): A PIL Image object.
+            data_backend_id (str): Identifier for the data backend used for additional operations.
+            metadata (dict): Optional metadata associated with the image.
         """
         self.image = image
         self.target_size = None
@@ -94,11 +94,11 @@ class TrainingSample:
         Create a new TrainingSample instance from an image path.
 
         Args:
-        image_path (str): The path to the image.
-        data_backend_id (str): Identifier for the data backend used for additional operations.
+            image_path (str): The path to the image.
+            data_backend_id (str): Identifier for the data backend used for additional operations.
 
         Returns:
-        TrainingSample: A new TrainingSample instance.
+            TrainingSample: A new TrainingSample instance.
         """
         data_backend = StateTracker.get_data_backend(data_backend_id)
         image = data_backend["metadata_backend"].read_image(image_path)
@@ -106,7 +106,11 @@ class TrainingSample:
 
     def _validate_image_metadata(self) -> bool:
         """
-        Determine whether all required keys exist for prepare() to skip calculations
+        Determine whether all required keys exist for prepare() to skip calculations.
+        This is useful because randomised aspect buckets must be preserved across runs to avoid mismatched tensor dimensions.
+
+        Returns:
+            bool: True if the metadata is valid, False otherwise.
         """
         required_keys = [
             "original_size",
@@ -156,7 +160,13 @@ class TrainingSample:
             raise Exception(f"Unknown resolution type: {self.resolution_type}")
 
     def _trim_aspect_bucket_list(self):
-        """Momentarily return a temporarily list of pruned buckets that'll work for this image."""
+        """
+        Momentarily return a temporarily list of pruned buckets that'll work for this image.
+        An aspect bucket will "work" if the image must be upscaled less than 20% to fit into it.
+
+        Returns:
+            list[float]: The list of available aspect buckets
+        """
         available_buckets = []
         for bucket in self.crop_aspect_buckets:
             # We want to ensure we don't upscale images beyond about 20% of their original size.
@@ -182,6 +192,12 @@ class TrainingSample:
         return available_buckets
 
     def _select_random_aspect(self):
+        """
+        This method returns a random aspect bucket from a list of configured, allowed values.
+
+        Returns:
+            float: The selected aspect ratio.
+        """
         if not self.crop_aspect_buckets:
             raise ValueError(
                 "Aspect buckets are not defined in the data backend config."
@@ -266,10 +282,12 @@ class TrainingSample:
         Perform initial image preparations such as converting to RGB and applying EXIF transformations.
 
         Args:
-        image (Image.Image): The image to prepare.
+            image (Image.Image): The image to prepare.
 
-        Returns:
-        (image, crop_coordinates, aspect_ratio)
+        Returns: tuple
+            - image data (PIL.Image)
+            - crop_coordinates (tuple)
+            - aspect_ratio (float)
         """
         self.save_debug_image(f"images/{time.time()}-0-original.png")
         self.crop()
@@ -305,7 +323,7 @@ class TrainingSample:
         Calculate the area of the image.
 
         Returns:
-        int: The area of the image.
+            int: The area of the image.
         """
         if self.image is not None:
             return self.image.size[0] * self.image.size[1]
@@ -314,8 +332,10 @@ class TrainingSample:
 
     def _should_downsample_before_crop(self) -> bool:
         """
+        If the options to do so are enabled, we will downsample before cropping.
+
         Returns:
-        bool: True if the image should be downsampled before cropping, False otherwise.
+            bool: True if the image should be downsampled before cropping, False otherwise.
         """
         if (
             not self.crop_enabled
@@ -336,11 +356,21 @@ class TrainingSample:
             )
 
     def _calculate_target_downsample_size(self):
-        # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
+        """
+        When cropping images, it is optional to disturb them with a resize before the crop.
+        This is desirable when a large image is being cropped to a small size, as it will preserve scene details and maintain aspect ratio.
+
+        Returns:
+            tuple: The target downsample size as (width, height).
+        """
+        # We'll run the target size calculator logic without updating any of the object attributes.
+        # This will prevent contamination of the final values that the image will represent.
         _, calculated_intermediary_size, _ = self.target_size_calculator(
             self.original_aspect_ratio, self.target_downsample_size, self.original_size
         )
-        # we might have the self.target_size edges very different from the target_downsample_size. in the worst case we have a shorter edge that will need to be boosted proportionally.
+        # The calculated_intermediary_size's purpose is to resize to this value before cropping to target_size.
+        # If the intermediary size is smaller than target_size on either edge, the cropping will result in black bars.
+        # We have to calculate the scale factor and adjust the image edges proportionally to avoid squishing it.
         if calculated_intermediary_size[0] < self.target_size[0]:
             scale_factor = self.target_size[0] / calculated_intermediary_size[0]
             calculated_intermediary_size = (
@@ -359,6 +389,9 @@ class TrainingSample:
     def _downsample_before_crop(self):
         """
         Downsample the image before cropping, to preserve scene details and maintain aspect ratio.
+
+        Returns:
+            TrainingSample: The current TrainingSample instance.
         """
         if self._should_downsample_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
@@ -368,8 +401,10 @@ class TrainingSample:
     def correct_intermediary_square_size(self):
         """
         When an intermediary size is calculated, we don't adjust it to be divisible by 8 or 64.
-
         However, the aspect ratio 1.0 needs special consideration for our base resolutions 512, 768, and 1024, because they typically result in 500x500, 750x750, and 1000x1000 images.
+
+        Returns:
+            TrainingSample: The current TrainingSample instance.
         """
         if (
             self.aspect_ratio == 1.0
@@ -383,7 +418,15 @@ class TrainingSample:
         return self
 
     def calculate_target_size(self):
-        # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
+        """
+        This method will populate the values for self.{target_size,intermediary_size,aspect_ratio} based on the image's original size and the data backend configuration.
+
+        Returns:
+            tuple:
+                - The target size as (width, height).
+                - The intermediary size as (width, height).
+                - The aspect ratio of the target size. This will likely be different from the original aspect ratio.
+        """
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size
         )
@@ -421,7 +464,10 @@ class TrainingSample:
 
     def correct_image(self):
         """
-        Apply a series of transformations to the image to "correct" it.
+        Apply a series of transformations to the image to "correct" it, such as EXIF rotation and conversion to RGB.
+
+        Returns:
+            TrainingSample: The current TrainingSample instance.
         """
         if self.image:
             # Convert image to RGB to remove any alpha channel and apply EXIF data transformations
@@ -432,6 +478,10 @@ class TrainingSample:
     def crop(self):
         """
         Crop the image using the detected crop handler class.
+        If cropping is not enabled, we do nothing.
+
+        Returns:
+            TrainingSample: The current TrainingSample instance.
         """
         if not self.crop_enabled:
             return self
@@ -450,10 +500,12 @@ class TrainingSample:
 
     def resize(self, size: tuple = None):
         """
-        Resize the image to a new size.
+        Resize the image to a new size. If one is not provided, we will use the precalculated self.target_size
 
         Args:
-        target_size (tuple): The target size as (width, height).
+            (optional) target_size (tuple): The target size as (width, height).
+        Returns:
+            TrainingSample: The current TrainingSample instance.
         """
         current_size = self.image.size if self.image is not None else self.original_size
         if size is None:
@@ -490,23 +542,37 @@ class TrainingSample:
     def get_image(self):
         """
         Returns the current state of the image.
+        If using the `parquet` metadata backend, this value may be None during the initial aspect bucketing phase.
 
         Returns:
-        Image.Image: The current image.
+            Image.Image: The current image.
         """
         return self.image
 
     def get_conditioning_image(self):
         """
         Fetch a conditioning image, eg. a canny edge map for ControlNet training.
+        Currently, this example is not implemented or used.
+
+        Returns:
+            None
         """
         if not StateTracker.get_args().controlnet:
             return None
         conditioning_dataset = StateTracker.get_conditioning_dataset(
             data_backend_id=self.data_backend_id
         )
+        raise NotImplementedError("Conditioning images are not yet implemented.")
 
     def cache_path(self):
+        """
+        Given an image path, manipulate the prefix and suffix to return its counterpart cache path.
+        The image extension will be stripped and replaced with the appropriate value (.pt).
+        If the instance_data_root is found in the path, it will be replaced with the cache_dir.
+
+        Returns:
+            str: The cache path for the image.
+        """
         metadata_backend = StateTracker.get_data_backend(self.data_backend_id)[
             "metadata_backend"
         ]
@@ -519,6 +585,14 @@ class TrainingSample:
         return os.path.splitext(partial_replacement)[0] + ".pt"
 
     def image_path(self, basename_only=False):
+        """
+        Returns the absolute or basename path for the current training sample.
+
+        Args:
+            basename_only (bool): Whether to return the basename only.
+        Returns:
+            str: The image path
+        """
         if basename_only:
             return os.path.basename(self._image_path)
         return self._image_path
