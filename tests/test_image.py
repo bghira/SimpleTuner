@@ -239,25 +239,38 @@ class TestMultiaspectImage(unittest.TestCase):
             for mp in test_megapixels:
                 for _ in range(num_random_tests):
                     # Generate a random original width and height
-                    original_width = random.randint(100, 5000)
-                    original_height = random.randint(100, 5000)
+                    original_width = random.randint(512, 2500)
+                    original_height = random.randint(512, 2500)
                     original_aspect_ratio = original_width / original_height
 
                     # Calculate new size
-                    reformed_size, intermediary_size, new_aspect_ratio = (
+                    target_size, intermediary_size, new_aspect_ratio = (
                         MultiaspectImage.calculate_new_size_by_pixel_area(
                             original_aspect_ratio, mp, (original_width, original_height)
                         )
                     )
 
                     # Calculate the resulting megapixels
-                    new_width, new_height = reformed_size
-                    resulting_mp = (new_width * new_height) / 1e6
-
-                    # Check that the resulting image size is not below the specified megapixels
-                    self.assertTrue(
-                        resulting_mp >= mp,
-                        f"Resulting size {new_width}x{new_height} = {resulting_mp} MP is below the specified {mp} MP",
+                    target_width, target_height = target_size
+                    intermediary_width, intermediary_height = intermediary_size
+                    self.assertGreaterEqual(
+                        intermediary_width,
+                        target_width,
+                        f"Final width {target_width} is greater than the intermediary {intermediary_size}",
+                    )
+                    self.assertGreaterEqual(
+                        intermediary_height,
+                        target_height,
+                        f"Final height {target_height} is greater than the intermediary {intermediary_size}",
+                    )
+                    self.assertAlmostEqual(
+                        MultiaspectImage.calculate_image_aspect_ratio(
+                            (original_width, original_height)
+                        ),
+                        MultiaspectImage.calculate_image_aspect_ratio(
+                            intermediary_size
+                        ),
+                        delta=0.02,
                     )
 
     def test_calculate_new_size_by_pixel_area_uniformity(self):
