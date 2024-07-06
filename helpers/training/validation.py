@@ -341,7 +341,7 @@ class Validation:
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if self.args.pixart_sigma:
+            if self.args.pixart_sigma or self.args.aura_diffusion:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -354,10 +354,6 @@ class Validation:
                         self.validation_negative_prompt_embeds,
                         self.validation_negative_prompt_mask,
                     ) = self.validation_negative_prompt_embeds[0]
-            elif self.args.aura_diffusion:
-                raise NotImplementedError(
-                    "Aura Diffusion validation prompt gathering is not yet implemented."
-                )
             else:
                 current_validation_prompt_embeds = current_validation_prompt_embeds[0]
             # logger.debug(
@@ -417,14 +413,12 @@ class Validation:
                 )
                 for key, value in prompt_embeds.items()
             }
-        if StateTracker.get_model_type() == "pixart_sigma":
+        if (
+            StateTracker.get_model_type() == "pixart_sigma"
+            or StateTracker.get_model_type() == "aura_diffusion"
+        ):
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
-
-        if StateTracker.get_model_type() == "aura_diffusion":
-            raise NotImplementedError(
-                "Aura Diffusion text embed gathering is not yet fully implemented."
-            )
 
         return prompt_embeds
 
@@ -783,7 +777,10 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                if StateTracker.get_model_type() == "pixart_sigma":
+                if (
+                    StateTracker.get_model_type() == "pixart_sigma"
+                    or StateTracker.get_model_type() == "aura_diffusion"
+                ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]
                     if pipeline_kwargs.get("prompt") is not None:
@@ -794,10 +791,6 @@ class Validation:
                     pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.accelerator.device, dtype=self.weight_dtype)
-                if StateTracker.get_model_type() == "aura_diffusion":
-                    raise NotImplementedError(
-                        "Aura Diffusion validation image generation is not yet implemented."
-                    )
 
                 validation_image_results = self.pipeline(**pipeline_kwargs).images
                 if self.args.controlnet:
