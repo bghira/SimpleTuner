@@ -41,10 +41,10 @@ except Exception as e:
     raise e
 
 try:
-    from diffusers.models import AuraMMDiT2DModel
+    from diffusers.models import AuraFlowTransformer2DModel
 except Exception as e:
     logger.error(
-        f"Can not load AuraMMDiT2DModel class. This release requires the latest version of Diffusers: {e}"
+        f"Can not load AuraFlowTransformer2DModel class. This release requires the latest version of Diffusers: {e}"
     )
     raise e
 
@@ -125,7 +125,7 @@ class SDXLSaveHook:
             elif self.args.hunyuan_dit:
                 self.ema_model_cls = HunyuanDiT2DModel
             elif self.args.aura_diffusion:
-                self.ema_model_cls = AuraMMDiT2DModel
+                self.ema_model_cls = AuraFlowTransformer2DModel
 
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
@@ -383,7 +383,7 @@ class SDXLSaveHook:
                             input_dir, subfolder="transformer"
                         )
                     elif self.args.aura_diffusion:
-                        load_model = AuraMMDiT2DModel.from_pretrained(
+                        load_model = AuraFlowTransformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
                     elif self.unet is not None:

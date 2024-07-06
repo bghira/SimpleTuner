@@ -1105,7 +1105,11 @@ def main():
                         else (
                             PixArtTransformer2DModel
                             if args.pixart_sigma
-                            else AuraMMDiT2DModel if args.aura_diffusion else None
+                            else (
+                                AuraFlowTransformer2DModel
+                                if args.aura_diffusion
+                                else None
+                            )
                         )
                     )
                 ),
