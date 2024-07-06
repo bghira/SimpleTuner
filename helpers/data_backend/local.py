@@ -54,9 +54,7 @@ class LocalDataBackend(BaseDataBackend):
 
     def exists(self, filepath):
         """Check if the file exists."""
-        result = os.path.exists(filepath)
-        logger.debug(f"Checking if {filepath} exists = {result}")
-        return result
+        return os.path.exists(filepath)
 
     def open_file(self, filepath, mode):
         """Open the file in the specified mode."""
