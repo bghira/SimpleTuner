@@ -1666,12 +1666,12 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    elif args.sd3 or args.aura_diffusion:
+    if args.sd3 or args.aura_diffusion:
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
         args.aspect_bucket_alignment = 64
-    else:
+    elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             warning_log(
