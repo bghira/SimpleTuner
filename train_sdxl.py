@@ -125,6 +125,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import T5EncoderModel
 
         return T5EncoderModel
+    elif model_class == "UMT5EncoderModel":
+        from transformers import UMT5EncoderModel
+
+        return UMT5EncoderModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -140,7 +144,14 @@ def get_tokenizers(args):
         if not args.pixart_sigma and not args.aura_diffusion:
             tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
         else:
-            from transformers import T5Tokenizer
+            if args.pixart_sigma:
+                from transformers import T5Tokenizer
+
+                tokenizer_cls = T5Tokenizer
+            elif args.aura_diffusion:
+                from transformers import LlamaTokenizer
+
+                tokenizer_cls = LlamaTokenizer
 
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
@@ -151,7 +162,7 @@ def get_tokenizers(args):
                 f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
             )
             try:
-                tokenizer_1 = T5Tokenizer.from_pretrained(
+                tokenizer_1 = tokenizer_cls.from_pretrained(
                     text_encoder_path,
                     subfolder="tokenizer",
                     revision=args.revision,
@@ -440,7 +451,7 @@ def main():
         if tokenizer_1 is not None:
             if args.pixart_sigma or args.sd3 or args.aura_diffusion:
                 logger.info(
-                    f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                    f"Loading {'T5-XXL v1.1' if not args.aura_diffusion else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
             else:
                 logger.info(
@@ -541,6 +552,7 @@ def main():
         transformer = AuraFlowTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
+            allow_pickle=True,
             **pretrained_load_args,
         )
     else:
