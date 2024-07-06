@@ -205,7 +205,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_shortnames,
                 validation_negative_prompt_embeds,
             )
-        elif model_type == "pixart_sigma":
+        elif model_type == "pixart_sigma" or model_type == "aura_diffusion":
             # we use the legacy encoder but we return no pooled embeds.
             validation_negative_prompt_embeds = (
                 embed_cache.compute_embeddings_for_prompts(
@@ -219,10 +219,6 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_shortnames,
                 validation_negative_prompt_embeds,
                 None,
-            )
-        elif model_type == "aura_diffusion":
-            raise NotImplementedError(
-                "Aura Diffusion validation prompt preparation is not yet implemented."
             )
         else:
             raise ValueError(f"Unknown model type '{model_type}'")
