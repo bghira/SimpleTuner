@@ -668,7 +668,7 @@ def main():
             raise ValueError(
                 "xformers is not available. Make sure it is installed correctly"
             )
-    elif args.enable_xformers_memory_attention:
+    elif args.enable_xformers_memory_efficient_attention:
         logger.warning(
             "xformers is not enabled, as it is incompatible with this model type."
         )
