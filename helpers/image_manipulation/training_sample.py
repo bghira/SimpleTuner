@@ -45,9 +45,6 @@ class TrainingSample:
             self.original_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.original_size
             )
-            logger.debug(
-                f"Metadata for training sample given instead of image? {image_metadata}"
-            )
         self.current_size = self.original_size
 
         if not self.original_size:
@@ -85,7 +82,6 @@ class TrainingSample:
         # RGB/EXIF conversions.
         self.correct_image()
         self._validate_image_metadata()
-        logger.debug(f"TrainingSample parameters: {self.__dict__}")
 
     def save_debug_image(self, path: str):
         if self.image and os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
@@ -126,7 +122,6 @@ class TrainingSample:
                 key in self.image_metadata for key in required_keys
             )
         if self.valid_metadata:
-            logger.debug(f"Setting metadata: {self.image_metadata}")
             self.original_size = self.image_metadata["original_size"]
             self.target_size = self.image_metadata["target_size"]
             self.intermediary_size = self.image_metadata["intermediary_size"]
@@ -192,9 +187,6 @@ class TrainingSample:
                 "Aspect buckets are not defined in the data backend config."
             )
         if self.valid_metadata:
-            logger.debug(
-                f"As we received valid metadata, we will use existing aspect ratio {self.aspect_ratio} for image {self.image_metadata}"
-            )
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
             return self.aspect_ratio
         if (
@@ -229,7 +221,6 @@ class TrainingSample:
             weights = [bucket["weight"] for bucket in self.crop_aspect_buckets]
 
             selected_aspect = random.choices(aspects, weights)[0]
-            logger.debug(f"Randomly selected aspect ratio: {selected_aspect}")
         elif (
             len(self.crop_aspect_buckets) > 0
             and type(self.crop_aspect_buckets[0]) is float
@@ -260,11 +251,7 @@ class TrainingSample:
                     f"Image dimensions do not fit into the configured aspect buckets. Using square crop."
                 )
             else:
-                logger.debug(
-                    f"Available aspect buckets: {available_aspects} for {self.aspect_ratio} from {self.crop_aspect_buckets}"
-                )
                 selected_aspect = random.choice(available_aspects)
-                logger.debug(f"Randomly selected aspect ratio: {selected_aspect}")
         else:
             raise ValueError(
                 "Aspect buckets must be a list of floats or dictionaries."
@@ -284,12 +271,11 @@ class TrainingSample:
         Returns:
         (image, crop_coordinates, aspect_ratio)
         """
-        current_timestamp = time.time()
-        self.save_debug_image(f"images/{current_timestamp}-0-original.png")
+        self.save_debug_image(f"images/{time.time()}-0-original.png")
         self.crop()
-        self.save_debug_image(f"images/{current_timestamp}-1-cropped.png")
+        self.save_debug_image(f"images/{time.time()}-1-cropped.png")
         if not self.crop_enabled:
-            self.save_debug_image(f"images/{current_timestamp}-1b-nocrop-resize.png")
+            self.save_debug_image(f"images/{time.time()}-1b-nocrop-resize.png")
             self.resize()
 
         image = self.image
@@ -343,100 +329,40 @@ class TrainingSample:
                 or self.current_size[1] > self.pixel_resolution
             )
         elif self.data_backend_config.get("resolution_type") == "area":
-            logger.debug(
-                f"Image is too large? {self.area() > self.target_area} (image area: {self.area()}, target area: {self.target_area})"
-            )
             return self.area() > self.target_area
         else:
             raise ValueError(
                 f"Unknown resolution type: {self.data_backend_config.get('resolution_type')}"
             )
 
+    def _calculate_target_downsample_size(self):
+        # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
+        _, calculated_intermediary_size, _ = self.target_size_calculator(
+            self.original_aspect_ratio, self.target_downsample_size, self.original_size
+        )
+        # we might have the self.target_size edges very different from the target_downsample_size. in the worst case we have a shorter edge that will need to be boosted proportionally.
+        if calculated_intermediary_size[0] < self.target_size[0]:
+            scale_factor = self.target_size[0] / calculated_intermediary_size[0]
+            calculated_intermediary_size = (
+                self.target_size[0],
+                int(calculated_intermediary_size[1] * scale_factor),
+            )
+        elif calculated_intermediary_size[1] < self.target_size[1]:
+            scale_factor = self.target_size[1] / calculated_intermediary_size[1]
+            calculated_intermediary_size = (
+                int(calculated_intermediary_size[0] * scale_factor),
+                self.target_size[1],
+            )
+
+        return calculated_intermediary_size
+
     def _downsample_before_crop(self):
         """
         Downsample the image before cropping, to preserve scene details and maintain aspect ratio.
         """
         if self._should_downsample_before_crop():
-            logger.debug(
-                f"Before downsampling, our intermediary size is {self.intermediary_size}"
-            )
-            self.calculate_target_size(downsample_before_crop=True)
-            logger.debug(
-                f"After calculating target size, our int size is {self.intermediary_size}"
-            )
-
-            # Calculate the scaling factors for width and height
-            if self.image:
-                width_scale = self.intermediary_size[0] / self.image.size[0]
-                height_scale = self.intermediary_size[1] / self.image.size[1]
-            else:
-                width_scale = self.intermediary_size[0] / self.current_size[0]
-                height_scale = self.intermediary_size[1] / self.current_size[1]
-
-            # Choose the smaller scaling factor to ensure the image fits within the intermediary size
-            scale_factor = min(width_scale, height_scale)
-
-            # Calculate new dimensions
-            if self.image:
-                new_width = int(self.image.size[0] * scale_factor)
-                new_height = int(self.image.size[1] * scale_factor)
-            else:
-                new_width = int(self.current_size[0] * scale_factor)
-                new_height = int(self.current_size[1] * scale_factor)
-
-            # if we're smaller, we have to adjust. this helps us avoid a double-resize later.
-            w_diff = self.target_size[0] - new_width
-            h_diff = self.target_size[1] - new_height
-            if w_diff > 0 and w_diff > h_diff:
-                new_width += w_diff
-                new_height += w_diff
-            elif h_diff > 0 and h_diff > w_diff:
-                new_width += h_diff
-                new_height += h_diff
-
-            intermediary_size = (new_width, new_height)
-            logger.debug(
-                f"Downsampling image from {self.image.size if self.image is not None else self.current_size} to {intermediary_size} before cropping."
-            )
-
-            # Resize the image to the new dimensions
-            self.resize(intermediary_size)
-        return self
-
-    def _should_upsample_before_crop(self) -> bool:
-        """
-        Returns:
-        bool: True if the image should be upsampled before cropping, False otherwise.
-        """
-        if self.image:
-            image_size = self.image.size
-        else:
-            image_size = self.current_size
-        if self.intermediary_size is None:
-            return False
-        return (
-            image_size[0] < self.intermediary_size[0]
-            or image_size[1] < self.intermediary_size[1]
-        )
-
-    def _upsample_before_crop(self):
-        """
-        Upsample the image before cropping, to preserve aspect ratio.
-        """
-        if self.image and self._should_upsample_before_crop():
-            diff_w = self.intermediary_size[0] - self.current_size[0]
-            diff_h = self.intermediary_size[1] - self.current_size[1]
-            if diff_w > diff_h:
-                target_size = (self.intermediary_size[0], self.current_size[1] + diff_w)
-            elif diff_h > diff_w:
-                target_size = (self.current_size[0] + diff_h, self.intermediary_size[1])
-            else:
-                target_size = self.intermediary_size
-            logger.debug(
-                f"Upsampling image from {self.current_size} to {target_size} before cropping."
-            )
-            self.resize(target_size)
-            self.save_debug_image(f"images/{time.time()}-0.5-upsampled-before-crop.png")
+            target_downsample_size = self._calculate_target_downsample_size()
+            self.resize(target_downsample_size)
         return self
 
     def correct_intermediary_square_size(self):
@@ -445,65 +371,24 @@ class TrainingSample:
 
         However, the aspect ratio 1.0 needs special consideration for our base resolutions 512, 768, and 1024, because they typically result in 500x500, 750x750, and 1000x1000 images.
         """
-        logger.debug("Correcting intermediary square size.")
         if (
             self.aspect_ratio == 1.0
             and self.intermediary_size[0] < self.pixel_resolution
         ):
-            logger.debug(
-                f"Aspect ratio is 1.0 and intermediary size is {self.intermediary_size}, adjusting to {self.pixel_resolution}"
-            )
             self.intermediary_size = (
                 self.pixel_resolution,
                 self.pixel_resolution,
             )
             self.crop_coordinates = (0, 0)
-        else:
-            logger.debug(
-                f"Aspect ratio is not 1.0 {self.aspect_ratio} or/and intermediary size is {self.intermediary_size}, no adjustment needed."
-            )
         return self
 
-    def correct_randomised_intermediate_size(self):
-        """
-        When we have a randomised aspect bucket, the intermediary size will be the wrong aspect ratio.
-
-        This function corrects the intermediary size to the correct aspect ratio by calculating it again,
-         using the original aspect ratio.
-        """
-        if self.crop_aspect == "random" and self.crop_enabled:
-            _, self.intermediary_size, _ = self.target_size_calculator(
-                self.original_aspect_ratio, self.resolution, self.original_size
-            )
-            # The intermediary size may be smaller than the target size on one edge, we should add the difference to both sides if so.
-            diff_A = self.target_size[0] - self.intermediary_size[0]
-            diff_B = self.target_size[1] - self.intermediary_size[1]
-            if diff_A > diff_B:
-                self.intermediary_size = (
-                    self.intermediary_size[0] + diff_A,
-                    self.intermediary_size[1] + diff_A,
-                )
-            elif diff_B > diff_A:
-                self.intermediary_size = (
-                    self.intermediary_size[0] + diff_B,
-                    self.intermediary_size[1] + diff_B,
-                )
-
-        return self
-
-    def calculate_target_size(self, downsample_before_crop: bool = False):
+    def calculate_target_size(self):
         # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.original_size
         )
-        logger.debug(
-            "Before calculating target size: "
-            f"\n-> Target size: {self.target_size}"
-            f"\n-> Intermediary size: {self.intermediary_size}"
-            f"\n-> Aspect ratio: {self.aspect_ratio}"
-        )
         if self.crop_enabled:
-            if self.crop_aspect == "square" and not downsample_before_crop:
+            if self.crop_aspect == "square":
                 self.aspect_ratio = 1.0
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
                 _, self.intermediary_size, _ = self.target_size_calculator(
@@ -514,46 +399,19 @@ class TrainingSample:
         if self.crop_enabled and self.crop_aspect == "random":
             # Grab a random aspect ratio from a list.
             self.aspect_ratio = self._select_random_aspect()
-        if downsample_before_crop and self.target_downsample_size is not None:
-            calculated_target_size, calculated_intermediary_size, self.aspect_ratio = (
-                self.target_size_calculator(
-                    self.aspect_ratio, self.target_downsample_size, self.original_size
-                )
+        self.target_size, calculated_intermediary_size, self.aspect_ratio = (
+            self.target_size_calculator(
+                self.aspect_ratio, self.resolution, self.original_size
             )
-            if self.crop_aspect != "square":
-                self.target_size = calculated_target_size
-            else:
-                self.target_size = (self.pixel_resolution, self.pixel_resolution)
-            if self.crop_aspect != "random" or not self.valid_metadata:
-                logger.debug(
-                    f"We had {'non-random crops' if self.crop_aspect != 'random' else 'invalid metadata'} and calculated intermediary size {calculated_intermediary_size}"
-                )
-                self.intermediary_size = calculated_intermediary_size
-            logger.debug(
-                f"Pre-crop downsample target size based on {self.target_downsample_size}{'px' if self.resolution_type == 'pixel' else 'megapixels'} results in target size of {self.target_size} via intermediary size {self.intermediary_size}"
-            )
-        else:
-            self.target_size, calculated_intermediary_size, self.aspect_ratio = (
-                self.target_size_calculator(
-                    self.aspect_ratio, self.resolution, self.original_size
-                )
-            )
-            if self.crop_aspect != "random" or not self.valid_metadata:
-                logger.debug(
-                    f"Calculated intermediary size {calculated_intermediary_size}, updating value."
-                )
-                self.intermediary_size = calculated_intermediary_size
+        )
+        if self.crop_aspect != "random" or not self.valid_metadata:
+            self.intermediary_size = calculated_intermediary_size
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
         )
-        self.correct_intermediary_square_size().correct_randomised_intermediate_size()
+        self.correct_intermediary_square_size()
         if self.aspect_ratio == 1.0:
             self.target_size = (self.pixel_resolution, self.pixel_resolution)
-        logger.debug(
-            f"\n-> Target size: {self.target_size}"
-            f"\n-> Intermediary size: {self.intermediary_size}"
-            f"\n-> Aspect ratio: {self.aspect_ratio}"
-        )
 
         return (
             self.target_size,
@@ -577,36 +435,17 @@ class TrainingSample:
         """
         if not self.crop_enabled:
             return self
-        logger.debug(
-            f"Cropping image with {self.crop_style} style and {self.crop_aspect}."
-        )
-
         # Too-big of an image, resize before we crop.
+        self.calculate_target_size()
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
-        self.calculate_target_size(downsample_before_crop=False)
-        # Too-small of an image, upscale before we crop.
-        self._upsample_before_crop()
-        self.save_debug_image(f"images/{time.time()}-0.5-upsampled.png")
-        logger.debug(f"Pre-crop size: {self.current_size}.")
         if self.image is not None:
             self.cropper.set_image(self.image)
-        self.cropper.set_intermediary_size(
-            self.intermediary_size[0], self.intermediary_size[1]
-        )
+        self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
         self.image, self.crop_coordinates = self.cropper.crop(
             self.target_size[0], self.target_size[1]
         )
         self.current_size = self.target_size
-        logger.debug(f"Post-crop size: {self.current_size}.")
-        if self.image is not None and hasattr(self.image, "size"):
-            logger.debug(
-                f"Post-crop size: {self.current_size} and real image is {self.image.size}."
-            )
-        elif self.image is None:
-            logger.debug(f"Post-crop size: {self.current_size} and image is None.")
-        else:
-            raise ValueError(f"Unknown image contents: {self.image}")
         return self
 
     def resize(self, size: tuple = None):
@@ -625,52 +464,27 @@ class TrainingSample:
             size = self.target_size
             if self.target_size != self.intermediary_size:
                 # Now we can resize the image to the intermediary size.
-                logger.debug(
-                    f"Before resizing to {self.intermediary_size}, our image is {current_size} resolution."
-                )
                 if self.image is not None:
                     self.image = self.image.resize(
                         self.intermediary_size, Image.Resampling.LANCZOS
                     )
                 self.current_size = self.intermediary_size
-                logger.debug(
-                    f"After resize, TrainingSample is updating Cropper with the latest image and intermediary size: {self.image} and {self.intermediary_size}"
-                )
                 if self.image is not None and self.cropper:
                     self.cropper.set_image(self.image)
                 self.cropper.set_intermediary_size(
                     self.intermediary_size[0], self.intermediary_size[1]
                 )
-                logger.debug(
-                    f"Setting intermediary size to {self.intermediary_size} for image {self.image}"
-                )
                 self.image, self.crop_coordinates = self.cropper.crop(
                     self.target_size[0], self.target_size[1]
                 )
-                logger.debug(
-                    f"Cropper returned image {self.image} and coords {self.crop_coordinates}"
-                )
-                logger.debug(
-                    f"After crop-adjusting pixel alignment, our image is now {self.image.size if hasattr(self.image, 'size') else size} resolution and its crop coordinates are now {self.crop_coordinates}"
-                )
-
                 return self
 
-            logger.debug(
-                f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else self.intermediary_size} to final target size: {size}"
-            )
-        else:
-            logger.debug(
-                f"Resizing image from {self.image.size if self.image is not None and type(self.image) is not dict else self.intermediary_size} to custom-provided size: {size}"
-            )
         if self.image and hasattr(self.image, "resize"):
-            logger.debug("Actually resizing image.")
             self.image = self.image.resize(size, Image.Resampling.LANCZOS)
             self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
                 self.image.size
             )
         self.current_size = size
-        logger.debug("Completed resize operation.")
         return self
 
     def get_image(self):
@@ -691,7 +505,6 @@ class TrainingSample:
         conditioning_dataset = StateTracker.get_conditioning_dataset(
             data_backend_id=self.data_backend_id
         )
-        # print(f"Conditioning dataset components: {conditioning_dataset.keys()}")
 
     def cache_path(self):
         metadata_backend = StateTracker.get_data_backend(self.data_backend_id)[

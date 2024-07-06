@@ -21,11 +21,11 @@ class BaseCropping:
             self.original_width, self.original_height = self.image_metadata[
                 "original_size"
             ]
-        logger.debug(
-            "Cropper intialized with image size: %s x %s",
-            self.original_width,
-            self.original_height,
-        )
+        # print(
+        #     "Cropper intialized with image size: %s x %s",
+        #     self.original_width,
+        #     self.original_height,
+        # )
 
     def crop(self, target_width, target_height):
         raise NotImplementedError("Subclasses must implement this method")
@@ -33,8 +33,8 @@ class BaseCropping:
     def set_image(self, image: Image.Image):
         if type(image) is not Image.Image:
             raise TypeError("Image must be a PIL Image object")
-        else:
-            logger.debug(f"Cropper received updated image contents: {image}")
+        # else:
+        #     print(f"Cropper received updated image contents: {image}")
         self.image = image
 
         return self
@@ -42,6 +42,7 @@ class BaseCropping:
     def set_intermediary_size(self, width, height):
         self.intermediary_width = width
         self.intermediary_height = height
+        # print(f"Updated intermediary size: {width} x {height}")
 
         return self
 
@@ -76,9 +77,6 @@ class RandomCropping(BaseCropping):
 
         left = random.randint(0, max(0, self.intermediary_width - target_width))
         top = random.randint(0, max(0, self.intermediary_height - target_height))
-        logger.debug(
-            f"Random cropping from {left}, {top} - {self.intermediary_width}x{self.intermediary_height} to {target_width}x{target_height}"
-        )
         right = left + target_width
         bottom = top + target_height
         if self.image:
