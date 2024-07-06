@@ -407,42 +407,6 @@ class TrainingSample:
             self.resize(target_downsample_size)
         return self
 
-    def _should_upsample_before_crop(self) -> bool:
-        """
-        Returns:
-        bool: True if the image should be upsampled before cropping, False otherwise.
-        """
-        if self.image:
-            image_size = self.image.size
-        else:
-            image_size = self.current_size
-        if self.intermediary_size is None:
-            return False
-        return (
-            image_size[0] < self.intermediary_size[0]
-            or image_size[1] < self.intermediary_size[1]
-        )
-
-    def _upsample_before_crop(self):
-        """
-        Upsample the image before cropping, to preserve aspect ratio.
-        """
-        if self.image and self._should_upsample_before_crop():
-            diff_w = self.intermediary_size[0] - self.current_size[0]
-            diff_h = self.intermediary_size[1] - self.current_size[1]
-            if diff_w > diff_h:
-                target_size = (self.intermediary_size[0], self.current_size[1] + diff_w)
-            elif diff_h > diff_w:
-                target_size = (self.current_size[0] + diff_h, self.intermediary_size[1])
-            else:
-                target_size = self.intermediary_size
-            logger.debug(
-                f"Upsampling image from {self.current_size} to {target_size} before cropping."
-            )
-            self.resize(target_size)
-            self.save_debug_image(f"images/{time.time()}-0.5-upsampled-before-crop.png")
-        return self
-
     def correct_intermediary_square_size(self):
         """
         When an intermediary size is calculated, we don't adjust it to be divisible by 8 or 64.
@@ -538,9 +502,6 @@ class TrainingSample:
         self.calculate_target_size()
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
-        # # Too-small of an image, upscale before we crop.
-        # self._upsample_before_crop()
-        self.save_debug_image(f"images/{time.time()}-0.5-upsampled.png")
         logger.debug(f"Pre-crop size: {self.current_size}.")
         if self.image is not None:
             self.cropper.set_image(self.image)
