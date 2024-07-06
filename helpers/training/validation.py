@@ -276,14 +276,14 @@ class Validation:
                     "Aura Diffusion inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
                 )
             try:
-                from helpers.aura_diffusion.pipeline import AuraDiffusionPipeline
+                from helpers.aura_diffusion.pipeline import AuraFlowPipeline
             except Exception as e:
                 logger.error(
                     f"Could not import Aura Diffusion pipeline. Perhaps you need a git-source version of Diffusers."
                 )
                 raise NotImplementedError("Aura Diffusion pipeline not available.")
 
-            return AuraDiffusionPipeline
+            return AuraFlowPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
