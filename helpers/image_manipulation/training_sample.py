@@ -468,33 +468,6 @@ class TrainingSample:
             )
         return self
 
-    def correct_randomised_intermediate_size(self):
-        """
-        When we have a randomised aspect bucket, the intermediary size will be the wrong aspect ratio.
-
-        This function corrects the intermediary size to the correct aspect ratio by calculating it again,
-         using the original aspect ratio.
-        """
-        if self.crop_aspect == "random" and self.crop_enabled:
-            _, self.intermediary_size, _ = self.target_size_calculator(
-                self.original_aspect_ratio, self.resolution, self.original_size
-            )
-            # The intermediary size may be smaller than the target size on one edge, we should add the difference to both sides if so.
-            diff_A = self.target_size[0] - self.intermediary_size[0]
-            diff_B = self.target_size[1] - self.intermediary_size[1]
-            if diff_A > diff_B:
-                self.intermediary_size = (
-                    self.intermediary_size[0] + diff_A,
-                    self.intermediary_size[1] + diff_A,
-                )
-            elif diff_B > diff_A:
-                self.intermediary_size = (
-                    self.intermediary_size[0] + diff_B,
-                    self.intermediary_size[1] + diff_B,
-                )
-
-        return self
-
     def calculate_target_size(self):
         # Square crops are always {self.pixel_resolution}x{self.pixel_resolution}
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
@@ -531,7 +504,7 @@ class TrainingSample:
         self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
             self.target_size
         )
-        self.correct_intermediary_square_size()  # .correct_randomised_intermediate_size()
+        self.correct_intermediary_square_size()
         if self.aspect_ratio == 1.0:
             self.target_size = (self.pixel_resolution, self.pixel_resolution)
 
