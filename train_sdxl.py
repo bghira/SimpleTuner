@@ -1709,10 +1709,6 @@ def main():
                     batch["encoder_attention_mask"] = batch[
                         "encoder_attention_mask"
                     ].to(device=accelerator.device, dtype=weight_dtype)
-                elif args.aura_diffusion:
-                    raise NotImplementedError(
-                        "Aura Diffusion noise residual predictions are not yet implemented."
-                    )
 
                 training_logger.debug("Predicting noise residual.")
 
