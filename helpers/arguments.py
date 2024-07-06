@@ -1660,24 +1660,24 @@ def parse_args(input_args=None):
     ):
         args.pretrained_vae_model_name_or_path = None
 
-    if "deepfloyd" not in args.model_type and not args.sd3:
+    if "deepfloyd" not in args.model_type:
         info_log(
             f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
+    elif args.sd3 or args.aura_diffusion:
+        warning_log(
+            "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+        )
+        args.aspect_bucket_alignment = 64
     else:
         deepfloyd_pixel_alignment = 8
-        if not args.sd3 and args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
+        if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             warning_log(
                 f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
-        elif args.sd3:
-            warning_log(
-                "Stable Diffusion 3 requires a pixel alignment interval of 64px. Updating value."
-            )
-            args.aspect_bucket_alignment = 64
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
         warning_log(
@@ -1736,6 +1736,10 @@ def parse_args(input_args=None):
                 "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
             )
             args.disable_compel = True
+
+    if args.aura_diffusion:
+        warning_log("Updating Pile-T5 tokeniser max length to 512 for Aura Diffusion")
+        args.tokenizer_max_length = 512
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"

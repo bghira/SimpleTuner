@@ -122,8 +122,6 @@ class SDXLSaveHook:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
-            elif self.args.hunyuan_dit:
-                self.ema_model_cls = HunyuanDiT2DModel
             elif self.args.aura_diffusion:
                 self.ema_model_cls = AuraFlowTransformer2DModel
 

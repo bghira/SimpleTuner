@@ -481,7 +481,7 @@ def main():
                 variant=args.variant,
             )
 
-        logger.info("Load VAE..")
+        logger.info(f"Load VAE: {vae_path}")
         vae = AutoencoderKL.from_pretrained(
             vae_path,
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
@@ -1786,6 +1786,19 @@ def main():
                     elif args.aura_diffusion:
                         # Aura Diffusion also uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
+                        # Print the dtypes/shapes:
+                        print(
+                            "Dtypes:"
+                            f" noisy_latents: {noisy_latents.dtype},"
+                            f" timesteps: {timesteps.dtype},"
+                            f" encoder_hidden_states: {encoder_hidden_states.dtype},"
+                        )
+                        print(
+                            "Shapes:"
+                            f" noisy_latents: {noisy_latents.shape},"
+                            f" timesteps: {timesteps.shape},"
+                            f" encoder_hidden_states: {encoder_hidden_states.shape},"
+                        )
                         model_pred = transformer(
                             hidden_states=noisy_latents,
                             encoder_hidden_states=encoder_hidden_states,
@@ -1845,7 +1858,9 @@ def main():
                     )
                     loss = loss.mean()
 
-                elif args.snr_gamma is None or args.snr_gamma == 0:
+                elif args.aura_diffusion or (
+                    args.snr_gamma is None or args.snr_gamma == 0
+                ):
                     training_logger.debug(f"Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"

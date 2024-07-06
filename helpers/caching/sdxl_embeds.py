@@ -711,6 +711,8 @@ class TextEmbeddingCache:
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 if prompt != "":
                     prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                if prompt is None:
+                    continue
 
                 if return_concat and load_from_cache:
                     try:
@@ -756,7 +758,9 @@ class TextEmbeddingCache:
                         prompt_embeds, attention_mask = self.compute_t5_prompt(prompt)
                         if "deepfloyd" not in StateTracker.get_args().model_type:
                             # we have to store the attn mask with the embed for pixart.
-                            # does aura diffusion require the attn mask be available? oh well.
+                            # aura doesn't require it, but it's just easier to keep.
+                            if self.model_type == "aura_diffusion":
+                                prompt_embeds = prompt_embeds.squeeze(0)
                             prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(
