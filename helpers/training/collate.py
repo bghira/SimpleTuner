@@ -426,12 +426,7 @@ def collate_fn(batch):
         )
         attn_mask = add_text_embeds_all
     elif StateTracker.get_model_type() == "aura_diffusion":
-        debug_log(
-            "Reached the collate_fn portion for computing microcondition inputs for the model."
-        )
-        raise NotImplementedError(
-            "Aura Diffusion microconditioning inputs are not yet implemented."
-        )
+        attn_mask = add_text_embeds_all
 
     return {
         "latent_batch": latent_batch,
