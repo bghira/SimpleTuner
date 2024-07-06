@@ -535,18 +535,14 @@ def main():
             **pretrained_load_args,
         )
     elif args.aura_diffusion:
-        raise NotImplementedError(
-            "Loading Aura Diffusion models is not yet implemented."
+        from diffusers.models import AuraFlowTransformer2DModel
+
+        unet = None
+        transformer = AuraFlowTransformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
         )
-
-        # from diffusers.models import AuraMMDiT2DModel
-
-        # unet = None
-        # transformer = AuraMMDiT2DModel.from_pretrained(
-        #     args.pretrained_model_name_or_path,
-        #     subfolder="transformer",
-        #     **pretrained_load_args,
-        # )
     else:
         logger.info(f"Loading SDXL U-net..")
         transformer = None
@@ -1778,12 +1774,10 @@ def main():
                     elif args.aura_diffusion:
                         # Aura Diffusion also uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
-                        raise NotImplementedError(
-                            "Aura Diffusion prediction is not currently implemented."
-                        )
                         model_pred = transformer(
                             hidden_states=noisy_latents,
                             encoder_hidden_states=encoder_hidden_states,
+                            timestep=timesteps,
                             return_dict=False,
                         )[0]
                     elif args.pixart_sigma:
