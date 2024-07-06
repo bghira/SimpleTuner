@@ -3,13 +3,13 @@ from helpers.image_manipulation.brightness import calculate_luminance
 from io import BytesIO
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-import logging, os, random, numpy
+import logging, os, random, numpy as np
 from math import sqrt, floor
 from helpers.training.state_tracker import StateTracker
 from helpers.image_manipulation.cropping import crop_handlers
 
 logger = logging.getLogger("MultiaspectImage")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
 
 
 class MultiaspectImage:
@@ -106,82 +106,109 @@ class MultiaspectImage:
     def calculate_new_size_by_pixel_area(
         aspect_ratio: float, megapixels: float, original_size: tuple
     ):
-        if type(aspect_ratio) != float and type(aspect_ratio) != numpy.float64:
+        if type(aspect_ratio) not in [float, np.float64]:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
-        pixels = megapixels * 1e6  # Convert megapixels to pixels
-        logger.debug(f"Converted {megapixels} megapixels to {pixels} pixels.")
-        W_initial = int(round((pixels * aspect_ratio) ** 0.5))
-        H_initial = int(round((pixels / aspect_ratio) ** 0.5))
-        # Special case for 1024px (1.0) megapixel images
-        if aspect_ratio == 1.0 and megapixels == 1.0:
-            return ((1024, 1024), (W_initial, H_initial), 1.0)
-        # Special case for 768px (0.75mp) images
-        if aspect_ratio == 1.0 and megapixels == 0.75:
-            return ((768, 768), (W_initial, H_initial), 1.0)
-        # Special case for 512px (0.5mp) images
-        if aspect_ratio == 1.0 and megapixels == 0.25:
-            return ((512, 512), (W_initial, H_initial), 1.0)
-
-        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
-        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
-
-        # Ensure the adjusted dimensions meet the megapixel requirement
-        while W_adjusted * H_adjusted < pixels:
-            W_adjusted += StateTracker.get_args().aspect_bucket_alignment
-            H_adjusted = MultiaspectImage._round_to_nearest_multiple(
-                int(round(W_adjusted / aspect_ratio))
-            )
-
-        # If W_initial or H_initial are < W_adjusted or H_adjusted, add the greater of the two differences to both values.
-        W_diff = W_adjusted - W_initial
-        H_diff = H_adjusted - H_initial
-        logger.debug(
-            f"Aspect ratio {aspect_ratio}, dimensions {original_size}, differences: {W_diff}, {H_diff}"
+        target_pixel_area = (
+            megapixels * 1e6
+        )  # Convert megapixels to pixel area, eg. 1.0 mp = 1000000 pixels
+        target_pixel_edge = MultiaspectImage._round_to_nearest_multiple(
+            int(sqrt(target_pixel_area))
         )
-        if W_diff > 0 and (W_diff > H_diff or W_diff == H_diff):
+        logger.debug(
+            f"Converted {megapixels} megapixels to {target_pixel_area} pixels with a square edge of {target_pixel_edge}."
+        )
+
+        W_initial, H_initial = original_size
+        if aspect_ratio == 1.0:
+            # If the aspect ratio is 1.0, we can just use the square edge as the target size.
             logger.debug(
-                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+                f"Returning the square edge {target_pixel_edge}x{target_pixel_edge} as the target size and original size as intermediary."
             )
-            H_initial += W_diff
-            W_initial += W_diff
-        elif H_diff > 0 and H_diff > W_diff:
+            return (
+                (target_pixel_edge, target_pixel_edge),
+                (W_initial, H_initial),
+                aspect_ratio,
+            )
+
+        # Calculate the target size. This is what will be cropped-to.
+        W_target = MultiaspectImage._round_to_nearest_multiple(
+            target_pixel_edge * sqrt(aspect_ratio)
+        )
+        H_target = MultiaspectImage._round_to_nearest_multiple(
+            target_pixel_edge / sqrt(aspect_ratio)
+        )
+        calculated_resulting_megapixels = (W_target * H_target) / 1e6
+        target_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
+            (W_target, H_target)
+        )
+
+        if not np.isclose(calculated_resulting_megapixels, megapixels, rtol=1e-1):
             logger.debug(
-                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} with a difference in size of {W_diff}x{H_diff}. Adjusting both sides by {max(W_diff, H_diff)} pixels."
+                f"-!- This image will not have the correct target megapixel size: {calculated_resulting_megapixels}"
             )
-            W_initial += H_diff
-            H_initial += H_diff
-        adjusted_resolution = (W_adjusted, H_adjusted)
+
+        # Calculate the intermediary size. This will maintain aspect ratio and be resized-to.
+        if W_target < H_target:  # Portrait or square orientation
+            W_intermediary = W_target
+            H_intermediary = int(W_intermediary / aspect_ratio)
+        else:  # Landscape orientation
+            H_intermediary = H_target
+            W_intermediary = int(H_intermediary * aspect_ratio)
+
+        # retrieve the static mapping.
         adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(
-            adjusted_resolution
+            (W_target, H_target)
         )
         previously_stored_resolution = StateTracker.get_resolution_by_aspect(
             dataloader_resolution=megapixels, aspect=adjusted_aspect_ratio
         )
-        if previously_stored_resolution is not None:
+
+        if previously_stored_resolution:
             logger.debug(
-                f"Using cached aspect-resolution map value for {adjusted_aspect_ratio}:{previously_stored_resolution}"
+                f"Using cached aspect-resolution map value for {adjusted_aspect_ratio}: {previously_stored_resolution}"
             )
-            return (
-                previously_stored_resolution,
-                MultiaspectImage.adjust_resolution_to_bucket_interval(
-                    (W_initial, H_initial),
-                    previously_stored_resolution,
-                ),
-                adjusted_aspect_ratio,
+            W_target, H_target = previously_stored_resolution
+        target_resolution = (W_target, H_target)
+
+        # The intermediary size might be smaller than the target. This is bad.
+        # If it happens, the cropped image will be cropped past the boundaries of the intermediary size.
+        if W_target > W_intermediary or H_target > H_intermediary:
+            _W_intermediary, _H_intermediary = W_intermediary, H_intermediary
+            if W_target > W_intermediary:
+                W_diff = W_target - W_intermediary
+                H_diff = int(W_diff / aspect_ratio)
+            else:
+                H_diff = H_target - H_intermediary
+                W_diff = int(H_diff * aspect_ratio)
+            H_intermediary += H_diff
+            W_intermediary += W_diff
+            logger.debug(
+                f"Intermediary size {_W_intermediary}x{_H_intermediary} would be smaller than {W_target}x{H_target} with a difference in size of {W_diff}x{H_diff}."
+                f" The size will be adjusted to maintain the aspect ratio: {W_intermediary}x{H_intermediary}."
             )
+            calculated_resulting_megapixels = (W_intermediary * H_intermediary) / 1e6
+
+        intermediary_resolution = (W_intermediary, H_intermediary)
+
         logger.debug(
-            f"Aspect ratio {adjusted_aspect_ratio} had no mapping: {previously_stored_resolution}. Storing {adjusted_resolution}."
+            f"Using target size of {megapixels} megapixels:"
+            f"\n-> initial size is {W_initial}x{H_initial}, original aspect ratio {aspect_ratio}."
+            f"\n-> intermediary size is {W_intermediary}x{H_intermediary}, with aspect ratio {adjusted_aspect_ratio}."
+            f"\n-> cropped size is {W_target}x{H_target}, with aspect ratio {target_aspect_ratio}."
+            f"\n-> cropped sample will be {calculated_resulting_megapixels} megapixels"
         )
-        StateTracker.set_resolution_by_aspect(
-            dataloader_resolution=megapixels,
-            aspect=adjusted_aspect_ratio,
-            resolution=adjusted_resolution,
-        )
-        return (
-            adjusted_resolution,
-            (W_initial, H_initial),
-            adjusted_aspect_ratio,
-        )
+        # Attempt to retrieve previously stored resolution by adjusted aspect ratio
+        if not previously_stored_resolution:
+            logger.debug(
+                f"No cached resolution found for aspect ratio {adjusted_aspect_ratio}. Storing {target_resolution}."
+            )
+            StateTracker.set_resolution_by_aspect(
+                dataloader_resolution=megapixels,
+                aspect=adjusted_aspect_ratio,
+                resolution=target_resolution,
+            )
+
+        return (target_resolution, intermediary_resolution, adjusted_aspect_ratio)
 
     @staticmethod
     def adjust_resolution_to_bucket_interval(
