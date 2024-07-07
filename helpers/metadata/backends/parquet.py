@@ -4,9 +4,12 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.metadata.backends.base import MetadataBackend
 from tqdm import tqdm
-import json, logging, os, time, traceback, numpy
-from io import BytesIO
-from PIL import Image
+import json
+import logging
+import os
+import time
+import traceback
+import numpy
 
 logger = logging.getLogger("ParquetMetadataBackend")
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
@@ -204,7 +207,7 @@ class ParquetMetadataBackend(MetadataBackend):
         if ignore_existing_cache:
             # Return all files and remove the existing buckets.
             logger.debug(
-                f"Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
+                "Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
             )
             self.aspect_ratio_bucket_indices = {}
             return list(all_image_files.keys())
@@ -405,7 +408,7 @@ class ParquetMetadataBackend(MetadataBackend):
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
-        logger.debug(f"Bucket worker completed processing. Returning to main thread.")
+        logger.debug("Bucket worker completed processing. Returning to main thread.")
         logger.info(f"Image processing statistics: {statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)

@@ -1,4 +1,5 @@
-import os, logging
+import os
+import logging
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -130,9 +131,9 @@ def save_model_card(
                     # Escape anything that YAML won't like
                     validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
-                widget_str += f"\n  parameters:"
+                widget_str += "\n  parameters:"
                 widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
-                widget_str += f"\n  output:"
+                widget_str += "\n  output:"
                 widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.png"
                 idx += 1
                 sub_idx += 1

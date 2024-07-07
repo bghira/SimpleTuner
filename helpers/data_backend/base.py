@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from io import BytesIO
-import gzip, torch
+import gzip
+import torch
 
 
 class BaseDataBackend(ABC):

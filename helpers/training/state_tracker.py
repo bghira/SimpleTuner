@@ -1,7 +1,7 @@
-from multiprocessing import Manager
-from os import environ, path
+from os import environ
 from pathlib import Path
-import json, logging
+import json
+import logging
 
 logger = logging.getLogger("StateTracker")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))

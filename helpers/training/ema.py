@@ -1,10 +1,12 @@
-import torch, copy, logging, os, contextlib, transformers
-from time import time
+import torch
+import copy
+import logging
+import os
+import contextlib
+import transformers
 from typing import Any, Dict, Iterable, Optional, Union
 from diffusers.utils.deprecation_utils import deprecate
-from diffusers.models import UNet2DConditionModel
 from diffusers.utils import is_transformers_available
-from tqdm import tqdm
 
 logger = logging.getLogger("EMAModel")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -17,7 +19,7 @@ def should_update_ema(args, step):
     else:
         should_update = step % args.ema_update_interval == 0
         if should_update:
-            logger.debug(f"Updating EMA weights...")
+            logger.debug("Updating EMA weights...")
         return should_update
 
 
@@ -296,7 +298,7 @@ class EMAModel:
         offloading EMA params to the host.
         """
         if torch.backends.mps.is_available():
-            logger.warning(f"Apple silicon does not support pinned memory. Skipping.")
+            logger.warning("Apple silicon does not support pinned memory. Skipping.")
             return
 
         if self.args.ema_cpu_only:

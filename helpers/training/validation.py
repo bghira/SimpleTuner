@@ -1,5 +1,7 @@
-import torch, os, wandb, logging
-from pathlib import Path
+import torch
+import os
+import wandb
+import logging
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
@@ -9,7 +11,6 @@ from helpers.sdxl.pipeline import (
     StableDiffusionXLImg2ImgPipeline,
 )
 from helpers.legacy.pipeline import StableDiffusionPipeline
-from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
@@ -32,7 +33,7 @@ try:
     )
 except ImportError:
     logger.error(
-        f"Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
+        "Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
     )
     raise ImportError()
 
@@ -45,26 +46,18 @@ SCHEDULER_NAME_MAP = {
     "ddpm": DDPMScheduler,
 }
 
-import logging, os, time, torch, numpy as np
-from tqdm import tqdm
+import logging
+import os
+import time
 from diffusers.utils import is_wandb_available
-from diffusers.utils.torch_utils import is_compiled_module
-from helpers.multiaspect.image import MultiaspectImage
-from helpers.image_manipulation.brightness import calculate_luminance
-from helpers.training.state_tracker import StateTracker
-from helpers.training.wrappers import unwrap_model
 from helpers.prompts import PromptHandler
-from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import (
     AutoencoderKL,
     DDIMScheduler,
-    DiffusionPipeline,
 )
 
 if is_wandb_available():
     import wandb
-
-from diffusers import DPMSolverMultistepScheduler, DiffusionPipeline
 
 
 logger = logging.getLogger("validation")
@@ -464,7 +457,6 @@ class Validation:
         self.text_encoder_3 = None
 
     def init_vae(self):
-        from diffusers import AutoencoderKL
 
         args = StateTracker.get_args()
         vae_path = (
@@ -524,7 +516,7 @@ class Validation:
             return StableDiffusionPipeline
         elif model_type == "sd3":
             if self.args.controlnet:
-                raise Exception(f"SD3 ControlNet is not yet supported.")
+                raise Exception("SD3 ControlNet is not yet supported.")
             if self.args.validation_using_datasets:
                 return StableDiffusion3Img2ImgPipeline
             return StableDiffusion3Pipeline
@@ -551,9 +543,9 @@ class Validation:
                 )
             try:
                 from helpers.aura_flow.pipeline import AuraFlowPipeline
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    f"Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
+                    "Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
                 )
                 raise NotImplementedError("AuraFlow pipeline not available.")
 
@@ -721,7 +713,7 @@ class Validation:
             return self
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
-                message=f"Validations are generating.. this might take a minute! 🖼️",
+                message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
             )
 
@@ -799,7 +791,7 @@ class Validation:
                     self.ema_model.to(self.accelerator.device)
             else:
                 logger.debug(
-                    f"Skipping EMA model setup for validation, as enable_ema_model=False."
+                    "Skipping EMA model setup for validation, as enable_ema_model=False."
                 )
 
         if self.pipeline is None:
@@ -1141,7 +1133,7 @@ class Validation:
                     mean_luminance = torch.tensor(luminance_values).mean().item()
                     while len(wandb_images) < len(resolution_list):
                         # any missing images will crash it. use None so they are indexed.
-                        logger.debug(f"Found a missing image - masking with a None")
+                        logger.debug("Found a missing image - masking with a None")
                         wandb_images.append(None)
                     table.add_data(prompt_shortname, *wandb_images, mean_luminance)
 
@@ -1162,7 +1154,7 @@ class Validation:
                     self.ema_model.to(self.args.ema_device)
             else:
                 logger.debug(
-                    f"Skipping EMA model restoration for validation, as enable_ema_model=False."
+                    "Skipping EMA model restoration for validation, as enable_ema_model=False."
                 )
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None

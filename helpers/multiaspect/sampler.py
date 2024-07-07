@@ -1,7 +1,7 @@
-import torch, logging, json, random, os
-from io import BytesIO
-from PIL import Image
-from PIL.ImageOps import exif_transpose
+import torch
+import logging
+import random
+import os
 from helpers.training.multi_process import rank_info
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
@@ -215,7 +215,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
         if StateTracker.get_args().print_sampler_statistics:
             self.logger.info(
-                f"Resetting seen image list and refreshing buckets. State before reset:"
+                "Resetting seen image list and refreshing buckets. State before reset:"
             )
             self.log_state()
         # All buckets are exhausted, so we will move onto the next epoch.
@@ -518,7 +518,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             if all_buckets_exhausted:
                 # If all buckets are exhausted, reset the seen images and refresh buckets
                 self.logger.warning(
-                    f"All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
+                    "All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
                 # Resetting buckets raises MultiDatasetExhausted
                 self._reset_buckets()
@@ -542,7 +542,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def convert_to_human_readable(
         aspect_ratio_float: float, bucket: iter, resolution: int = 1024
     ):
-        from math import gcd
 
         if aspect_ratio_float < 1:
             ratio_width = resolution

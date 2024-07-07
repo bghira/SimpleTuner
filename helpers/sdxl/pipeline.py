@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect, PIL
+import inspect
+import PIL
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from PIL import Image
 from helpers.training.state_tracker import StateTracker
 from diffusers.callbacks import PipelineCallback, MultiPipelineCallbacks
 import torch

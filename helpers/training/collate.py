@@ -1,10 +1,11 @@
-import torch, logging, concurrent.futures, numpy as np
-from PIL import Image
+import torch
+import logging
+import concurrent.futures
+import numpy as np
 from os import environ
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import rank_info
 from helpers.image_manipulation.training_sample import TrainingSample
-from helpers.multiaspect.image import MultiaspectImage
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("collate_fn")

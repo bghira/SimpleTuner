@@ -1,5 +1,9 @@
 from torch.optim.lr_scheduler import LambdaLR
-import torch, math, warnings, accelerate, os, logging
+import torch
+import math
+import accelerate
+import os
+import logging
 from torch.optim.lr_scheduler import LRScheduler
 from helpers.training.state_tracker import StateTracker
 from transformers.optimization import AdafactorSchedule
@@ -504,7 +508,7 @@ def get_lr_scheduler(
     args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
 ):
     if use_deepspeed_scheduler:
-        logger.info(f"Using DeepSpeed learning rate scheduler")
+        logger.info("Using DeepSpeed learning rate scheduler")
         lr_scheduler = accelerate.utils.DummyScheduler(
             optimizer,
             total_num_steps=args.max_train_steps,
@@ -513,15 +517,15 @@ def get_lr_scheduler(
     elif args.use_adafactor_optimizer and args.adafactor_relative_step:
         # Use the AdafactorScheduler.
         logger.info(
-            f"Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
+            "Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
         )
         lr_scheduler = AdafactorSchedule(
             optimizer=optimizer, initial_lr=args.learning_rate
         )
     elif args.lr_scheduler == "cosine_with_restarts":
-        logger.info(f"Using Cosine with Restarts learning rate scheduler.")
+        logger.info("Using Cosine with Restarts learning rate scheduler.")
         logger.warning(
-            f"cosine_with_restarts is currently misbehaving, and may not do what you expect. sine is recommended instead."
+            "cosine_with_restarts is currently misbehaving, and may not do what you expect. sine is recommended instead."
         )
         from helpers.training.custom_schedule import CosineAnnealingHardRestarts
 
@@ -535,7 +539,7 @@ def get_lr_scheduler(
             == "true",
         )
     elif args.lr_scheduler == "sine":
-        logger.info(f"Using Sine learning rate scheduler.")
+        logger.info("Using Sine learning rate scheduler.")
         from helpers.training.custom_schedule import Sine
 
         lr_scheduler = Sine(
@@ -548,7 +552,7 @@ def get_lr_scheduler(
             == "true",
         )
     elif args.lr_scheduler == "cosine":
-        logger.info(f"Using Cosine learning rate scheduler.")
+        logger.info("Using Cosine learning rate scheduler.")
         from helpers.training.custom_schedule import Cosine
 
         lr_scheduler = Cosine(
@@ -604,13 +608,12 @@ def get_lr_scheduler(
 # DISCLAIMER: This code is strongly influenced by https://github.com/leffff/euler-scheduler
 
 from dataclasses import dataclass
-from typing import Tuple, Any, Optional, Union
+from typing import Tuple, Optional, Union
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.utils import BaseOutput
 from diffusers.schedulers.scheduling_utils import (
-    KarrasDiffusionSchedulers,
     SchedulerMixin,
 )
 

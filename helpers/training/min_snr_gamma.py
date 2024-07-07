@@ -1,5 +1,4 @@
 # From Diffusers repository: examples/research_projects/onnxruntime/text_to_image/train_text_to_image.py
-import logging, torch
 
 
 def compute_snr(timesteps, noise_scheduler, use_soft_min: bool = False, sigma_data=1.0):
