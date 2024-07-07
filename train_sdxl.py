@@ -740,6 +740,9 @@ def main():
         text_encoder_2 = None
         text_encoder_3 = None
         text_encoders = []
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            if "text_embed_cache" in backend:
+                backend["text_embed_cache"].text_encoders = None
         reclaim_memory()
         memory_after_unload = torch.cuda.memory_allocated() / 1024**3
         memory_saved = memory_after_unload - memory_before_unload
@@ -1215,10 +1218,6 @@ def main():
         logger.info(
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
-
-    for backend_id, backend in StateTracker.get_data_backends().items():
-        if "text_embed_cache" in backend:
-            backend["text_embed_cache"].text_encoders = None
 
     # Train!
     total_batch_size = (
