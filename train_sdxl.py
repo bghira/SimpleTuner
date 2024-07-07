@@ -412,8 +412,10 @@ def main():
         )
 
     # Load scheduler and models
+    flow_matching = False
     if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
         # Stable Diffusion 3 and Aura Diffusion use rectified flow.
+        flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
 
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -422,10 +424,6 @@ def main():
         noise_scheduler_copy = copy.deepcopy(noise_scheduler)
 
     else:
-        if args.sd3 and args.sd3_uses_diffusion:
-            logger.warning(
-                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while."
-            )
         # SDXL uses the old style noise scheduler.
         noise_scheduler = DDPMScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -434,10 +432,10 @@ def main():
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             timestep_spacing=args.training_scheduler_timestep_spacing,
         )
-    if args.sd3 and args.sd3_uses_diffusion:
-        logger.info(
-            f"Stable Diffusion 3 noise scheduler config: {noise_scheduler.config}"
-        )
+        if args.sd3 and args.sd3_uses_diffusion:
+            logger.warning(
+                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
+            )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -449,7 +447,7 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         if tokenizer_1 is not None:
-            if args.pixart_sigma or args.sd3 or args.aura_diffusion:
+            if args.pixart_sigma or args.aura_diffusion:
                 logger.info(
                     f"Loading {'T5-XXL v1.1' if not args.aura_diffusion else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
@@ -490,16 +488,18 @@ def main():
             variant=args.variant,
         )
 
-    logger.info("Moving models to GPU. Almost there.")
     if tokenizer_1 is not None:
+        logger.info("Moving text encoder to GPU.")
         text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     if tokenizer_2 is not None:
+        logger.info("Moving text encoder 2 to GPU.")
         text_encoder_2.to(accelerator.device, dtype=weight_dtype)
     if tokenizer_1 is not None or tokenizer_2 is not None:
         tokenizers = [tokenizer_1, tokenizer_2]
         text_encoders = [text_encoder_1, text_encoder_2]
 
     if tokenizer_3 is not None:
+        logger.info("Moving text encoder 3 to GPU.")
         text_encoder_3.to(accelerator.device, dtype=weight_dtype)
         tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
         text_encoders = [text_encoder_1, text_encoder_2, text_encoder_3]
@@ -546,13 +546,17 @@ def main():
             **pretrained_load_args,
         )
     elif args.aura_diffusion:
-        from diffusers.models import AuraFlowTransformer2DModel
+        try:
+            from diffusers.models import AuraFlowTransformer2DModel
+        except:
+            raise Exception(
+                "The Aura Diffusion model is not available in this release. Please update to the latest version of Diffusers: https://github.com/huggingface/diffusers/pull/8796"
+            )
 
         unet = None
         transformer = AuraFlowTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
-            allow_pickle=True,
             **pretrained_load_args,
         )
     else:
@@ -1588,7 +1592,7 @@ def main():
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
-                if not args.sd3 and not args.sd3_uses_diffusion:
+                if not flow_matching:
                     if args.offset_noise:
                         if (
                             args.noise_offset_probability == 1.0
@@ -1604,7 +1608,7 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+                if flow_matching:
                     # for weighting schemes where we sample timesteps non-uniformly
                     # thanks to @Slickytail who implemented this correctly via #8528
                     if args.weighting_scheme == "logit_normal":
@@ -1658,7 +1662,7 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+                if flow_matching:
                     # Add noise according to flow matching.
                     # TODO: Determine whether Aura Diffusion benefits from this.
                     sigmas = get_sd3_sigmas(
@@ -1686,7 +1690,7 @@ def main():
                 add_text_embeds = batch["add_text_embeds"]
                 training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
                 # Get the target for loss depending on the prediction type
-                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+                if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
                     # If sd3_uses_diffusion, we will instead use v_prediction (see below)
                     target = latents
@@ -1815,7 +1819,7 @@ def main():
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
 
-                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+                if flow_matching:
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                     # Preconditioning of the model outputs.
                     model_pred = model_pred * (-sigmas) + noisy_latents
@@ -1828,7 +1832,7 @@ def main():
                 ):
                     model_pred = model_pred - noise
 
-                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+                if flow_matching:
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     # these weighting schemes use a uniform timestep sampling
                     # and instead post-weight the loss
