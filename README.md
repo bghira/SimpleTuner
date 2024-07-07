@@ -134,10 +134,8 @@ Without EMA, more care must be taken not to drastically change the model leading
 ## Scripts
 
 - `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance. It might not work for every single container image.
-- `train_sdxl.sh` - The main training script for SDXL.
-- `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
-- `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
-- `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
+- `train.sh` - The main training script for SDXL.
+- `config/config.env.example` - These are training parameters, you should copy to `config/config.env`
 
 ## Toolkit
 

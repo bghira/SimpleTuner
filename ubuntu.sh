@@ -13,12 +13,8 @@ pip install -U pip poetry
 echo "Using poetry to install project dependencies"
 poetry install
 
-if ! [ -f 'sdxl-env.sh' ]; then
-	echo "Copying SDXL example config to sdxl-env.sh"
-	cp sdxl-env.sh.example sdxl-env.sh
-fi
-if ! [ -f 'env.sh' ]; then
-	echo "Copying SD 2.1 example config to sd21-env.sh"
-	cp sd21-env.sh.example sd21-env.sh
+if ! [ -f 'config/config.env' ]; then
+	echo "Copying SDXL example config to config/config.env"
+	cp config/config.env.example config/config.env
 fi
 echo "Done."

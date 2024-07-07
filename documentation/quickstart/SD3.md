@@ -45,10 +45,10 @@ To run SimpleTuner, you will need to set up a configuration file, the dataset an
 
 #### Configuration file
 
-Copy `sdxl-env.sh.example` to `sdxl-env.sh`:
+Copy `config/config.env.example` to `config/config.env`:
 
 ```bash
-cp sdxl-env.sh.example sdxl-env.sh
+cp config/config.env.example config/config.env
 ```
 
 There, you will need to modify the following variables:
@@ -143,7 +143,7 @@ Follow the instructions to log in to both services.
 From the SimpleTuner directory, one simply has to run:
 
 ```bash
-bash train_sdxl.sh
+bash train.sh
 ```
 
 This will begin the text embed and VAE output caching to disk.

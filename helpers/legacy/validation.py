@@ -204,6 +204,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_prompts,
                 validation_shortnames,
                 validation_negative_prompt_embeds,
+                None,
             )
         elif model_type == "pixart_sigma" or model_type == "aura_flow":
             # we use the legacy encoder but we return no pooled embeds.
