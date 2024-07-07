@@ -376,7 +376,7 @@ class SDXLSaveHook:
                         load_model = PixArtTransformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
-                    elif self.args.hunyuan_dit:
+                    elif hasattr(self.args, "hunyuan_dit") and self.args.hunyuan_dit:
                         load_model = HunyuanDiT2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
