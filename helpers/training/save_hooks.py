@@ -16,7 +16,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from tqdm import tqdm
 
-logger = logging.getLogger("SDXLSaveHook")
+logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
@@ -89,7 +89,7 @@ def merge_safetensors_files(directory):
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
 
-class SDXLSaveHook:
+class SaveHookManager:
     def __init__(
         self,
         args,
