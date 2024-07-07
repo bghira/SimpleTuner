@@ -1737,9 +1737,23 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
-    if args.aura_diffusion:
-        warning_log("Updating Pile-T5 tokeniser max length to 512 for Aura Diffusion")
-        args.tokenizer_max_length = 512
+    t5_max_length = 512
+    if args.aura_diffusion and (
+        args.tokenizer_max_length is None
+        or int(args.tokenizer_max_length) > t5_max_length
+    ):
+        if not args.i_know_what_i_am_doing:
+            warning_log(
+                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for Aura Diffusion."
+            )
+            args.tokenizer_max_length = t5_max_length
+        else:
+            warning_log(
+                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+            )
+            warning_log(
+                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+            )
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
