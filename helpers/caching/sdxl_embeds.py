@@ -119,6 +119,8 @@ class TextEmbeddingCache:
         self.text_encoder_batch_size = text_encoder_batch_size
         self.max_workers = max_workers
         self.rank_info = rank_info()
+        if self.data_backend.type == "local":
+            self.cache_dir = os.path.abspath(self.cache_dir)
         self.data_backend.create_directory(self.cache_dir)
         self.write_queue = Queue()
         self.process_write_batches = True

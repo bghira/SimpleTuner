@@ -67,6 +67,7 @@ class S3DataBackend(BaseDataBackend):
         self.write_retry_limit = write_retry_limit
         self.write_retry_interval = write_retry_interval
         self.compress_cache = compress_cache
+        self.type = "aws"
         if compress_cache:
             logging.warning(
                 f"Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."

@@ -909,6 +909,8 @@ class StableDiffusion3Pipeline(
             generator,
             latents,
         )
+        latents = latents.to(self.transformer.device)
+        timesteps = timesteps.to(self.transformer.device)
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
