@@ -149,9 +149,9 @@ def get_tokenizers(args):
 
                 tokenizer_cls = T5Tokenizer
             elif args.aura_diffusion:
-                from transformers import LlamaTokenizer
+                from transformers import LlamaTokenizerFast
 
-                tokenizer_cls = LlamaTokenizer
+                tokenizer_cls = LlamaTokenizerFast
 
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
@@ -1305,6 +1305,7 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
+    # validation.run_validations(validation_type="base_model", step=0)
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
@@ -1779,26 +1780,10 @@ def main():
                             ),
                             return_dict=False,
                         )[0]
-                        if not args.sd3_uses_diffusion:
-                            # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                            # Preconditioning of the model outputs.
-                            model_pred = model_pred * (-sigmas) + noisy_latents
                     elif args.aura_diffusion:
                         # Aura Diffusion also uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
                         # Print the dtypes/shapes:
-                        print(
-                            "Dtypes:"
-                            f" noisy_latents: {noisy_latents.dtype},"
-                            f" timesteps: {timesteps.dtype},"
-                            f" encoder_hidden_states: {encoder_hidden_states.dtype},"
-                        )
-                        print(
-                            "Shapes:"
-                            f" noisy_latents: {noisy_latents.shape},"
-                            f" timesteps: {timesteps.shape},"
-                            f" encoder_hidden_states: {encoder_hidden_states.shape},"
-                        )
                         model_pred = transformer(
                             hidden_states=noisy_latents,
                             encoder_hidden_states=encoder_hidden_states,
@@ -1830,6 +1815,11 @@ def main():
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
 
+                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
+                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+                    # Preconditioning of the model outputs.
+                    model_pred = model_pred * (-sigmas) + noisy_latents
+
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
                     hasattr(noise_scheduler, "config")
@@ -1838,7 +1828,7 @@ def main():
                 ):
                     model_pred = model_pred - noise
 
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_diffusion:
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     # these weighting schemes use a uniform timestep sampling
                     # and instead post-weight the loss
@@ -1858,9 +1848,7 @@ def main():
                     )
                     loss = loss.mean()
 
-                elif args.aura_diffusion or (
-                    args.snr_gamma is None or args.snr_gamma == 0
-                ):
+                elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug(f"Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
@@ -1933,9 +1921,7 @@ def main():
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
-            sync_gradients = False
             if accelerator.sync_gradients:
-                sync_gradients = True
                 try:
                     if args.use_adafactor_optimizer:
                         lr = lr_scheduler.get_lr()[0]
