@@ -73,20 +73,18 @@ def parse_validation_resolution(input_str: str) -> tuple:
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
+    is_df_ii = (
+        True if "deepfloyd-stage2" in StateTracker.get_args().model_type else False
+    )
     if isinstance(input_str, int) or input_str.isdigit():
-        if (
-            "deepfloyd-stage2" in StateTracker.get_args().model_type
-            and int(input_str) < 256
-        ):
+        if is_df_ii and int(input_str) < 256:
             raise ValueError(
                 "Cannot use less than 256 resolution for DeepFloyd stage 2."
             )
         return (input_str, input_str)
     if "x" in input_str:
         pieces = input_str.split("x")
-        if "deepfloyd-stage2" in StateTracker.get_args().model_type and (
-            int(pieces[0]) < 256 or int(pieces[1]) < 256
-        ):
+        if is_df_ii and (int(pieces[0]) < 256 or int(pieces[1]) < 256):
             raise ValueError(
                 "Cannot use less than 256 resolution for DeepFloyd stage 2."
             )
@@ -152,14 +150,19 @@ class Validation:
         self.ema_model = ema_model
         self.vae = vae
         self.pipeline = None
+        self.deepfloyd = True if "deepfloyd" in self.args.model_type else False
+        self.deepfloyd_stage2 = (
+            True if "deepfloyd-stage2" in self.args.model_type else False
+        )
         self._discover_validation_input_samples()
         self.validation_resolutions = (
-            get_validation_resolutions()
-            if "deepfloyd-stage2" not in args.model_type
-            else ["base-256"]
+            get_validation_resolutions() if not self.deepfloyd_stage2 else ["base-256"]
         )
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
+        self.flow_matching = (
+            self.args.sd3 and not self.args.sd3_uses_diffusion
+        ) or self.args.aura_flow
 
         self._update_state()
 
@@ -221,7 +224,7 @@ class Validation:
         """
         self.validation_image_inputs = None
         if (
-            "deepfloyd-stage2" in self.args.model_type
+            self.deepfloyd_stage2
             or self.args.validation_using_datasets
             or self.args.controlnet
         ):
@@ -243,7 +246,7 @@ class Validation:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
         elif model_type == "legacy":
-            if "deepfloyd-stage2" in self.args.model_type:
+            if self.deepfloyd_stage2:
                 from diffusers.pipelines import IFSuperResolutionPipeline
 
                 return IFSuperResolutionPipeline
@@ -266,6 +269,24 @@ class Validation:
             from helpers.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
+        elif model_type == "aura_flow":
+            if self.args.controlnet:
+                raise Exception(
+                    "AuraFlow ControlNet inference validation is not yet supported."
+                )
+            if self.args.validation_using_datasets:
+                raise Exception(
+                    "AuraFlow inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                )
+            try:
+                from helpers.aura_flow.pipeline import AuraFlowPipeline
+            except Exception as e:
+                logger.error(
+                    f"Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
+                )
+                raise NotImplementedError("AuraFlow pipeline not available.")
+
+            return AuraFlowPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
@@ -316,13 +337,14 @@ class Validation:
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
+            or StateTracker.get_model_type() == "aura_flow"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if self.args.pixart_sigma:
+            if self.args.pixart_sigma or self.args.aura_flow:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -346,9 +368,11 @@ class Validation:
             # )
             if (
                 self.prompt_handler is not None
-                and "deepfloyd" not in self.args.model_type
-                and "pixart" not in self.args.model_type
+                and not self.deepfloyd
+                and not self.args.pixart_sigma
+                and not self.flow_matching
             ):
+                # for SDXL and earlier SD models we optionally use Compel for prompt upweighting/long prompt parsing.
                 for text_encoder in self.prompt_handler.text_encoders:
                     if text_encoder:
                         text_encoder = text_encoder.to(
@@ -384,17 +408,16 @@ class Validation:
                 device=self.accelerator.device, dtype=self.weight_dtype
             )
         )
+        # when sampling unconditional guidance, you should only zero one or the other prompt, and not both.
+        # we'll assume that the user has a negative prompt, so that the unconditional sampling works.
+        # the positive prompt embed is zeroed out for SDXL at the time of it being placed into the cache.
+        # the embeds are not zeroed out for any other model, including Stable Diffusion 3.
         prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
-        # If the prompt is an empty string, zero out all of the embeds:
-        if validation_prompt == "" and "deepfloyd" not in self.args.model_type:
-            prompt_embeds = {
-                key: torch.zeros_like(value).to(
-                    device=self.accelerator.device, dtype=self.weight_dtype
-                )
-                for key, value in prompt_embeds.items()
-            }
-        if StateTracker.get_model_type() == "pixart_sigma":
+        if (
+            StateTracker.get_model_type() == "pixart_sigma"
+            or StateTracker.get_model_type() == "aura_flow"
+        ):
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
 
@@ -415,7 +438,7 @@ class Validation:
         self._update_state()
         should_validate = self.should_perform_validation(
             step, self.validation_prompts, validation_type
-        )
+        ) or (step == 0 and validation_type == "base_model")
         logger.debug(
             f"Should evaluate: {should_validate}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
@@ -472,9 +495,9 @@ class Validation:
                 variance_type = "fixed_small"
 
             scheduler_args["variance_type"] = variance_type
-        if "deepfloyd" in self.args.model_type:
+        if self.deepfloyd:
             self.args.validation_noise_scheduler = "ddpm"
-        if self.args.sd3 and not self.args.sd3_uses_diffusion:
+        if self.flow_matching:
             # NO TOUCHIE FOR FLOW-MATCHING.
             # Touchie for diffusion though.
             return
@@ -536,6 +559,10 @@ class Validation:
                     extra_pipeline_kwargs["tokenizer_1"] = None
                     extra_pipeline_kwargs["text_encoder_2"] = None
                     extra_pipeline_kwargs["tokenizer_2"] = None
+
+            if self.args.aura_flow:
+                extra_pipeline_kwargs["tokenizer"] = None
+                extra_pipeline_kwargs["text_encoder"] = None
 
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
@@ -691,7 +718,7 @@ class Validation:
                 )
             if validation_input_image is not None:
                 extra_validation_kwargs["image"] = validation_input_image
-                if "deepfloyd-stage2" in self.args.model_type:
+                if self.deepfloyd_stage2:
                     validation_resolution_width, validation_resolution_height = (
                         val * 4 for val in extra_validation_kwargs["image"].size
                     )
@@ -706,10 +733,15 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if "deepfloyd" not in self.args.model_type and not self.args.sd3:
+            if (
+                not self.deepfloyd
+                and not self.args.pixart_sigma
+                and not self.flow_matching
+            ):
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
                 )
+
             if StateTracker.get_args().validation_using_datasets:
                 extra_validation_kwargs["strength"] = getattr(
                     self.args, "validation_strength", 0.2
@@ -732,8 +764,11 @@ class Validation:
                     f"Error gathering text embed for validation prompt {prompt}: {e}, traceback: {traceback.format_exc()}"
                 )
                 continue
+
             try:
                 pipeline_kwargs = {
+                    "prompt": None,
+                    "negative_prompt": None,
                     "num_images_per_prompt": self.args.num_validation_images,
                     "num_inference_steps": self.args.validation_num_inference_steps,
                     "guidance_scale": self.args.validation_guidance,
@@ -755,7 +790,10 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                if StateTracker.get_model_type() == "pixart_sigma":
+                if (
+                    StateTracker.get_model_type() == "pixart_sigma"
+                    or StateTracker.get_model_type() == "aura_flow"
+                ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]
                     if pipeline_kwargs.get("prompt") is not None:

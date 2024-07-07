@@ -79,6 +79,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--aura_flow",
+        action="store_true",
+        default=False,
+        help=("This must be set when training an AuraFlow model."),
+    )
+    parser.add_argument(
         "--pixart_sigma",
         action="store_true",
         default=False,
@@ -1654,24 +1660,24 @@ def parse_args(input_args=None):
     ):
         args.pretrained_vae_model_name_or_path = None
 
-    if "deepfloyd" not in args.model_type and not args.sd3:
+    if "deepfloyd" not in args.model_type:
         info_log(
             f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    else:
+    if args.sd3 or args.aura_flow:
+        warning_log(
+            "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+        )
+        args.aspect_bucket_alignment = 64
+    elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
-        if not args.sd3 and args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
+        if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             warning_log(
                 f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
-        elif args.sd3:
-            warning_log(
-                "Stable Diffusion 3 requires a pixel alignment interval of 64px. Updating value."
-            )
-            args.aspect_bucket_alignment = 64
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
         warning_log(
@@ -1731,11 +1737,29 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
+    t5_max_length = 512
+    if args.aura_flow and (
+        args.tokenizer_max_length is None
+        or int(args.tokenizer_max_length) > t5_max_length
+    ):
+        if not args.i_know_what_i_am_doing:
+            warning_log(
+                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
+            )
+            args.tokenizer_max_length = t5_max_length
+        else:
+            warning_log(
+                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+            )
+            warning_log(
+                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+            )
+
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3:
+        if args.pixart_sigma or args.sd3 or args.aura_flow:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."

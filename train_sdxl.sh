@@ -163,6 +163,9 @@ fi
 if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --pixart_sigma"
 fi
+if [ -n "$AURA_FLOW" ] && [[ "$AURA_FLOW" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aura_flow"
+fi
 
 
 export EMA_ARGS=""

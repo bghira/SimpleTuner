@@ -181,7 +181,10 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl, is_sd3: bool = 
             [caption]
         )
         if type(prompt_embeds) == tuple:
-            if StateTracker.get_args().pixart_sigma:
+            if (
+                StateTracker.get_args().pixart_sigma
+                or StateTracker.get_args().aura_flow
+            ):
                 # PixArt requires the attn mask be returned, too.
                 prompt_embeds, attn_mask = prompt_embeds
 
@@ -210,6 +213,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     is_sdxl = text_embed_cache.model_type == "sdxl"
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
+    is_aura_flow = text_embed_cache.model_type == "aura_flow"
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
@@ -234,12 +238,16 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         prompt_embeds = [t[0] for t in embeddings]
         add_text_embeds = [t[1] for t in embeddings]
         return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
-    elif is_pixart_sigma:
+    elif is_pixart_sigma or is_aura_flow:
         # the tuples here are the text encoder hidden states and the attention masks
+        # TODO: determine whether AuraFlow requires these conjoined
         prompt_embeds, attn_masks = [], []
         for embed in embeddings:
             prompt_embeds.append(embed[0][0])
             attn_masks.append(embed[1][0])
+        if len(prompt_embeds[0].shape) == 3:
+            # some tensors are already expanded due to the way they were saved
+            prompt_embeds = [t.squeeze(0) for t in prompt_embeds]
         return (torch.stack(prompt_embeds), torch.stack(attn_masks))
     else:
         # Separate the tuples
@@ -419,6 +427,8 @@ def collate_fn(batch):
         batch_time_ids = gather_conditional_pixart_size_features(
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
+        attn_mask = add_text_embeds_all
+    elif StateTracker.get_model_type() == "aura_flow":
         attn_mask = add_text_embeds_all
 
     return {

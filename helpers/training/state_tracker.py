@@ -95,7 +95,13 @@ class StateTracker:
 
     @classmethod
     def set_model_type(cls, model_type: str):
-        if model_type not in ["legacy", "sdxl", "sd3", "pixart_sigma"]:
+        if model_type not in [
+            "legacy",
+            "sdxl",
+            "sd3",
+            "pixart_sigma",
+            "aura_flow",
+        ]:
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
 

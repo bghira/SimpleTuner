@@ -178,11 +178,12 @@ class LocalDataBackend(BaseDataBackend):
         if self.compress_cache:
             try:
                 stored_tensor = self._decompress_torch(stored_tensor)
-                stored_tensor.seek(0)
             except Exception as e:
                 logger.error(
                     f"Failed to decompress torch file, falling back to passthrough: {e}"
                 )
+        if hasattr(stored_tensor, "seek"):
+            stored_tensor.seek(0)
         try:
             loaded_tensor = torch.load(stored_tensor, map_location="cpu")
         except Exception as e:

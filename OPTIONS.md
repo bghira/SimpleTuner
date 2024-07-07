@@ -27,6 +27,11 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Enable PixArt Sigma training quirks/overrides.
 - **Why**: PixArt is similar to SD3 and DeepFloyd in one way or another, and needs special treatment at validation, training, and inference time. Use this option to enable PixArt training support. PixArt does not support ControlNet, LoRA, or `--validation_using_datasets`
 
+### `--aura_flow`
+
+- **What**: Enable AuraFlow training quirks/overrides.
+- **Why**: As a flow-matching model, AuraFlow has several unique needs. This option must be enabled to load and train an AuraFlow model.
+
 **Note:** Like SDXL and SD3, PixArt Sigma **also** uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
 
 ### `--pretrained_model_name_or_path`
@@ -243,7 +248,8 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                      [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                     [--pixart_sigma] [--sd3] [--sd3_uses_diffusion]
+                     [--aura_flow] [--pixart_sigma] [--sd3]
+                     [--sd3_uses_diffusion]
                      [--weighting_scheme {sigma_sqrt,logit_normal,mode}]
                      [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
                      [--mode_scale MODE_SCALE] [--lora_type {Standard}]
@@ -280,7 +286,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
-                     [--enable_multiprocessing] [--dataloader_prefetch]
+                     [--enable_multiprocessing]
+                     [--torch_num_threads TORCH_NUM_THREADS]
+                     [--dataloader_prefetch]
                      [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
                      [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                      [--cache_dir CACHE_DIR]
@@ -403,6 +411,7 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --aura_flow      This must be set when training an AuraFlow model.
   --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.
@@ -664,6 +673,10 @@ options:
                         multiprocessing may be faster than threading, but will
                         consume a lot more memory. Use this option with
                         caution, and monitor your system's memory usage.
+  --torch_num_threads TORCH_NUM_THREADS
+                        The number of threads to use for PyTorch operations.
+                        This is not the same as the number of workers.
+                        Default: 8.
   --dataloader_prefetch
                         When provided, the dataloader will read-ahead and
                         attempt to retrieve latents, text embeds, and other
@@ -1013,7 +1026,8 @@ options:
                         better speed, and Euler A can put up with
                         instabilities a bit better. For zero-terminal SNR
                         models, DDIM is the best choice. Choices: ['ddim',
-                        'ddpm', 'euler', 'euler-a', 'unipc'], Default: ddim
+                        'ddpm', 'euler', 'euler-a', 'unipc'], Default: None
+                        (use the model default)
   --validation_disable_unconditional
                         When set, the validation pipeline will not generate
                         unconditional samples. This is useful to speed up

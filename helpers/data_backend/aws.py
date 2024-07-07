@@ -304,6 +304,8 @@ class S3DataBackend(BaseDataBackend):
                         logger.error(
                             f"Failed to decompress torch file, falling back to passthrough: {e}"
                         )
+                if hasattr(stored_tensor, "seek"):
+                    stored_tensor.seek(0)
 
                 obj = torch.load(stored_tensor, map_location="cpu")
                 # logger.debug(f"torch.load found: {obj}")
