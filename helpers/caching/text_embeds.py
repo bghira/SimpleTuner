@@ -1,6 +1,10 @@
-import os, torch, hashlib, logging, time, gc
+import os
+import torch
+import hashlib
+import logging
+import time
+import gc
 from tqdm import tqdm
-from random import shuffle
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.state_tracker import StateTracker
 from helpers.prompts import PromptHandler
@@ -202,7 +206,7 @@ class TextEmbeddingCache:
             except queue.Empty:
                 # Timeout occurred, no items were ready
                 pass
-            except Exception as e:
+            except Exception:
                 logger.exception("An error occurred while writing embeddings to disk.")
         logger.debug("Exiting background batch write thread.")
 
@@ -767,7 +771,7 @@ class TextEmbeddingCache:
                         )
                         self.write_thread_bar.write(log_msg)
                         while self.write_queue.qsize() > 100:
-                            logger.debug(f"Waiting for write thread to catch up.")
+                            logger.debug("Waiting for write thread to catch up.")
                             time.sleep(5)
                     if (
                         "deepfloyd" in StateTracker.get_args().model_type

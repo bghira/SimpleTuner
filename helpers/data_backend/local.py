@@ -2,7 +2,9 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.load import load_image
 from pathlib import Path
 from io import BytesIO
-import os, logging, torch, gzip
+import os
+import logging
+import torch
 from typing import Any
 
 logger = logging.getLogger("LocalDataBackend")
@@ -123,7 +125,7 @@ class LocalDataBackend(BaseDataBackend):
             )
             if delete_problematic_images:
                 logger.error(
-                    f"Deleting image, because --delete_problematic_images is provided."
+                    "Deleting image, because --delete_problematic_images is provided."
                 )
                 self.delete(filepath)
             else:

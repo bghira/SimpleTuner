@@ -1,12 +1,10 @@
 from torchvision import transforms
-from helpers.image_manipulation.brightness import calculate_luminance
-from io import BytesIO
 from PIL import Image
-from PIL.ImageOps import exif_transpose
-import logging, os, random, numpy as np
-from math import sqrt, floor
+import logging
+import os
+import numpy as np
+from math import sqrt
 from helpers.training.state_tracker import StateTracker
-from helpers.image_manipulation.cropping import crop_handlers
 
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))

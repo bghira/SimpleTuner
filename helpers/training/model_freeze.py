@@ -1,4 +1,5 @@
-import logging, os
+import logging
+import os
 
 logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -42,7 +43,7 @@ def freeze_text_encoder(args, component):
         or type(component) is T5EncoderModel
     ):
         if args.train_text_encoder:
-            logger.info(f"Not freezing text encoder. Live dangerously and prosper!")
+            logger.info("Not freezing text encoder. Live dangerously and prosper!")
         return component
     method = args.freeze_encoder_strategy
     first_layer = args.freeze_encoder_before

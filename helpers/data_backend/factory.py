@@ -1,7 +1,7 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
 from helpers.data_backend.base import BaseDataBackend
-from helpers.caching.sdxl_embeds import TextEmbeddingCache
+from helpers.caching.text_embeds import TextEmbeddingCache
 
 from helpers.training.exceptions import MultiDatasetExhausted
 from helpers.multiaspect.dataset import MultiAspectDataset
@@ -12,11 +12,18 @@ from helpers.training.multi_process import rank_info
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
-import json, os, torch, logging, io, time, threading, queue
+import json
+import os
+import torch
+import logging
+import io
+import time
+import threading
+import queue
 
 logger = logging.getLogger("DataBackendFactory")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-prefetch_log = logging.getLogger(f"DataBackendPrefetch")
+prefetch_log = logging.getLogger("DataBackendPrefetch")
 prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
 
 # For prefetching.
@@ -200,7 +207,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     parquet_config = backend.get("parquet", None)
     if not parquet_config:
         raise ValueError(
-            f"Parquet backend must have a 'parquet' field in the backend config containing required fields for configuration."
+            "Parquet backend must have a 'parquet' field in the backend config containing required fields for configuration."
         )
     parquet_path = parquet_config.get("path", None)
     if not parquet_path:
@@ -378,7 +385,7 @@ def configure_multi_databackend(
             accelerator.wait_for_everyone()
         if args.caption_dropout_probability == 0.0:
             logger.warning(
-                f"Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+                "Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
@@ -492,7 +499,7 @@ def configure_multi_databackend(
             metadata_backend_args["parquet_config"] = backend.get("parquet", None)
             if not metadata_backend_args["parquet_config"]:
                 raise ValueError(
-                    f"Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
+                    "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
                 )
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")

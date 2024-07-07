@@ -1,16 +1,12 @@
 from helpers.training.state_tracker import StateTracker
-from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.image_manipulation.load import load_image
-from pathlib import Path
-import json, logging, os, traceback
-from multiprocessing import Manager
-from tqdm import tqdm
-from multiprocessing import Process, Queue
-import numpy as np
-from math import floor
+import json
+import logging
+import os
+import traceback
 from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
 
@@ -80,7 +76,7 @@ class JsonMetadataBackend(MetadataBackend):
         if ignore_existing_cache:
             # Return all files and remove the existing buckets.
             logger.debug(
-                f"Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
+                "Resetting the entire aspect bucket cache as we've received the signal to ignore existing cache."
             )
             self.aspect_ratio_bucket_indices = {}
             return list(all_image_files.keys())
@@ -134,7 +130,7 @@ class JsonMetadataBackend(MetadataBackend):
         if self.data_backend.exists(self.cache_file):
             try:
                 # Use our DataBackend to actually read the cache file.
-                logger.info(f"Pulling cache file from storage")
+                logger.info("Pulling cache file from storage")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:

@@ -2,8 +2,8 @@ from torch.utils.data import Dataset
 from helpers.training.state_tracker import StateTracker
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.training_sample import TrainingSample
-from pathlib import Path
-import logging, os
+import logging
+import os
 
 logger = logging.getLogger("MultiAspectDataset")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))

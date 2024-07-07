@@ -11,12 +11,15 @@ from peft.utils import get_peft_model_state_dict
 from diffusers import UNet2DConditionModel
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
-import os, logging, shutil, torch, json
+import os
+import logging
+import shutil
+import json
 from safetensors import safe_open
 from safetensors.torch import save_file
 from tqdm import tqdm
 
-logger = logging.getLogger("SDXLSaveHook")
+logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
@@ -89,7 +92,7 @@ def merge_safetensors_files(directory):
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
 
-class SDXLSaveHook:
+class SaveHookManager:
     def __init__(
         self,
         args,
@@ -361,7 +364,7 @@ class SDXLSaveHook:
                             raise e
                         if not self.args.train_text_encoder:
                             logger.info(
-                                f"Unloading text encoders for full SD3 training without --train_text_encoder"
+                                "Unloading text encoders for full SD3 training without --train_text_encoder"
                             )
                             (
                                 self.text_encoder_1,

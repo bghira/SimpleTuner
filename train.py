@@ -23,8 +23,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
-from helpers.legacy.validation import prepare_validation_prompt_list
-from helpers.training.validation import Validation
+from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
@@ -1151,9 +1150,9 @@ def main():
             logger.info("EMA model creation complete.")
         accelerator.wait_for_everyone()
 
-    from helpers.sdxl.save_hooks import SDXLSaveHook
+    from helpers.training.save_hooks import SaveHookManager
 
-    model_hooks = SDXLSaveHook(
+    model_hooks = SaveHookManager(
         args=args,
         unet=unet,
         transformer=transformer,
@@ -1699,7 +1698,9 @@ def main():
                 )
 
                 add_text_embeds = batch["add_text_embeds"]
-                training_logger.debug(f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}")
+                training_logger.debug(
+                    f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
+                )
                 # Get the target for loss depending on the prediction type
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.

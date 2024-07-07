@@ -1,4 +1,7 @@
-import os, torch, logging, traceback
+import os
+import torch
+import logging
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from random import shuffle
 from tqdm import tqdm
@@ -14,7 +17,6 @@ from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
 from queue import Queue
 from concurrent.futures import as_completed
-from concurrent.futures import ProcessPoolExecutor
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -762,7 +764,7 @@ class VAECache:
                     output_value = (output_file, filepath, latent_vector)
                     output_values.append(output_value)
                     if not disable_queue:
-                        logger.debug(f"Adding outputs to write queue")
+                        logger.debug("Adding outputs to write queue")
                         self.write_queue.put(output_value)
                 if image_pixel_values is not None:
                     qlen = len(image_pixel_values)

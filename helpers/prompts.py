@@ -1,4 +1,5 @@
-import json, regex as re
+import json
+import regex as re
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 
@@ -82,8 +83,6 @@ def prompt_library_injection(new_prompts: dict) -> dict:
 
 import logging
 from helpers.data_backend.base import BaseDataBackend
-from helpers.data_backend.aws import S3DataBackend
-from pathlib import Path
 from tqdm import tqdm
 import os
 
@@ -115,7 +114,7 @@ class PromptHandler:
             and text_encoders[0] is not None
         ):
             # SDXL Refiner and Base can both use the 2nd tokenizer/encoder.
-            logger.debug(f"Initialising Compel prompt manager with dual text encoders.")
+            logger.debug("Initialising Compel prompt manager with dual text encoders.")
             self.compel = Compel(
                 tokenizer=tokenizers,
                 text_encoder=text_encoders,
@@ -130,7 +129,7 @@ class PromptHandler:
         elif len(text_encoders) == 2 and text_encoders[0] is None:
             # SDXL Refiner has ONLY the 2nd tokenizer/encoder, which needs to be the only one in Compel.
             logger.debug(
-                f"Initialising Compel prompt manager with just the 2nd text encoder."
+                "Initialising Compel prompt manager with just the 2nd text encoder."
             )
             self.compel = Compel(
                 tokenizer=tokenizers[1],
@@ -144,7 +143,7 @@ class PromptHandler:
         else:
             # Any other pipeline uses the first tokenizer/encoder.
             logger.debug(
-                f"Initialising the Compel prompt manager with a single text encoder."
+                "Initialising the Compel prompt manager with a single text encoder."
             )
             pipe_tokenizer = tokenizers[0]
             pipe_text_encoder = text_encoders[0]
@@ -619,13 +618,13 @@ class PromptHandler:
             prompt = [prompt] * num_images_per_prompt
             conditioning, pooled_embed = self.compel(prompt)
         else:
-            logger.debug(f"Running single encoder Compel pipeline.")
+            logger.debug("Running single encoder Compel pipeline.")
             conditioning = self.compel.build_conditioning_tensor(prompt)
         [conditioning] = self.compel.pad_conditioning_tensors_to_same_length(
             [conditioning]
         )
         if "sdxl" in self.encoder_style:
-            logger.debug(f"Returning pooled embeds along with hidden states.")
+            logger.debug("Returning pooled embeds along with hidden states.")
             return (conditioning, pooled_embed)
         logger.debug("Returning legacy style hidden states without pooled embeds")
         return conditioning

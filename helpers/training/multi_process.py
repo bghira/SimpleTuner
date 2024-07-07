@@ -1,4 +1,3 @@
-import accelerate
 import torch.distributed as dist
 
 

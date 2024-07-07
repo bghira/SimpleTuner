@@ -1018,7 +1018,6 @@ class StableDiffusion3Pipeline(
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 from typing import Callable, Dict, List, Optional, Union
 
 import PIL.Image
@@ -1031,9 +1030,6 @@ from transformers import (
 )
 
 from diffusers.image_processor import PipelineImageInput
-from diffusers.pipelines.stable_diffusion_3.pipeline_output import (
-    StableDiffusion3PipelineOutput,
-)
 
 
 if is_torch_xla_available():
