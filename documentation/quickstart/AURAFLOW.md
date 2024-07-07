@@ -88,7 +88,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
 ```json
 [
   {
-    "id": "pseudo-camera-10k-sd3",
+    "id": "pseudo-camera-10k-aura",
     "type": "local",
     "crop": true,
     "crop_aspect": "square",
@@ -98,7 +98,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
     "maximum_image_size": 1.0,
     "target_downsample_size": 1.0,
     "resolution_type": "area",
-    "cache_dir_vae": "cache/vae/sd3/pseudo-camera-10k",
+    "cache_dir_vae": "cache/vae/aura/pseudo-camera-10k",
     "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
@@ -110,7 +110,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
     "type": "local",
     "dataset_type": "text_embeds",
     "default": true,
-    "cache_dir": "cache/text/sd3/pseudo-camera-10k",
+    "cache_dir": "cache/text/aura/pseudo-camera-10k",
     "disabled": false,
     "write_batch_size": 128
   }
