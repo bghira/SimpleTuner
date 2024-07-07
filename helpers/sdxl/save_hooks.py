@@ -122,7 +122,7 @@ class SDXLSaveHook:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
-            elif self.args.aura_diffusion:
+            elif self.args.aura_flow:
                 self.ema_model_cls = AuraFlowTransformer2DModel
 
     def _save_lora(self, models, weights, output_dir):
@@ -380,7 +380,7 @@ class SDXLSaveHook:
                         load_model = HunyuanDiT2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
-                    elif self.args.aura_diffusion:
+                    elif self.args.aura_flow:
                         load_model = AuraFlowTransformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )

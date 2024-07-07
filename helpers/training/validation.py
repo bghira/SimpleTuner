@@ -162,7 +162,7 @@ class Validation:
         self.tokenizer_3 = tokenizer_3
         self.flow_matching = (
             self.args.sd3 and not self.args.sd3_uses_diffusion
-        ) or self.args.aura_diffusion
+        ) or self.args.aura_flow
 
         self._update_state()
 
@@ -269,22 +269,22 @@ class Validation:
             from helpers.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
-        elif model_type == "aura_diffusion":
+        elif model_type == "aura_flow":
             if self.args.controlnet:
                 raise Exception(
-                    "Aura Diffusion ControlNet inference validation is not yet supported."
+                    "AuraFlow ControlNet inference validation is not yet supported."
                 )
             if self.args.validation_using_datasets:
                 raise Exception(
-                    "Aura Diffusion inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                    "AuraFlow inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
                 )
             try:
-                from helpers.aura_diffusion.pipeline import AuraFlowPipeline
+                from helpers.aura_flow.pipeline import AuraFlowPipeline
             except Exception as e:
                 logger.error(
-                    f"Could not import Aura Diffusion pipeline. Perhaps you need a git-source version of Diffusers."
+                    f"Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
                 )
-                raise NotImplementedError("Aura Diffusion pipeline not available.")
+                raise NotImplementedError("AuraFlow pipeline not available.")
 
             return AuraFlowPipeline
 
@@ -337,14 +337,14 @@ class Validation:
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "aura_diffusion"
+            or StateTracker.get_model_type() == "aura_flow"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if self.args.pixart_sigma or self.args.aura_diffusion:
+            if self.args.pixart_sigma or self.args.aura_flow:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -416,7 +416,7 @@ class Validation:
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
         if (
             StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "aura_diffusion"
+            or StateTracker.get_model_type() == "aura_flow"
         ):
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
@@ -560,7 +560,7 @@ class Validation:
                     extra_pipeline_kwargs["text_encoder_2"] = None
                     extra_pipeline_kwargs["tokenizer_2"] = None
 
-            if self.args.aura_diffusion:
+            if self.args.aura_flow:
                 extra_pipeline_kwargs["tokenizer"] = None
                 extra_pipeline_kwargs["text_encoder"] = None
 
@@ -792,7 +792,7 @@ class Validation:
                         logger.debug(f"Device for {key}: {value.device}")
                 if (
                     StateTracker.get_model_type() == "pixart_sigma"
-                    or StateTracker.get_model_type() == "aura_diffusion"
+                    or StateTracker.get_model_type() == "aura_flow"
                 ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]

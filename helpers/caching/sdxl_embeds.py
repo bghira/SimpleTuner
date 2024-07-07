@@ -414,7 +414,9 @@ class TextEmbeddingCache:
 
         return text_inputs
 
-    def encode_t5_prompt(self, input_ids, attention_mask, apply_attn_mask: bool = False):
+    def encode_t5_prompt(
+        self, input_ids, attention_mask, apply_attn_mask: bool = False
+    ):
         text_input_ids = input_ids.to(self.text_encoders[0].device)
         attention_mask = attention_mask.to(self.text_encoders[0].device)
         prompt_embeds = self.text_encoders[0](
@@ -424,8 +426,8 @@ class TextEmbeddingCache:
         )[0]
         if apply_attn_mask:
             # then we'll mangle the attention mask to be a bit more useful.
-            prompt_attention_mask = (
-                attention_mask.unsqueeze(-1).expand(prompt_embeds.shape)
+            prompt_attention_mask = attention_mask.unsqueeze(-1).expand(
+                prompt_embeds.shape
             )
             prompt_embeds = prompt_embeds * prompt_attention_mask
         prompt_embeds = prompt_embeds.to("cpu")
@@ -438,7 +440,7 @@ class TextEmbeddingCache:
 
         Args:
             prompt: The prompt to encode.
-            apply_attn_mask: Whether to apply the attention mask to the embeddings. This is required for Aura Diffusion, and might also improve disk space efficiency.
+            apply_attn_mask: Whether to apply the attention mask to the embeddings. This is required for AuraFlow, and might also improve disk space efficiency.
         Returns:
             Tuple of (prompt_embeds, attention_mask)
         """
@@ -449,7 +451,7 @@ class TextEmbeddingCache:
         result = self.encode_t5_prompt(
             text_inputs.input_ids,
             text_inputs.attention_mask,
-            apply_attn_mask=apply_attn_mask
+            apply_attn_mask=apply_attn_mask,
         )
         attn_mask = text_inputs.attention_mask
         del text_inputs
@@ -515,7 +517,7 @@ class TextEmbeddingCache:
         elif (
             self.model_type == "legacy"
             or self.model_type == "pixart_sigma"
-            or self.model_type == "aura_diffusion"
+            or self.model_type == "aura_flow"
         ):
             # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(
@@ -768,12 +770,14 @@ class TextEmbeddingCache:
                     if (
                         "deepfloyd" in StateTracker.get_args().model_type
                         or self.model_type == "pixart_sigma"
-                        or self.model_type == "aura_diffusion"
+                        or self.model_type == "aura_flow"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(
                             prompt=prompt,
-                            apply_attn_mask=True if self.model_type == "aura_diffusion" else False,
+                            apply_attn_mask=(
+                                True if self.model_type == "aura_flow" else False
+                            ),
                         )
                         if "deepfloyd" not in StateTracker.get_args().model_type:
                             # we have to store the attn mask with the embed for pixart.

@@ -79,10 +79,10 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--aura_diffusion",
+        "--aura_flow",
         action="store_true",
         default=False,
-        help=("This must be set when training an Aura Diffusion model."),
+        help=("This must be set when training an AuraFlow model."),
     )
     parser.add_argument(
         "--pixart_sigma",
@@ -1666,7 +1666,7 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.sd3 or args.aura_diffusion:
+    if args.sd3 or args.aura_flow:
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
@@ -1738,13 +1738,13 @@ def parse_args(input_args=None):
             args.disable_compel = True
 
     t5_max_length = 512
-    if args.aura_diffusion and (
+    if args.aura_flow and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
     ):
         if not args.i_know_what_i_am_doing:
             warning_log(
-                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for Aura Diffusion."
+                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
             )
             args.tokenizer_max_length = t5_max_length
         else:
@@ -1759,7 +1759,7 @@ def parse_args(input_args=None):
         args.ema_device = "cpu"
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3 or args.aura_diffusion:
+        if args.pixart_sigma or args.sd3 or args.aura_flow:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
