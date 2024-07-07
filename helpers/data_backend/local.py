@@ -14,6 +14,7 @@ class LocalDataBackend(BaseDataBackend):
         self.accelerator = accelerator
         self.id = id
         self.compress_cache = compress_cache
+        self.type = "local"
 
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
