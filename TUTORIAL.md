@@ -22,13 +22,11 @@ git clone --branch=release https://github.com/bghira/SimpleTuner
 
 2. Install the required packages as per [INSTALL.md](/INSTALL.md).
 3. Follow the below section, [Training data](#training-data) to produce a set of valid training data, or to obtain example data.
-4. Modify the `sdxl-env.sh` file in the `SimpleTuner/` project root directory. These contain all of the settings that the trainer will use to process your data.
+4. Copy the `config/config.env.example` file in the `SimpleTuner/` project root directory to `config/config.env` and fill it with your configuration options.
 
 - Use the instructions in the below section [Example Environment File Explained](#example-environment-file-explained) to modify these values.
 
-5. Run the [train_sdxl.py](/train_sdxl.py) script.
-
-> **Note**: Stable Diffusion 3 is trained using `train_sdxl.py` and configured via `sdxl-env.sh`
+5. Run the [train.py](/train.py) script.
 
 ## Advanced users: Kohya config conversion
 
@@ -137,7 +135,7 @@ For users who are more familiar with model training and wish to tweak settings e
 
 ## Publishing checkpoints to Hugging Face Hub
 
-Setting two values inside `sdxl-env.sh` or `sd2x-env.sh` will cause the trainer to automatically push your model up to the Hugging Face Hub upon training completion:
+Setting two values inside `config/config.env` will cause the trainer to automatically push your model up to the Hugging Face Hub upon training completion:
 
 ```bash
 export PUSH_TO_HUB="true"
@@ -152,7 +150,7 @@ huggingface-cli login
 
 A model card will be automatically generated containing a majority of the relevant training session parameters.
 
-By default, every checkpoint will be uploaded to the Hub. However, if you wish to disable this behaviour to conserve bandwidth or for privacy reasons, you can set the following value in your `sdxl-env.sh`:
+By default, every checkpoint will be uploaded to the Hub. However, if you wish to disable this behaviour to conserve bandwidth or for privacy reasons, you can set the following value in `config/config.env`:
 
 ```bash
 export PUSH_CHECKPOINTS="false"

@@ -38,7 +38,7 @@ For DeepFloyd tuning, it's recommended to visit [this page](/documentation/DEEPF
 
 For Stable Diffusion 1.x/2.x/XL, here are recommended configuration values.
 
-Located in `sdxl-env.sh` or `sd2x-env.sh`:
+Located in `config/config.env`:
 ```bash
 TRAIN_BATCH_SIZE=1
 
@@ -146,7 +146,7 @@ You'll need to update `cache_dir` in your dataloader configuration, `multidataba
 ]
 ```
 
-If you wish to target a specific aesthetic score with your data, you can add this to `sdxl-env.sh`:
+If you wish to target a specific aesthetic score with your data, you can add this to `config/config.env`:
 
 ```bash
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --data_aesthetic_score=5.6"

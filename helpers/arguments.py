@@ -79,6 +79,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--legacy",
+        action="store_true",
+        default=False,
+        help=(
+            "This option must be provided when training a Stable Diffusion 1.x or 2.x model."
+        ),
+    )
+    parser.add_argument(
         "--aura_flow",
         action="store_true",
         default=False,
@@ -1620,7 +1628,7 @@ def parse_args(input_args=None):
         )
 
     if torch.backends.mps.is_available():
-        if not args.unet_attention_slice and StateTracker.get_model_type() != "legacy":
+        if not args.unet_attention_slice and not args.legacy:
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
@@ -1646,7 +1654,7 @@ def parse_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and StateTracker.get_model_type() == "legacy"
+        and args.legacy
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):

@@ -71,9 +71,7 @@ poetry install --no-root -C install/rocm
 
 ### All platforms
 
-2. For SD2.1, copy `sd21-env.sh.example` to `env.sh` - be sure to fill out the details. Try to change as little as possible.
-
-For SDXL, copy `sdxl-env.sh.example` to `sdxl-env.sh` and then fill in the details.
+2. Copy `config/config.env.example` to `config/config.env` and then fill in the details.
 
 For both training scripts, any missing values from your user config will fallback to the defaults.
 
@@ -87,16 +85,10 @@ Follow the instructions that are printed, to locate your API key and configure i
 
 Once that is done, any of your training sessions and validation data will be available on Weights & Biases.
 
-4. For SD2.1, run the `training.sh` script, probably by redirecting the output to a log file:
+4. Launch the `train.sh` script, probably by redirecting the output to a log file:
 
 ```bash
-bash training.sh > /path/to/training-$(date +%s).log 2>&1
-```
-
-For SDXL, run the `train_sdxl.sh` script, redirecting outputs to the log file:
-
-```bash
-bash train_sdxl.sh > /path/to/training-$(date +%s).log 2>&1
+bash train.sh > /path/to/training-$(date +%s).log 2>&1
 ```
 
 > ⚠️ At this point, the commands will work, but further configuration is required. See [the tutorial](/TUTORIAL.md) for more information.

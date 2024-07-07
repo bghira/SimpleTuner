@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
-
 # Pull the default config.
-source sd21-env.sh.example
-# Pull config from env.sh
-source sd21-env.sh
+[ -f "config/config.env.example" ] && source config/config.env.example
+# Pull config from config.env
+[ -f "config/config.env" ] && source config/config.env
 
 export PLATFORM
 PLATFORM=$(uname -s)
-
-export OVERRIDE_DATALOADER_CONFIG_ARG=""
-if [ -n "$OVERRIDE_DATALOADER_CONFIG" ] && [[ "$OVERRIDE_DATALOADER_CONFIG" == "1" ]]; then
-    export OVERRIDE_DATALOADER_CONFIG_ARG="--override_dataset_config"
-fi
 
 if [ -z "${ACCELERATE_EXTRA_ARGS}" ]; then
     ACCELERATE_EXTRA_ARGS=""
@@ -30,6 +24,14 @@ fi
 if [ -z "${MIXED_PRECISION}" ]; then
     printf "MIXED_PRECISION not set, defaulting to bf16.\n"
     MIXED_PRECISION=bf16
+fi
+
+export PURE_BF16_ARGS=""
+if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
+    PURE_BF16_ARGS="--adam_bfloat16"
+    if [[ "$MIXED_PRECISION" != "no" ]]; then
+        MIXED_PRECISION="bf16"
+    fi
 fi
 
 if [ -z "${TRAINING_SEED}" ]; then
@@ -153,6 +155,21 @@ if [ -z "$METADATA_UPDATE_INTERVAL" ]; then
     printf "METADATA_UPDATE_INTERVAL not set, defaulting to 120 seconds.\n"
     export METADATA_UPDATE_INTERVAL=120
 fi
+if [ -n "$STABLE_DIFFUSION_3" ] && [[ "$STABLE_DIFFUSION_3" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --sd3"
+    echo "Disabling Xformers for Stable Diffusion 3 (https://github.com/huggingface/diffusers/issues/8535)"
+    export XFORMERS_ARG=""
+fi
+if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --pixart_sigma"
+fi
+if [ -n "$AURA_FLOW" ] && [[ "$AURA_FLOW" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aura_flow"
+fi
+if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
+fi
+
 
 export EMA_ARGS=""
 if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
@@ -162,6 +179,32 @@ if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
     fi
     export EMA_ARGS="--use_ema --ema_decay=${EMA_DECAY}"
 fi
+# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
+export OPTIMIZER_ARG=""
+case $OPTIMIZER in
+    "adamw")
+        export OPTIMIZER_ARG=""
+        ;;
+    "adamw8bit")
+        export OPTIMIZER_ARG="--use_8bit_adam"
+        ;;
+    "adamw_bf16")
+        export OPTIMIZER_ARG="--adam_bfloat16"
+        ;;
+    "adafactor")
+        export OPTIMIZER_ARG="--use_adafactor_optimizer"
+        ;;
+    "dadaptation")
+        export OPTIMIZER_ARG="--use_dadapt_optimizer"
+        ;;
+    "prodigy")
+        export OPTIMIZER_ARG="--use_prodigy_optimizer"
+        ;;
+    *)
+        echo "Unknown optimizer requested: $OPTIMIZER"
+        exit 1
+        ;;
+esac
 
 export DELETE_ARGS=""
 if ! [ -z "$DELETE_SMALL_IMAGES" ] && [ $DELETE_SMALL_IMAGES -eq 1 ]; then
@@ -187,9 +230,10 @@ fi
 
 export XFORMERS_ARG="--enable_xformers_memory_efficient_attention"
 if ! [ -z "$USE_XFORMERS" ] && [[ "$USE_XFORMERS" == "false" ]]; then
-    XFORMERS_ARG=""
+    export XFORMERS_ARG=""
 fi
 if [[ "$PLATFORM" == "Darwin" ]]; then
+    export XFORMERS_ARG=""
     export MIXED_PRECISION="no"
     echo "Disabled Xformers on MacOS, as it is not yet supported."
     echo "Overridden MIXED_PRECISION to 'no' for MacOS, as autocast is not supported by MPS."
@@ -204,14 +248,8 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
     exit 1
 fi
 
-export PURE_BF16_ARGS=""
-if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
-    PURE_BF16_ARGS="--adam_bfloat16"
-    MIXED_PRECISION="bf16"
-fi
-
 export SNR_GAMMA_ARG=""
-if ! [ -z "$MIN_SNR_GAMMA" ]; then
+if [ -n "$MIN_SNR_GAMMA" ]; then
     export SNR_GAMMA_ARG="--snr_gamma=${MIN_SNR_GAMMA}"
 fi
 
@@ -225,50 +263,12 @@ if [ -z "$GRADIENT_ACCUMULATION_STEPS" ]; then
     export GRADIENT_ACCUMULATION_STEPS=1
 fi
 
-if [ -z "$DEFAULT_CAPTION_STRATEGY" ]; then
-    printf "DEFAULT_CAPTION_STRATEGY not set, defaulting to 'filename'. Choices are: 'filename', 'textfile'\n"
-    export DEFAULT_CAPTION_STRATEGY='filename'
-fi
-
 export TF32_ARG=""
 if [ -n "$ALLOW_TF32" ] && [[ "$ALLOW_TF32" == "true" ]]; then
     export TF32_ARG="--allow_tf32"
 fi
-
-# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
-export OPTIMIZER_ARG=""
-case $OPTIMIZER in
-    "adamw")
-        export OPTIMIZER_ARG=""
-        ;;
-    "adamw_bf16")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    "adamw8bit")
-        export OPTIMIZER_ARG="--use_8bit_adam"
-        ;;
-    "adafactor")
-        export OPTIMIZER_ARG="--use_adafactor_optimizer"
-        ;;
-    "dadaptation")
-        export OPTIMIZER_ARG="--use_dadapt_optimizer"
-        ;;
-    "adamw_stochastic")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    *)
-        echo "Unknown optimizer requested: $OPTIMIZER"
-        exit 1
-        ;;
-esac
-
-# if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.
-# they can use huggingface-cli login to generate the token.
-if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_to_hub --hub_model_id=${HUB_MODEL_NAME}"
-    if [ -n "$PUSH_CHECKPOINTS" ] && [[ "$PUSH_CHECKPOINTS" == "true" ]]; then
-        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_checkpoints_to_hub"
-    fi
+if [[ "$PLATFORM" == "Darwin" ]]; then
+    export TF32_ARG=""
 fi
 
 export DORA_ARGS=""
@@ -279,18 +279,19 @@ elif [[ "$MODEL_TYPE" == "lora" ]] && [[ "$USE_DORA" != "false" ]]; then
     DORA_ARGS="--use_dora"
 fi
 
-export DORA_ARGS=""
-if [[ "$MODEL_TYPE" == "deepfloyd-full" ]] && [[ "$USE_DORA" != "false" ]]; then
-    echo "Cannot use DoRA with a full u-net training task. Disabling DoRA."
-elif [[ "$MODEL_TYPE" == "deepfloyd-lora" ]] && [[ "$USE_DORA" != "false" ]]; then
-    echo "Enabling DoRA."
-    DORA_ARGS="--use_dora"
-fi
-
 export BITFIT_ARGS=""
-if [[ "$USE_BITFIT" != "false" ]]; then
+if [[ "$USE_BITFIT" == "true" ]]; then
     echo "Enabling BitFit."
     BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+fi
+
+# if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.
+# they can use huggingface-cli login to generate the token.
+if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_to_hub --hub_model_id=${HUB_MODEL_NAME}"
+    if [ -n "$PUSH_CHECKPOINTS" ] && [[ "$PUSH_CHECKPOINTS" == "true" ]]; then
+        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_checkpoints_to_hub"
+    fi
 fi
 
 export ASPECT_BUCKET_ROUNDING_ARGS=""
@@ -308,22 +309,22 @@ if [ -n "$CONTROLNET" ] && [[ "$CONTROLNET" == "true" ]]; then
     export CONTROLNET_ARGS="--controlnet"
 fi
 
-accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train_sd21.py \
+
+# Run the training script.
+accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train.py \
     --model_type="${MODEL_TYPE}" ${DORA_ARGS} --pretrained_model_name_or_path="${MODEL_NAME}" ${XFORMERS_ARG} ${GRADIENT_ARG} --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
-    --resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} --data_backend_config="${DATALOADER_CONFIG}" ${OVERRIDE_DATALOADER_CONFIG_ARG} \
+    --resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} --data_backend_config="${DATALOADER_CONFIG}" \
     --num_train_epochs=${NUM_EPOCHS} ${MAX_TRAIN_STEPS_ARGS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \
-    --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" --lr_end="${LEARNING_RATE_END}" \
-    --output_dir="${OUTPUT_DIR}" \
+    ${OPTIMIZER_ARG} --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
+    --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
-    ${DEBUG_EXTRA_ARGS}	${TF32_ARG} ${PURE_BF16_ARGS} --mixed_precision="${MIXED_PRECISION}" --vae_dtype="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
+    ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
     --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
     --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
     --resolution_type="${RESOLUTION_TYPE}" \
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
-    --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" \
-    --freeze_encoder=true --freeze_encoder_strategy="${TEXT_ENCODER_FREEZE_STRATEGY}" --freeze_encoder_before="${TEXT_ENCODER_FREEZE_BEFORE}" --freeze_encoder_after="${TEXT_ENCODER_FREEZE_AFTER}" \
-    --caption_strategy="${DEFAULT_CAPTION_STRATEGY}" ${EMA_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} ${CONTROLNET_ARGS}
+    --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
 
 exit 0

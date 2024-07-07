@@ -241,6 +241,8 @@ def main():
         StateTracker.set_model_type("pixart_sigma")
     if args.aura_flow:
         StateTracker.set_model_type("aura_flow")
+    if args.legacy:
+        StateTracker.set_model_type("legacy")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -370,6 +372,9 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.bfloat16
+    if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
+        weight_dtype = torch.float32
+        args.adam_bfloat16 = False
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load scheduler, tokenizer and models.
@@ -382,8 +387,9 @@ def main():
     text_encoders = []
     tokenizers = []
     if not args.pixart_sigma and not args.aura_flow:
-        # sdxl and sd3 use the sd 1.5 encoder as number one.
-        logger.info("Load OpenAI CLIP-L/14 text encoder..")
+        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
+        # sd2.x uses openclip vit-H/14
+        logger.info("Load CLIP text encoder..")
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     else:
@@ -424,14 +430,17 @@ def main():
         noise_scheduler_copy = copy.deepcopy(noise_scheduler)
 
     else:
-        # SDXL uses the old style noise scheduler.
+        if args.legacy:
+            args.rescale_betas_zero_snr = True
+            args.training_scheduler_timestep_spacing = "trailing"
+
         noise_scheduler = DDPMScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
-            prediction_type=args.prediction_type,
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             timestep_spacing=args.training_scheduler_timestep_spacing,
         )
+        args.prediction_type = noise_scheduler.config.prediction_type
         if args.sd3 and args.sd3_uses_diffusion:
             logger.warning(
                 "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
@@ -453,7 +462,7 @@ def main():
                 )
             else:
                 logger.info(
-                    f"Loading OpenAI CLIP-L/14 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                    f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
             text_encoder_1 = text_encoder_cls_1.from_pretrained(
                 text_encoder_path,
@@ -560,7 +569,7 @@ def main():
             **pretrained_load_args,
         )
     else:
-        logger.info(f"Loading SDXL U-net..")
+        logger.info(f"Loading U-net..")
         transformer = None
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
@@ -575,6 +584,10 @@ def main():
         model_type_label = "PixArt Sigma"
     if args.aura_flow:
         model_type_label = "AuraFlow"
+    if args.legacy:
+        model_type_label = "Stable Diffusion 1.x/2.x"
+    if "deepfloyd" in args.model_type:
+        model_type_label = "DeepFloyd-IF"
 
     if args.controlnet:
         if args.pixart_sigma or args.aura_flow:
@@ -1686,7 +1699,7 @@ def main():
                 )
 
                 add_text_embeds = batch["add_text_embeds"]
-                training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
+                training_logger.debug(f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}")
                 # Get the target for loss depending on the prediction type
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
@@ -1803,12 +1816,19 @@ def main():
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif unet is not None:
-                        model_pred = unet(
-                            noisy_latents,
-                            timesteps,
-                            encoder_hidden_states,
-                            added_cond_kwargs=added_cond_kwargs,
-                        ).sample
+                        if args.legacy:
+                            model_pred = unet(
+                                noisy_latents,
+                                timesteps,
+                                encoder_hidden_states,
+                            ).sample
+                        else:
+                            model_pred = unet(
+                                noisy_latents,
+                                timesteps,
+                                encoder_hidden_states,
+                                added_cond_kwargs=added_cond_kwargs,
+                            ).sample
                     else:
                         raise Exception(
                             "Unknown error occurred, no prediction could be made."

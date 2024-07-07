@@ -108,7 +108,7 @@ This will take about 30 seconds for a small dataset of fewer than 100 images.
 
 Just setting up the dataloader configuration won't be enough to start training ControlNet models.
 
-Inside `sd2x-env.sh` or `sdxl-env.sh`, you will have to set the following values:
+Inside `config/config.env`, you will have to set the following values:
 
 ```bash
 export MODEL_TYPE='full'

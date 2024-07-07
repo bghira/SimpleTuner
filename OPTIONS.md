@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides a user-friendly breakdown of the command-line options available in SimpleTuner's `train_sdxl.py` script. These options offer a high degree of customization, allowing you to train your model to suit your specific requirements.
+This guide provides a user-friendly breakdown of the command-line options available in SimpleTuner's `train.py` script. These options offer a high degree of customization, allowing you to train your model to suit your specific requirements.
 
 ---
 
@@ -13,14 +13,10 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Choices: lora, full, deepfloyd, deepfloyd-lora, deepfloyd-stage2, deepfloyd-stage2-lora. Default: lora
 - **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
 
-**Note:** DeepFloyd uses the `train_sd2x.sh`/`train_sd21.py` training script, `sd2x-env.sh` configuration file. See [DEEPFLOYD.md](/documentation/DEEPFLOYD.md) for more information.
-
 ### `--sd3`
 
 - **What**: Enable Stable Diffusion 3 training quirks/overrides.
-- **Why**: SD3 has three text encoders, it's pretty hefty and needs specific validation-time options considered. The equivalent option for this in the `sdxl-env.sh` environment file is `STABLE_DIFFUSION_3`.
-
-**Note:** Stable Diffusion 3 uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
+- **Why**: SD3 has three text encoders, it's pretty hefty and needs specific validation-time options considered. The equivalent option for this in the `config/config.env` environment file is `STABLE_DIFFUSION_3`.
 
 ### `--pixart_sigma`
 
@@ -32,8 +28,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Enable AuraFlow training quirks/overrides.
 - **Why**: As a flow-matching model, AuraFlow has several unique needs. This option must be enabled to load and train an AuraFlow model.
 
-**Note:** Like SDXL and SD3, PixArt Sigma **also** uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
-
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
@@ -43,7 +37,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: Path to the pretrained T5 model or its identifier from huggingface.co/models.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
-
 
 ### `--hub_model_id`
 
@@ -245,7 +238,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 This is a basic overview meant to help you get started. For a complete list of options and more detailed explanations, please refer to the full specification:
 
 ```
-usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
+usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                      [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                      [--aura_flow] [--pixart_sigma] [--sd3]

@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.DEBUG, format=log_format)
 logger = logging.getLogger("kohya_config")
 
 # Default script name assumption
-DEFAULT_SCRIPT_NAME = "train_sd2x.py"
+DEFAULT_SCRIPT_NAME = "train.py"
 
 ARG_MAPPING = {
     "LoRA_type": "lora_type",
@@ -202,7 +202,7 @@ ARG_MAPPING = {
         "warn_if_value": 0,
         "warning": "In SimpleTuner, max_grad_norm is set to 2 by default. Please change this if you see issues.",
     },
-    "sdxl": {"script_name": "train_sdxl.py"},
+    "sdxl": {"script_name": "train.py"},
     "sdxl_cache_text_encoder_outputs": {
         "warning": "--sdxl_cache_text_encoder_outputs is not currently supported. Text encoder outputs are always cached."
     },
@@ -233,7 +233,7 @@ ARG_MAPPING = {
     "up_lr_weight": None,
     "use_cp": None,
     "use_wandb": {"parameter": "report_to", "value": "wandb", "ignore_if_value": False},
-    "v2": {"script_name": "train_sd2x.py", "ignore_if_value": False},
+    "v2": {"script_name": "train.py", "ignore_if_value": False},
     "v_parameterization": {"parameter": "prediction_type", "value": "v_prediction"},
     "vae_batch_size": {"parameter": "vae_batch_size", "range": [1, 128]},
     "wandb_api_key": {
