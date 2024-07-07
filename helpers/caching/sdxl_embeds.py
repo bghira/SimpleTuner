@@ -879,6 +879,9 @@ class TextEmbeddingCache:
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
                 debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                if prompt is None:
+                    logger.error(f"Filename {filename} does not have a caption.")
+                    continue
                 logger.debug(debug_msg)
                 if return_concat and load_from_cache:
                     try:
