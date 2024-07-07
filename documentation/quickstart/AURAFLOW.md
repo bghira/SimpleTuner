@@ -71,6 +71,8 @@ There, you will need to modify the following variables:
 - `AURA_FLOW` - Set this to `true`.
 - `MODEL_NAME` - Set this to `AuraDiffusion/auradiffusion-v0.1a0`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `VALIDATION_RESOLUTION` - As AuraFlow v0.1a is a 512px model, you should set this to `512x512`.
+- `VALIDATION_GUIDANCE` - Aura benefits from a very-low value. Set this to `3.0`.
 
 There are a few more if using a Mac M-series machine:
 
