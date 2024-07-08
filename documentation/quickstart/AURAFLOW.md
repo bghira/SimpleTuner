@@ -2,7 +2,9 @@
 
 In this example, we'll be running a **full fine-tune** on an AuraFlow model using the SimpleTuner toolkit.
 
-> ⚠️ LoRA is not currently supported for AuraFlow, this will require more resources.
+> ⛔️ Full fine-tuning requires the use of FSDP due to a lack of optimisations in the currently available MMDiT transformer module for AuraFlow. Experimentation with [DeepSpeed](/documentation/DEEPSPEED.md) is required for full network training.
+
+> ⚠️ LoRA is not currently supported for AuraFlow when using upstream Diffusers. A [special version](#diffusers) is required for full feature support.
 
 ### Prerequisites
 
@@ -41,6 +43,8 @@ poetry install --no-root
 poetry install --no-root -C install/rocm
 ```
 
+#### Diffusers
+
 Additionally, because of AuraFlow's preliminary support in the Diffusers project, you will have to manually install a fork that contains the AuraFlow patches already-integrated.
 
 This command should be executed while you are still inside your venv from earlier:
@@ -67,7 +71,7 @@ cp config/config.env.example config/config.env
 
 There, you will need to modify the following variables:
 
-- `MODEL_TYPE` - This should remain set as `full`. **LoRA will not work.**
+- `MODEL_TYPE` - This should remain set as `lora`. **`full` will not work.**
 - `AURA_FLOW` - Set this to `true`.
 - `MODEL_NAME` - Set this to `AuraDiffusion/auradiffusion-v0.1a0`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
@@ -118,6 +122,8 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
   }
 ]
 ```
+
+> ⛔️ Resolutions other than `resolution=512, resolution_type=pixel` or `resolution=0.5, resolution_type=area` are not supported by AuraFlow and will result in errors.
 
 Then, navigate to the `BASE_DIR` directory and create a `datasets` directory:
 
