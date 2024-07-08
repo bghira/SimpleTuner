@@ -88,7 +88,7 @@ AuraFlow is a novel, open-source implementation of a flow-matching text-to-image
 
 Currently, AuraFlow v0.1 has limited support for SimpleTuner:
 - All limitations that apply to Stable Diffusion 3 also apply to AuraFlow
-- LoRA is not available yet for AuraFlow training
+- LoRA is currently the only viable method of AuraFlow training
 
 This model is very large, and will require more resources to train than PixArt or SDXL.
 
