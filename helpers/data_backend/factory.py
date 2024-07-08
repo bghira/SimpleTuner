@@ -8,7 +8,7 @@ from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.prompts import PromptHandler
 from helpers.caching.vae import VAECache
-from helpers.training.multi_process import rank_info
+from helpers.training.multi_process import rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
@@ -189,17 +189,18 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
 def print_bucket_info(metadata_backend):
     # Print table header
-    print(f"{rank_info()} | {'Bucket':<10} | {'Image Count':<12}")
+    if get_rank() == 0:
+        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
 
-    # Print separator
-    print("-" * 30)
+        # Print separator
+        print("-" * 30)
 
-    # Print each bucket's information
-    for bucket in metadata_backend.aspect_ratio_bucket_indices:
-        image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
-        if image_count == 0:
-            continue
-        print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
+        # Print each bucket's information
+        for bucket in metadata_backend.aspect_ratio_bucket_indices:
+            image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
+            if image_count == 0:
+                continue
+            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
 def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
