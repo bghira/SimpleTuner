@@ -2,7 +2,7 @@ import os
 import logging
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
-from helpers.legacy.metadata import save_model_card
+from helpers.publishing.metadata import save_model_card
 
 from huggingface_hub import create_repo, upload_folder, upload_file
 
