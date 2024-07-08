@@ -16,6 +16,7 @@ from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from transformers import T5Tokenizer, UMT5EncoderModel
+from diffusers.loaders.lora import AuraFlowLoraLoaderMixin
 
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models import AuraFlowTransformer2DModel, AutoencoderKL
@@ -99,7 +100,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class AuraFlowPipeline(DiffusionPipeline):
+class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
     _optional_components = ["tokenizer", "text_encoder"]
     model_cpu_offload_seq = "text_encoder->transformer->vae"
 

@@ -611,7 +611,7 @@ def main():
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
     elif "lora" in args.model_type:
-        if args.pixart_sigma or args.aura_flow:
+        if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
 
         logger.info("Using LoRA training mode.")
@@ -648,11 +648,16 @@ def main():
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
         if transformer is not None:
+            target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
+            if args.aura_flow:
+                target_modules = (
+                    r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+                )
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=args.lora_alpha,
                 init_lora_weights=lora_weight_init_type,
-                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                target_modules=target_modules,
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)

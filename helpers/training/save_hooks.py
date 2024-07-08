@@ -23,7 +23,11 @@ logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
-    from diffusers import StableDiffusion3Pipeline, SD3Transformer2DModel
+    from diffusers import (
+        StableDiffusion3Pipeline,
+        SD3Transformer2DModel,
+        StableDiffusionPipeline,
+    )
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
 
@@ -45,6 +49,7 @@ except Exception as e:
 
 try:
     from diffusers.models import AuraFlowTransformer2DModel
+    from diffusers.pipelines import AuraFlowPipeline
 except Exception as e:
     logger.error(
         f"Can not load AuraFlowTransformer2DModel class. This release requires the latest version of Diffusers: {e}"
@@ -181,9 +186,22 @@ class SaveHookManager:
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 # SD3 doesn't support text encoder training.
-                # text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
-                # text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
-                # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
+                text_encoder_1_lora_layers_to_save=text_encoder_1_lora_layers_to_save,
+                text_encoder_2_lora_layers_to_save=text_encoder_2_lora_layers_to_save,
+                text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
+            )
+        elif self.args.legacy:
+            StableDiffusionPipeline.save_lora_weights(
+                output_dir,
+                unet_lora_layers=unet_lora_layers_to_save,
+                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+                transformer_lora_layers=transformer_lora_layers_to_save,
+            )
+        elif self.args.aura_flow:
+            AuraFlowPipeline.save_lora_weights(
+                output_dir,
+                transformer_lora_layers=transformer_lora_layers_to_save,
+                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
         else:
             StableDiffusionXLPipeline.save_lora_weights(
@@ -276,6 +294,20 @@ class SaveHookManager:
 
         if self.args.sd3:
             lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+            transformer_state_dict = {
+                f'{k.replace("transformer.", "")}': v
+                for k, v in lora_state_dict.items()
+                if k.startswith("unet.")
+            }
+            transformer_state_dict = convert_unet_state_dict_to_peft(
+                transformer_state_dict
+            )
+            incompatible_keys = set_peft_model_state_dict(
+                transformer_, transformer_state_dict, adapter_name="default"
+            )
+
+        elif self.args.aura_flow:
+            lora_state_dict = AuraFlowPipeline.lora_state_dict(input_dir)
             transformer_state_dict = {
                 f'{k.replace("transformer.", "")}': v
                 for k, v in lora_state_dict.items()
