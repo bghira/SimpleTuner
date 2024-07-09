@@ -792,7 +792,15 @@ def main():
     # Grab GPU memory used:
 
     if args.model_type == "full" or not args.train_text_encoder:
-        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        if torch.cuda.is_available():
+            memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_before_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            logger.warning(
+                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
+            )
+            memory_before_unload = 0
         if accelerator.is_main_process:
             logger.info(f"Unloading text encoders, as they are not being trained.")
         text_encoder_1 = text_encoder_1.to("meta") if text_encoder_1 is not None else None
@@ -807,7 +815,12 @@ def main():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
         reclaim_memory()
-        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        if torch.cuda.is_available():
+            memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_after_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            memory_after_unload = 0
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
@@ -1273,16 +1286,32 @@ def main():
     )
 
     if not args.keep_vae_loaded and args.vae_cache_preprocess:
-        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
-        import gc
+        if torch.cuda.is_available():
+            memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_before_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            logger.warning(
+                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
+            )
+            memory_before_unload = 0
 
+        vae = vae.to("meta")
         del vae
         vae = None
+
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
+                backend["vaecache"].vae = backend["vaecache"].vae.to("meta")
                 backend["vaecache"].vae = None
+
         reclaim_memory()
-        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        if torch.cuda.is_available():
+            memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_after_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            memory_after_unload = 0
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
