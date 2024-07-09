@@ -97,6 +97,18 @@ def parse_args(input_args=None):
         help=("This must be set when training an AuraFlow model."),
     )
     parser.add_argument(
+        "--aura_flow_target",
+        type=str,
+        choices=["all", "dit", "mmdit"],
+        default="all",
+        help=(
+            "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
+            " The default option 'all' means all blocks will be trained. 'dit' will train only the standard DiT blocks,"
+            " and 'mmdit' will train only the MM-DiT blocks. Experimentation will likely prove fruitful,"
+            " as these LoRAs train quickly. The default is 'all'."
+        ),
+    )
+    parser.add_argument(
         "--pixart_sigma",
         action="store_true",
         default=False,
