@@ -650,9 +650,13 @@ def main():
         if transformer is not None:
             target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
             if args.aura_flow:
-                target_modules = (
-                    r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
-                )
+                target_modules = ["to_k", "to_q", "to_v", "to_out.0", "to_add_out"]
+                if args.aura_flow_target == "dit":
+                    target_modules = r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+                elif args.aura_flow_target == "mmdit":
+                    target_modules = (
+                        r"joint_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+                    )
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=args.lora_alpha,
