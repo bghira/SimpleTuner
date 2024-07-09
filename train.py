@@ -791,6 +791,9 @@ def main():
         memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         if accelerator.is_main_process:
             logger.info(f"Unloading text encoders, as they are not being trained.")
+        text_encoder_1 = text_encoder_1.to("meta") if text_encoder_1 is not None else None
+        text_encoder_2 = text_encoder_2.to("meta") if text_encoder_2 is not None else None
+        text_encoder_3 = text_encoder_3.to("meta") if text_encoder_3 is not None else None
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
