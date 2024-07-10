@@ -13,18 +13,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from helpers import log_format
 
-import shutil, hashlib, json, copy, random, logging, math, os, sys
+import shutil
+import hashlib
+import json
+import copy
+import random
+import logging
+import math
+import os
+import sys
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-
-from pathlib import Path
+from helpers import log_format  # noqa
 from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
-from helpers.legacy.validation import prepare_validation_prompt_list
-from helpers.training.validation import Validation
+from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
@@ -54,18 +59,18 @@ training_logger.setLevel(training_logger_level)
 # Less important logs.
 filelock_logger.setLevel("WARNING")
 connection_logger.setLevel("WARNING")
-import numpy as np
-import torch, diffusers, accelerate, transformers
-import torch.nn as nn
+import torch
+import diffusers
+import accelerate
+import transformers
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
-from huggingface_hub import create_repo, upload_folder
-from packaging import version
 from tqdm.auto import tqdm
+from helpers.training.model_freeze import freeze_transformer_blocks
 from helpers.training.custom_schedule import get_sd3_sigmas
-from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
+from transformers import PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
 
@@ -74,7 +79,6 @@ from diffusers import (
     ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
-    DPMSolverMultistepScheduler,
     UNet2DConditionModel,
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
@@ -83,8 +87,7 @@ from diffusers import (
 
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
-from diffusers.optimization import get_scheduler
-from helpers.training.ema import EMAModel, should_update_ema
+from helpers.training.ema import EMAModel
 from diffusers.utils import (
     check_min_version,
     convert_state_dict_to_diffusers,
@@ -125,6 +128,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import T5EncoderModel
 
         return T5EncoderModel
+    elif model_class == "UMT5EncoderModel":
+        from transformers import UMT5EncoderModel
+
+        return UMT5EncoderModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -137,10 +144,17 @@ def get_tokenizers(args):
             "subfolder": "tokenizer",
             "revision": args.revision,
         }
-        if not args.pixart_sigma:
+        if not args.pixart_sigma and not args.aura_flow:
             tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
         else:
-            from transformers import T5Tokenizer
+            if args.pixart_sigma:
+                from transformers import T5Tokenizer
+
+                tokenizer_cls = T5Tokenizer
+            elif args.aura_flow:
+                from transformers import LlamaTokenizerFast
+
+                tokenizer_cls = LlamaTokenizerFast
 
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
@@ -151,7 +165,7 @@ def get_tokenizers(args):
                 f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
             )
             try:
-                tokenizer_1 = T5Tokenizer.from_pretrained(
+                tokenizer_1 = tokenizer_cls.from_pretrained(
                     text_encoder_path,
                     subfolder="tokenizer",
                     revision=args.revision,
@@ -177,7 +191,7 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
-    if not args.pixart_sigma:
+    if not args.pixart_sigma and not args.aura_flow:
         try:
             tokenizer_2 = CLIPTokenizer.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -190,7 +204,7 @@ def get_tokenizers(args):
                 StateTracker.is_sdxl_refiner(True)
                 if args.validation_using_datasets is None:
                     logger.warning(
-                        f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
+                        "Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
                     )
                     args.validation_using_datasets = True
         except:
@@ -228,6 +242,10 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
+    if args.aura_flow:
+        StateTracker.set_model_type("aura_flow")
+    if args.legacy:
+        StateTracker.set_model_type("legacy")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -357,6 +375,9 @@ def main():
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.bfloat16
+    if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
+        weight_dtype = torch.float32
+        args.adam_bfloat16 = False
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load scheduler, tokenizer and models.
@@ -368,9 +389,10 @@ def main():
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoders = []
     tokenizers = []
-    if not args.pixart_sigma:
-        # sdxl and sd3 use the sd 1.5 encoder as number one.
-        logger.info("Load OpenAI CLIP-L/14 text encoder..")
+    if not args.pixart_sigma and not args.aura_flow:
+        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
+        # sd2.x uses openclip vit-H/14
+        logger.info("Load CLIP text encoder..")
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     else:
@@ -399,8 +421,10 @@ def main():
         )
 
     # Load scheduler and models
-    if args.sd3 and not args.sd3_uses_diffusion:
-        # Stable Diffusion 3 uses rectified flow.
+    flow_matching = False
+    if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_flow:
+        # Stable Diffusion 3 and AuraFlow use rectified flow.
+        flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
 
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -409,22 +433,21 @@ def main():
         noise_scheduler_copy = copy.deepcopy(noise_scheduler)
 
     else:
-        if args.sd3 and args.sd3_uses_diffusion:
-            logger.warning(
-                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while."
-            )
-        # SDXL uses the old style noise scheduler.
+        if args.legacy:
+            args.rescale_betas_zero_snr = True
+            args.training_scheduler_timestep_spacing = "trailing"
+
         noise_scheduler = DDPMScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
-            prediction_type=args.prediction_type,
             rescale_betas_zero_snr=args.rescale_betas_zero_snr,
             timestep_spacing=args.training_scheduler_timestep_spacing,
         )
-    if args.sd3 and args.sd3_uses_diffusion:
-        logger.info(
-            f"Stable Diffusion 3 noise scheduler config: {noise_scheduler.config}"
-        )
+        args.prediction_type = noise_scheduler.config.prediction_type
+        if args.sd3 and args.sd3_uses_diffusion:
+            logger.warning(
+                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
+            )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -436,13 +459,13 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         if tokenizer_1 is not None:
-            if args.pixart_sigma or args.sd3:
+            if args.pixart_sigma or args.aura_flow:
                 logger.info(
-                    f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                    f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
             else:
                 logger.info(
-                    f"Loading OpenAI CLIP-L/14 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                    f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
             text_encoder_1 = text_encoder_cls_1.from_pretrained(
                 text_encoder_path,
@@ -468,7 +491,7 @@ def main():
                 variant=args.variant,
             )
 
-        logger.info("Load VAE..")
+        logger.info(f"Load VAE: {vae_path}")
         vae = AutoencoderKL.from_pretrained(
             vae_path,
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
@@ -477,16 +500,18 @@ def main():
             variant=args.variant,
         )
 
-    logger.info("Moving models to GPU. Almost there.")
     if tokenizer_1 is not None:
+        logger.info("Moving text encoder to GPU.")
         text_encoder_1.to(accelerator.device, dtype=weight_dtype)
     if tokenizer_2 is not None:
+        logger.info("Moving text encoder 2 to GPU.")
         text_encoder_2.to(accelerator.device, dtype=weight_dtype)
     if tokenizer_1 is not None or tokenizer_2 is not None:
         tokenizers = [tokenizer_1, tokenizer_2]
         text_encoders = [text_encoder_1, text_encoder_2]
 
     if tokenizer_3 is not None:
+        logger.info("Moving text encoder 3 to GPU.")
         text_encoder_3.to(accelerator.device, dtype=weight_dtype)
         tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
         text_encoders = [text_encoder_1, text_encoder_2, text_encoder_3]
@@ -510,7 +535,7 @@ def main():
     }
     if args.sd3:
         # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info(f"Loading Stable Diffusion 3 diffusion transformer..")
+        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
         unet = None
         try:
             from diffusers import SD3Transformer2DModel
@@ -532,8 +557,22 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.aura_flow:
+        try:
+            from diffusers.models import AuraFlowTransformer2DModel
+        except:
+            raise Exception(
+                "The AuraFlow model is not available in this release. Please update to the latest version of Diffusers: https://github.com/huggingface/diffusers/pull/8796"
+            )
+
+        unet = None
+        transformer = AuraFlowTransformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
     else:
-        logger.info(f"Loading SDXL U-net..")
+        logger.info("Loading U-net..")
         transformer = None
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
@@ -546,9 +585,21 @@ def main():
         model_type_label = "Stable Diffusion 3"
     if args.pixart_sigma:
         model_type_label = "PixArt Sigma"
+    if args.aura_flow:
+        model_type_label = "AuraFlow"
+    if args.legacy:
+        model_type_label = "Stable Diffusion 1.x/2.x"
+    if "deepfloyd" in args.model_type:
+        model_type_label = "DeepFloyd-IF"
+    AURA_DIT_BLOCKS_REGEX = (
+        r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+    )
+    AURA_MMDIT_BLOCKS_REGEX = (
+        r"joint_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+    )
 
     if args.controlnet:
-        if args.pixart_sigma:
+        if args.pixart_sigma or args.aura_flow:
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
@@ -571,7 +622,7 @@ def main():
             controlnet = ControlNetModel.from_unet(unet)
     elif "lora" in args.model_type:
         if args.pixart_sigma:
-            raise Exception("PixArt does not support LoRA model training.")
+            raise Exception(f"{model_type_label} does not support LoRA model training.")
 
         logger.info("Using LoRA training mode.")
         if webhook_handler is not None:
@@ -607,11 +658,18 @@ def main():
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
         if transformer is not None:
+            target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
+            if args.aura_flow:
+                target_modules = ["to_k", "to_q", "to_v", "to_out.0", "to_add_out"]
+                if args.aura_flow_target == "dit":
+                    target_modules = AURA_DIT_BLOCKS_REGEX
+                elif args.aura_flow_target == "mmdit":
+                    target_modules = AURA_MMDIT_BLOCKS_REGEX
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=args.lora_alpha,
                 init_lora_weights=lora_weight_init_type,
-                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                target_modules=target_modules,
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)
@@ -623,14 +681,12 @@ def main():
         unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
-    if (
-        args.enable_xformers_memory_efficient_attention
-        and not args.sd3
-        and not args.pixart_sigma
+    if args.enable_xformers_memory_efficient_attention and not any(
+        [args.sd3, args.pixart_sigma, args.aura_flow]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
-            import xformers  # type: ignore
+            import xformers  # type: ignore # noqa
 
             if unet is not None:
                 unet.enable_xformers_memory_efficient_attention()
@@ -642,6 +698,10 @@ def main():
             raise ValueError(
                 "xformers is not available. Make sure it is installed correctly"
             )
+    elif args.enable_xformers_memory_efficient_attention:
+        logger.warning(
+            "xformers is not enabled, as it is incompatible with this model type."
+        )
 
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
@@ -655,6 +715,16 @@ def main():
             logger.warning(
                 "Unknown results will occur when finetuning the text encoder alongside ControlNet."
             )
+
+    if "lora" not in args.model_type and args.aura_flow:
+        # we might want to just train a piece of the whole aura model.
+        transformer = freeze_transformer_blocks(
+            transformer,
+            target_blocks=args.aura_flow_target,
+            first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
+            first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
+            use_bitfit=True if args.layer_freeze_strategy == "bitfit" else False,
+        )
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in bfloat16 to avoid NaN losses.
@@ -682,11 +752,16 @@ def main():
         vae.to(accelerator.device, dtype=vae_dtype)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    logger.info(f"Loaded VAE into VRAM.")
+    logger.info("Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel and not args.sd3 and not args.pixart_sigma:
+    if (
+        not args.disable_compel
+        and not args.sd3
+        and not args.pixart_sigma
+        and not args.aura_flow
+    ):
         # SD3 and PixArt don't really work with prompt weighting.
         prompt_handler = PromptHandler(
             args=args,
@@ -732,9 +807,17 @@ def main():
     # Grab GPU memory used:
 
     if args.model_type == "full" or not args.train_text_encoder:
-        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        if torch.cuda.is_available():
+            memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_before_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            logger.warning(
+                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
+            )
+            memory_before_unload = 0
         if accelerator.is_main_process:
-            logger.info(f"Unloading text encoders, as they are not being trained.")
+            logger.info("Unloading text encoders, as they are not being trained.")
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
@@ -744,7 +827,12 @@ def main():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
         reclaim_memory()
-        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        if torch.cuda.is_available():
+            memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_after_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            memory_after_unload = 0
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
@@ -793,15 +881,15 @@ def main():
     logger.info(
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
-    if args.freeze_unet_strategy == "bitfit":
+    if args.layer_freeze_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
 
         if unet is not None:
-            logger.info(f"Applying BitFit freezing strategy to the U-net.")
+            logger.info("Applying BitFit freezing strategy to the U-net.")
             unet = apply_bitfit_freezing(unet, args)
         if transformer is not None:
             logger.warning(
-                f"Training Diffusion transformer models with BitFit is not yet tested, and unexpected results may occur."
+                "Training Diffusion transformer models with BitFit is not yet tested, and unexpected results may occur."
             )
             transformer = apply_bitfit_freezing(transformer, args)
 
@@ -1003,9 +1091,9 @@ def main():
                 filter(lambda p: p.requires_grad, transformer.parameters())
             )
         if args.train_text_encoder:
-            if args.sd3:
+            if args.sd3 or args.aura_flow or args.pixart_sigma:
                 raise ValueError(
-                    "Stable Diffusion 3 does not support finetuning the text encoders, as it is a multimodal transformer model that does not benefit from it."
+                    f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
             else:
                 params_to_optimize = (
@@ -1079,7 +1167,13 @@ def main():
                     else (
                         SD3Transformer2DModel
                         if args.sd3
-                        else PixArtTransformer2DModel if args.pixart_sigma else None
+                        else (
+                            PixArtTransformer2DModel
+                            if args.pixart_sigma
+                            else (
+                                AuraFlowTransformer2DModel if args.aura_flow else None
+                            )
+                        )
                     )
                 ),
                 model_config=(
@@ -1093,9 +1187,9 @@ def main():
             logger.info("EMA model creation complete.")
         accelerator.wait_for_everyone()
 
-    from helpers.sdxl.save_hooks import SDXLSaveHook
+    from helpers.training.save_hooks import SaveHookManager
 
-    model_hooks = SDXLSaveHook(
+    model_hooks = SaveHookManager(
         args=args,
         unet=unet,
         transformer=transformer,
@@ -1122,7 +1216,7 @@ def main():
         sys.exit(0)
 
     if not disable_accelerator:
-        logger.info(f"Loading our accelerator...")
+        logger.info("Loading our accelerator...")
         if torch.backends.mps.is_available():
             accelerator.native_amp = False
         if webhook_handler is not None:
@@ -1204,16 +1298,30 @@ def main():
     )
 
     if not args.keep_vae_loaded and args.vae_cache_preprocess:
-        memory_before_unload = torch.cuda.memory_allocated() / 1024**3
-        import gc
+        if torch.cuda.is_available():
+            memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_before_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            logger.warning(
+                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
+            )
+            memory_before_unload = 0
 
         del vae
         vae = None
+
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
                 backend["vaecache"].vae = None
+
         reclaim_memory()
-        memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        if torch.cuda.is_available():
+            memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_after_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            memory_after_unload = 0
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
             f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
@@ -1262,6 +1370,7 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
+    # validation.run_validations(validation_type="base_model", step=0)
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
@@ -1434,16 +1543,16 @@ def main():
                     accelerator.wait_for_everyone()
                     logger.info(f"Reloading cache for backend {backend_id}")
                     backend["metadata_backend"].reload_cache(set_config=False)
-                    logger.info(f"Waiting for other threads to finish..")
+                    logger.info("Waiting for other threads to finish..")
                     accelerator.wait_for_everyone()
                     # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
-                    logger.info(f"Splitting buckets across GPUs")
+                    logger.info("Splitting buckets across GPUs")
                     backend["metadata_backend"].split_buckets_between_processes(
                         gradient_accumulation_steps=args.gradient_accumulation_steps
                     )
                     # we have to rebuild the VAE cache if it exists.
                     if "vaecache" in backend:
-                        logger.info(f"Rebuilding VAE cache..")
+                        logger.info("Rebuilding VAE cache..")
                         backend["vaecache"].rebuild_cache()
                     # no need to manually call metadata_backend.save_cache() here.
                 elif (
@@ -1453,7 +1562,7 @@ def main():
                 ):
                     # If the user has specified that this should happen,
                     # we will clear the cache and then rebuild it. This is useful for random crops.
-                    logger.debug(f"VAE Cache rebuild is enabled. Rebuilding.")
+                    logger.debug("VAE Cache rebuild is enabled. Rebuilding.")
                     logger.debug(f"Backend config: {backend_config}")
                     backend["vaecache"].rebuild_cache()
         current_epoch = epoch
@@ -1537,14 +1646,14 @@ def main():
                 training_luminance_values.append(batch["batch_luminance"])
 
             with accelerator.accumulate(training_models):
-                training_logger.debug(f"Sending latent batch to GPU.")
+                training_logger.debug("Sending latent batch to GPU.")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
                 )
 
                 # Sample noise that we'll add to the latents - args.noise_offset might need to be set to 0.1 by default.
                 noise = torch.randn_like(latents)
-                if not args.sd3 and not args.sd3_uses_diffusion:
+                if not flow_matching:
                     if args.offset_noise:
                         if (
                             args.noise_offset_probability == 1.0
@@ -1560,7 +1669,7 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if flow_matching:
                     # for weighting schemes where we sample timesteps non-uniformly
                     # thanks to @Slickytail who implemented this correctly via #8528
                     if args.weighting_scheme == "logit_normal":
@@ -1614,8 +1723,9 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if flow_matching:
                     # Add noise according to flow matching.
+                    # TODO: Determine whether AuraFlow benefits from this.
                     sigmas = get_sd3_sigmas(
                         accelerator,
                         noise_scheduler_copy,
@@ -1639,9 +1749,11 @@ def main():
                 )
 
                 add_text_embeds = batch["add_text_embeds"]
-                training_logger.debug(f"Pooled embeds: {add_text_embeds.shape}")
+                training_logger.debug(
+                    f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
+                )
                 # Get the target for loss depending on the prediction type
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
                     # If sd3_uses_diffusion, we will instead use v_prediction (see below)
                     target = latents
@@ -1663,7 +1775,7 @@ def main():
                     )
 
                 # Predict the noise residual and compute loss
-                if args.sd3:
+                if args.sd3 or args.aura_flow:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
                 elif StateTracker.get_model_type() == "sdxl":
@@ -1735,10 +1847,16 @@ def main():
                             ),
                             return_dict=False,
                         )[0]
-                        if not args.sd3_uses_diffusion:
-                            # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                            # Preconditioning of the model outputs.
-                            model_pred = model_pred * (-sigmas) + noisy_latents
+                    elif args.aura_flow:
+                        # AuraFlow also uses a MM-DiT model where the VAE-produced
+                        #  image embeds are passed in with the TE-produced text embeds.
+                        # Print the dtypes/shapes:
+                        model_pred = transformer(
+                            hidden_states=noisy_latents,
+                            encoder_hidden_states=encoder_hidden_states,
+                            timestep=timesteps,
+                            return_dict=False,
+                        )[0]
                     elif args.pixart_sigma:
                         model_pred = transformer(
                             noisy_latents,
@@ -1750,12 +1868,19 @@ def main():
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif unet is not None:
-                        model_pred = unet(
-                            noisy_latents,
-                            timesteps,
-                            encoder_hidden_states,
-                            added_cond_kwargs=added_cond_kwargs,
-                        ).sample
+                        if args.legacy:
+                            model_pred = unet(
+                                noisy_latents,
+                                timesteps,
+                                encoder_hidden_states,
+                            ).sample
+                        else:
+                            model_pred = unet(
+                                noisy_latents,
+                                timesteps,
+                                encoder_hidden_states,
+                                added_cond_kwargs=added_cond_kwargs,
+                            ).sample
                     else:
                         raise Exception(
                             "Unknown error occurred, no prediction could be made."
@@ -1763,6 +1888,11 @@ def main():
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
+
+                if flow_matching:
+                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+                    # Preconditioning of the model outputs.
+                    model_pred = model_pred * (-sigmas) + noisy_latents
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
@@ -1772,7 +1902,7 @@ def main():
                 ):
                     model_pred = model_pred - noise
 
-                if args.sd3 and not args.sd3_uses_diffusion:
+                if flow_matching:
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     # these weighting schemes use a uniform timestep sampling
                     # and instead post-weight the loss
@@ -1793,7 +1923,7 @@ def main():
                     loss = loss.mean()
 
                 elif args.snr_gamma is None or args.snr_gamma == 0:
-                    training_logger.debug(f"Calculating loss")
+                    training_logger.debug("Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
@@ -1801,7 +1931,7 @@ def main():
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
-                    training_logger.debug(f"Using min-SNR loss")
+                    training_logger.debug("Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
                     snr_divisor = snr
                     if noise_scheduler.config.prediction_type == "v_prediction" or (
@@ -1810,7 +1940,7 @@ def main():
                         snr_divisor = snr + 1
 
                     training_logger.debug(
-                        f"Calculating MSE loss weights using SNR as divisor"
+                        "Calculating MSE loss weights using SNR as divisor"
                     )
                     mse_loss_weights = (
                         torch.stack(
@@ -1837,7 +1967,7 @@ def main():
 
                 # Backpropagate
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
-                    training_logger.debug(f"Backwards pass.")
+                    training_logger.debug("Backwards pass.")
                     # Check for NaNs
                     if (
                         torch.isnan(loss).any()
@@ -1859,15 +1989,13 @@ def main():
                         grad_norm = accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
-                    training_logger.debug(f"Stepping components forward.")
+                    training_logger.debug("Stepping components forward.")
                     optimizer.step()
                     lr_scheduler.step(**scheduler_kwargs)
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
-            sync_gradients = False
             if accelerator.sync_gradients:
-                sync_gradients = True
                 try:
                     if args.use_adafactor_optimizer:
                         lr = lr_scheduler.get_lr()[0]
@@ -1893,7 +2021,7 @@ def main():
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
                     if ema_model is not None:
-                        training_logger.debug(f"Stepping EMA forward")
+                        training_logger.debug("Stepping EMA forward")
                         ema_model.step(
                             parameters=(
                                 unet.parameters()
@@ -2051,7 +2179,7 @@ def main():
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
-            if args.sd3:
+            if args.sd3 or args.pixart_sigma or args.aura_flow:
                 transformer_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(transformer)
                 )
@@ -2064,15 +2192,16 @@ def main():
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_1)
                 )
-                text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
-                text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(text_encoder_2)
-                )
-                if args.sd3:
-                    text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
-                    text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
-                        get_peft_model_state_dict(text_encoder_3)
+                if not args.aura_flow and not args.pixart_sigma:
+                    text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
+                    text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
+                        get_peft_model_state_dict(text_encoder_2)
                     )
+                    if args.sd3:
+                        text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
+                        text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
+                            get_peft_model_state_dict(text_encoder_3)
+                        )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
@@ -2172,6 +2301,74 @@ def main():
                     logger.debug(
                         f"Setting scheduler to Euler for SD3. Config: {pipeline.scheduler.config}"
                     )
+            elif args.aura_flow:
+                from diffusers import AuraFlowPipeline
+
+                pipeline = AuraFlowPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                    torch_dtype=weight_dtype,
+                )
+            elif args.legacy:
+                from diffusers import StableDiffusionPipeline
+
+                pipeline = StableDiffusionPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    unet=unet,
+                    torch_dtype=weight_dtype,
+                )
 
             else:
                 pipeline = StableDiffusionXLPipeline.from_pretrained(
@@ -2253,7 +2450,7 @@ if __name__ == "__main__":
         )
     try:
         main()
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message="Training has been interrupted by user action (lost terminal, or ctrl+C)."

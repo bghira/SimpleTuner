@@ -1,7 +1,7 @@
-from multiprocessing import Manager
-from os import environ, path
+from os import environ
 from pathlib import Path
-import json, logging
+import json
+import logging
 
 logger = logging.getLogger("StateTracker")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -95,7 +95,13 @@ class StateTracker:
 
     @classmethod
     def set_model_type(cls, model_type: str):
-        if model_type not in ["legacy", "sdxl", "sd3", "pixart_sigma"]:
+        if model_type not in [
+            "legacy",
+            "sdxl",
+            "sd3",
+            "pixart_sigma",
+            "aura_flow",
+        ]:
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
 

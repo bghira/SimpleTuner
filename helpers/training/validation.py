@@ -1,5 +1,7 @@
-import torch, os, wandb, logging
-from pathlib import Path
+import torch
+import os
+import wandb
+import logging
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
@@ -9,8 +11,6 @@ from helpers.sdxl.pipeline import (
     StableDiffusionXLImg2ImgPipeline,
 )
 from helpers.legacy.pipeline import StableDiffusionPipeline
-from helpers.legacy.validation import retrieve_validation_images
-from diffusers.training_utils import EMAModel
 from diffusers.schedulers import (
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
@@ -33,7 +33,7 @@ try:
     )
 except ImportError:
     logger.error(
-        f"Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
+        "Stable Diffusion 3 not available in this release of Diffusers. Please upgrade."
     )
     raise ImportError()
 
@@ -45,6 +45,270 @@ SCHEDULER_NAME_MAP = {
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
 }
+
+import logging
+import os
+import time
+from diffusers.utils import is_wandb_available
+from helpers.prompts import PromptHandler
+from diffusers import (
+    AutoencoderKL,
+    DDIMScheduler,
+)
+
+if is_wandb_available():
+    import wandb
+
+
+logger = logging.getLogger("validation")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+
+
+def resize_validation_images(validation_images, edge_length):
+    # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
+    resized_validation_samples = []
+    for _sample in validation_images:
+        validation_shortname, validation_prompt, training_sample_image = _sample
+        resize_to, crop_to, new_aspect_ratio = (
+            MultiaspectImage.calculate_new_size_by_pixel_edge(
+                aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
+                    training_sample_image
+                ),
+                resolution=edge_length,
+                original_size=training_sample_image.size,
+            )
+        )
+        # we can be less precise here
+        training_sample_image = training_sample_image.resize(crop_to)
+        resized_validation_samples.append(
+            (validation_shortname, validation_prompt, training_sample_image)
+        )
+    return resized_validation_samples
+
+
+def retrieve_validation_images():
+    """
+    From each data backend, collect the top 5 images for validation, such that
+    we select the same images on each startup, unless the dataset changes.
+
+    Returns:
+        dict: A dictionary of shortname to image paths.
+    """
+    args = StateTracker.get_args()
+    data_backends = StateTracker.get_data_backends(
+        _type="conditioning" if args.controlnet else "image"
+    )
+    validation_data_backend_id = args.eval_dataset_id
+    validation_set = []
+    logger.info("Collecting validation images")
+    for _data_backend in data_backends:
+        data_backend = StateTracker.get_data_backend(_data_backend)
+        data_backend_config = data_backend.get("config", {})
+        should_skip_dataset = data_backend_config.get("disable_validation", False)
+        logger.debug(f"Backend {_data_backend}: {data_backend}")
+        if "id" not in data_backend or (
+            args.controlnet and data_backend.get("dataset_type", None) != "conditioning"
+        ):
+            logger.debug(
+                f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}"
+            )
+            continue
+        logger.debug(f"Checking data backend: {data_backend['id']}")
+        if (
+            validation_data_backend_id is not None
+            and data_backend["id"] != validation_data_backend_id
+        ) or should_skip_dataset:
+            logger.warning(f"Not collecting images from {data_backend['id']}")
+            continue
+        if "sampler" in data_backend:
+            validation_samples_from_sampler = data_backend[
+                "sampler"
+            ].retrieve_validation_set(batch_size=args.num_eval_images)
+            if "stage2" in args.model_type:
+                validation_samples_from_sampler = resize_validation_images(
+                    validation_samples_from_sampler, edge_length=64
+                )
+
+            validation_set.extend(validation_samples_from_sampler)
+        else:
+            logger.warning(
+                f"Data backend {data_backend['id']} does not have a sampler. Skipping."
+            )
+    return validation_set
+
+
+def prepare_validation_prompt_list(args, embed_cache):
+    validation_negative_prompt_embeds = None
+    validation_negative_pooled_embeds = None
+    validation_prompts = (
+        [""] if not StateTracker.get_args().validation_disable_unconditional else []
+    )
+    validation_shortnames = (
+        ["unconditional"]
+        if not StateTracker.get_args().validation_disable_unconditional
+        else []
+    )
+    if not hasattr(embed_cache, "model_type"):
+        raise ValueError(
+            f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().multidatabackend_config}."
+        )
+    model_type = embed_cache.model_type
+    validation_sample_images = None
+    if (
+        "deepfloyd-stage2" in args.model_type
+        or args.controlnet
+        or args.validation_using_datasets
+    ):
+        # Now, we prepare the DeepFloyd upscaler image inputs so that we can calculate their prompts.
+        # If we don't do it here, they won't be available at inference time.
+        validation_sample_images = retrieve_validation_images()
+        if len(validation_sample_images) > 0:
+            StateTracker.set_validation_sample_images(validation_sample_images)
+            # Collect the prompts for the validation images.
+            for _validation_sample in tqdm(
+                validation_sample_images,
+                ncols=100,
+                desc="Precomputing validation image embeds",
+            ):
+                _, validation_prompt, _ = _validation_sample
+                embed_cache.compute_embeddings_for_prompts(
+                    [validation_prompt], load_from_cache=False
+                )
+            time.sleep(5)
+
+    if args.validation_prompt_library:
+        # Use the SimpleTuner prompts library for validation prompts.
+        from helpers.prompts import prompts as prompt_library
+
+        # Iterate through the prompts with a progress bar
+        for shortname, prompt in tqdm(
+            prompt_library.items(),
+            leave=False,
+            ncols=100,
+            desc="Precomputing validation prompt embeddings",
+        ):
+            embed_cache.compute_embeddings_for_prompts(
+                [prompt], is_validation=True, load_from_cache=False
+            )
+            validation_prompts.append(prompt)
+            validation_shortnames.append(shortname)
+    if args.user_prompt_library is not None:
+        user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
+        for shortname, prompt in tqdm(
+            user_prompt_library.items(),
+            leave=False,
+            ncols=100,
+            desc="Precomputing user prompt library embeddings",
+        ):
+            embed_cache.compute_embeddings_for_prompts(
+                [prompt], is_validation=True, load_from_cache=False
+            )
+            validation_prompts.append(prompt)
+            validation_shortnames.append(shortname)
+    if args.validation_prompt is not None:
+        # Use a single prompt for validation.
+        # This will add a single prompt to the prompt library, if in use.
+        validation_prompts = validation_prompts + [args.validation_prompt]
+        validation_shortnames = validation_shortnames + ["validation"]
+        embed_cache.compute_embeddings_for_prompts(
+            [args.validation_prompt], is_validation=True, load_from_cache=False
+        )
+
+    # Compute negative embed for validation prompts, if any are set.
+    if validation_prompts:
+        logger.info("Precomputing the negative prompt embed for validations.")
+        if model_type == "sdxl" or model_type == "sd3":
+            (
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            ) = embed_cache.compute_embeddings_for_prompts(
+                [StateTracker.get_args().validation_negative_prompt],
+                is_validation=True,
+                load_from_cache=False,
+            )
+            return (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            )
+        elif model_type == "legacy":
+            validation_negative_prompt_embeds = (
+                embed_cache.compute_embeddings_for_prompts(
+                    [StateTracker.get_args().validation_negative_prompt],
+                    load_from_cache=False,
+                )
+            )
+
+            return (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                None,
+            )
+        elif model_type == "pixart_sigma" or model_type == "aura_flow":
+            # we use the legacy encoder but we return no pooled embeds.
+            validation_negative_prompt_embeds = (
+                embed_cache.compute_embeddings_for_prompts(
+                    [StateTracker.get_args().validation_negative_prompt],
+                    load_from_cache=False,
+                )
+            )
+
+            return (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                None,
+            )
+        else:
+            raise ValueError(f"Unknown model type '{model_type}'")
+
+
+def parse_validation_resolution(input_str: str) -> tuple:
+    """
+    If the args.validation_resolution:
+     - is an int, we'll treat it as height and width square aspect
+     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
+     - if it has comma, we will split and treat each value as above
+    """
+    if isinstance(input_str, int) or input_str.isdigit():
+        if (
+            "deepfloyd-stage2" in StateTracker.get_args().model_type
+            and int(input_str) < 256
+        ):
+            raise ValueError(
+                "Cannot use less than 256 resolution for DeepFloyd stage 2."
+            )
+        return (input_str, input_str)
+    if "x" in input_str:
+        pieces = input_str.split("x")
+        if "deepfloyd-stage2" in StateTracker.get_args().model_type and (
+            int(pieces[0]) < 256 or int(pieces[1]) < 256
+        ):
+            raise ValueError(
+                "Cannot use less than 256 resolution for DeepFloyd stage 2."
+            )
+        return (int(pieces[0]), int(pieces[1]))
+
+
+def get_validation_resolutions():
+    """
+    If the args.validation_resolution:
+     - is an int, we'll treat it as height and width square aspect
+     - if it has an x in it, we will split and treat as WIDTHxHEIGHT
+     - if it has comma, we will split and treat each value as above
+    """
+    validation_resolution_parameter = StateTracker.get_args().validation_resolution
+    if (
+        type(validation_resolution_parameter) is str
+        and "," in validation_resolution_parameter
+    ):
+        return [
+            parse_validation_resolution(res)
+            for res in validation_resolution_parameter.split(",")
+        ]
+    return [parse_validation_resolution(validation_resolution_parameter)]
 
 
 def get_validation_resolutions():
@@ -73,20 +337,18 @@ def parse_validation_resolution(input_str: str) -> tuple:
      - if it has an x in it, we will split and treat as WIDTHxHEIGHT
      - if it has comma, we will split and treat each value as above
     """
+    is_df_ii = (
+        True if "deepfloyd-stage2" in StateTracker.get_args().model_type else False
+    )
     if isinstance(input_str, int) or input_str.isdigit():
-        if (
-            "deepfloyd-stage2" in StateTracker.get_args().model_type
-            and int(input_str) < 256
-        ):
+        if is_df_ii and int(input_str) < 256:
             raise ValueError(
                 "Cannot use less than 256 resolution for DeepFloyd stage 2."
             )
         return (input_str, input_str)
     if "x" in input_str:
         pieces = input_str.split("x")
-        if "deepfloyd-stage2" in StateTracker.get_args().model_type and (
-            int(pieces[0]) < 256 or int(pieces[1]) < 256
-        ):
+        if is_df_ii and (int(pieces[0]) < 256 or int(pieces[1]) < 256):
             raise ValueError(
                 "Cannot use less than 256 resolution for DeepFloyd stage 2."
             )
@@ -152,14 +414,19 @@ class Validation:
         self.ema_model = ema_model
         self.vae = vae
         self.pipeline = None
+        self.deepfloyd = True if "deepfloyd" in self.args.model_type else False
+        self.deepfloyd_stage2 = (
+            True if "deepfloyd-stage2" in self.args.model_type else False
+        )
         self._discover_validation_input_samples()
         self.validation_resolutions = (
-            get_validation_resolutions()
-            if "deepfloyd-stage2" not in args.model_type
-            else ["base-256"]
+            get_validation_resolutions() if not self.deepfloyd_stage2 else ["base-256"]
         )
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
+        self.flow_matching = (
+            self.args.sd3 and not self.args.sd3_uses_diffusion
+        ) or self.args.aura_flow
 
         self._update_state()
 
@@ -190,7 +457,6 @@ class Validation:
         self.text_encoder_3 = None
 
     def init_vae(self):
-        from diffusers import AutoencoderKL
 
         args = StateTracker.get_args()
         vae_path = (
@@ -221,7 +487,7 @@ class Validation:
         """
         self.validation_image_inputs = None
         if (
-            "deepfloyd-stage2" in self.args.model_type
+            self.deepfloyd_stage2
             or self.args.validation_using_datasets
             or self.args.controlnet
         ):
@@ -243,14 +509,14 @@ class Validation:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
         elif model_type == "legacy":
-            if "deepfloyd-stage2" in self.args.model_type:
+            if self.deepfloyd_stage2:
                 from diffusers.pipelines import IFSuperResolutionPipeline
 
                 return IFSuperResolutionPipeline
             return StableDiffusionPipeline
         elif model_type == "sd3":
             if self.args.controlnet:
-                raise Exception(f"SD3 ControlNet is not yet supported.")
+                raise Exception("SD3 ControlNet is not yet supported.")
             if self.args.validation_using_datasets:
                 return StableDiffusion3Img2ImgPipeline
             return StableDiffusion3Pipeline
@@ -266,6 +532,24 @@ class Validation:
             from helpers.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
+        elif model_type == "aura_flow":
+            if self.args.controlnet:
+                raise Exception(
+                    "AuraFlow ControlNet inference validation is not yet supported."
+                )
+            if self.args.validation_using_datasets:
+                raise Exception(
+                    "AuraFlow inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                )
+            try:
+                from helpers.aura_flow.pipeline import AuraFlowPipeline
+            except Exception:
+                logger.error(
+                    "Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
+                )
+                raise NotImplementedError("AuraFlow pipeline not available.")
+
+            return AuraFlowPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
@@ -316,13 +600,14 @@ class Validation:
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
+            or StateTracker.get_model_type() == "aura_flow"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if self.args.pixart_sigma:
+            if self.args.pixart_sigma or self.args.aura_flow:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -346,9 +631,11 @@ class Validation:
             # )
             if (
                 self.prompt_handler is not None
-                and "deepfloyd" not in self.args.model_type
-                and "pixart" not in self.args.model_type
+                and not self.deepfloyd
+                and not self.args.pixart_sigma
+                and not self.flow_matching
             ):
+                # for SDXL and earlier SD models we optionally use Compel for prompt upweighting/long prompt parsing.
                 for text_encoder in self.prompt_handler.text_encoders:
                     if text_encoder:
                         text_encoder = text_encoder.to(
@@ -384,17 +671,16 @@ class Validation:
                 device=self.accelerator.device, dtype=self.weight_dtype
             )
         )
+        # when sampling unconditional guidance, you should only zero one or the other prompt, and not both.
+        # we'll assume that the user has a negative prompt, so that the unconditional sampling works.
+        # the positive prompt embed is zeroed out for SDXL at the time of it being placed into the cache.
+        # the embeds are not zeroed out for any other model, including Stable Diffusion 3.
         prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
-        # If the prompt is an empty string, zero out all of the embeds:
-        if validation_prompt == "" and "deepfloyd" not in self.args.model_type:
-            prompt_embeds = {
-                key: torch.zeros_like(value).to(
-                    device=self.accelerator.device, dtype=self.weight_dtype
-                )
-                for key, value in prompt_embeds.items()
-            }
-        if StateTracker.get_model_type() == "pixart_sigma":
+        if (
+            StateTracker.get_model_type() == "pixart_sigma"
+            or StateTracker.get_model_type() == "aura_flow"
+        ):
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
 
@@ -415,7 +701,7 @@ class Validation:
         self._update_state()
         should_validate = self.should_perform_validation(
             step, self.validation_prompts, validation_type
-        )
+        ) or (step == 0 and validation_type == "base_model")
         logger.debug(
             f"Should evaluate: {should_validate}, force evaluation: {force_evaluation}, skip execution: {skip_execution}"
         )
@@ -427,7 +713,7 @@ class Validation:
             return self
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
-                message=f"Validations are generating.. this might take a minute! 🖼️",
+                message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
             )
 
@@ -472,9 +758,9 @@ class Validation:
                 variance_type = "fixed_small"
 
             scheduler_args["variance_type"] = variance_type
-        if "deepfloyd" in self.args.model_type:
+        if self.deepfloyd:
             self.args.validation_noise_scheduler = "ddpm"
-        if self.args.sd3 and not self.args.sd3_uses_diffusion:
+        if self.flow_matching:
             # NO TOUCHIE FOR FLOW-MATCHING.
             # Touchie for diffusion though.
             return
@@ -505,7 +791,7 @@ class Validation:
                     self.ema_model.to(self.accelerator.device)
             else:
                 logger.debug(
-                    f"Skipping EMA model setup for validation, as enable_ema_model=False."
+                    "Skipping EMA model setup for validation, as enable_ema_model=False."
                 )
 
         if self.pipeline is None:
@@ -536,6 +822,10 @@ class Validation:
                     extra_pipeline_kwargs["tokenizer_1"] = None
                     extra_pipeline_kwargs["text_encoder_2"] = None
                     extra_pipeline_kwargs["tokenizer_2"] = None
+
+            if self.args.aura_flow:
+                extra_pipeline_kwargs["tokenizer"] = None
+                extra_pipeline_kwargs["text_encoder"] = None
 
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
@@ -691,7 +981,7 @@ class Validation:
                 )
             if validation_input_image is not None:
                 extra_validation_kwargs["image"] = validation_input_image
-                if "deepfloyd-stage2" in self.args.model_type:
+                if self.deepfloyd_stage2:
                     validation_resolution_width, validation_resolution_height = (
                         val * 4 for val in extra_validation_kwargs["image"].size
                     )
@@ -706,10 +996,15 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if "deepfloyd" not in self.args.model_type and not self.args.sd3:
+            if (
+                not self.deepfloyd
+                and not self.args.pixart_sigma
+                and not self.flow_matching
+            ):
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
                 )
+
             if StateTracker.get_args().validation_using_datasets:
                 extra_validation_kwargs["strength"] = getattr(
                     self.args, "validation_strength", 0.2
@@ -732,8 +1027,11 @@ class Validation:
                     f"Error gathering text embed for validation prompt {prompt}: {e}, traceback: {traceback.format_exc()}"
                 )
                 continue
+
             try:
                 pipeline_kwargs = {
+                    "prompt": None,
+                    "negative_prompt": None,
                     "num_images_per_prompt": self.args.num_validation_images,
                     "num_inference_steps": self.args.validation_num_inference_steps,
                     "guidance_scale": self.args.validation_guidance,
@@ -755,7 +1053,10 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                if StateTracker.get_model_type() == "pixart_sigma":
+                if (
+                    StateTracker.get_model_type() == "pixart_sigma"
+                    or StateTracker.get_model_type() == "aura_flow"
+                ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]
                     if pipeline_kwargs.get("prompt") is not None:
@@ -832,7 +1133,7 @@ class Validation:
                     mean_luminance = torch.tensor(luminance_values).mean().item()
                     while len(wandb_images) < len(resolution_list):
                         # any missing images will crash it. use None so they are indexed.
-                        logger.debug(f"Found a missing image - masking with a None")
+                        logger.debug("Found a missing image - masking with a None")
                         wandb_images.append(None)
                     table.add_data(prompt_shortname, *wandb_images, mean_luminance)
 
@@ -853,7 +1154,7 @@ class Validation:
                     self.ema_model.to(self.args.ema_device)
             else:
                 logger.debug(
-                    f"Skipping EMA model restoration for validation, as enable_ema_model=False."
+                    "Skipping EMA model restoration for validation, as enable_ema_model=False."
                 )
         if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
             self.vae = None

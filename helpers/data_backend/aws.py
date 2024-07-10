@@ -1,12 +1,13 @@
-import boto3, os, time
+import boto3
+import os
+import time
 from botocore.exceptions import (
     NoCredentialsError,
     PartialCredentialsError,
-    BotoCoreError,
 )
-import fnmatch, logging
+import fnmatch
+import logging
 from torch import Tensor
-from pathlib import PosixPath
 import concurrent.futures
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
@@ -70,7 +71,7 @@ class S3DataBackend(BaseDataBackend):
         self.type = "aws"
         if compress_cache:
             logging.warning(
-                f"Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."
+                "Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."
             )
         # AWS buckets might use a region.
         extra_args = {
@@ -304,6 +305,8 @@ class S3DataBackend(BaseDataBackend):
                         logger.error(
                             f"Failed to decompress torch file, falling back to passthrough: {e}"
                         )
+                if hasattr(stored_tensor, "seek"):
+                    stored_tensor.seek(0)
 
                 obj = torch.load(stored_tensor, map_location="cpu")
                 # logger.debug(f"torch.load found: {obj}")

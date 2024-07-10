@@ -2,7 +2,9 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.load import load_image
 from pathlib import Path
 from io import BytesIO
-import os, logging, torch, gzip
+import os
+import logging
+import torch
 from typing import Any
 
 logger = logging.getLogger("LocalDataBackend")
@@ -123,7 +125,7 @@ class LocalDataBackend(BaseDataBackend):
             )
             if delete_problematic_images:
                 logger.error(
-                    f"Deleting image, because --delete_problematic_images is provided."
+                    "Deleting image, because --delete_problematic_images is provided."
                 )
                 self.delete(filepath)
             else:
@@ -178,15 +180,18 @@ class LocalDataBackend(BaseDataBackend):
         if self.compress_cache:
             try:
                 stored_tensor = self._decompress_torch(stored_tensor)
-                stored_tensor.seek(0)
             except Exception as e:
                 logger.error(
                     f"Failed to decompress torch file, falling back to passthrough: {e}"
                 )
+        if hasattr(stored_tensor, "seek"):
+            stored_tensor.seek(0)
         try:
             loaded_tensor = torch.load(stored_tensor, map_location="cpu")
         except Exception as e:
-            logger.error(f"Failed to load torch file '{filename}': {e}")
+            logger.error(f"Failed to load corrupt torch file '{filename}': {e}")
+            if "invalid load key" in str(e):
+                self.delete(filename)
             raise e
         return loaded_tensor
 

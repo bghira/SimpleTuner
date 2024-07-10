@@ -50,8 +50,8 @@ work
 multidatabackend.json
 multidatabackend_sd2x.json
 
-sd21-env.sh
-sdxl-env.sh
+config/*.json
+config/*.env
 wandb/
 cache/
 vae_cache/
@@ -59,4 +59,3 @@ vendor/
 inference/
 webhooks.json
 untracked/
-sd21-env*.sh

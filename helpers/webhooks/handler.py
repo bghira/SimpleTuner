@@ -1,7 +1,8 @@
 from helpers.webhooks.config import WebhookConfig
-import requests, os, logging
+import requests
+import os
+import logging
 from io import BytesIO
-from PIL import Image
 
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
 

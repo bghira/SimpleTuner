@@ -1,4 +1,8 @@
-import os, time, logging, threading, torch
+import os
+import time
+import logging
+import threading
+import torch
 from helpers.data_backend.base import BaseDataBackend
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.training.state_tracker import StateTracker
@@ -157,7 +161,7 @@ class MetadataBackend:
             # At the end of the _bucket_worker method
             metadata_updates_queue.put(("statistics", statistics))
         time.sleep(0.001)
-        logger.debug(f"Bucket worker completed processing. Returning to main thread.")
+        logger.debug("Bucket worker completed processing. Returning to main thread.")
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
         """
@@ -297,7 +301,7 @@ class MetadataBackend:
         logger.info(f"Image processing statistics: {aggregated_statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
-        logger.info(f"Completed aspect bucket update.")
+        logger.info("Completed aspect bucket update.")
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1):
         """
@@ -559,10 +563,10 @@ class MetadataBackend:
         )
         self.remove_image(image_path, bucket)
         if actual_bucket in self.aspect_ratio_bucket_indices:
-            logger.warning(f"Moved image to bucket, it already existed.")
+            logger.warning("Moved image to bucket, it already existed.")
             self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
         else:
-            logger.warning(f"Created new bucket for that pesky image.")
+            logger.warning("Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
         if save_cache:
             self.save_cache()
@@ -584,7 +588,7 @@ class MetadataBackend:
                     f"Image {image_path} too small: DELETING image and continuing search."
                 )
                 self.data_backend.delete(image_path)
-            except Exception as e:
+            except Exception:
                 logger.debug(
                     f"Image {image_path} was already deleted. Another GPU must have gotten to it."
                 )
@@ -769,7 +773,7 @@ class MetadataBackend:
             return
         if vae_cache_behavior not in ["sync", "recreate"]:
             raise ValueError("Invalid VAE cache behavior specified.")
-        logger.info(f"Scanning VAE cache for inconsistencies with aspect buckets...")
+        logger.info("Scanning VAE cache for inconsistencies with aspect buckets...")
         try:
             for cache_file, cache_content in vae_cache.scan_cache_contents():
                 if cache_content is None:

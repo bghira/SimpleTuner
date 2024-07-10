@@ -45,10 +45,10 @@ To run SimpleTuner, you will need to set up a configuration file, the dataset an
 
 #### Configuration file
 
-Copy `sdxl-env.sh.example` to `sdxl-env.sh`:
+Copy `config/config.env.example` to `config/config.env`:
 
 ```bash
-cp sdxl-env.sh.example sdxl-env.sh
+cp config/config.env.example config/config.env
 ```
 
 There, you will need to modify the following variables:
@@ -57,6 +57,9 @@ There, you will need to modify the following variables:
 - `STABLE_DIFFUSION_3` - Set this to `true`.
 - `MODEL_NAME` - Set this to `stabilityai/stable-diffusion-3-medium-diffusers`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `VALIDATION_RESOLUTION` - As SD3 is a 1024px model, you can set this to `1024x1024`.
+  - Additionally, SD3 was fine0tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768`
+- `VALIDATION_GUIDANCE` - SD3 benefits from a very-low value. Set this to `3.0`.
 
 There are a few more if using a Mac M-series machine:
 
@@ -79,8 +82,8 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
     "crop": true,
     "crop_aspect": "square",
     "crop_style": "center",
-    "resolution": 0.5,
-    "minimum_image_size": 0.25,
+    "resolution": 1.0,
+    "minimum_image_size": 0.5,
     "maximum_image_size": 1.0,
     "target_downsample_size": 1.0,
     "resolution_type": "area",
@@ -140,7 +143,7 @@ Follow the instructions to log in to both services.
 From the SimpleTuner directory, one simply has to run:
 
 ```bash
-bash train_sdxl.sh
+bash train.sh
 ```
 
 This will begin the text embed and VAE output caching to disk.

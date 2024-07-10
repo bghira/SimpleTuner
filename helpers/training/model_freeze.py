@@ -1,7 +1,73 @@
-import logging, os
+import logging
+import os, re
+from torch import nn
 
 logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
+
+def freeze_transformer_blocks(
+    model: nn.Module,
+    target_blocks: str,
+    first_unfrozen_dit_layer: int = 0,
+    first_unfrozen_mmdit_layer: int = 0,
+    use_bitfit: bool = False,
+):
+    if target_blocks not in ["any", "dit", "mmdit"]:
+        raise ValueError(
+            f"Invalid target_blocks value {target_blocks}. Choose from 'any', 'dit', 'mmdit'."
+        )
+    if first_unfrozen_dit_layer < 0 or first_unfrozen_mmdit_layer < 0:
+        raise ValueError(f"Invalid first_unfrozen layer value. Must be greater than 0.")
+    for name, param in model.named_parameters():
+        # Example names:
+        #  single_transformer_blocks.31.ff.c_proj.weight
+        #  joint_transformer_blocks.1.ff.c_proj.weight
+        try:
+            layer_group = name.split(".")[0]
+            layer_number = int(name.split(".")[1])
+        except Exception as e:
+            # non-numeric layer.
+            continue
+        try:
+            if hasattr(param, "requires_grad"):
+                # freeze by default.
+                param.requires_grad = False
+            else:
+                continue
+            if target_blocks != "any":
+                # We will exclude entire categories of blocks here if they aren't defined to be trained.
+                if (
+                    target_blocks == "dit"
+                    and layer_group != "single_transformer_blocks"
+                ):
+                    continue
+                if (
+                    target_blocks == "mmdit"
+                    and layer_group != "joint_transformer_blocks"
+                ):
+                    continue
+            if (
+                first_unfrozen_dit_layer is not None
+                and (
+                    layer_group == "single_transformer_blocks" or target_blocks == "any"
+                )
+                and layer_number >= first_unfrozen_dit_layer
+            ) or (
+                first_unfrozen_mmdit_layer is not None
+                and (
+                    layer_group == "joint_transformer_blocks" or target_blocks == "any"
+                )
+                and layer_number >= first_unfrozen_mmdit_layer
+            ):
+                if not use_bitfit or "bias" in name:
+                    param.requires_grad = True
+                    logger.debug(f"Unfreezing {name}.")
+        except Exception as e:
+            logger.error(e)
+            raise e
+
+    return model
 
 
 def apply_bitfit_freezing(model, args):
@@ -42,7 +108,7 @@ def freeze_text_encoder(args, component):
         or type(component) is T5EncoderModel
     ):
         if args.train_text_encoder:
-            logger.info(f"Not freezing text encoder. Live dangerously and prosper!")
+            logger.info("Not freezing text encoder. Live dangerously and prosper!")
         return component
     method = args.freeze_encoder_strategy
     first_layer = args.freeze_encoder_before

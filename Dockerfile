@@ -72,8 +72,7 @@ RUN git clone https://github.com/bghira/SimpleTuner --branch release
 # Install SimpleTuner
 RUN pip3 install poetry
 RUN cd SimpleTuner && python3 -m venv .venv && poetry install --no-root
-RUN chmod +x SimpleTuner/train_sdxl.sh
-RUN chmod +x SimpleTuner/train_sd2x.sh
+RUN chmod +x SimpleTuner/train.sh
 
 # Copy start script with exec permissions
 COPY --chmod=755 docker-start.sh /start.sh

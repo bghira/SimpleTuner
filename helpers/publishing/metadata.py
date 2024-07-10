@@ -1,4 +1,5 @@
-import os, logging
+import os
+import logging
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -130,9 +131,9 @@ def save_model_card(
                     # Escape anything that YAML won't like
                     validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
-                widget_str += f"\n  parameters:"
+                widget_str += "\n  parameters:"
                 widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
-                widget_str += f"\n  output:"
+                widget_str += "\n  output:"
                 widget_str += f"\n    url: ./assets/image_{idx}_{sub_idx}.png"
                 idx += 1
                 sub_idx += 1
@@ -193,7 +194,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {StateTracker.get_args().prediction_type}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().aura_flow or StateTracker.get_args().sd3) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
 - Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}

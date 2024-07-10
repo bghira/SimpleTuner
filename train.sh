@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Pull the default config.
-source sdxl-env.sh.example
-# Pull config from env.sh
-[ -f "sdxl-env.sh" ] && source sdxl-env.sh
+[ -f "config/config.env.example" ] && source config/config.env.example
+# Pull config from config.env
+[ -f "config/config.env" ] && source config/config.env
 
 export PLATFORM
 PLATFORM=$(uname -s)
@@ -163,6 +163,12 @@ fi
 if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --pixart_sigma"
 fi
+if [ -n "$AURA_FLOW" ] && [[ "$AURA_FLOW" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aura_flow"
+fi
+if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
+fi
 
 
 export EMA_ARGS=""
@@ -276,7 +282,7 @@ fi
 export BITFIT_ARGS=""
 if [[ "$USE_BITFIT" == "true" ]]; then
     echo "Enabling BitFit."
-    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+    BITFIT_ARGS="--layer_freeze_strategy=bitfit"
 fi
 
 # if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.
@@ -305,7 +311,7 @@ fi
 
 
 # Run the training script.
-accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train_sdxl.py \
+accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train.py \
     --model_type="${MODEL_TYPE}" ${DORA_ARGS} --pretrained_model_name_or_path="${MODEL_NAME}" ${XFORMERS_ARG} ${GRADIENT_ARG} --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
     --resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} --data_backend_config="${DATALOADER_CONFIG}" \
     --num_train_epochs=${NUM_EPOCHS} ${MAX_TRAIN_STEPS_ARGS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \

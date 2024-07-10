@@ -40,6 +40,8 @@ For a quick start without reading the full documentation, you can use the [Quick
 
 For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload.
 
+---
+
 ## Features
 
 - Precomputed VAE (latents) outputs saved to storage, eliminating the need to invoke the VAE during training.
@@ -80,6 +82,28 @@ Simply point your base model to a Stable Diffusion 3 checkpoint and set `STABLE_
 
 > ⚠️ In the current source release of Diffusers, gradient checkpointing is broken for Stable Diffusion 3 models. This will result in much, much higher memory use.
 
+### AuraFlow
+
+AuraFlow is a novel, open-source implementation of a flow-matching text-to-image model using a simplified architecture compared to SD3, with a greater number of parameters.
+
+Currently, AuraFlow v0.1 has limited support for SimpleTuner:
+- All limitations that apply to Stable Diffusion 3 also apply to AuraFlow
+- LoRA is currently the only viable method of AuraFlow training
+
+This model is very large, and will require more resources to train than PixArt or SDXL.
+
+AuraFlow has some distinct advantages that make it worth investigating over Stable Diffusion 3:
+
+- It is the largest open text-to-image model with a truly open license
+- It uses the SDXL 4ch VAE which arguably provides an easier learning objective over the 16ch VAE from Stable Diffusion 3
+  - Though small newspaper or book print text suffers at 4ch compression levels, the overall fine details makes this approach viable.
+- It uses just a single text encoder versus Stable Diffusion's three text encoders
+  - AuraFlow leverages EleutherAI's **Pile-T5** which was trained on **twice as much data** with **fewer parameters** than Stable Diffusion 3, DeepFloyd, and PixArt's **T5-XXL v1.1**
+  - Pile-T5 has gone through less content prefiltering than OpenCLIP or T5 v1.1, and has "consumed more of the Internet" than T5 v1.1
+  - With a large data corpus, it has potential for subtle semantic understanding of linguistic oddities, and understanding of more modern concepts without finetuning the text encoder
+
+---
+
 ## Hardware Requirements
 
 EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Options like `--ema_cpu_only` can improve this situation by loading EMA weights onto the CPU and then keeping them there.
@@ -110,10 +134,8 @@ Without EMA, more care must be taken not to drastically change the model leading
 ## Scripts
 
 - `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance. It might not work for every single container image.
-- `train_sdxl.sh` - The main training script for SDXL.
-- `train_sd2x.sh` - This is the Stable Diffusion 1.x / 2.x trainer.
-- `sdxl-env.sh.example` - These are the SDXL training parameters, you should copy to `sdxl-env.sh`
-- `sd21-env.sh.example` - These are the training parameters, copy to `env.sh`
+- `train.sh` - The main training script for SDXL.
+- `config/config.env.example` - These are training parameters, you should copy to `config/config.env`
 
 ## Toolkit
 

@@ -1,6 +1,10 @@
-import argparse, os, random, time, json, logging, sys, torch
-from pathlib import Path
-from helpers.training.state_tracker import StateTracker
+import argparse
+import os
+import random
+import time
+import logging
+import sys
+import torch
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -76,6 +80,49 @@ def parse_args(input_args=None):
         help=(
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
             " LoRA is a smaller model that can be used for faster training."
+        ),
+    )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        default=False,
+        help=(
+            "This option must be provided when training a Stable Diffusion 1.x or 2.x model."
+        ),
+    )
+    parser.add_argument(
+        "--aura_flow",
+        action="store_true",
+        default=False,
+        help=("This must be set when training an AuraFlow model."),
+    )
+    parser.add_argument(
+        "--aura_flow_target",
+        type=str,
+        choices=["all", "dit", "mmdit"],
+        default="dit",
+        help=(
+            "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
+            " The default option 'all' means all blocks will be trained. 'dit' will train only the standard DiT blocks,"
+            " and 'mmdit' will train only the MM-DiT blocks. Experimentation will likely prove fruitful,"
+            " as these LoRAs train quickly. The default is 'all'."
+        ),
+    )
+    parser.add_argument(
+        "--aura_flow_first_unfrozen_dit_layer",
+        type=int,
+        default=20,
+        help=(
+            "Due to the size of the Aura Flow model, by default only the 20th layer and up will be trained."
+            " More layers can be excluded to speed up training or reduce VRAM consumption further."
+        ),
+    )
+    parser.add_argument(
+        "--aura_flow_first_unfrozen_mmdit_layer",
+        type=int,
+        default=0,
+        help=(
+            "By default, Aura Flow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
         ),
     )
     parser.add_argument(
@@ -1348,15 +1395,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--freeze_unet_strategy",
+        "--layer_freeze_strategy",
         type=str,
         choices=["none", "bitfit"],
         default="none",
         help=(
-            "When freezing the UNet, we can use the 'none' or 'bitfit' strategy."
-            " The 'bitfit' strategy will freeze all weights, and leave bias thawed."
-            " The default strategy is to leave the full u-net thawed."
+            "When freezing parameters, we can use the 'none' or 'bitfit' strategy."
+            " The 'bitfit' strategy will freeze all weights, and leave bias in a trainable state."
+            " The default strategy is to leave all parameters in a trainable state."
             " Freezing the weights can improve convergence for finetuning."
+            " Using bitfit only moderately reduces VRAM consumption, but substantially reduces the count of trainable parameters."
         ),
     )
     parser.add_argument(
@@ -1614,7 +1662,7 @@ def parse_args(input_args=None):
         )
 
     if torch.backends.mps.is_available():
-        if not args.unet_attention_slice and StateTracker.get_model_type() != "legacy":
+        if not args.unet_attention_slice and not args.legacy:
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
@@ -1640,7 +1688,7 @@ def parse_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and StateTracker.get_model_type() == "legacy"
+        and args.legacy
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -1654,24 +1702,24 @@ def parse_args(input_args=None):
     ):
         args.pretrained_vae_model_name_or_path = None
 
-    if "deepfloyd" not in args.model_type and not args.sd3:
+    if "deepfloyd" not in args.model_type:
         info_log(
             f"VAE Model: {args.pretrained_vae_model_name_or_path or args.pretrained_model_name_or_path}"
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    else:
+    if args.sd3 or args.aura_flow:
+        warning_log(
+            "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+        )
+        args.aspect_bucket_alignment = 64
+    elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
-        if not args.sd3 and args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
+        if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
             warning_log(
                 f"Overriding aspect bucket alignment pixel interval to {deepfloyd_pixel_alignment}px instead of {args.aspect_bucket_alignment}px."
             )
             args.aspect_bucket_alignment = deepfloyd_pixel_alignment
-        elif args.sd3:
-            warning_log(
-                "Stable Diffusion 3 requires a pixel alignment interval of 64px. Updating value."
-            )
-            args.aspect_bucket_alignment = 64
 
     if "deepfloyd-stage2" in args.model_type and args.resolution < 256:
         warning_log(
@@ -1731,11 +1779,29 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
+    t5_max_length = 512
+    if args.aura_flow and (
+        args.tokenizer_max_length is None
+        or int(args.tokenizer_max_length) > t5_max_length
+    ):
+        if not args.i_know_what_i_am_doing:
+            warning_log(
+                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
+            )
+            args.tokenizer_max_length = t5_max_length
+        else:
+            warning_log(
+                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+            )
+            warning_log(
+                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+            )
+
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3:
+        if args.pixart_sigma or args.sd3 or args.aura_flow:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."

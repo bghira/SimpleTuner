@@ -22,7 +22,7 @@ The first portion of a mixture-of-experts is known as the base model. As mention
 
 ### Environment configuration
 
-Setting the following values in your `sdxl-env.sh` will get us started:
+Setting the following values in your `config/config.env` will get us started:
 
 ```bash
 # Ensure these aren't incorrectly set.
@@ -77,7 +77,7 @@ Future work will support this as an option, in case a stage two model already ex
 
 ### Environment Configuration
 
-Update the following values in your `sdxl-env.sh` to swap training over to your stage two model. It might be convenient to keep a copy of the base model configuration.
+Update the following values in your `config/config.env` to swap training over to your stage two model. It might be convenient to keep a copy of the base model configuration.
 
 ```bash
 # Update your OUTPUT_DIR value, so that we don't overwrite the stage one model checkpoints.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides a user-friendly breakdown of the command-line options available in SimpleTuner's `train_sdxl.py` script. These options offer a high degree of customization, allowing you to train your model to suit your specific requirements.
+This guide provides a user-friendly breakdown of the command-line options available in SimpleTuner's `train.py` script. These options offer a high degree of customization, allowing you to train your model to suit your specific requirements.
 
 ---
 
@@ -13,21 +13,20 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Choices: lora, full, deepfloyd, deepfloyd-lora, deepfloyd-stage2, deepfloyd-stage2-lora. Default: lora
 - **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
 
-**Note:** DeepFloyd uses the `train_sd2x.sh`/`train_sd21.py` training script, `sd2x-env.sh` configuration file. See [DEEPFLOYD.md](/documentation/DEEPFLOYD.md) for more information.
-
 ### `--sd3`
 
 - **What**: Enable Stable Diffusion 3 training quirks/overrides.
-- **Why**: SD3 has three text encoders, it's pretty hefty and needs specific validation-time options considered. The equivalent option for this in the `sdxl-env.sh` environment file is `STABLE_DIFFUSION_3`.
-
-**Note:** Stable Diffusion 3 uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
+- **Why**: SD3 has three text encoders, it's pretty hefty and needs specific validation-time options considered. The equivalent option for this in the `config/config.env` environment file is `STABLE_DIFFUSION_3`.
 
 ### `--pixart_sigma`
 
 - **What**: Enable PixArt Sigma training quirks/overrides.
 - **Why**: PixArt is similar to SD3 and DeepFloyd in one way or another, and needs special treatment at validation, training, and inference time. Use this option to enable PixArt training support. PixArt does not support ControlNet, LoRA, or `--validation_using_datasets`
 
-**Note:** Like SDXL and SD3, PixArt Sigma **also** uses the `train_sdxl.sh`/`train_sdxl.py` training script, `sdxl-env.sh` configuration file.
+### `--aura_flow`
+
+- **What**: Enable AuraFlow training quirks/overrides.
+- **Why**: As a flow-matching model, AuraFlow has several unique needs. This option must be enabled to load and train an AuraFlow model.
 
 ### `--pretrained_model_name_or_path`
 
@@ -38,7 +37,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 - **What**: Path to the pretrained T5 model or its identifier from huggingface.co/models.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
-
 
 ### `--hub_model_id`
 
@@ -240,10 +238,11 @@ A lot of settings are instead set through the [dataloader config](/documentation
 This is a basic overview meant to help you get started. For a complete list of options and more detailed explanations, please refer to the full specification:
 
 ```
-usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
+usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                      [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                     [--pixart_sigma] [--sd3] [--sd3_uses_diffusion]
+                     [--aura_flow] [--pixart_sigma] [--sd3]
+                     [--sd3_uses_diffusion]
                      [--weighting_scheme {sigma_sqrt,logit_normal,mode}]
                      [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
                      [--mode_scale MODE_SCALE] [--lora_type {Standard}]
@@ -280,7 +279,9 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--cache_dir_text CACHE_DIR_TEXT]
                      [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                      DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
-                     [--enable_multiprocessing] [--dataloader_prefetch]
+                     [--enable_multiprocessing]
+                     [--torch_num_threads TORCH_NUM_THREADS]
+                     [--dataloader_prefetch]
                      [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
                      [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                      [--cache_dir CACHE_DIR]
@@ -368,7 +369,7 @@ usage: train_sdxl.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                      [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                      [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
-                     [--freeze_unet_strategy {none,bitfit}]
+                     [--layer_freeze_strategy {none,bitfit}]
                      [--unet_attention_slice] [--print_filenames]
                      [--print_sampler_statistics]
                      [--metadata_update_interval METADATA_UPDATE_INTERVAL]
@@ -403,6 +404,7 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
+  --aura_flow      This must be set when training an AuraFlow model.
   --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.
@@ -664,6 +666,10 @@ options:
                         multiprocessing may be faster than threading, but will
                         consume a lot more memory. Use this option with
                         caution, and monitor your system's memory usage.
+  --torch_num_threads TORCH_NUM_THREADS
+                        The number of threads to use for PyTorch operations.
+                        This is not the same as the number of workers.
+                        Default: 8.
   --dataloader_prefetch
                         When provided, the dataloader will read-ahead and
                         attempt to retrieve latents, text embeds, and other
@@ -1013,7 +1019,8 @@ options:
                         better speed, and Euler A can put up with
                         instabilities a bit better. For zero-terminal SNR
                         models, DDIM is the best choice. Choices: ['ddim',
-                        'ddpm', 'euler', 'euler-a', 'unipc'], Default: ddim
+                        'ddpm', 'euler', 'euler-a', 'unipc'], Default: None
+                        (use the model default)
   --validation_disable_unconditional
                         When set, the validation pipeline will not generate
                         unconditional samples. This is useful to speed up
@@ -1088,7 +1095,7 @@ options:
                         default strategy is to freeze all layers from 17 up.
                         This can be helpful when fine-tuning Stable Diffusion
                         2.1 on a new style.
-  --freeze_unet_strategy {none,bitfit}
+  --layer_freeze_strategy {none,bitfit}
                         When freezing the UNet, we can use the 'none' or
                         'bitfit' strategy. The 'bitfit' strategy will freeze
                         all weights, and leave bias thawed. The default
