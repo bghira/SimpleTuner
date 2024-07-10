@@ -109,11 +109,21 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--aura_flow_freeze_direction",
+        type=str,
+        choices=["up", "down"],
+        default="up",
+        help=(
+            "When freezing the AuraFlow model, you can freeze it 'up' from the bottom, or 'down' from the top."
+            " The default value is 'up' which will freeze the model from layer 11 to 31 by default."
+        ),
+    )
+    parser.add_argument(
         "--aura_flow_first_unfrozen_dit_layer",
         type=int,
-        default=20,
+        default=11,
         help=(
-            "Due to the size of the Aura Flow model, by default only the 20th layer and up will be trained."
+            "Due to the size of the AuraFlow model, by default only the 20th layer and up will be trained."
             " More layers can be excluded to speed up training or reduce VRAM consumption further."
         ),
     )
@@ -122,7 +132,7 @@ def parse_args(input_args=None):
         type=int,
         default=0,
         help=(
-            "By default, Aura Flow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
+            "By default, AuraFlow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
         ),
     )
     parser.add_argument(

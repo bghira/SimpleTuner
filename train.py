@@ -721,6 +721,7 @@ def main():
         transformer = freeze_transformer_blocks(
             transformer,
             target_blocks=args.aura_flow_target,
+            freeze_direction=args.aura_flow_freeze_direction,
             first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
             first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
             use_bitfit=True if args.layer_freeze_strategy == "bitfit" else False,
