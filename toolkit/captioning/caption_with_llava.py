@@ -184,6 +184,8 @@ def load_llava_model(
             bnb_config = BitsAndBytesConfig(
                 load_in_8bit=True,
             )
+        else:
+            bnb_config = None
         torch_dtype = None
     except:
         bnb_config = None
