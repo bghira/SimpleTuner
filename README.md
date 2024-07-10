@@ -2,7 +2,7 @@
 
 > ⚠️ **Warning**: The scripts in this repository have the potential to damage your training data. Always maintain backups before proceeding.
 
-**SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions to its improvement are welcome.
+**SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions are welcome.
 
 - Multi-GPU training
 - Aspect bucketing "just works"; fill a folder of images and let it rip
