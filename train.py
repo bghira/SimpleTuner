@@ -26,7 +26,7 @@ import sys
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-from helpers import log_format
+from helpers import log_format  # noqa
 from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -686,7 +686,7 @@ def main():
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
-            import xformers  # type: ignore
+            import xformers  # type: ignore # noqa
 
             if unet is not None:
                 unet.enable_xformers_memory_efficient_attention()
