@@ -1,8 +1,23 @@
 import logging
-import os
+import os, re
+from torch import nn
 
 logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
+
+def freeze_transformer_blocks(regex: re.Pattern, model: nn.Module):
+    for name, param in model.named_parameters():
+        if not hasattr(param, "requires_grad"):
+            logger.debug(
+                f"Skipping {name} as it does not have 'requires_grad' attribute."
+            )
+            continue
+        if regex.search(name):
+            param.requires_grad = False
+            logger.debug(f"Freezing {name}.")
+
+    return model
 
 
 def apply_bitfit_freezing(model, args):
