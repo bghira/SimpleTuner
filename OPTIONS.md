@@ -369,7 +369,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                      [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                      [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
-                     [--freeze_unet_strategy {none,bitfit}]
+                     [--layer_freeze_strategy {none,bitfit}]
                      [--unet_attention_slice] [--print_filenames]
                      [--print_sampler_statistics]
                      [--metadata_update_interval METADATA_UPDATE_INTERVAL]
@@ -1095,7 +1095,7 @@ options:
                         default strategy is to freeze all layers from 17 up.
                         This can be helpful when fine-tuning Stable Diffusion
                         2.1 on a new style.
-  --freeze_unet_strategy {none,bitfit}
+  --layer_freeze_strategy {none,bitfit}
                         When freezing the UNet, we can use the 'none' or
                         'bitfit' strategy. The 'bitfit' strategy will freeze
                         all weights, and leave bias thawed. The default

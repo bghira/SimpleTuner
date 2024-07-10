@@ -282,7 +282,7 @@ fi
 export BITFIT_ARGS=""
 if [[ "$USE_BITFIT" == "true" ]]; then
     echo "Enabling BitFit."
-    BITFIT_ARGS="--freeze_unet_strategy=bitfit"
+    BITFIT_ARGS="--layer_freeze_strategy=bitfit"
 fi
 
 # if PUSH_TO_HUB is set, ~/.cache/huggingface/token needs to exist and have a valid token.

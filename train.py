@@ -723,6 +723,7 @@ def main():
             target_blocks=args.aura_flow_target,
             first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
             first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
+            use_bitfit=True if args.layer_freeze_strategy == "bitfit" else False,
         )
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
@@ -880,7 +881,7 @@ def main():
     logger.info(
         f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
     )
-    if args.freeze_unet_strategy == "bitfit":
+    if args.layer_freeze_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
 
         if unet is not None:

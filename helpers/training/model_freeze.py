@@ -11,6 +11,7 @@ def freeze_transformer_blocks(
     target_blocks: str,
     first_unfrozen_dit_layer: int = 0,
     first_unfrozen_mmdit_layer: int = 0,
+    use_bitfit: bool = False,
 ):
     if target_blocks not in ["any", "dit", "mmdit"]:
         raise ValueError(
@@ -26,12 +27,14 @@ def freeze_transformer_blocks(
             layer_group = name.split(".")[0]
             layer_number = int(name.split(".")[1])
         except Exception as e:
-            logger.debug(f"Skipping {name} as it does not have a layer number.")
+            # non-numeric layer.
             continue
         try:
             if hasattr(param, "requires_grad"):
                 # freeze by default.
                 param.requires_grad = False
+            else:
+                continue
             if target_blocks != "any":
                 # We will exclude entire categories of blocks here if they aren't defined to be trained.
                 if (
@@ -57,7 +60,7 @@ def freeze_transformer_blocks(
                 )
                 and layer_number >= first_unfrozen_mmdit_layer
             ):
-                if hasattr(param, "requires_grad"):
+                if not use_bitfit or "bias" in name:
                     param.requires_grad = True
                     logger.debug(f"Unfreezing {name}.")
         except Exception as e:
