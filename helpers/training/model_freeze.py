@@ -12,6 +12,12 @@ def freeze_transformer_blocks(
     first_unfrozen_dit_layer: int = 0,
     first_unfrozen_mmdit_layer: int = 0,
 ):
+    if target_blocks not in ["any", "dit", "mmdit"]:
+        raise ValueError(
+            f"Invalid target_blocks value {target_blocks}. Choose from 'any', 'dit', 'mmdit'."
+        )
+    if first_unfrozen_dit_layer < 0 or first_unfrozen_mmdit_layer < 0:
+        raise ValueError(f"Invalid first_unfrozen layer value. Must be greater than 0.")
     for name, param in model.named_parameters():
         # Example names:
         #  single_transformer_blocks.31.ff.c_proj.weight
@@ -19,6 +25,13 @@ def freeze_transformer_blocks(
         try:
             layer_group = name.split(".")[0]
             layer_number = int(name.split(".")[1])
+        except Exception as e:
+            logger.debug(f"Skipping {name} as it does not have a layer number.")
+            continue
+        try:
+            if hasattr(param, "requires_grad"):
+                # freeze by default.
+                param.requires_grad = False
             if target_blocks != "any":
                 # We will exclude entire categories of blocks here if they aren't defined to be trained.
                 if (
@@ -33,26 +46,23 @@ def freeze_transformer_blocks(
                     continue
             if (
                 first_unfrozen_dit_layer is not None
-                and first_unfrozen_dit_layer > 0
-                and layer_group == "single_transformer_blocks"
-                and layer_number < first_unfrozen_dit_layer
+                and (
+                    layer_group == "single_transformer_blocks" or target_blocks == "any"
+                )
+                and layer_number >= first_unfrozen_dit_layer
             ) or (
                 first_unfrozen_mmdit_layer is not None
-                and first_unfrozen_mmdit_layer > 0
-                and layer_group == "joint_transformer_blocks"
-                and layer_number < first_unfrozen_mmdit_layer
+                and (
+                    layer_group == "joint_transformer_blocks" or target_blocks == "any"
+                )
+                and layer_number >= first_unfrozen_mmdit_layer
             ):
-                param.requires_grad = False
-                logger.debug(f"Freezing {name}.")
-                continue
-            else:
-                logger.debug(f"Unfreezing {name}.")
-                continue
+                if hasattr(param, "requires_grad"):
+                    param.requires_grad = True
+                    logger.debug(f"Unfreezing {name}.")
         except Exception as e:
-            logger.debug(f"Skipping {name} as it does not have a layer number.")
-            if hasattr(param, "requires_grad"):
-                param.requires_grad = False
-            continue
+            logger.error(e)
+            raise e
 
     return model
 

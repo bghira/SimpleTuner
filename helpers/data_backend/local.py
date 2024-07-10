@@ -190,7 +190,7 @@ class LocalDataBackend(BaseDataBackend):
             loaded_tensor = torch.load(stored_tensor, map_location="cpu")
         except Exception as e:
             logger.error(f"Failed to load corrupt torch file '{filename}': {e}")
-            if "invalid load key" in e:
+            if "invalid load key" in str(e):
                 self.delete(filename)
             raise e
         return loaded_tensor
