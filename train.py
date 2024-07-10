@@ -1308,7 +1308,7 @@ def main():
             )
             memory_before_unload = 0
 
-        vae = vae.to("meta")
+        vae = vae.to("cpu")
         del vae
         vae = None
 
