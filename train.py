@@ -63,6 +63,7 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from tqdm.auto import tqdm
+from helpers.training.model_freeze import freeze_transformer_blocks
 from helpers.training.custom_schedule import get_sd3_sigmas
 from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
@@ -587,6 +588,12 @@ def main():
         model_type_label = "Stable Diffusion 1.x/2.x"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
+    AURA_DIT_BLOCKS_REGEX = (
+        r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+    )
+    AURA_MMDIT_BLOCKS_REGEX = (
+        r"joint_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+    )
 
     if args.controlnet:
         if args.pixart_sigma or args.aura_flow:
@@ -652,11 +659,9 @@ def main():
             if args.aura_flow:
                 target_modules = ["to_k", "to_q", "to_v", "to_out.0", "to_add_out"]
                 if args.aura_flow_target == "dit":
-                    target_modules = r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
+                    target_modules = AURA_DIT_BLOCKS_REGEX
                 elif args.aura_flow_target == "mmdit":
-                    target_modules = (
-                        r"joint_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
-                    )
+                    target_modules = AURA_MMDIT_BLOCKS_REGEX
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=args.lora_alpha,
@@ -710,6 +715,16 @@ def main():
             logger.warning(
                 "Unknown results will occur when finetuning the text encoder alongside ControlNet."
             )
+
+    if "lora" not in args.model_type and args.aura_flow:
+        # we might want to just train a piece of the whole aura model.
+        if args.aura_flow_target == "dit":
+            # we will freeze the joint transformer blocks
+            transformer = freeze_transformer_blocks(
+                AURA_MMDIT_BLOCKS_REGEX, transformer
+            )
+        elif args.aura_flow_target == "mmdit":
+            transformer = freeze_transformer_blocks(AURA_DIT_BLOCKS_REGEX, transformer)
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in bfloat16 to avoid NaN losses.
@@ -803,9 +818,6 @@ def main():
             memory_before_unload = 0
         if accelerator.is_main_process:
             logger.info(f"Unloading text encoders, as they are not being trained.")
-        text_encoder_1 = text_encoder_1.to("meta") if text_encoder_1 is not None else None
-        text_encoder_2 = text_encoder_2.to("meta") if text_encoder_2 is not None else None
-        text_encoder_3 = text_encoder_3.to("meta") if text_encoder_3 is not None else None
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
