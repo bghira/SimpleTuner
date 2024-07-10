@@ -13,7 +13,7 @@ def freeze_transformer_blocks(regex: re.Pattern, model: nn.Module):
                 f"Skipping {name} as it does not have 'requires_grad' attribute."
             )
             continue
-        if regex.search(name):
+        if re.search(regex, name):
             param.requires_grad = False
             logger.debug(f"Freezing {name}.")
 
