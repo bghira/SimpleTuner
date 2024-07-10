@@ -50,6 +50,8 @@ def freeze_transformer_blocks(
                 continue
         except Exception as e:
             logger.debug(f"Skipping {name} as it does not have a layer number.")
+            if hasattr(param, "requires_grad"):
+                param.requires_grad = False
             continue
 
     return model
