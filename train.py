@@ -26,7 +26,7 @@ import sys
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
-
+from helpers import log_format
 from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
