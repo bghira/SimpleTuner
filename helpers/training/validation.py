@@ -261,6 +261,10 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
+        elif model_type == "kolors":
+            raise NotImplementedError(
+                "Kolors validation prompt preparation is not yet implemented."
+            )
         else:
             raise ValueError(f"Unknown model type '{model_type}'")
 
@@ -508,6 +512,20 @@ class Validation:
             if self.args.validation_using_datasets:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
+        elif model_type == "kolors":
+            if self.args.controlnet:
+                raise NotImplementedError("Kolors ControlNet is not yet supported.")
+            if self.args.validation_using_datasets:
+                raise NotImplementedError(
+                    "Kolors inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                )
+            try:
+                from diffusers.pipelines import KolorsPipeline
+            except Exception:
+                logger.error(
+                    "Kolors pipeline requires the latest version of Diffusers."
+                )
+            return KolorsPipeline
         elif model_type == "legacy":
             if self.deepfloyd_stage2:
                 from diffusers.pipelines import IFSuperResolutionPipeline
@@ -662,6 +680,11 @@ class Validation:
                         device=self.accelerator.device, dtype=self.weight_dtype
                     )
                 )
+        else:
+            raise NotImplementedError(
+                f"Model type {StateTracker.get_model_type()} not implemented for validation."
+            )
+
         current_validation_prompt_embeds = current_validation_prompt_embeds.to(
             device=self.accelerator.device, dtype=self.weight_dtype
         )

@@ -246,6 +246,8 @@ def main():
         StateTracker.set_model_type("aura_flow")
     if args.legacy:
         StateTracker.set_model_type("legacy")
+    if args.kolors:
+        StateTracker.set_model_type("kolors")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -589,6 +591,8 @@ def main():
         model_type_label = "AuraFlow"
     if args.legacy:
         model_type_label = "Stable Diffusion 1.x/2.x"
+    if args.kolors:
+        model_type_label = "Kwai Kolors"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
     AURA_DIT_BLOCKS_REGEX = (
@@ -599,7 +603,7 @@ def main():
     )
 
     if args.controlnet:
-        if args.pixart_sigma or args.aura_flow:
+        if args.pixart_sigma or args.aura_flow or args.kolors:
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
@@ -757,11 +761,8 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if (
-        not args.disable_compel
-        and not args.sd3
-        and not args.pixart_sigma
-        and not args.aura_flow
+    if not args.disable_compel and not any(
+        [args.sd3, args.pixart_sigma, args.aura_flow, args.kolors]
     ):
         # SD3 and PixArt don't really work with prompt weighting.
         prompt_handler = PromptHandler(
@@ -2392,7 +2393,12 @@ def main():
                 )
 
             else:
-                pipeline = StableDiffusionXLPipeline.from_pretrained(
+                sdxl_pipeline_cls = StableDiffusionXLPipeline
+                if args.kolors:
+                    from diffusers.pipelines import KolorsPipeline
+
+                    sdxl_pipeline_cls = KolorsPipeline
+                pipeline = sdxl_pipeline_cls.from_pretrained(
                     args.pretrained_model_name_or_path,
                     text_encoder=(
                         text_encoder_cls_1.from_pretrained(

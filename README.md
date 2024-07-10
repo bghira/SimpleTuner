@@ -102,6 +102,12 @@ AuraFlow has some distinct advantages that make it worth investigating over Stab
   - Pile-T5 has gone through less content prefiltering than OpenCLIP or T5 v1.1, and has "consumed more of the Internet" than T5 v1.1
   - With a large data corpus, it has potential for subtle semantic understanding of linguistic oddities, and understanding of more modern concepts without finetuning the text encoder
 
+### Kwai Kolors
+
+An SDXL-based model with ChatGLM (General Language Model) 6B as its text encoder, **doubling** the hidden dimension size and substantially increasing the level of local detail included in the prompt embeds.
+
+Kolors support is a work-in-progress.
+
 ---
 
 ## Hardware Requirements
