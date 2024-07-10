@@ -1308,13 +1308,11 @@ def main():
             )
             memory_before_unload = 0
 
-        vae = vae.to("cpu")
         del vae
         vae = None
 
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
-                backend["vaecache"].vae = backend["vaecache"].vae.to("cpu")
                 backend["vaecache"].vae = None
 
         reclaim_memory()
