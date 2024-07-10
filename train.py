@@ -1314,7 +1314,7 @@ def main():
 
         for _, backend in StateTracker.get_data_backends().items():
             if "vaecache" in backend:
-                backend["vaecache"].vae = backend["vaecache"].vae.to("meta")
+                backend["vaecache"].vae = backend["vaecache"].vae.to("cpu")
                 backend["vaecache"].vae = None
 
         reclaim_memory()
