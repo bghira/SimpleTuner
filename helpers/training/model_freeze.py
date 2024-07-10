@@ -6,16 +6,51 @@ logger = logging.getLogger("ModelFreeze")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
-def freeze_transformer_blocks(regex: re.Pattern, model: nn.Module):
+def freeze_transformer_blocks(
+    model: nn.Module,
+    target_blocks: str,
+    first_unfrozen_dit_layer: int = 0,
+    first_unfrozen_mmdit_layer: int = 0,
+):
     for name, param in model.named_parameters():
-        if not hasattr(param, "requires_grad"):
-            logger.debug(
-                f"Skipping {name} as it does not have 'requires_grad' attribute."
-            )
+        # Example names:
+        #  single_transformer_blocks.31.ff.c_proj.weight
+        #  joint_transformer_blocks.1.ff.c_proj.weight
+        try:
+            layer_group = name.split(".")[0]
+            layer_number = int(name.split(".")[1])
+            if target_blocks != "any":
+                # We will exclude entire categories of blocks here if they aren't defined to be trained.
+                if (
+                    target_blocks == "dit"
+                    and layer_group != "single_transformer_blocks"
+                ):
+                    continue
+                if (
+                    target_blocks == "mmdit"
+                    and layer_group != "joint_transformer_blocks"
+                ):
+                    continue
+            if (
+                first_unfrozen_dit_layer is not None
+                and first_unfrozen_dit_layer > 0
+                and layer_group == "single_transformer_blocks"
+                and layer_number < first_unfrozen_dit_layer
+            ) or (
+                first_unfrozen_mmdit_layer is not None
+                and first_unfrozen_mmdit_layer > 0
+                and layer_group == "joint_transformer_blocks"
+                and layer_number < first_unfrozen_mmdit_layer
+            ):
+                param.requires_grad = False
+                logger.debug(f"Freezing {name}.")
+                continue
+            else:
+                logger.debug(f"Unfreezing {name}.")
+                continue
+        except Exception as e:
+            logger.debug(f"Skipping {name} as it does not have a layer number.")
             continue
-        if re.search(regex, name):
-            param.requires_grad = False
-            logger.debug(f"Freezing {name}.")
 
     return model
 

@@ -13,14 +13,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from helpers import log_format
 
-import shutil, hashlib, json, copy, random, logging, math, os, sys
+import shutil
+import hashlib
+import json
+import copy
+import random
+import logging
+import math
+import os
+import sys
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
-from pathlib import Path
 from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -53,19 +59,18 @@ training_logger.setLevel(training_logger_level)
 # Less important logs.
 filelock_logger.setLevel("WARNING")
 connection_logger.setLevel("WARNING")
-import numpy as np
-import torch, diffusers, accelerate, transformers
-import torch.nn as nn
+import torch
+import diffusers
+import accelerate
+import transformers
 import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
-from huggingface_hub import create_repo, upload_folder
-from packaging import version
 from tqdm.auto import tqdm
 from helpers.training.model_freeze import freeze_transformer_blocks
 from helpers.training.custom_schedule import get_sd3_sigmas
-from transformers import AutoTokenizer, PretrainedConfig, CLIPTokenizer
+from transformers import PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
 
@@ -74,7 +79,6 @@ from diffusers import (
     ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
-    DPMSolverMultistepScheduler,
     UNet2DConditionModel,
     EulerDiscreteScheduler,
     EulerAncestralDiscreteScheduler,
@@ -83,8 +87,7 @@ from diffusers import (
 
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
-from diffusers.optimization import get_scheduler
-from helpers.training.ema import EMAModel, should_update_ema
+from helpers.training.ema import EMAModel
 from diffusers.utils import (
     check_min_version,
     convert_state_dict_to_diffusers,
@@ -201,7 +204,7 @@ def get_tokenizers(args):
                 StateTracker.is_sdxl_refiner(True)
                 if args.validation_using_datasets is None:
                     logger.warning(
-                        f"Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
+                        "Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
                     )
                     args.validation_using_datasets = True
         except:
@@ -532,7 +535,7 @@ def main():
     }
     if args.sd3:
         # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info(f"Loading Stable Diffusion 3 diffusion transformer..")
+        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
         unet = None
         try:
             from diffusers import SD3Transformer2DModel
@@ -569,7 +572,7 @@ def main():
             **pretrained_load_args,
         )
     else:
-        logger.info(f"Loading U-net..")
+        logger.info("Loading U-net..")
         transformer = None
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
@@ -678,11 +681,8 @@ def main():
         unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
-    if (
-        args.enable_xformers_memory_efficient_attention
-        and not args.sd3
-        and not args.pixart_sigma
-        and not args.aura_flow
+    if args.enable_xformers_memory_efficient_attention and not any(
+        [args.sd3, args.pixart_sigma, args.aura_flow]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
@@ -718,13 +718,12 @@ def main():
 
     if "lora" not in args.model_type and args.aura_flow:
         # we might want to just train a piece of the whole aura model.
-        if args.aura_flow_target == "dit":
-            # we will freeze the joint transformer blocks
-            transformer = freeze_transformer_blocks(
-                AURA_MMDIT_BLOCKS_REGEX, transformer
-            )
-        elif args.aura_flow_target == "mmdit":
-            transformer = freeze_transformer_blocks(AURA_DIT_BLOCKS_REGEX, transformer)
+        transformer = freeze_transformer_blocks(
+            transformer,
+            target_blocks=args.aura_flow_target,
+            first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
+            first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
+        )
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in bfloat16 to avoid NaN losses.
@@ -752,7 +751,7 @@ def main():
         vae.to(accelerator.device, dtype=vae_dtype)
     StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    logger.info(f"Loaded VAE into VRAM.")
+    logger.info("Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
@@ -817,7 +816,7 @@ def main():
             )
             memory_before_unload = 0
         if accelerator.is_main_process:
-            logger.info(f"Unloading text encoders, as they are not being trained.")
+            logger.info("Unloading text encoders, as they are not being trained.")
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
@@ -885,11 +884,11 @@ def main():
         from helpers.training.model_freeze import apply_bitfit_freezing
 
         if unet is not None:
-            logger.info(f"Applying BitFit freezing strategy to the U-net.")
+            logger.info("Applying BitFit freezing strategy to the U-net.")
             unet = apply_bitfit_freezing(unet, args)
         if transformer is not None:
             logger.warning(
-                f"Training Diffusion transformer models with BitFit is not yet tested, and unexpected results may occur."
+                "Training Diffusion transformer models with BitFit is not yet tested, and unexpected results may occur."
             )
             transformer = apply_bitfit_freezing(transformer, args)
 
@@ -1216,7 +1215,7 @@ def main():
         sys.exit(0)
 
     if not disable_accelerator:
-        logger.info(f"Loading our accelerator...")
+        logger.info("Loading our accelerator...")
         if torch.backends.mps.is_available():
             accelerator.native_amp = False
         if webhook_handler is not None:
@@ -1543,16 +1542,16 @@ def main():
                     accelerator.wait_for_everyone()
                     logger.info(f"Reloading cache for backend {backend_id}")
                     backend["metadata_backend"].reload_cache(set_config=False)
-                    logger.info(f"Waiting for other threads to finish..")
+                    logger.info("Waiting for other threads to finish..")
                     accelerator.wait_for_everyone()
                     # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
-                    logger.info(f"Splitting buckets across GPUs")
+                    logger.info("Splitting buckets across GPUs")
                     backend["metadata_backend"].split_buckets_between_processes(
                         gradient_accumulation_steps=args.gradient_accumulation_steps
                     )
                     # we have to rebuild the VAE cache if it exists.
                     if "vaecache" in backend:
-                        logger.info(f"Rebuilding VAE cache..")
+                        logger.info("Rebuilding VAE cache..")
                         backend["vaecache"].rebuild_cache()
                     # no need to manually call metadata_backend.save_cache() here.
                 elif (
@@ -1562,7 +1561,7 @@ def main():
                 ):
                     # If the user has specified that this should happen,
                     # we will clear the cache and then rebuild it. This is useful for random crops.
-                    logger.debug(f"VAE Cache rebuild is enabled. Rebuilding.")
+                    logger.debug("VAE Cache rebuild is enabled. Rebuilding.")
                     logger.debug(f"Backend config: {backend_config}")
                     backend["vaecache"].rebuild_cache()
         current_epoch = epoch
@@ -1646,7 +1645,7 @@ def main():
                 training_luminance_values.append(batch["batch_luminance"])
 
             with accelerator.accumulate(training_models):
-                training_logger.debug(f"Sending latent batch to GPU.")
+                training_logger.debug("Sending latent batch to GPU.")
                 latents = batch["latent_batch"].to(
                     accelerator.device, dtype=weight_dtype
                 )
@@ -1923,7 +1922,7 @@ def main():
                     loss = loss.mean()
 
                 elif args.snr_gamma is None or args.snr_gamma == 0:
-                    training_logger.debug(f"Calculating loss")
+                    training_logger.debug("Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
                         model_pred.float(), target.float(), reduction="mean"
                     )
@@ -1931,7 +1930,7 @@ def main():
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
                     # This is discussed in Section 4.2 of the same paper.
-                    training_logger.debug(f"Using min-SNR loss")
+                    training_logger.debug("Using min-SNR loss")
                     snr = compute_snr(timesteps, noise_scheduler)
                     snr_divisor = snr
                     if noise_scheduler.config.prediction_type == "v_prediction" or (
@@ -1940,7 +1939,7 @@ def main():
                         snr_divisor = snr + 1
 
                     training_logger.debug(
-                        f"Calculating MSE loss weights using SNR as divisor"
+                        "Calculating MSE loss weights using SNR as divisor"
                     )
                     mse_loss_weights = (
                         torch.stack(
@@ -1967,7 +1966,7 @@ def main():
 
                 # Backpropagate
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
-                    training_logger.debug(f"Backwards pass.")
+                    training_logger.debug("Backwards pass.")
                     # Check for NaNs
                     if (
                         torch.isnan(loss).any()
@@ -1989,7 +1988,7 @@ def main():
                         grad_norm = accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
-                    training_logger.debug(f"Stepping components forward.")
+                    training_logger.debug("Stepping components forward.")
                     optimizer.step()
                     lr_scheduler.step(**scheduler_kwargs)
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
@@ -2021,7 +2020,7 @@ def main():
                 ema_decay_value = "None (EMA not in use)"
                 if args.use_ema:
                     if ema_model is not None:
-                        training_logger.debug(f"Stepping EMA forward")
+                        training_logger.debug("Stepping EMA forward")
                         ema_model.step(
                             parameters=(
                                 unet.parameters()
@@ -2301,6 +2300,74 @@ def main():
                     logger.debug(
                         f"Setting scheduler to Euler for SD3. Config: {pipeline.scheduler.config}"
                     )
+            elif args.aura_flow:
+                from diffusers import AuraFlowPipeline
+
+                pipeline = AuraFlowPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                    torch_dtype=weight_dtype,
+                )
+            elif args.legacy:
+                from diffusers import StableDiffusionPipeline
+
+                pipeline = StableDiffusionPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    unet=unet,
+                    torch_dtype=weight_dtype,
+                )
 
             else:
                 pipeline = StableDiffusionXLPipeline.from_pretrained(
@@ -2382,7 +2449,7 @@ if __name__ == "__main__":
         )
     try:
         main()
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message="Training has been interrupted by user action (lost terminal, or ctrl+C)."

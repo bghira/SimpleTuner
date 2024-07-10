@@ -100,12 +100,29 @@ def parse_args(input_args=None):
         "--aura_flow_target",
         type=str,
         choices=["all", "dit", "mmdit"],
-        default="all",
+        default="dit",
         help=(
             "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
             " The default option 'all' means all blocks will be trained. 'dit' will train only the standard DiT blocks,"
             " and 'mmdit' will train only the MM-DiT blocks. Experimentation will likely prove fruitful,"
             " as these LoRAs train quickly. The default is 'all'."
+        ),
+    )
+    parser.add_argument(
+        "--aura_flow_first_unfrozen_dit_layer",
+        type=int,
+        default=20,
+        help=(
+            "Due to the size of the Aura Flow model, by default only the 20th layer and up will be trained."
+            " More layers can be excluded to speed up training or reduce VRAM consumption further."
+        ),
+    )
+    parser.add_argument(
+        "--aura_flow_first_unfrozen_mmdit_layer",
+        type=int,
+        default=0,
+        help=(
+            "By default, Aura Flow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
         ),
     )
     parser.add_argument(
