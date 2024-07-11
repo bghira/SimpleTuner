@@ -904,8 +904,8 @@ def main():
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
-            if text_encoder_3:
-                text_encoder_3.gradient_checkpointing_enable()
+            # if text_encoder_3:
+            #     text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
     extra_optimizer_args = {
@@ -1271,6 +1271,8 @@ def main():
 
     if "lora" in args.model_type and args.train_text_encoder:
         logger.info("Preparing text encoders for training.")
+        if args.sd3:
+            logger.info("NOTE: The third text encoder is not trained for SD3.")
         text_encoder_1, text_encoder_2 = accelerator.prepare(
             text_encoder_1, text_encoder_2
         )
@@ -2207,18 +2209,20 @@ def main():
                     )
                     if args.sd3:
                         text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
-                        text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(text_encoder_3)
-                        )
+                        # text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
+                        #     get_peft_model_state_dict(text_encoder_3)
+                        # )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
-                text_encoder_3_lora_layers = None
+                # text_encoder_3_lora_layers = None
 
             if args.sd3:
                 StableDiffusion3Pipeline.save_lora_weights(
                     save_directory=args.output_dir,
                     transformer_lora_layers=transformer_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers,
                 )
             else:
                 StableDiffusionXLPipeline.save_lora_weights(
