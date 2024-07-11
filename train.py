@@ -721,6 +721,7 @@ def main():
         transformer = freeze_transformer_blocks(
             transformer,
             target_blocks=args.aura_flow_target,
+            freeze_direction=args.aura_flow_freeze_direction,
             first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
             first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
             use_bitfit=True if args.layer_freeze_strategy == "bitfit" else False,
@@ -903,8 +904,8 @@ def main():
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
-            if text_encoder_3:
-                text_encoder_3.gradient_checkpointing_enable()
+            # if text_encoder_3:
+            #     text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
     extra_optimizer_args = {
@@ -1270,6 +1271,8 @@ def main():
 
     if "lora" in args.model_type and args.train_text_encoder:
         logger.info("Preparing text encoders for training.")
+        if args.sd3:
+            logger.info("NOTE: The third text encoder is not trained for SD3.")
         text_encoder_1, text_encoder_2 = accelerator.prepare(
             text_encoder_1, text_encoder_2
         )
@@ -1756,7 +1759,10 @@ def main():
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
                     # If sd3_uses_diffusion, we will instead use v_prediction (see below)
-                    target = latents
+                    if args.flow_matching_loss == "diffusers":
+                        target = latents
+                    elif args.flow_matching_loss == "compatible":
+                        target = noise - latents
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction" or (
@@ -1892,7 +1898,11 @@ def main():
                 if flow_matching:
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                     # Preconditioning of the model outputs.
-                    model_pred = model_pred * (-sigmas) + noisy_latents
+                    if args.flow_matching_loss == "diffusers":
+                        model_pred = model_pred * (-sigmas) + noisy_latents
+                    elif args.flow_matching_loss == "compatible":
+                        # the compatible implementation does not precondition the model outputs.
+                        pass
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
@@ -2199,18 +2209,20 @@ def main():
                     )
                     if args.sd3:
                         text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
-                        text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(text_encoder_3)
-                        )
+                        # text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
+                        #     get_peft_model_state_dict(text_encoder_3)
+                        # )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
-                text_encoder_3_lora_layers = None
+                # text_encoder_3_lora_layers = None
 
             if args.sd3:
                 StableDiffusion3Pipeline.save_lora_weights(
                     save_directory=args.output_dir,
                     transformer_lora_layers=transformer_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers,
                 )
             else:
                 StableDiffusionXLPipeline.save_lora_weights(
