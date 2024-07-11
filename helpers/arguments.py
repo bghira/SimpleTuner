@@ -97,6 +97,16 @@ def parse_args(input_args=None):
         help=("This must be set when training an AuraFlow model."),
     )
     parser.add_argument(
+        "--flow_matching_loss",
+        type=str,
+        choices=["diffusers", "compatible"],
+        default="diffusers",
+        help=(
+            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementations provided"
+            " by StabilityAI and AuraFlow. This experimental option allows switching loss calculations to be compatible with those."
+        ),
+    )
+    parser.add_argument(
         "--aura_flow_target",
         type=str,
         choices=["all", "dit", "mmdit"],
