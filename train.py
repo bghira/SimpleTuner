@@ -1761,7 +1761,10 @@ def main():
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
                     # If sd3_uses_diffusion, we will instead use v_prediction (see below)
-                    target = latents
+                    if args.flow_matching_loss == "diffusers":
+                        target = latents
+                    elif args.flow_matching_loss == "compatible":
+                        target = noise - latents
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction" or (
@@ -1900,7 +1903,8 @@ def main():
                     if args.flow_matching_loss == "diffusers":
                         model_pred = model_pred * (-sigmas) + noisy_latents
                     elif args.flow_matching_loss == "compatible":
-                        model_pred = noisy_latents - latents - model_pred
+                        # we shouldn't mess with the model prediction.
+                        pass
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
