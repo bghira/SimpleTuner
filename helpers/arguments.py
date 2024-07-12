@@ -109,7 +109,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--aura_flow_target",
         type=str,
-        choices=["all", "dit", "mmdit"],
+        choices=["any", "dit", "mmdit"],
         default="dit",
         help=(
             "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
