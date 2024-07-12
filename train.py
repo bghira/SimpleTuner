@@ -1736,7 +1736,9 @@ def main():
                         n_dim=latents.ndim,
                         dtype=latents.dtype,
                     )
-                    noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
+                    noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
+                    # is equal to:
+                    # zt = (1 - texp) * x + texp * z1
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
@@ -1759,10 +1761,7 @@ def main():
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
                     # If sd3_uses_diffusion, we will instead use v_prediction (see below)
-                    if args.flow_matching_loss == "diffusers":
-                        target = latents
-                    elif args.flow_matching_loss == "compatible":
-                        target = noise - latents
+                    target = latents
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction" or (
@@ -1901,8 +1900,7 @@ def main():
                     if args.flow_matching_loss == "diffusers":
                         model_pred = model_pred * (-sigmas) + noisy_latents
                     elif args.flow_matching_loss == "compatible":
-                        # the compatible implementation does not precondition the model outputs.
-                        pass
+                        model_pred = noisy_latents - latents - model_pred
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
