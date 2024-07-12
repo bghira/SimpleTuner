@@ -95,11 +95,11 @@ def process_directory(
     image_processor,
     input_parquet=None,
     original_query_str=None,
+    total_to_process: int = None,
 ):
     records = []
     parquet_path = f"{output_parquet}.{os.path.basename(image_dir)}.parquet"
     print(f"Parquet: {parquet_path}")
-    total_to_process = 10000
     total_processed = 0
     for filename in tqdm(os.listdir(image_dir), desc="Processing Images"):
         if input_parquet is not None:
@@ -157,7 +157,10 @@ def process_directory(
                     #     image_bytes = img_file.tobytes()
 
                     records.append({"filename": filename, "caption": best_match})
-                    if total_processed >= total_to_process:
+                    if (
+                        total_to_process is not None
+                        and total_processed >= total_to_process
+                    ):
                         break
 
             except Exception as e:
