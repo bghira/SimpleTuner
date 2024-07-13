@@ -55,6 +55,8 @@ def freeze_transformer_blocks(
             should_train = False
             if first_unfrozen_dit_layer is not None:
                 if layer_group == "single_transformer_blocks" or target_blocks == "any":
+                    if first_unfrozen_dit_layer == 0:
+                        should_train = True
                     if (
                         freeze_direction == "up"
                         and layer_number < first_unfrozen_dit_layer
@@ -66,6 +68,8 @@ def freeze_transformer_blocks(
 
             if first_unfrozen_mmdit_layer is not None:
                 if layer_group == "joint_transformer_blocks" or target_blocks == "any":
+                    if first_unfrozen_mmdit_layer == 0:
+                        should_train = True
                     if (
                         freeze_direction == "up"
                         and layer_number < first_unfrozen_mmdit_layer
@@ -75,7 +79,7 @@ def freeze_transformer_blocks(
                     ):
                         should_train = True
 
-            if should_train and not use_bitfit or "bias" in name:
+            if should_train:
                 param.requires_grad = True
                 logger.debug(f"Unfreezing {name}.")
 
