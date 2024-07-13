@@ -99,11 +99,12 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flow_matching_loss",
         type=str,
-        choices=["diffusers", "compatible"],
+        choices=["diffusers", "compatible", "diffusion"],
         default="diffusers",
         help=(
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementations provided"
             " by StabilityAI and AuraFlow. This experimental option allows switching loss calculations to be compatible with those."
+            " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
         ),
     )
     parser.add_argument(

@@ -422,7 +422,7 @@ def main():
 
     # Load scheduler and models
     flow_matching = False
-    if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_flow:
+    if (args.sd3 or args.aura_flow) and args.flow_matching_loss != "diffusion":
         # Stable Diffusion 3 and AuraFlow use rectified flow.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -444,9 +444,9 @@ def main():
             timestep_spacing=args.training_scheduler_timestep_spacing,
         )
         args.prediction_type = noise_scheduler.config.prediction_type
-        if args.sd3 and args.sd3_uses_diffusion:
+        if flow_matching and args.flow_matching_loss == "diffusion":
             logger.warning(
-                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
+                "Since --flow_matching_loss=diffusion, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
             )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
@@ -1760,7 +1760,7 @@ def main():
                 # Get the target for loss depending on the prediction type
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
-                    # If sd3_uses_diffusion, we will instead use v_prediction (see below)
+                    # If flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
                     if args.flow_matching_loss == "diffusers":
                         target = latents
                     elif args.flow_matching_loss == "compatible":
@@ -1768,9 +1768,9 @@ def main():
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction" or (
-                    args.sd3 and args.sd3_uses_diffusion
+                    flow_matching and args.flow_matching_loss == "diffusion"
                 ):
-                    # When not using flow-matching, SD3 is trained on velocity prediction objective.
+                    # When not using flow-matching, train on velocity prediction objective.
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 elif noise_scheduler.config.prediction_type == "sample":
                     # We set the target to latents here, but the model_pred will return the noise sample prediction.
@@ -1947,7 +1947,7 @@ def main():
                     snr = compute_snr(timesteps, noise_scheduler)
                     snr_divisor = snr
                     if noise_scheduler.config.prediction_type == "v_prediction" or (
-                        args.sd3 and args.sd3_uses_diffusion
+                        flow_matching and args.flow_matching_loss == "diffusion"
                     ):
                         snr_divisor = snr + 1
 
@@ -2302,7 +2302,7 @@ def main():
                     ),
                     transformer=transformer,
                 )
-                if args.sd3_uses_diffusion:
+                if flow_matching and args.flow_matching_loss == "diffusion":
                     # Diffusion-based SD3 is currently fixed to a Euler v-prediction schedule.
                     pipeline.scheduler = SCHEDULER_NAME_MAP["euler"].from_pretrained(
                         args.pretrained_model_name_or_path,
