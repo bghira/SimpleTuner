@@ -795,7 +795,7 @@ def main():
 
         sys.exit(0)
 
-    with accelerator.main_process_first():
+    if accelerator.is_main_process:
         (
             validation_prompts,
             validation_shortnames,
@@ -804,10 +804,15 @@ def main():
         ) = prepare_validation_prompt_list(
             args=args, embed_cache=StateTracker.get_default_text_embed_cache()
         )
+    else:
+        validation_prompts = None
+        validation_shortnames = None
+        validation_negative_prompt_embeds = None
+        validation_negative_pooled_embeds = None
     accelerator.wait_for_everyone()
-    # Grab GPU memory used:
 
     if args.model_type == "full" or not args.train_text_encoder:
+        # Grab GPU memory used:
         if torch.cuda.is_available():
             memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():
