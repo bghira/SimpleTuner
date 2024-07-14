@@ -547,7 +547,6 @@ class Validation:
                 logger.error(
                     "Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
                 )
-                raise NotImplementedError("AuraFlow pipeline not available.")
 
             return AuraFlowPipeline
 
