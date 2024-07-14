@@ -93,6 +93,7 @@ class BaseDataBackend(ABC):
         """
         We've read the gzip from disk. Just decompress it.
         """
+        gzip_data.seek(0)
         with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
             decompressed_data = file.read()
         return BytesIO(decompressed_data)
