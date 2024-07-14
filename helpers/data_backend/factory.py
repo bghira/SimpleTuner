@@ -893,9 +893,6 @@ def get_aws_backend(
     )
 
 
-step = None
-
-
 def select_dataloader_index(step, backends):
     # Generate weights for each backend based on some criteria
     weights = []
@@ -929,14 +926,8 @@ def get_backend_weight(backend_id, backend, step):
     return adjusted_prob
 
 
-def random_dataloader_iterator(backends: dict):
+def random_dataloader_iterator(step, backends: dict):
     prefetch_log_debug("Random dataloader iterator launched.")
-    global step
-    if step is None:
-        step = StateTracker.get_epoch_step()
-    else:
-        step = 0
-
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
     logger.debug(f"Backends to select from {backends}")
     if backends == {}:
@@ -945,9 +936,8 @@ def random_dataloader_iterator(backends: dict):
         )
         StateTracker.clear_exhausted_buckets()
         StateTracker.set_repeats(repeats=0)
-        return (step, False)
+        return False
     while backends:
-        step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
 
@@ -959,7 +949,7 @@ def random_dataloader_iterator(backends: dict):
         chosen_iter = iter(backends[chosen_backend_id])
 
         try:
-            return (step, next(chosen_iter))
+            return next(chosen_iter)
         except MultiDatasetExhausted:
             # We may want to repeat the same dataset multiple times in a single epoch.
             # If so, we can just reset the iterator and keep going.
@@ -995,7 +985,7 @@ def random_dataloader_iterator(backends: dict):
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()
-                return (step, False)
+                return False
 
 
 class BatchFetcher:

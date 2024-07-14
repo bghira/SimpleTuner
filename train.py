@@ -1345,6 +1345,7 @@ def main():
     global_step = 0
     global_resume_step = 0
     StateTracker.set_global_step(global_step)
+
     # First_epoch represents the *currently training epoch*, as opposed to global_step, which represents
     #  the *last completed* optimization step.
     first_epoch = 1
@@ -1622,7 +1623,8 @@ def main():
             iterator_fn = bf.next_response
 
         while True:
-            step, batch = iterator_fn(*iterator_args)
+            step += 1
+            batch = iterator_fn(step, *iterator_args)
             training_logger.debug(f"Iterator: {iterator_fn}")
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
