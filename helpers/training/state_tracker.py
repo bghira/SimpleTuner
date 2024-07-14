@@ -21,6 +21,7 @@ class StateTracker:
     global_step = 0
     global_resume_step = None
     epoch_step = 0
+    epoch_micro_step = 0
     epoch = 1
 
     ## Caches

@@ -99,17 +99,18 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flow_matching_loss",
         type=str,
-        choices=["diffusers", "compatible"],
+        choices=["diffusers", "compatible", "diffusion"],
         default="diffusers",
         help=(
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementations provided"
             " by StabilityAI and AuraFlow. This experimental option allows switching loss calculations to be compatible with those."
+            " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
         ),
     )
     parser.add_argument(
         "--aura_flow_target",
         type=str,
-        choices=["all", "dit", "mmdit"],
+        choices=["any", "dit", "mmdit"],
         default="dit",
         help=(
             "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
@@ -156,16 +157,6 @@ def parse_args(input_args=None):
         action="store_true",
         default=False,
         help=("This option must be provided when training a Stable Diffusion 3 model."),
-    )
-    parser.add_argument(
-        "--sd3_uses_diffusion",
-        action="store_true",
-        default=False,
-        help=(
-            "The rectified flow objective of stable diffusion 3 seems to hold few advantages, yet is very difficult to train with."
-            " If this option is supplied, a normal DDPM-based diffusion schedule will be used to train, instead of flow-matching."
-            " This will take a lot of data and even more compute to resolve. If possible, use a pretrained SD3 Diffusion model."
-        ),
     )
     parser.add_argument(
         "--weighting_scheme",
