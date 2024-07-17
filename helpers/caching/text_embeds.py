@@ -500,7 +500,7 @@ class TextEmbeddingCache:
         ]
 
         # If all prompts are cached and certain conditions are met, return None
-        if not uncached_prompts and not is_validation and not return_concat:
+        if not uncached_prompts and not return_concat:
             self.debug_log(
                 f"All prompts are cached, ignoring (uncached_prompts={uncached_prompts}, is_validation={is_validation}, return_concat={return_concat})"
             )
@@ -920,10 +920,10 @@ class TextEmbeddingCache:
                         f"SD3 prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}"
                     )
                     add_text_embeds = pooled_prompt_embeds
-                    # If the prompt is empty, zero out the embeddings
-                    if prompt == "":
-                        prompt_embeds = torch.zeros_like(prompt_embeds)
-                        add_text_embeds = torch.zeros_like(add_text_embeds)
+                    # StabilityAI say not to zero them out.
+                    # if prompt == "":
+                    #     prompt_embeds = torch.zeros_like(prompt_embeds)
+                    #     add_text_embeds = torch.zeros_like(add_text_embeds)
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
                     if current_size >= 2048:
