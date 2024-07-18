@@ -159,6 +159,22 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Stable Diffusion 3 model."),
     )
     parser.add_argument(
+        "--sd3_t5_mask_behaviour",
+        type=str,
+        choices=["do-nothing", "mask"],
+        default="mask",
+        help=(
+            "StabilityAI did not correctly implement their attention masking on T5 inputs for SD3 Medium."
+            " This option enables you to switch between their broken implementation or the corrected mask"
+            " implementation. Although, the corrected masking is still applied via hackish workaround,"
+            " manually applying the mask to the prompt embeds so that the padded positions are zero."
+            " This improves the results for short captions, but does not change the behaviour for long captions."
+            " It is important to note that this limitation currently prevents expansion of SD3 Medium's"
+            " prompt length, as it will unnecessarily attend to every token in the prompt embed,"
+            " even masked positions."
+        ),
+    )
+    parser.add_argument(
         "--weighting_scheme",
         type=str,
         default="none",

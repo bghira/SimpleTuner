@@ -25,6 +25,7 @@ def _encode_sd3_prompt_with_t5(
     prompt=None,
     num_images_per_prompt=1,
     device=None,
+    return_masked_embed: bool = True,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
     batch_size = len(prompt)
@@ -48,8 +49,15 @@ def _encode_sd3_prompt_with_t5(
     # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+    attention_mask = text_inputs.attention_mask.to(device)
 
-    return prompt_embeds
+    if return_masked_embed:
+        # for some reason, SAI's reference code doesn't bother to mask the prompt embeddings.
+        # this can lead to a problem where the model fails to represent short and long prompts equally well.
+        # additionally, the model learns the bias of the prompt embeds' noise.
+        return prompt_embeds * attention_mask.unsqueeze(-1).expand(prompt_embeds.shape)
+    else:
+        return prompt_embeds
 
 
 def _encode_sd3_prompt_with_clip(
