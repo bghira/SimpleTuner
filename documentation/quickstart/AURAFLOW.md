@@ -1,6 +1,6 @@
 ## AuraFlow v0.1
 
-In this example, we'll be running a **full fine-tune** on an AuraFlow model using the SimpleTuner toolkit.
+In this example, we'll be training a **LoRA** on an AuraFlow model using the SimpleTuner toolkit.
 
 > ⛔️ Full fine-tuning requires the use of FSDP due to a lack of optimisations in the currently available MMDiT transformer module for AuraFlow. Experimentation with [DeepSpeed](/documentation/DEEPSPEED.md) is required for full network training.
 
@@ -73,7 +73,7 @@ There, you will need to modify the following variables:
 
 - `MODEL_TYPE` - This should remain set as `lora`. **`full` will not work.**
 - `AURA_FLOW` - Set this to `true`.
-- `MODEL_NAME` - Set this to `AuraDiffusion/auradiffusion-v0.1a0`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
+- `MODEL_NAME` - Set this to `fal/AuraFlow`.
 - `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As AuraFlow v0.1a is a 512px model, you should set this to `512x512`.
 - `VALIDATION_GUIDANCE` - Aura benefits from a very-low value. Set this to `3.0`.
