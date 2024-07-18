@@ -1816,7 +1816,7 @@ def parse_args(input_args=None):
     ):
         if not args.i_know_what_i_am_doing:
             warning_log(
-                f"Updating T5 XXL tokeniser max length to {t5_max_length} for AuraFlow."
+                f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
             )
             args.tokenizer_max_length = t5_max_length
         else:
