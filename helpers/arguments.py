@@ -159,6 +159,22 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Stable Diffusion 3 model."),
     )
     parser.add_argument(
+        "--sd3_t5_mask_behaviour",
+        type=str,
+        choices=["do-nothing", "mask"],
+        default="mask",
+        help=(
+            "StabilityAI did not correctly implement their attention masking on T5 inputs for SD3 Medium."
+            " This option enables you to switch between their broken implementation or the corrected mask"
+            " implementation. Although, the corrected masking is still applied via hackish workaround,"
+            " manually applying the mask to the prompt embeds so that the padded positions are zero."
+            " This improves the results for short captions, but does not change the behaviour for long captions."
+            " It is important to note that this limitation currently prevents expansion of SD3 Medium's"
+            " prompt length, as it will unnecessarily attend to every token in the prompt embed,"
+            " even masked positions."
+        ),
+    )
+    parser.add_argument(
         "--weighting_scheme",
         type=str,
         default="none",
@@ -1792,7 +1808,7 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
-    t5_max_length = 512
+    t5_max_length = 120
     if args.aura_flow and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
@@ -1805,6 +1821,23 @@ def parse_args(input_args=None):
         else:
             warning_log(
                 f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+            )
+            warning_log(
+                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+            )
+    t5_max_length = 77
+    if args.sd3 and (
+        args.tokenizer_max_length is None
+        or int(args.tokenizer_max_length) > t5_max_length
+    ):
+        if not args.i_know_what_i_am_doing:
+            warning_log(
+                f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
+            )
+            args.tokenizer_max_length = t5_max_length
+        else:
+            warning_log(
+                f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
             )
             warning_log(
                 f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."

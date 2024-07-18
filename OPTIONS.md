@@ -242,7 +242,6 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                      [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                      [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                      [--aura_flow] [--pixart_sigma] [--sd3]
-                     [--sd3_uses_diffusion]
                      [--weighting_scheme {sigma_sqrt,logit_normal,mode}]
                      [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
                      [--mode_scale MODE_SCALE] [--lora_type {Standard}]
@@ -408,13 +407,6 @@ options:
   --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.
-  --sd3_uses_diffusion  The rectified flow objective of stable diffusion 3
-                        seems to hold few advantages, yet is very difficult to
-                        train with. If this option is supplied, a normal DDPM-
-                        based diffusion schedule will be used to train,
-                        instead of flow-matching. This will take a lot of data
-                        and even more compute to resolve. If possible, use a
-                        pretrained SD3 Diffusion model.
   --weighting_scheme {sigma_sqrt,logit_normal,mode}
                         Stable Diffusion 3 used either uniform sampling of
                         timesteps with post-prediction loss weighting, or a

@@ -511,7 +511,14 @@ class VAECache:
                 latents_uncached = self.vae.encode(
                     processed_images
                 ).latent_dist.sample()
-                latents_uncached = latents_uncached * self.vae.config.scaling_factor
+                if hasattr(self.vae, "config") and hasattr(
+                    self.vae.config, "shift_factor"
+                ):
+                    latents_uncached = (
+                        latents_uncached - self.vae.config.shift_factor
+                    ) * self.vae.config.scaling_factor
+                else:
+                    latents_uncached = latents_uncached * self.vae.config.scaling_factor
                 logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
