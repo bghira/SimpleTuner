@@ -111,6 +111,7 @@ class TextEmbeddingCache:
         process_queue_size: int = 16,
         text_encoder_batch_size: int = 4,
         max_workers: int = 32,
+        mulit_prompt_sep: str = "",
     ):
         self.id = id
         if data_backend.id != id:
@@ -130,6 +131,7 @@ class TextEmbeddingCache:
         self.write_thread_bar = None
         self.text_encoder_batch_size = text_encoder_batch_size
         self.max_workers = max_workers
+        self.multi_prompt_sep = mulit_prompt_sep
         self.rank_info = rank_info()
         if self.data_backend.type == "local":
             self.cache_dir = os.path.abspath(self.cache_dir)
@@ -251,6 +253,11 @@ class TextEmbeddingCache:
             Tuple of (prompt_embeds, pooled_prompt_embeds).
         """
         prompt = [prompt] if isinstance(prompt, str) else prompt
+        if self.model_type == 'sd3' and self.multi_prompt_sep != "":
+            prompt = prompt[0]
+            prompt = prompt.split(self.multi_prompt_sep)
+            assert len(prompt) == 3 or len(prompt) == 1, f"Prompt must have three parts separated by your separator: {self.multi_prompt_sep} or just one part. Got: {prompt}"
+
         num_images_per_prompt = 1
 
         clip_tokenizers = tokenizers[:2]
@@ -258,14 +265,23 @@ class TextEmbeddingCache:
 
         clip_prompt_embeds_list = []
         clip_pooled_prompt_embeds_list = []
-        for tokenizer, text_encoder in zip(clip_tokenizers, clip_text_encoders):
-            prompt_embeds, pooled_prompt_embeds = _encode_sd3_prompt_with_clip(
-                text_encoder=text_encoder,
-                tokenizer=tokenizer,
-                prompt=prompt,
-                device=self.accelerator.device,
-                num_images_per_prompt=num_images_per_prompt,
-            )
+        for idx, (tokenizer, text_encoder) in enumerate(zip(clip_tokenizers, clip_text_encoders)):
+            if self.multi_prompt_sep != "" and len(prompt) == 3:
+                prompt_embeds, pooled_prompt_embeds = _encode_sd3_prompt_with_clip(
+                    text_encoder=text_encoder,
+                    tokenizer=tokenizer,
+                    prompt=[prompt[idx]],
+                    device=self.accelerator.device,
+                    num_images_per_prompt=num_images_per_prompt,
+                )
+            else:
+                prompt_embeds, pooled_prompt_embeds = _encode_sd3_prompt_with_clip(
+                    text_encoder=text_encoder,
+                    tokenizer=tokenizer,
+                    prompt=prompt,
+                    device=self.accelerator.device,
+                    num_images_per_prompt=num_images_per_prompt,
+                )
             clip_prompt_embeds_list.append(prompt_embeds)
             clip_pooled_prompt_embeds_list.append(pooled_prompt_embeds)
 
@@ -275,7 +291,7 @@ class TextEmbeddingCache:
         t5_prompt_embed = _encode_sd3_prompt_with_t5(
             text_encoders[-1],
             tokenizers[-1],
-            prompt=prompt,
+            prompt=[prompt[-1]],
             num_images_per_prompt=num_images_per_prompt,
             device=self.accelerator.device,
         )

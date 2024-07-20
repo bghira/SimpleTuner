@@ -367,6 +367,7 @@ def configure_multi_databackend(
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_type(),
             write_batch_size=backend.get("write_batch_size", 1),
+            mulit_prompt_sep=backend.get("multi_prompt_sep", ""),
         )
         with accelerator.main_process_first():
             init_backend["text_embed_cache"].discover_all_files()
