@@ -40,6 +40,23 @@ from diffusers.pipelines.pixart_alpha.pipeline_pixart_alpha import (
     ASPECT_RATIO_1024_BIN,
 )
 
+
+# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
+def retrieve_latents(
+    encoder_output: torch.Tensor,
+    generator: Optional[torch.Generator] = None,
+    sample_mode: str = "sample",
+):
+    if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
+        return encoder_output.latent_dist.sample(generator)
+    elif hasattr(encoder_output, "latent_dist") and sample_mode == "argmax":
+        return encoder_output.latent_dist.mode()
+    elif hasattr(encoder_output, "latents"):
+        return encoder_output.latents
+    else:
+        raise AttributeError("Could not access latents of provided encoder_output")
+
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 if is_bs4_available():
@@ -224,6 +241,45 @@ class PixArtSigmaPipeline(DiffusionPipeline):
         self.image_processor = PixArtImageProcessor(
             vae_scale_factor=self.vae_scale_factor
         )
+
+    def get_timesteps(
+        self, num_inference_steps, strength, device, denoising_start=None
+    ):
+        # get the original timestep using init_timestep
+        if denoising_start is not None:
+            init_timestep = min(
+                int(num_inference_steps * denoising_start), num_inference_steps
+            )
+            t_start = max(num_inference_steps - init_timestep, 0)
+        else:
+            t_start = 0
+
+        timesteps = self.scheduler.timesteps[t_start * self.scheduler.order :]
+        # Strength is irrelevant if we directly request a timestep to start at;
+        # that is, strength is determined by the denoising_start instead.
+        if denoising_start is not None:
+            discrete_timestep_cutoff = int(
+                round(
+                    self.scheduler.config.num_train_timesteps
+                    - (denoising_start * self.scheduler.config.num_train_timesteps)
+                )
+            )
+
+            num_inference_steps = (timesteps < discrete_timestep_cutoff).sum().item()
+            if self.scheduler.order == 2 and num_inference_steps % 2 == 0:
+                # if the scheduler is a 2nd order scheduler we might have to do +1
+                # because `num_inference_steps` might be even given that every timestep
+                # (except the highest one) is duplicated. If `num_inference_steps` is even it would
+                # mean that we cut the timesteps in the middle of the denoising step
+                # (between 1st and 2nd derivative) which leads to incorrect results. By adding 1
+                # we ensure that the denoising process always ends after the 2nd derivate step of the scheduler
+                num_inference_steps = num_inference_steps + 1
+
+            # because t_n+1 >= t_n, we slice the timesteps starting from the end
+            timesteps = timesteps[-num_inference_steps:]
+            return timesteps, num_inference_steps
+
+        return timesteps, num_inference_steps - t_start
 
     # Copied from diffusers.pipelines.pixart_alpha.pipeline_pixart_alpha.PixArtAlphaPipeline.encode_prompt with 120->300
     def encode_prompt(
@@ -426,6 +482,8 @@ class PixArtSigmaPipeline(DiffusionPipeline):
         prompt,
         height,
         width,
+        strength,
+        num_inference_steps,
         negative_prompt,
         callback_steps,
         prompt_embeds=None,
@@ -433,11 +491,23 @@ class PixArtSigmaPipeline(DiffusionPipeline):
         prompt_attention_mask=None,
         negative_prompt_attention_mask=None,
     ):
-        if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
-            )
-
+        if strength is None:
+            if height % 8 != 0 or width % 8 != 0:
+                raise ValueError(
+                    f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
+                )
+        else:
+            if strength < 0 or strength > 1:
+                raise ValueError(
+                    f"The value of strength should in [0.0, 1.0] but is {strength}"
+                )
+            if num_inference_steps is None:
+                raise ValueError("`num_inference_steps` cannot be None.")
+            elif not isinstance(num_inference_steps, int) or num_inference_steps <= 0:
+                raise ValueError(
+                    f"`num_inference_steps` has to be a positive integer but is {num_inference_steps} of type"
+                    f" {type(num_inference_steps)}."
+                )
         if (callback_steps is None) or (
             callback_steps is not None
             and (not isinstance(callback_steps, int) or callback_steps <= 0)
@@ -660,6 +730,8 @@ class PixArtSigmaPipeline(DiffusionPipeline):
         device,
         generator,
         latents=None,
+        timestep=None,
+        add_noise=False,
     ):
         shape = (
             batch_size,
@@ -679,10 +751,30 @@ class PixArtSigmaPipeline(DiffusionPipeline):
             )
         else:
             latents = latents.to(device)
+            if add_noise and timestep is not None:
+                shape = latents.shape
+                noise = randn_tensor(
+                    shape, generator=generator, device=device, dtype=dtype
+                )
+                # get latents
+                latents = self.scheduler.add_noise(latents, noise, timestep)
 
         # scale the initial noise by the standard deviation required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
+
         return latents
+
+    @property
+    def denoising_start(self):
+        return self._denoising_start
+
+    @property
+    def denoising_end(self):
+        return self._denoising_end
+
+    @property
+    def num_timesteps(self):
+        return self._num_timesteps
 
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
@@ -690,9 +782,12 @@ class PixArtSigmaPipeline(DiffusionPipeline):
         self,
         prompt: Union[str, List[str]] = None,
         negative_prompt: str = "",
+        strength: float = None,
         num_inference_steps: int = 20,
         timesteps: List[int] = None,
         sigmas: List[float] = None,
+        denoising_start: Optional[float] = None,
+        denoising_end: Optional[float] = None,
         guidance_scale: float = 4.5,
         num_images_per_prompt: Optional[int] = 1,
         height: Optional[int] = None,
@@ -724,9 +819,30 @@ class PixArtSigmaPipeline(DiffusionPipeline):
                 The prompt or prompts not to guide the image generation. If not defined, one has to pass
                 `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
                 less than `1`).
+            strength (`float`, *optional*, defaults to 0.3):
+                Conceptually, indicates how much to transform the reference `image`. Must be between 0 and 1. `image`
+                will be used as a starting point, adding more noise to it the larger the `strength`. The number of
+                denoising steps depends on the amount of noise initially added. When `strength` is 1, added noise will
+                be maximum and the denoising process will run for the full number of iterations specified in
+                `num_inference_steps`. A value of 1, therefore, essentially ignores `image`. Note that in the case of
+                `denoising_start` being declared as an integer, the value of `strength` will be ignored.
             num_inference_steps (`int`, *optional*, defaults to 100):
                 The number of denoising steps. More denoising steps usually lead to a higher quality image at the
                 expense of slower inference.
+            denoising_start (`float`, *optional*):
+                When specified, indicates the fraction (between 0.0 and 1.0) of the total denoising process to be
+                bypassed before it is initiated. Consequently, the initial part of the denoising process is skipped and
+                it is assumed that the passed `image` is a partly denoised image. Note that when this is specified,
+                strength will be ignored. The `denoising_start` parameter is particularly beneficial when this pipeline
+                is integrated into a "Mixture of Denoisers" multi-pipeline setup, as detailed in [**Refine Image
+                Quality**](https://huggingface.co/docs/diffusers/using-diffusers/sdxl#refine-image-quality).
+            denoising_end (`float`, *optional*):
+                When specified, determines the fraction (between 0.0 and 1.0) of the total denoising process to be
+                completed before it is intentionally prematurely terminated. As a result, the returned sample will
+                still retain a substantial amount of noise as determined by the discrete timesteps selected by the
+                scheduler. The denoising_end parameter should ideally be utilized when this pipeline forms a part of a
+                "Mixture of Denoisers" multi-pipeline setup, as elaborated in [**Refining the Image
+                Output**](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/stable_diffusion_xl#refining-the-image-output)
             timesteps (`List[int]`, *optional*):
                 Custom timesteps to use for the denoising process with schedulers which support a `timesteps` argument
                 in their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is
@@ -817,6 +933,8 @@ class PixArtSigmaPipeline(DiffusionPipeline):
             prompt,
             height,
             width,
+            strength,
+            num_inference_steps,
             negative_prompt,
             callback_steps,
             prompt_embeds,
@@ -834,6 +952,9 @@ class PixArtSigmaPipeline(DiffusionPipeline):
             batch_size = prompt_embeds.shape[0]
 
         device = self._execution_device
+        self._denoising_start = denoising_start
+        self._num_timesteps = num_inference_steps
+        self._denoising_end = denoising_end
 
         # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
         # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
@@ -866,22 +987,46 @@ class PixArtSigmaPipeline(DiffusionPipeline):
             )
 
         # 4. Prepare timesteps
+        def denoising_value_valid(dnv):
+            return isinstance(dnv, float) and 0 < dnv < 1
+
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler, num_inference_steps, device, timesteps, sigmas
         )
 
         # 5. Prepare latents.
         latent_channels = self.transformer.config.in_channels
-        latents = self.prepare_latents(
-            batch_size * num_images_per_prompt,
-            latent_channels,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            generator,
-            latents,
-        )
+        latent_timestep = None
+        if denoising_end is not None or denoising_start is not None:
+            timesteps, num_inference_steps = self.get_timesteps(
+                num_inference_steps,
+                strength,
+                device,
+                denoising_start=(
+                    self.denoising_start
+                    if denoising_value_valid(self.denoising_start)
+                    else None
+                ),
+            )
+            latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
+            if latents is not None:
+                height, width = latents.shape[-2:]
+                height = height * self.vae_scale_factor
+                width = width * self.vae_scale_factor
+        add_noise = True if self.denoising_start is None else False
+        if latents is None:
+            latents = self.prepare_latents(
+                batch_size * num_images_per_prompt,
+                latent_channels,
+                height,
+                width,
+                prompt_embeds.dtype,
+                device,
+                generator,
+                latents,
+                timestep=latent_timestep,
+                add_noise=add_noise,
+            )
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -893,7 +1038,53 @@ class PixArtSigmaPipeline(DiffusionPipeline):
         num_warmup_steps = max(
             len(timesteps) - num_inference_steps * self.scheduler.order, 0
         )
+        if (
+            self.denoising_end is not None
+            and self.denoising_start is not None
+            and denoising_value_valid(self.denoising_end)
+            and denoising_value_valid(self.denoising_start)
+            and self.denoising_start >= self.denoising_end
+        ):
+            raise ValueError(
+                f"`denoising_start`: {self.denoising_start} cannot be larger than or equal to `denoising_end`: "
+                + f" {self.denoising_end} when using type float."
+            )
+        if self.denoising_start is not None:
+            if denoising_value_valid(self.denoising_start):
+                discrete_timestep_cutoff = int(
+                    round(
+                        self.scheduler.config.num_train_timesteps
+                        - (denoising_start * self.scheduler.config.num_train_timesteps)
+                    )
+                )
 
+                num_inference_steps = (
+                    (timesteps < discrete_timestep_cutoff).sum().item()
+                )
+
+            else:
+                raise ValueError(
+                    f"`denoising_start` must be a float between 0 and 1: {denoising_start}"
+                )
+        if self.denoising_end is not None:
+            if denoising_value_valid(self.denoising_end):
+                discrete_timestep_cutoff = int(
+                    round(
+                        self.scheduler.config.num_train_timesteps
+                        - (
+                            self.denoising_end
+                            * self.scheduler.config.num_train_timesteps
+                        )
+                    )
+                )
+                num_inference_steps = len(
+                    list(filter(lambda ts: ts >= discrete_timestep_cutoff, timesteps))
+                )
+                timesteps = timesteps[:num_inference_steps]
+            else:
+                raise ValueError(
+                    f"`denoising_end` must be a float between 0 and 1: {denoising_end}"
+                )
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 latent_model_input = (
@@ -926,7 +1117,9 @@ class PixArtSigmaPipeline(DiffusionPipeline):
 
                 # predict noise model_output
                 noise_pred = self.transformer(
-                    latent_model_input,
+                    latent_model_input.to(
+                        device=self.transformer.device, dtype=self.transformer.dtype
+                    ),
                     encoder_hidden_states=prompt_embeds,
                     encoder_attention_mask=prompt_attention_mask,
                     timestep=current_timestep,
