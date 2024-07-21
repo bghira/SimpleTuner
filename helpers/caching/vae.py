@@ -511,8 +511,10 @@ class VAECache:
                 latents_uncached = self.vae.encode(
                     processed_images
                 ).latent_dist.sample()
-                if hasattr(self.vae, "config") and hasattr(
-                    self.vae.config, "shift_factor"
+                if (
+                    hasattr(self.vae, "config")
+                    and hasattr(self.vae.config, "shift_factor")
+                    and self.vae.config.shift_factor is not None
                 ):
                     latents_uncached = (
                         latents_uncached - self.vae.config.shift_factor
