@@ -132,6 +132,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import UMT5EncoderModel
 
         return UMT5EncoderModel
+    elif model_class == "ChatGLMTokenizer":
+        from transformers import ChatGLMTokenizer
+
+        return ChatGLMTokenizer
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -391,19 +395,23 @@ def main():
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoders = []
     tokenizers = []
-    if not args.pixart_sigma and not args.aura_flow:
-        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
-        # sd2.x uses openclip vit-H/14
-        logger.info("Load CLIP text encoder..")
-        text_encoder_path = args.pretrained_model_name_or_path
+    if args.kolors:
+        logger.info("Loading Kolors ChatGLM language model..")
+        text_encoder_path = "kwai-kolors/kolors-diffusers"
         text_encoder_subfolder = "text_encoder"
-    else:
+    elif args.pixart_sigma or args.aura_flow:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
             if args.pretrained_t5_model_name_or_path is not None
             else args.pretrained_model_name_or_path
         )
         # Google's version of the T5 XXL model doesn't have a subfolder :()
+        text_encoder_subfolder = "text_encoder"
+    else:
+        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
+        # sd2.x uses openclip vit-H/14
+        logger.info("Load CLIP text encoder..")
+        text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
@@ -591,10 +599,10 @@ def main():
         model_type_label = "AuraFlow"
     if args.legacy:
         model_type_label = "Stable Diffusion 1.x/2.x"
-    if args.kolors:
-        model_type_label = "Kwai Kolors"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
+    if args.kolors:
+        model_type_label = "Kwai Kolors"
     AURA_DIT_BLOCKS_REGEX = (
         r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
     )
@@ -603,7 +611,7 @@ def main():
     )
 
     if args.controlnet:
-        if args.pixart_sigma or args.aura_flow or args.kolors:
+        if args.pixart_sigma or args.aura_flow:
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
             )
@@ -764,7 +772,7 @@ def main():
     if not args.disable_compel and not any(
         [args.sd3, args.pixart_sigma, args.aura_flow, args.kolors]
     ):
-        # SD3 and PixArt don't really work with prompt weighting.
+        # Only CLIP works with prompt weighting.
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
