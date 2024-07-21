@@ -2177,7 +2177,10 @@ class KolorsPipeline(
             # unscale/denormalize the latents
             latents = latents / self.vae.config.scaling_factor
 
-            image = self.vae.decode(latents, return_dict=False)[0]
+            image = self.vae.decode(
+                latents.to(device=self.vae.device, dtype=self.vae.dtype),
+                return_dict=False,
+            )[0]
 
             # cast back to fp16 if needed
             if needs_upcasting:
