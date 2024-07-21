@@ -217,7 +217,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
-        if model_type == "sdxl" or model_type == "sd3":
+        if model_type == "sdxl" or model_type == "sd3" or model_type == "kolors":
             (
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
@@ -260,10 +260,6 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_shortnames,
                 validation_negative_prompt_embeds,
                 None,
-            )
-        elif model_type == "kolors":
-            raise NotImplementedError(
-                "Kolors validation prompt preparation is not yet implemented."
             )
         else:
             raise ValueError(f"Unknown model type '{model_type}'")
