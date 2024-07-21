@@ -8,6 +8,10 @@
 
 For a fun and lightweight model, see [this quickstart guide](/documentation/quickstart/SIGMA.md)
 
+## Kwai Kolors
+
+An SDXL-like U-net based architecture that uses a language model called ChatGLM for its text parsing can be found [here](/documentation/quickstart/KOLORS.md)
+
 ## AuraFlow
 
 A full tutorial to start training an AuraFlow model is available in [this quickstart guide](/documentation/quickstart/AURAFLOW.md)

@@ -235,7 +235,12 @@ class TextEmbeddingCache:
 
     # Adapted from pipelines.StableDiffusion3Pipeline.encode_prompt
     def encode_sd3_prompt(
-        self, text_encoders, tokenizers, prompt: str, is_validation: bool = False
+        self,
+        text_encoders,
+        tokenizers,
+        prompt: str,
+        is_validation: bool = False,
+        return_masked_embed: bool = True,
     ):
         """
         Encode a prompt for an SD3 model.
@@ -278,6 +283,7 @@ class TextEmbeddingCache:
             prompt=prompt,
             num_images_per_prompt=num_images_per_prompt,
             device=self.accelerator.device,
+            return_masked_embed=return_masked_embed,
         )
 
         clip_prompt_embeds = torch.nn.functional.pad(
@@ -323,19 +329,25 @@ class TextEmbeddingCache:
                     continue
                 if type(prompt) is not str and type(prompt) is not list:
                     prompt = str(prompt)
+                max_seq_len = 256 if self.model_type == "kolors" else 77
                 text_inputs = tokenizer(
-                    prompt, padding="max_length", truncation=True, return_tensors="pt"
+                    prompt,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt",
+                    max_length=max_seq_len,
                 )
-                text_input_ids = text_inputs.input_ids
-
                 untruncated_ids = tokenizer(
-                    prompt, padding="longest", return_tensors="pt"
+                    prompt,
+                    padding="longest",
+                    return_tensors="pt",
+                    max_length=max_seq_len,
                 ).input_ids
 
                 if untruncated_ids.shape[
                     -1
                 ] > tokenizer.model_max_length and not torch.equal(
-                    text_input_ids, untruncated_ids
+                    text_inputs.input_ids, untruncated_ids
                 ):
                     removed_text = tokenizer.batch_decode(
                         untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
@@ -346,21 +358,42 @@ class TextEmbeddingCache:
                         logger.warning(
                             f"The following part of your input was truncated because CLIP can only handle sequences up to {tokenizer.model_max_length} tokens: {removed_text}"
                         )
-
-                prompt_embeds_output = text_encoder(
-                    text_input_ids.to(self.accelerator.device),
-                    output_hidden_states=True,
-                )
-                # We are always interested in the pooled output of the final text encoder
-                pooled_prompt_embeds = prompt_embeds_output[0]
-                prompt_embeds = prompt_embeds_output.hidden_states[-2]
-                del prompt_embeds_output
+                if self.model_type == "sdxl":
+                    prompt_embeds_output = text_encoder(
+                        text_inputs.input_ids.to(self.accelerator.device),
+                        output_hidden_states=True,
+                    )
+                    # We are always interested in the pooled output of the final text encoder
+                    pooled_prompt_embeds = prompt_embeds_output[0]
+                    prompt_embeds = prompt_embeds_output.hidden_states[-2]
+                elif self.model_type == "kolors":
+                    # we pass the attention mask into the text encoder. it transforms the embeds but does not attend to them.
+                    # unfortunately, kolors does not return the attention mask for later use by the U-net to avoid attending to the padding tokens.
+                    prompt_embeds_output = text_encoder(
+                        input_ids=text_inputs["input_ids"].to(self.accelerator.device),
+                        attention_mask=text_inputs["attention_mask"].to(
+                            self.accelerator.device
+                        ),
+                        position_ids=text_inputs["position_ids"],
+                        output_hidden_states=True,
+                    )
+                    # the ChatGLM encoder output is hereby mangled in fancy ways for Kolors to be useful.
+                    prompt_embeds = (
+                        prompt_embeds_output.hidden_states[-2].permute(1, 0, 2).clone()
+                    )
+                    # [max_sequence_length, batch, hidden_size] -> [batch, hidden_size]
+                    pooled_prompt_embeds = prompt_embeds_output.hidden_states[-1][
+                        -1, :, :
+                    ].clone()
+                else:
+                    raise ValueError(f"Unknown model type: {self.model_type}")
                 bs_embed, seq_len, _ = prompt_embeds.shape
                 prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
 
                 # Clear out anything we moved to the text encoder device
-                text_input_ids.to("cpu")
-                del text_input_ids
+                text_inputs.input_ids.to("cpu")
+                del prompt_embeds_output
+                del text_inputs
 
                 prompt_embeds_list.append(prompt_embeds)
         except Exception as e:
@@ -397,13 +430,21 @@ class TextEmbeddingCache:
         ).squeeze(dim=1)
 
     def encode_prompt(self, prompt: str, is_validation: bool = False):
-        if self.model_type == "sdxl":
+        if self.model_type == "sdxl" or self.model_type == "kolors":
             return self.encode_sdxl_prompt(
                 self.text_encoders, self.tokenizers, prompt, is_validation
             )
         elif self.model_type == "sd3":
             return self.encode_sd3_prompt(
-                self.text_encoders, self.tokenizers, prompt, is_validation
+                self.text_encoders,
+                self.tokenizers,
+                prompt,
+                is_validation,
+                return_masked_embed=(
+                    True
+                    if StateTracker.get_args().sd3_t5_mask_behaviour == "mask"
+                    else False
+                ),
             )
         else:
             return self.encode_legacy_prompt(
@@ -521,7 +562,7 @@ class TextEmbeddingCache:
         # Proceed with uncached prompts
         raw_prompts = uncached_prompts if uncached_prompts else all_prompts
         output = None
-        if self.model_type == "sdxl":
+        if self.model_type == "sdxl" or self.model_type == "kolors":
             output = self.compute_embeddings_for_sdxl_prompts(
                 raw_prompts,
                 return_concat=return_concat,

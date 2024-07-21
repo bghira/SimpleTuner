@@ -91,6 +91,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--kolors",
+        action="store_true",
+        default=False,
+        help=("This option must be provided when training a Kolors model."),
+    )
+    parser.add_argument(
         "--aura_flow",
         action="store_true",
         default=False,

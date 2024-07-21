@@ -217,7 +217,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     # Compute negative embed for validation prompts, if any are set.
     if validation_prompts:
         logger.info("Precomputing the negative prompt embed for validations.")
-        if model_type == "sdxl" or model_type == "sd3":
+        if model_type == "sdxl" or model_type == "sd3" or model_type == "kolors":
             (
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
@@ -508,6 +508,24 @@ class Validation:
             if self.args.validation_using_datasets:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
+        elif model_type == "kolors":
+            if self.args.controlnet:
+                raise NotImplementedError("Kolors ControlNet is not yet supported.")
+            if self.args.validation_using_datasets:
+                try:
+                    from helpers.kolors.pipeline import KolorsImg2ImgPipeline
+                except:
+                    logger.error(
+                        "Kolors pipeline requires the latest version of Diffusers."
+                    )
+                return KolorsImg2ImgPipeline
+            try:
+                from helpers.kolors.pipeline import KolorsPipeline
+            except Exception:
+                logger.error(
+                    "Kolors pipeline requires the latest version of Diffusers."
+                )
+            return KolorsPipeline
         elif model_type == "legacy":
             if self.deepfloyd_stage2:
                 from diffusers.pipelines import IFSuperResolutionPipeline
@@ -556,6 +574,7 @@ class Validation:
         if (
             StateTracker.get_model_type() == "sdxl"
             or StateTracker.get_model_type() == "sd3"
+            or StateTracker.get_model_type() == "kolors"
         ):
             (
                 current_validation_prompt_embeds,
@@ -662,6 +681,11 @@ class Validation:
                         device=self.accelerator.device, dtype=self.weight_dtype
                     )
                 )
+        else:
+            raise NotImplementedError(
+                f"Model type {StateTracker.get_model_type()} not implemented for validation."
+            )
+
         current_validation_prompt_embeds = current_validation_prompt_embeds.to(
             device=self.accelerator.device, dtype=self.weight_dtype
         )
@@ -1068,10 +1092,13 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if (
-                not self.deepfloyd
-                and not self.args.pixart_sigma
-                and not self.flow_matching
+            if not any(
+                [
+                    self.deepfloyd,
+                    self.args.pixart_sigma,
+                    self.flow_matching,
+                    self.args.kolors,
+                ]
             ):
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale

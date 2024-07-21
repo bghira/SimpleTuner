@@ -211,7 +211,9 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         add_text_embeds_all: Tensor of shape (batch_size, 512)
     """
     debug_log(" -> get embed from cache")
-    is_sdxl = text_embed_cache.model_type == "sdxl"
+    is_sdxl = (
+        text_embed_cache.model_type == "sdxl" or text_embed_cache.model_type == "kolors"
+    )
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
     is_aura_flow = text_embed_cache.model_type == "aura_flow"
@@ -417,7 +419,10 @@ def collate_fn(batch):
     )
     batch_time_ids = None
     attn_mask = None
-    if StateTracker.get_model_type() == "sdxl":
+    if (
+        StateTracker.get_model_type() == "sdxl"
+        or StateTracker.get_model_type() == "kolors"
+    ):
         debug_log("Compute and stack SDXL time ids")
         batch_time_ids = gather_conditional_sdxl_size_features(
             examples, latent_batch, StateTracker.get_weight_dtype()
