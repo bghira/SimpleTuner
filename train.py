@@ -602,7 +602,15 @@ def main():
         )
     else:
         logger.info("Loading U-net..")
+        unet_variant = args.variant
+        if (
+            args.kolors
+            and args.pretrained_model_name_or_path.lower()
+            == "kwai-kolors/kolors-diffusers"
+        ):
+            unet_variant = "fp16"
         transformer = None
+        pretrained_load_args["variant"] = unet_variant
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
@@ -1821,7 +1829,7 @@ def main():
                 if args.sd3 or args.aura_flow:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
-                elif StateTracker.get_model_type() == "sdxl":
+                elif StateTracker.get_model_type() == "sdxl" or args.kolors:
                     added_cond_kwargs = {
                         "text_embeds": add_text_embeds.to(
                             device=accelerator.device, dtype=weight_dtype
@@ -1912,12 +1920,14 @@ def main():
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif unet is not None:
                         if args.legacy:
+                            # SD 1.5 or 2.x
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,
                                 encoder_hidden_states,
                             ).sample
                         else:
+                            # SDXL, Kolors, other default unet prediction.
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,
