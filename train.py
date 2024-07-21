@@ -132,6 +132,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import UMT5EncoderModel
 
         return UMT5EncoderModel
+    elif model_class == "ChatGLMModel":
+        from diffusers import ChatGLMModel
+
+        return ChatGLMModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -144,18 +148,31 @@ def get_tokenizers(args):
             "subfolder": "tokenizer",
             "revision": args.revision,
         }
-        if not args.pixart_sigma and not args.aura_flow:
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
+        is_t5_model = False
+        if args.pixart_sigma:
+            from transformers import T5Tokenizer
+
+            tokenizer_cls = T5Tokenizer
+            is_t5_model = True
+        elif args.aura_flow:
+            from transformers import LlamaTokenizerFast
+
+            tokenizer_cls = LlamaTokenizerFast
+            is_t5_model = True
+        elif args.kolors:
+            from diffusers import ChatGLMTokenizer
+
+            tokenizer_cls = ChatGLMTokenizer
+            tokenizer_1 = tokenizer_cls.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer",
+                revision=args.revision,
+                use_fast=False,
+            )
         else:
-            if args.pixart_sigma:
-                from transformers import T5Tokenizer
+            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
 
-                tokenizer_cls = T5Tokenizer
-            elif args.aura_flow:
-                from transformers import LlamaTokenizerFast
-
-                tokenizer_cls = LlamaTokenizerFast
-
+        if is_t5_model:
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
                 if args.pretrained_t5_model_name_or_path is not None
@@ -191,7 +208,7 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
-    if not args.pixart_sigma and not args.aura_flow:
+    if not any([args.pixart_sigma, args.aura_flow, args.kolors]):
         try:
             tokenizer_2 = CLIPTokenizer.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -246,6 +263,8 @@ def main():
         StateTracker.set_model_type("aura_flow")
     if args.legacy:
         StateTracker.set_model_type("legacy")
+    if args.kolors:
+        StateTracker.set_model_type("kolors")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -389,19 +408,23 @@ def main():
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoders = []
     tokenizers = []
-    if not args.pixart_sigma and not args.aura_flow:
-        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
-        # sd2.x uses openclip vit-H/14
-        logger.info("Load CLIP text encoder..")
-        text_encoder_path = args.pretrained_model_name_or_path
+    if args.kolors:
+        logger.info("Loading Kolors ChatGLM language model..")
+        text_encoder_path = "kwai-kolors/kolors-diffusers"
         text_encoder_subfolder = "text_encoder"
-    else:
+    elif args.pixart_sigma or args.aura_flow:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
             if args.pretrained_t5_model_name_or_path is not None
             else args.pretrained_model_name_or_path
         )
         # Google's version of the T5 XXL model doesn't have a subfolder :()
+        text_encoder_subfolder = "text_encoder"
+    else:
+        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
+        # sd2.x uses openclip vit-H/14
+        logger.info("Load CLIP text encoder..")
+        text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
@@ -458,11 +481,17 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        text_encoder_variant = args.variant
         if tokenizer_1 is not None:
             if args.pixart_sigma or args.aura_flow:
                 logger.info(
                     f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
+            elif args.kolors:
+                logger.info(
+                    f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
+                )
+                text_encoder_variant = "fp16"
             else:
                 logger.info(
                     f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
@@ -471,7 +500,7 @@ def main():
                 text_encoder_path,
                 subfolder=text_encoder_subfolder,
                 revision=args.revision,
-                variant=args.variant,
+                variant=text_encoder_variant,
             )
 
         if tokenizer_2 is not None:
@@ -573,7 +602,15 @@ def main():
         )
     else:
         logger.info("Loading U-net..")
+        unet_variant = args.variant
+        if (
+            args.kolors
+            and args.pretrained_model_name_or_path.lower()
+            == "kwai-kolors/kolors-diffusers"
+        ):
+            unet_variant = "fp16"
         transformer = None
+        pretrained_load_args["variant"] = unet_variant
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
@@ -591,6 +628,8 @@ def main():
         model_type_label = "Stable Diffusion 1.x/2.x"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
+    if args.kolors:
+        model_type_label = "Kwai Kolors"
     AURA_DIT_BLOCKS_REGEX = (
         r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
     )
@@ -757,13 +796,10 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if (
-        not args.disable_compel
-        and not args.sd3
-        and not args.pixart_sigma
-        and not args.aura_flow
+    if not args.disable_compel and not any(
+        [args.sd3, args.pixart_sigma, args.aura_flow, args.kolors]
     ):
-        # SD3 and PixArt don't really work with prompt weighting.
+        # Only CLIP works with prompt weighting.
         prompt_handler = PromptHandler(
             args=args,
             text_encoders=[text_encoder_1, text_encoder_2],
@@ -1793,7 +1829,7 @@ def main():
                 if args.sd3 or args.aura_flow:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
-                elif StateTracker.get_model_type() == "sdxl":
+                elif StateTracker.get_model_type() == "sdxl" or args.kolors:
                     added_cond_kwargs = {
                         "text_embeds": add_text_embeds.to(
                             device=accelerator.device, dtype=weight_dtype
@@ -1884,12 +1920,14 @@ def main():
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif unet is not None:
                         if args.legacy:
+                            # SD 1.5 or 2.x
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,
                                 encoder_hidden_states,
                             ).sample
                         else:
+                            # SDXL, Kolors, other default unet prediction.
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,
@@ -2392,7 +2430,12 @@ def main():
                 )
 
             else:
-                pipeline = StableDiffusionXLPipeline.from_pretrained(
+                sdxl_pipeline_cls = StableDiffusionXLPipeline
+                if args.kolors:
+                    from helpers.kolors.pipeline import KolorsPipeline
+
+                    sdxl_pipeline_cls = KolorsPipeline
+                pipeline = sdxl_pipeline_cls.from_pretrained(
                     args.pretrained_model_name_or_path,
                     text_encoder=(
                         text_encoder_cls_1.from_pretrained(
