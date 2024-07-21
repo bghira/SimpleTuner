@@ -169,7 +169,9 @@ fi
 if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
 fi
-
+if [ -n "$KOLORS" ] && [[ "$KOLORS" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --kolors"
+fi
 
 export EMA_ARGS=""
 if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
