@@ -638,14 +638,15 @@ def main():
     )
 
     if args.controlnet:
-        if args.pixart_sigma or args.aura_flow:
-            raise ValueError(
-                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
-            )
-        if (
-            "deepfloyd" in StateTracker.get_args().model_type
-            or StateTracker.is_sdxl_refiner()
-            or args.sd3
+        if any(
+            [
+                args.pixart_sigma,
+                args.aura_flow,
+                args.sd3,
+                args.kolors,
+                StateTracker.is_sdxl_refiner(),
+                "deepfloyd" in args.model_type,
+            ]
         ):
             raise ValueError(
                 f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
