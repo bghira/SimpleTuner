@@ -2432,7 +2432,7 @@ def main():
             else:
                 sdxl_pipeline_cls = StableDiffusionXLPipeline
                 if args.kolors:
-                    from diffusers.pipelines import KolorsPipeline
+                    from helpers.kolors.pipeline import KolorsPipeline
 
                     sdxl_pipeline_cls = KolorsPipeline
                 pipeline = sdxl_pipeline_cls.from_pretrained(
