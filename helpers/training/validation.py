@@ -512,11 +512,15 @@ class Validation:
             if self.args.controlnet:
                 raise NotImplementedError("Kolors ControlNet is not yet supported.")
             if self.args.validation_using_datasets:
-                raise NotImplementedError(
-                    "Kolors inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-                )
+                try:
+                    from helpers.kolors.pipeline import KolorsImg2ImgPipeline
+                except:
+                    logger.error(
+                        "Kolors pipeline requires the latest version of Diffusers."
+                    )
+                return KolorsImg2ImgPipeline
             try:
-                from diffusers.pipelines import KolorsPipeline
+                from helpers.kolors.pipeline import KolorsPipeline
             except Exception:
                 logger.error(
                     "Kolors pipeline requires the latest version of Diffusers."
@@ -570,6 +574,7 @@ class Validation:
         if (
             StateTracker.get_model_type() == "sdxl"
             or StateTracker.get_model_type() == "sd3"
+            or StateTracker.get_model_type() == "kolors"
         ):
             (
                 current_validation_prompt_embeds,
@@ -1087,10 +1092,13 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if (
-                not self.deepfloyd
-                and not self.args.pixart_sigma
-                and not self.flow_matching
+            if not any(
+                [
+                    self.deepfloyd,
+                    self.args.pixart_sigma,
+                    self.flow_matching,
+                    self.args.kolors,
+                ]
             ):
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
