@@ -235,7 +235,12 @@ class TextEmbeddingCache:
 
     # Adapted from pipelines.StableDiffusion3Pipeline.encode_prompt
     def encode_sd3_prompt(
-        self, text_encoders, tokenizers, prompt: str, is_validation: bool = False
+        self,
+        text_encoders,
+        tokenizers,
+        prompt: str,
+        is_validation: bool = False,
+        return_masked_embed: bool = True,
     ):
         """
         Encode a prompt for an SD3 model.
@@ -278,6 +283,7 @@ class TextEmbeddingCache:
             prompt=prompt,
             num_images_per_prompt=num_images_per_prompt,
             device=self.accelerator.device,
+            return_masked_embed=return_masked_embed,
         )
 
         clip_prompt_embeds = torch.nn.functional.pad(
@@ -397,13 +403,21 @@ class TextEmbeddingCache:
         ).squeeze(dim=1)
 
     def encode_prompt(self, prompt: str, is_validation: bool = False):
-        if self.model_type == "sdxl":
+        if self.model_type == "sdxl" or self.model_type == "kolors":
             return self.encode_sdxl_prompt(
                 self.text_encoders, self.tokenizers, prompt, is_validation
             )
         elif self.model_type == "sd3":
             return self.encode_sd3_prompt(
-                self.text_encoders, self.tokenizers, prompt, is_validation
+                self.text_encoders,
+                self.tokenizers,
+                prompt,
+                is_validation,
+                return_masked_embed=(
+                    True
+                    if StateTracker.get_args().sd3_t5_mask_behaviour == "mask"
+                    else False
+                ),
             )
         else:
             return self.encode_legacy_prompt(
@@ -521,7 +535,7 @@ class TextEmbeddingCache:
         # Proceed with uncached prompts
         raw_prompts = uncached_prompts if uncached_prompts else all_prompts
         output = None
-        if self.model_type == "sdxl":
+        if self.model_type == "sdxl" or self.model_type == "kolors":
             output = self.compute_embeddings_for_sdxl_prompts(
                 raw_prompts,
                 return_concat=return_concat,
