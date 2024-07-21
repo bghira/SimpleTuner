@@ -132,10 +132,10 @@ def import_model_class_from_model_name_or_path(
         from transformers import UMT5EncoderModel
 
         return UMT5EncoderModel
-    elif model_class == "ChatGLMTokenizer":
-        from transformers import ChatGLMTokenizer
+    elif model_class == "ChatGLMModel":
+        from diffusers import ChatGLMModel
 
-        return ChatGLMTokenizer
+        return ChatGLMModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -148,18 +148,31 @@ def get_tokenizers(args):
             "subfolder": "tokenizer",
             "revision": args.revision,
         }
-        if not args.pixart_sigma and not args.aura_flow:
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
+        is_t5_model = False
+        if args.pixart_sigma:
+            from transformers import T5Tokenizer
+
+            tokenizer_cls = T5Tokenizer
+            is_t5_model = True
+        elif args.aura_flow:
+            from transformers import LlamaTokenizerFast
+
+            tokenizer_cls = LlamaTokenizerFast
+            is_t5_model = True
+        elif args.kolors:
+            from diffusers import ChatGLMTokenizer
+
+            tokenizer_cls = ChatGLMTokenizer
+            tokenizer_1 = tokenizer_cls.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer",
+                revision=args.revision,
+                use_fast=False,
+            )
         else:
-            if args.pixart_sigma:
-                from transformers import T5Tokenizer
+            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
 
-                tokenizer_cls = T5Tokenizer
-            elif args.aura_flow:
-                from transformers import LlamaTokenizerFast
-
-                tokenizer_cls = LlamaTokenizerFast
-
+        if is_t5_model:
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
                 if args.pretrained_t5_model_name_or_path is not None
@@ -195,7 +208,7 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
-    if not args.pixart_sigma and not args.aura_flow:
+    if not any([args.pixart_sigma, args.aura_flow, args.kolors]):
         try:
             tokenizer_2 = CLIPTokenizer.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -468,11 +481,17 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+        text_encoder_variant = args.variant
         if tokenizer_1 is not None:
             if args.pixart_sigma or args.aura_flow:
                 logger.info(
                     f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
+            elif args.kolors:
+                logger.info(
+                    f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
+                )
+                text_encoder_variant = "fp16"
             else:
                 logger.info(
                     f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
@@ -481,7 +500,7 @@ def main():
                 text_encoder_path,
                 subfolder=text_encoder_subfolder,
                 revision=args.revision,
-                variant=args.variant,
+                variant=text_encoder_variant,
             )
 
         if tokenizer_2 is not None:
