@@ -1336,6 +1336,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--gradient_precision",
+        type=str,
+        choices=["unmodified", "fp32"],
+        default=None,
+        help=(
+            "One of the hallmark discoveries of the Llama 3.1 paper is numeric instability when calculating"
+            " gradients in bf16 precision. The default behaviour when gradient accumulation steps are enabled"
+            " is now to use fp32 gradients, which is slower, but provides more accurate updates."
+        ),
+    )
+    parser.add_argument(
         "--local_rank",
         type=int,
         default=-1,
@@ -1859,4 +1870,17 @@ def parse_args(input_args=None):
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
+
+    if args.gradient_accumulation_steps > 1:
+        if args.gradient_precision == "unmodified":
+            warning_log(
+                "Gradient accumulation steps are enabled, but gradient precision is set to 'unmodified'."
+                " This may lead to numeric instability. Consider setting --gradient_precision=fp32."
+            )
+        elif args.gradient_precision is None or args.gradient_precision == "fp32":
+            info_log(
+                "Gradient accumulation steps are enabled, and gradient precision is set to 'fp32'."
+            )
+            args.gradient_precision = "fp32"
+
     return args
