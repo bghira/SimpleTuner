@@ -498,6 +498,7 @@ class MetadataBackend:
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
                 logger.warning(f"Metadata not found for image {image_path}.")
+                raise Exception(f"Metadata not found for image {image_path}.")
                 return False
             width, height = metadata["original_size"]
         elif image is not None:
@@ -706,7 +707,7 @@ class MetadataBackend:
             existing_file for existing_file in self.image_metadata.keys()
         }
 
-        num_cpus = 8  # Using a fixed number for better control and predictability
+        num_cpus = 16  # Using a fixed number for better control and predictability
         files_split = np.array_split(new_files, num_cpus)
 
         metadata_updates_queue = Queue()

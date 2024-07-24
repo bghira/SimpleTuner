@@ -44,16 +44,16 @@ from helpers.training.min_snr_gamma import compute_snr
 from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
-logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "DEBUG"))
 
 filelock_logger = get_logger("filelock")
 connection_logger = get_logger("urllib3.connectionpool")
 training_logger = get_logger("training-loop")
 
 # More important logs.
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "DEBUG")
 logger.setLevel(target_level)
-training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO")
+training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "DEBUG")
 training_logger.setLevel(training_logger_level)
 
 # Less important logs.
@@ -85,7 +85,7 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 
-from peft import LoraConfig
+from peft import LoraConfig, get_peft_model
 from peft.utils import get_peft_model_state_dict
 from helpers.training.ema import EMAModel
 from diffusers.utils import (
@@ -656,7 +656,10 @@ def main():
                 use_dora=args.use_dora,
             )
             logger.info("Adding LoRA adapter to the unet model..")
-            unet.add_adapter(unet_lora_config)
+            try:
+                unet.add_adapter(unet_lora_config)
+            except AttributeError:
+                unet = get_peft_model(unet, unet_lora_config)
         if transformer is not None:
             target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
             if args.aura_flow:
@@ -672,7 +675,10 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
-            transformer.add_adapter(transformer_lora_config)
+            try:
+                transformer.add_adapter(transformer_lora_config)
+            except AttributeError:
+                transformer = get_peft_model(transformer, transformer_lora_config)
 
     logger.info(
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."

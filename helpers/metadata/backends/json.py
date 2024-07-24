@@ -261,10 +261,10 @@ class JsonMetadataBackend(MetadataBackend):
                 metadata_updates[image_path_str] = image_metadata
 
         except Exception as e:
+            logger.error(f"Image in question: {image_path_str}")
             logger.error(f"Error processing image: {e}")
             logger.error(f"Error traceback: {traceback.format_exc()}")
             if delete_problematic_images:
                 logger.error(f"Deleting image {image_path_str}.")
                 self.data_backend.delete(image_path_str)
-
         return aspect_ratio_bucket_indices

@@ -1,0 +1,31 @@
+[
+  {
+    "id": "jewelry-v13",
+    "type": "csv",
+    "crop": true,
+    "crop_aspect": "square",
+    "crop_style": "center",
+    "resolution": 0.5,
+    "minimum_image_size": 0.25,
+    "maximum_image_size": 1.0,
+    "target_downsample_size": 1.0,
+    "resolution_type": "area",
+    "cache_dir_vae": "/media/second8TBNVME/cache/SimpleTuner/aura/vae/jewelry-v13",
+    "instance_data_dir": "/media/second8TBNVME/cache/SimpleTuner/aura/jewelry-v13",
+    "csv_file": "/media/second8TBNVME/cache/SimpleTuner/aura/jewelry-v13.csv",
+    "csv_cache_dir": "/media/second8TBNVME/cache/SimpleTuner/image-cache",
+    "disabled": false,
+    "skip_file_discovery": "",
+    "caption_strategy": "textfile",
+    "metadata_backend": "json"
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "/media/second8TBNVME/cache/SimpleTuner/aura/text_embeds/jewelry-v13",
+    "disabled": false,
+    "write_batch_size": 128
+  }
+]

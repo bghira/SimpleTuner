@@ -293,7 +293,8 @@ class PromptHandler:
                     "Instance prompt is required when instance_prompt_only is enabled."
                 )
             return instance_prompt
-        caption_file = os.path.splitext(image_path)[0] + ".txt"
+        # caption_file = os.path.splitext(image_path)[0] + ".txt"
+        caption_file = image_path + '.txt'
         if not data_backend.exists(caption_file):
             raise FileNotFoundError(f"Caption file {caption_file} not found.")
         try:
