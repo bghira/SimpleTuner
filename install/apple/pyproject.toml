@@ -8,9 +8,9 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
-torch = { version = "^2.4.0.dev20240511", source = "pytorch-nightly" }
-torchvision = "^0.19.0.dev20240511"
-diffusers = {git = "https://github.com/huggingface/diffusers"}
+torch = "^2.4.0"
+torchvision = "^0.19.0"
+diffusers = {git = "https://github.com/bghira/diffusers", rev = "feature/lavender-flow-complete"}
 transformers = "^4.41.2"
 datasets = "^2.14.3"
 dadaptation = "^3.1"
