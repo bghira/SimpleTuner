@@ -17,10 +17,14 @@
 - [Design Philosophy](#design-philosophy)
 - [Tutorial](#tutorial)
 - [Features](#features)
-- [Hardware Requirements](#hardware-requirements)
-  - [SDXL](#sdxl)
-  - [Stable Diffusion 2.0/2.1](#stable-diffusion-2x)
+  - [PixArt Sigma](#pixart-sigma)
+  - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
   - [Stable Diffusion 3.0](#stable-diffusion-3)
+  - [AuraFlow](#auraflow)
+  - [Kwai Kolors](#kwai-kolors)
+- [Hardware Requirements](#hardware-requirements)
+  - [SDXL](#sdxl-1024px)
+  - [Stable Diffusion (Legacy)](#stable-diffusion-2x-768px)
 - [Scripts](#scripts)
 - [Toolkit](#toolkit)
 - [Setup](#setup)
@@ -59,7 +63,16 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
-### Stable Diffusion 2.0/2.1
+### PixArt Sigma
+
+SimpleTuner has extensive training integration with PixArt Sigma - both the 600M & 900M models load without any fuss.
+
+- Text encoder training is not supported, as T5 is enormous.
+- LoRA and full tuning both work as expected
+- ControlNet training is not yet supported
+- [Two-stage PixArt](https://huggingface.co/ptx0/pixart-900m-1024-ft-v0.7-stage1) training support (see: [MIXTURE_OF_EXPERTS](/documentation/MIXTURE_OF_EXPERTS.md))
+
+### Stable Diffusion 2.0 & 2.1
 
 Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn't have to be the case. Related features in SimpleTuner include:
 
