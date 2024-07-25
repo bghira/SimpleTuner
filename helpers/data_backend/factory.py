@@ -46,6 +46,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["dataset_type"] = "text_embeds"
 
         return output
+    elif backend.get("dataset_type", None) == "image_embeds":
+        # no overrides for image embed backends
+        return output
     else:
         ## Check for settings we shouldn't have for non-text datasets.
         if "caption_filter_list" in backend:
@@ -305,6 +308,11 @@ def configure_multi_databackend(
         )
 
     text_embed_backends = {}
+    image_embed_backends = {}
+
+    ###                                            ###
+    #    now we configure the text embed backends    #
+    ###                                            ###
     default_text_embed_backend_id = None
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
@@ -411,6 +419,62 @@ def configure_multi_databackend(
         default_text_embed_backend_id = list(text_embed_backends.keys())[0]
     info_log("Completed loading text embed services.")
 
+    ###                                             ###
+    #    now we configure the image embed backends    #
+    ###                                             ###
+    for backend in data_backend_config:
+        dataset_type = backend.get("dataset_type", None)
+        if dataset_type is None or dataset_type != "image_embeds":
+            continue
+        if ("disabled" in backend and backend["disabled"]) or (
+            "disable" in backend and backend["disable"]
+        ):
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
+            continue
+
+        info_log(f'Configuring VAE image embed backend: {backend["id"]}')
+        # Retrieve some config file overrides for commandline arguments,
+        #  there currently isn't much for text embeds.
+        init_backend = init_backend_config(backend, args, accelerator)
+        existing_config = StateTracker.get_data_backend_config(init_backend["id"])
+        if existing_config is not None and existing_config != {}:
+            raise ValueError(
+                f"You can only have one backend named {init_backend['id']}"
+            )
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+        if backend["type"] == "local":
+            init_backend["data_backend"] = get_local_backend(
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
+            )
+        elif backend["type"] == "aws":
+            check_aws_config(backend)
+            init_backend["data_backend"] = get_aws_backend(
+                identifier=init_backend["id"],
+                aws_bucket_name=backend["aws_bucket_name"],
+                aws_region_name=backend["aws_region_name"],
+                aws_endpoint_url=backend["aws_endpoint_url"],
+                aws_access_key_id=backend["aws_access_key_id"],
+                aws_secret_access_key=backend["aws_secret_access_key"],
+                accelerator=accelerator,
+            )
+            # S3 buckets use the aws_data_prefix as their prefix/ for all data.
+            # Ensure we have a trailing slash on the prefix:
+            init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+        else:
+            raise ValueError(f"Unknown data backend type: {backend['type']}")
+
+        preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+        if not preserve_data_backend_cache and accelerator.is_local_main_process:
+            StateTracker.delete_cache_files(
+                data_backend_id=init_backend["id"],
+                preserve_data_backend_cache=preserve_data_backend_cache,
+            )
+
+        image_embed_backends[init_backend["id"]] = init_backend
+
+    ###                                       ###
+    #    now we configure the image backends    #
+    ###                                       ###
     all_captions = []
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
@@ -486,6 +550,15 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
             )
+        # Do we have a specific VAE embed backend?
+        image_embed_backend_id = backend.get("image_embeds", None)
+        image_embed_data_backend = None
+        if image_embed_backend_id is not None:
+            if image_embed_backend_id not in image_embed_backends:
+                raise ValueError(
+                    f"Could not find image embed backend ID in multidatabackend config: {image_embed_backend_id}"
+                )
+            image_embed_data_backend = image_embed_backends[image_embed_backend_id]
         info_log(f"(id={init_backend['id']}) Loading bucket manager.")
         metadata_backend_args = {}
         metadata_backend = backend.get("metadata_backend", "json")
@@ -722,7 +795,8 @@ def configure_multi_databackend(
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],
-                data_backend=init_backend["data_backend"],
+                image_data_backend=init_backend["data_backend"],
+                cache_data_backend=image_embed_data_backend["data_backend"],
                 instance_data_root=init_backend["instance_data_root"],
                 delete_problematic_images=backend.get(
                     "delete_problematic_images", args.delete_problematic_images
