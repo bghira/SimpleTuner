@@ -309,6 +309,10 @@ def configure_multi_databackend(
 
     text_embed_backends = {}
     image_embed_backends = {}
+
+    ###                                            ###
+    #    now we configure the text embed backends    #
+    ###                                            ###
     default_text_embed_backend_id = None
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
