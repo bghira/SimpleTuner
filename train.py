@@ -2037,6 +2037,13 @@ def main():
                             f"NaNs detected. Loss: {loss}, Model prediction: {model_pred}, Target: {target}"
                         )
                     accelerator.backward(loss)
+
+                    if args.gradient_precision == "fp32":
+                        # After backward, convert gradients to fp32 for stable accumulation
+                        for param in params_to_optimize:
+                            if param.grad is not None:
+                                param.grad.data = param.grad.data.to(torch.float32)
+
                     grad_norm = None
                     if (
                         accelerator.sync_gradients
