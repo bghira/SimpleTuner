@@ -1,6 +1,6 @@
 # Dataloader configuration file
 
-Here is an example dataloader configuration file, as `multidatabackend.example.json`:
+Here is the most basic example of a dataloader configuration file, as `multidatabackend.example.json`.
 
 ```json
 [
@@ -8,34 +8,19 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
     "id": "something-special-to-remember-by",
     "type": "local",
     "instance_data_dir": "/path/to/data/tree",
-    "crop": false,
-    "crop_style": "random|center|corner|face",
-    "crop_aspect": "square|preserve|random",
-    "crop_aspect_buckets": [0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75],
+    "crop": true,
+    "crop_style": "center",
+    "crop_aspect": "square",
     "resolution": 1.0,
-    "resolution_type": "area|pixel",
     "minimum_image_size": 1.0,
+    "maximum_image_size": 1.5,
+    "target_downsample_size": 1.5,
+    "resolution_type": "area",
     "prepend_instance_prompt": false,
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
-    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "caption_strategy": "textfile",
     "cache_dir_vae": "/path/to/vaecache",
-    "vae_cache_clear_each_epoch": true,
-    "probability": 1.0,
-    "repeats": 0,
-    "text_embeds": "alt-embed-cache"
-  },
-  {
-    "id": "another-special-name-for-another-backend",
-    "type": "aws",
-    "aws_bucket_name": "something-yummy",
-    "aws_region_name": null,
-    "aws_endpoint_url": "https://foo.bar/",
-    "aws_access_key_id": "wpz-764e9734523434",
-    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
-    "aws_data_prefix": "",
-    "cache_dir_vae": "s3prefix/for/vaecache",
-    "vae_cache_clear_each_epoch": true,
     "repeats": 0
   },
   {
@@ -50,13 +35,6 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
     "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
     "aws_data_prefix": "",
     "cache_dir": ""
-  },
-  {
-    "id": "alt-embed-cache",
-    "dataset_type": "text_embeds",
-    "default": false,
-    "type": "local",
-    "cache_dir": "/path/to/textembed_cache"
   }
 ]
 ```
@@ -69,8 +47,9 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 ### `dataset_type`
 
-- **Values:** `image` | `text_embeds`
-- **Description:** Text embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
+- **Values:** `image` | `text_embeds` | `image_embeds`
+- **Description:** `image` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one.
+- **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 
 ### `default`
 
@@ -81,6 +60,11 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 - **Only applies to `dataset_type=image`**
 - If unset, the `default` text_embeds dataset will be used. If set to an existing `id` of a `text_embeds` dataset, it will use that instead. Allows specific text embed datasets to be associated with a given image dataset.
+
+### `image_embeds`
+
+- **Only applies to `dataset_type=image`**
+- If unset, the VAE outputs will be stored on the image backend. Otherwise, you may set this to the `id` of an `image_embeds` dataset, and the VAE outputs will be stored there instead. Allows associating the image_embed dataset to the image data.
 
 ### `type`
 
@@ -175,6 +159,74 @@ In order, the lines behave as follows:
 
 # Advanced techniques
 
+## Advanced Example Configuration
+
+```json
+[
+  {
+    "id": "something-special-to-remember-by",
+    "type": "local",
+    "instance_data_dir": "/path/to/data/tree",
+    "crop": false,
+    "crop_style": "random|center|corner|face",
+    "crop_aspect": "square|preserve|random",
+    "crop_aspect_buckets": [0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75],
+    "resolution": 1.0,
+    "resolution_type": "area|pixel",
+    "minimum_image_size": 1.0,
+    "prepend_instance_prompt": false,
+    "instance_prompt": "something to label every image",
+    "only_instance_prompt": false,
+    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "cache_dir_vae": "/path/to/vaecache",
+    "vae_cache_clear_each_epoch": true,
+    "probability": 1.0,
+    "repeats": 0,
+    "text_embeds": "alt-embed-cache",
+    "image_embeds": "vae-embeds-example"
+  },
+  {
+    "id": "another-special-name-for-another-backend",
+    "type": "aws",
+    "aws_bucket_name": "something-yummy",
+    "aws_region_name": null,
+    "aws_endpoint_url": "https://foo.bar/",
+    "aws_access_key_id": "wpz-764e9734523434",
+    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+    "aws_data_prefix": "",
+    "cache_dir_vae": "s3prefix/for/vaecache",
+    "vae_cache_clear_each_epoch": true,
+    "repeats": 0
+  },
+  {
+      "id": "vae-embeds-example",
+      "type": "local",
+      "dataset_type": "image_embeds",
+      "disabled": false,
+  },
+  {
+    "id": "an example backend for text embeds.",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "aws",
+    "aws_bucket_name": "textembeds-something-yummy",
+    "aws_region_name": null,
+    "aws_endpoint_url": "https://foo.bar/",
+    "aws_access_key_id": "wpz-764e9734523434",
+    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+    "aws_data_prefix": "",
+    "cache_dir": ""
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": false,
+    "type": "local",
+    "cache_dir": "/path/to/textembed_cache"
+  }
+]
+```
+
 ## Parquet caption strategy / JSON Lines datasets
 
 > ⚠️ This is an advanced feature, and will not be necessary for most users.
@@ -242,6 +294,60 @@ As with other dataloader configurations:
 - `prepend_instance_prompt` and `instance_prompt` behave as normal.
 - Updating a sample's caption in between training runs will cache the new embed, but not remove the old (orphaned) unit.
 - When an image doesn't exist in a dataset, its filename will be used as its caption and an error will be emitted.
+
+## Local cache with cloud dataset
+
+In order to maximise the use of costly local NVMe storage, you may wish to store just the image files (png, jpg) on an S3 bucket, and use the local storage to cache your extracted feature maps from the text encoder(s) and VAE (if applicable).
+
+In this example configuration:
+
+- Image data is stored on an S3-compatible bucket
+- VAE data is stored in /local/path/to/cache/vae
+- Text embeds are stored in /local/path/to/cache/textencoder
+
+> ⚠️ Remember to configure the other dataset options, such as `resolution` and `crop`
+
+```json
+[
+    {
+        "id": "data",
+        "type": "aws",
+        "aws_bucket_name": "text-vae-embeds",
+        "aws_endpoint_url": "https://storage.provider.example",
+        "aws_access_key_id": "exampleAccessKey",
+        "aws_secret_access_key": "exampleSecretKey",
+        "aws_region_name": null,
+        "cache_dir_vae": "/local/path/to/cache/vae/",
+        "caption_strategy": "parquet",
+        "metadata_backend": "parquet",
+        "parquet": {
+            "path": "train.parquet",
+            "caption_column": "caption",
+            "filename_column": "filename",
+            "width_column": "width",
+            "height_column": "height",
+            "identifier_includes_extension": true
+        },
+        "preserve_data_backend_cache": false,
+        "image_embeds": "vae-embed-storage"
+    },
+    {
+        "id": "vae-embed-storage",
+        "type": "local",
+        "dataset_type": "image_embeds"
+    },
+    {
+        "id": "text-embed-storage",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/local/path/to/cache/textencoder/",
+        "write_batch_size": 128
+    }
+]
+```
+
+**Note:** The `image_embeds` dataset does not have any options to set for data paths. Those are configured via `cache_dir_vae` on the image backend.
 
 ## Custom aspect ratio-to-resolution mapping
 

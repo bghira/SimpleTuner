@@ -239,150 +239,148 @@ This is a basic overview meant to help you get started. For a complete list of o
 
 ```
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
-                     [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
-                     [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                     [--aura_flow] [--pixart_sigma] [--sd3]
-                     [--weighting_scheme {sigma_sqrt,logit_normal,mode}]
-                     [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
-                     [--mode_scale MODE_SCALE] [--lora_type {Standard}]
-                     [--lora_init_type {default,gaussian,loftq}]
-                     [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
-                     [--lora_dropout LORA_DROPOUT] [--controlnet]
-                     [--controlnet_model_name_or_path]
-                     --pretrained_model_name_or_path
-                     PRETRAINED_MODEL_NAME_OR_PATH
-                     [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
-                     [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
-                     [--prediction_type {epsilon,v_prediction,sample}]
-                     [--snr_weight SNR_WEIGHT]
-                     [--training_scheduler_timestep_spacing {leading,linspace,trailing}]
-                     [--inference_scheduler_timestep_spacing {leading,linspace,trailing}]
-                     [--refiner_training] [--refiner_training_invert_schedule]
-                     [--refiner_training_strength REFINER_TRAINING_STRENGTH]
-                     [--timestep_bias_strategy {earlier,later,range,none}]
-                     [--timestep_bias_multiplier TIMESTEP_BIAS_MULTIPLIER]
-                     [--timestep_bias_begin TIMESTEP_BIAS_BEGIN]
-                     [--timestep_bias_end TIMESTEP_BIAS_END]
-                     [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
-                     [--disable_segmented_timestep_sampling]
-                     [--rescale_betas_zero_snr]
-                     [--vae_dtype {default,fp16,fp32,bf16}]
-                     [--vae_batch_size VAE_BATCH_SIZE]
-                     [--vae_cache_scan_behaviour {recreate,sync}]
-                     [--vae_cache_preprocess] [--compress_disk_cache]
-                     [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
-                     [--skip_file_discovery SKIP_FILE_DISCOVERY]
-                     [--revision REVISION] [--variant VARIANT]
-                     [--preserve_data_backend_cache] [--use_dora]
-                     [--override_dataset_config]
-                     [--cache_dir_text CACHE_DIR_TEXT]
-                     [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
-                     DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
-                     [--enable_multiprocessing]
-                     [--torch_num_threads TORCH_NUM_THREADS]
-                     [--dataloader_prefetch]
-                     [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
-                     [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
-                     [--cache_dir CACHE_DIR]
-                     [--cache_clear_validation_prompts]
-                     [--caption_strategy {filename,textfile,instance_prompt,parquet}]
-                     [--parquet_caption_column PARQUET_CAPTION_COLUMN]
-                     [--parquet_filename_column PARQUET_FILENAME_COLUMN]
-                     [--instance_prompt INSTANCE_PROMPT]
-                     [--output_dir OUTPUT_DIR] [--seed SEED]
-                     [--seed_for_each_device SEED_FOR_EACH_DEVICE]
-                     [--resolution RESOLUTION]
-                     [--resolution_type {pixel,area}]
-                     [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
-                     [--aspect_bucket_alignment {8,64}]
-                     [--minimum_image_size MINIMUM_IMAGE_SIZE]
-                     [--maximum_image_size MAXIMUM_IMAGE_SIZE]
-                     [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
-                     [--train_text_encoder]
-                     [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
-                     [--train_batch_size TRAIN_BATCH_SIZE]
-                     [--num_train_epochs NUM_TRAIN_EPOCHS]
-                     [--max_train_steps MAX_TRAIN_STEPS]
-                     [--checkpointing_steps CHECKPOINTING_STEPS]
-                     [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT]
-                     [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
-                     [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
-                     [--gradient_checkpointing]
-                     [--learning_rate LEARNING_RATE]
-                     [--text_encoder_lr TEXT_ENCODER_LR] [--lr_scale]
-                     [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
-                     [--lr_warmup_steps LR_WARMUP_STEPS]
-                     [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                     [--use_ema] [--ema_device {cpu,accelerator}]
-                     [--ema_cpu_only] [--ema_foreach_disable]
-                     [--ema_update_interval EMA_UPDATE_INTERVAL]
-                     [--ema_decay EMA_DECAY]
-                     [--non_ema_revision NON_EMA_REVISION]
-                     [--offload_param_path OFFLOAD_PARAM_PATH]
-                     [--use_8bit_adam] [--use_adafactor_optimizer]
-                     [--adafactor_relative_step ADAFACTOR_RELATIVE_STEP]
-                     [--use_prodigy_optimizer] [--prodigy_beta3 PRODIGY_BETA3]
-                     [--prodigy_decouple PRODIGY_DECOUPLE]
-                     [--prodigy_use_bias_correction PRODIGY_USE_BIAS_CORRECTION]
-                     [--prodigy_safeguard_warmup PRODIGY_SAFEGUARD_WARMUP]
-                     [--prodigy_learning_rate PRODIGY_LEARNING_RATE]
-                     [--prodigy_weight_decay PRODIGY_WEIGHT_DECAY]
-                     [--prodigy_epsilon PRODIGY_EPSILON]
-                     [--use_dadapt_optimizer]
-                     [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE]
-                     [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2]
-                     [--adam_weight_decay ADAM_WEIGHT_DECAY]
-                     [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
-                     [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
-                     [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
-                     [--logging_dir LOGGING_DIR]
-                     [--validation_seed_source {gpu,cpu}]
-                     [--validation_torch_compile VALIDATION_TORCH_COMPILE]
-                     [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
-                     [--allow_tf32] [--validation_using_datasets]
-                     [--webhook_config WEBHOOK_CONFIG] [--report_to REPORT_TO]
-                     [--tracker_run_name TRACKER_RUN_NAME]
-                     [--tracker_project_name TRACKER_PROJECT_NAME]
-                     [--validation_prompt VALIDATION_PROMPT]
-                     [--validation_prompt_library]
-                     [--user_prompt_library USER_PROMPT_LIBRARY]
-                     [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
-                     [--num_validation_images NUM_VALIDATION_IMAGES]
-                     [--validation_steps VALIDATION_STEPS]
-                     [--num_eval_images NUM_EVAL_IMAGES]
-                     [--eval_dataset_id EVAL_DATASET_ID]
-                     [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
-                     [--validation_resolution VALIDATION_RESOLUTION]
-                     [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
-                     [--validation_disable_unconditional] [--disable_compel]
-                     [--enable_watermark] [--mixed_precision {bf16,no}]
-                     [--local_rank LOCAL_RANK]
-                     [--enable_xformers_memory_efficient_attention]
-                     [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
-                     [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
-                     [--validation_guidance VALIDATION_GUIDANCE]
-                     [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
-                     [--validation_randomize]
-                     [--validation_seed VALIDATION_SEED]
-                     [--fully_unload_text_encoder]
-                     [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
-                     [--freeze_encoder_after FREEZE_ENCODER_AFTER]
-                     [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
-                     [--layer_freeze_strategy {none,bitfit}]
-                     [--unet_attention_slice] [--print_filenames]
-                     [--print_sampler_statistics]
-                     [--metadata_update_interval METADATA_UPDATE_INTERVAL]
-                     [--debug_aspect_buckets] [--debug_dataset_loader]
-                     [--freeze_encoder FREEZE_ENCODER] [--save_text_encoder]
-                     [--text_encoder_limit TEXT_ENCODER_LIMIT]
-                     [--prepend_instance_prompt] [--only_instance_prompt]
-                     [--data_aesthetic_score DATA_AESTHETIC_SCORE]
-                     [--sdxl_refiner_uses_full_range]
-                     [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
-                     [--delete_unwanted_images] [--delete_problematic_images]
-                     [--offset_noise] [--lr_end LR_END]
-                     [--i_know_what_i_am_doing]
-                     [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
+                [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
+                [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
+                [--legacy] [--kolors] [--aura_flow]
+                [--flow_matching_loss {diffusers,compatible,diffusion}]
+                [--aura_flow_target {any,dit,mmdit}]
+                [--aura_flow_freeze_direction {up,down}]
+                [--aura_flow_first_unfrozen_dit_layer AURA_FLOW_FIRST_UNFROZEN_DIT_LAYER]
+                [--aura_flow_first_unfrozen_mmdit_layer AURA_FLOW_FIRST_UNFROZEN_MMDIT_LAYER]
+                [--pixart_sigma] [--sd3]
+                [--sd3_t5_mask_behaviour {do-nothing,mask}]
+                [--weighting_scheme {sigma_sqrt,logit_normal,mode,none}]
+                [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
+                [--mode_scale MODE_SCALE] [--lora_type {Standard}]
+                [--lora_init_type {default,gaussian,loftq}]
+                [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
+                [--lora_dropout LORA_DROPOUT] [--controlnet]
+                [--controlnet_model_name_or_path]
+                --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
+                [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
+                [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
+                [--prediction_type {epsilon,v_prediction,sample}]
+                [--snr_weight SNR_WEIGHT]
+                [--training_scheduler_timestep_spacing {leading,linspace,trailing}]
+                [--inference_scheduler_timestep_spacing {leading,linspace,trailing}]
+                [--refiner_training] [--refiner_training_invert_schedule]
+                [--refiner_training_strength REFINER_TRAINING_STRENGTH]
+                [--timestep_bias_strategy {earlier,later,range,none}]
+                [--timestep_bias_multiplier TIMESTEP_BIAS_MULTIPLIER]
+                [--timestep_bias_begin TIMESTEP_BIAS_BEGIN]
+                [--timestep_bias_end TIMESTEP_BIAS_END]
+                [--timestep_bias_portion TIMESTEP_BIAS_PORTION]
+                [--disable_segmented_timestep_sampling]
+                [--rescale_betas_zero_snr]
+                [--vae_dtype {default,fp16,fp32,bf16}]
+                [--vae_batch_size VAE_BATCH_SIZE]
+                [--vae_cache_scan_behaviour {recreate,sync}]
+                [--vae_cache_preprocess] [--compress_disk_cache]
+                [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
+                [--skip_file_discovery SKIP_FILE_DISCOVERY]
+                [--revision REVISION] [--variant VARIANT]
+                [--preserve_data_backend_cache] [--use_dora]
+                [--override_dataset_config] [--cache_dir_text CACHE_DIR_TEXT]
+                [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
+                DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
+                [--enable_multiprocessing]
+                [--torch_num_threads TORCH_NUM_THREADS]
+                [--dataloader_prefetch]
+                [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
+                [--cache_dir CACHE_DIR] [--cache_clear_validation_prompts]
+                [--caption_strategy {filename,textfile,instance_prompt,parquet}]
+                [--parquet_caption_column PARQUET_CAPTION_COLUMN]
+                [--parquet_filename_column PARQUET_FILENAME_COLUMN]
+                [--instance_prompt INSTANCE_PROMPT] [--output_dir OUTPUT_DIR]
+                [--seed SEED] [--seed_for_each_device SEED_FOR_EACH_DEVICE]
+                [--resolution RESOLUTION] [--resolution_type {pixel,area}]
+                [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
+                [--aspect_bucket_alignment {8,64}]
+                [--minimum_image_size MINIMUM_IMAGE_SIZE]
+                [--maximum_image_size MAXIMUM_IMAGE_SIZE]
+                [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
+                [--train_text_encoder]
+                [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
+                [--train_batch_size TRAIN_BATCH_SIZE]
+                [--num_train_epochs NUM_TRAIN_EPOCHS]
+                [--max_train_steps MAX_TRAIN_STEPS]
+                [--checkpointing_steps CHECKPOINTING_STEPS]
+                [--checkpoints_total_limit CHECKPOINTS_TOTAL_LIMIT]
+                [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
+                [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
+                [--gradient_checkpointing] [--learning_rate LEARNING_RATE]
+                [--text_encoder_lr TEXT_ENCODER_LR] [--lr_scale]
+                [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
+                [--lr_warmup_steps LR_WARMUP_STEPS]
+                [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
+                [--use_ema] [--ema_device {cpu,accelerator}] [--ema_cpu_only]
+                [--ema_foreach_disable]
+                [--ema_update_interval EMA_UPDATE_INTERVAL]
+                [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
+                [--offload_param_path OFFLOAD_PARAM_PATH] [--use_8bit_adam]
+                [--use_adafactor_optimizer]
+                [--adafactor_relative_step ADAFACTOR_RELATIVE_STEP]
+                [--use_prodigy_optimizer] [--prodigy_beta3 PRODIGY_BETA3]
+                [--prodigy_decouple PRODIGY_DECOUPLE]
+                [--prodigy_use_bias_correction PRODIGY_USE_BIAS_CORRECTION]
+                [--prodigy_safeguard_warmup PRODIGY_SAFEGUARD_WARMUP]
+                [--prodigy_learning_rate PRODIGY_LEARNING_RATE]
+                [--prodigy_weight_decay PRODIGY_WEIGHT_DECAY]
+                [--prodigy_epsilon PRODIGY_EPSILON] [--use_dadapt_optimizer]
+                [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE]
+                [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2]
+                [--adam_weight_decay ADAM_WEIGHT_DECAY]
+                [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
+                [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
+                [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
+                [--logging_dir LOGGING_DIR]
+                [--validation_seed_source {gpu,cpu}]
+                [--validation_torch_compile VALIDATION_TORCH_COMPILE]
+                [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
+                [--allow_tf32] [--validation_using_datasets]
+                [--webhook_config WEBHOOK_CONFIG] [--report_to REPORT_TO]
+                [--tracker_run_name TRACKER_RUN_NAME]
+                [--tracker_project_name TRACKER_PROJECT_NAME]
+                [--validation_prompt VALIDATION_PROMPT]
+                [--validation_prompt_library]
+                [--user_prompt_library USER_PROMPT_LIBRARY]
+                [--validation_negative_prompt VALIDATION_NEGATIVE_PROMPT]
+                [--num_validation_images NUM_VALIDATION_IMAGES]
+                [--validation_steps VALIDATION_STEPS]
+                [--num_eval_images NUM_EVAL_IMAGES]
+                [--eval_dataset_id EVAL_DATASET_ID]
+                [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
+                [--validation_resolution VALIDATION_RESOLUTION]
+                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
+                [--validation_disable_unconditional] [--disable_compel]
+                [--enable_watermark] [--mixed_precision {bf16,no}]
+                [--gradient_precision {unmodified,fp32}]
+                [--local_rank LOCAL_RANK]
+                [--enable_xformers_memory_efficient_attention]
+                [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
+                [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
+                [--validation_guidance VALIDATION_GUIDANCE]
+                [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
+                [--validation_randomize] [--validation_seed VALIDATION_SEED]
+                [--fully_unload_text_encoder]
+                [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
+                [--freeze_encoder_after FREEZE_ENCODER_AFTER]
+                [--freeze_encoder_strategy FREEZE_ENCODER_STRATEGY]
+                [--layer_freeze_strategy {none,bitfit}]
+                [--unet_attention_slice] [--print_filenames]
+                [--print_sampler_statistics]
+                [--metadata_update_interval METADATA_UPDATE_INTERVAL]
+                [--debug_aspect_buckets] [--debug_dataset_loader]
+                [--freeze_encoder FREEZE_ENCODER] [--save_text_encoder]
+                [--text_encoder_limit TEXT_ENCODER_LIMIT]
+                [--prepend_instance_prompt] [--only_instance_prompt]
+                [--data_aesthetic_score DATA_AESTHETIC_SCORE]
+                [--sdxl_refiner_uses_full_range]
+                [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
+                [--delete_unwanted_images] [--delete_problematic_images]
+                [--offset_noise] [--lr_end LR_END] [--i_know_what_i_am_doing]
+                [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
 
 The following SimpleTuner command-line options are available:
 
@@ -403,19 +401,71 @@ options:
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
-  --aura_flow      This must be set when training an AuraFlow model.
+  --legacy              This option must be provided when training a Stable
+                        Diffusion 1.x or 2.x model.
+  --kolors              This option must be provided when training a Kolors
+                        model.
+  --aura_flow           This must be set when training an AuraFlow model.
+  --flow_matching_loss {diffusers,compatible,diffusion}
+                        A discrepancy exists between the Diffusers
+                        implementation of flow matching and the minimal
+                        implementations provided by StabilityAI and AuraFlow.
+                        This experimental option allows switching loss
+                        calculations to be compatible with those.
+                        Additionally, 'diffusion' is offered as an option to
+                        reparameterise a model to v_prediction loss.
+  --aura_flow_target {any,dit,mmdit}
+                        Aura Diffusion contains joint attention MM-DiT blocks
+                        as well as standard DiT. When training a LoRA, we can
+                        limit the blocks trained. The default option 'all'
+                        means all blocks will be trained. 'dit' will train
+                        only the standard DiT blocks, and 'mmdit' will train
+                        only the MM-DiT blocks. Experimentation will likely
+                        prove fruitful, as these LoRAs train quickly. The
+                        default is 'all'.
+  --aura_flow_freeze_direction {up,down}
+                        When freezing the AuraFlow model, you can freeze it
+                        'up' from the bottom, or 'down' from the top. The
+                        default value is 'up' which will freeze the model from
+                        layer 11 to 31 by default.
+  --aura_flow_first_unfrozen_dit_layer AURA_FLOW_FIRST_UNFROZEN_DIT_LAYER
+                        Due to the size of the AuraFlow model, by default only
+                        the 20th layer and up will be trained. More layers can
+                        be excluded to speed up training or reduce VRAM
+                        consumption further.
+  --aura_flow_first_unfrozen_mmdit_layer AURA_FLOW_FIRST_UNFROZEN_MMDIT_LAYER
+                        By default, AuraFlow's MM-DiT blocks are not trained
+                        as they are very large and training them is
+                        unnecessary for finetuning.
   --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.
-  --weighting_scheme {sigma_sqrt,logit_normal,mode}
+  --sd3_t5_mask_behaviour {do-nothing,mask}
+                        StabilityAI did not correctly implement their
+                        attention masking on T5 inputs for SD3 Medium. This
+                        option enables you to switch between their broken
+                        implementation or the corrected mask implementation.
+                        Although, the corrected masking is still applied via
+                        hackish workaround, manually applying the mask to the
+                        prompt embeds so that the padded positions are zero.
+                        This improves the results for short captions, but does
+                        not change the behaviour for long captions. It is
+                        important to note that this limitation currently
+                        prevents expansion of SD3 Medium's prompt length, as
+                        it will unnecessarily attend to every token in the
+                        prompt embed, even masked positions.
+  --weighting_scheme {sigma_sqrt,logit_normal,mode,none}
                         Stable Diffusion 3 used either uniform sampling of
                         timesteps with post-prediction loss weighting, or a
                         weighted timestep selection by mode or log-normal
                         distribution. The default for SD3 is logit_normal,
                         though upstream Diffusers training examples use
                         sigma_sqrt. The mode option is experimental, as it is
-                        the most difficult to implement cleanly. In short
-                        experiments, logit_normal produced the best results.
+                        the most difficult to implement cleanly. In
+                        experiments, logit_normal produced the best results
+                        for large-scale finetuning across many nodes. For
+                        small scale tuning, 'none' returns the best results.
+                        The default is 'none'.
   --logit_mean LOGIT_MEAN
                         As outlined in the Stable Diffusion 3 paper, using a
                         logit_mean of -0.5 produced the highest quality FID
@@ -1040,6 +1090,13 @@ options:
                         value of accelerate config of the current system or
                         the flag passed with the `accelerate.launch` command.
                         Use this argument to override the accelerate config.
+  --gradient_precision {unmodified,fp32}
+                        One of the hallmark discoveries of the Llama 3.1 paper
+                        is numeric instability when calculating gradients in
+                        bf16 precision. The default behaviour when gradient
+                        accumulation steps are enabled is now to use fp32
+                        gradients, which is slower, but provides more accurate
+                        updates.
   --local_rank LOCAL_RANK
                         For distributed training: local_rank
   --enable_xformers_memory_efficient_attention
@@ -1088,11 +1145,14 @@ options:
                         This can be helpful when fine-tuning Stable Diffusion
                         2.1 on a new style.
   --layer_freeze_strategy {none,bitfit}
-                        When freezing the UNet, we can use the 'none' or
+                        When freezing parameters, we can use the 'none' or
                         'bitfit' strategy. The 'bitfit' strategy will freeze
-                        all weights, and leave bias thawed. The default
-                        strategy is to leave the full u-net thawed. Freezing
-                        the weights can improve convergence for finetuning.
+                        all weights, and leave bias in a trainable state. The
+                        default strategy is to leave all parameters in a
+                        trainable state. Freezing the weights can improve
+                        convergence for finetuning. Using bitfit only
+                        moderately reduces VRAM consumption, but substantially
+                        reduces the count of trainable parameters.
   --unet_attention_slice
                         If set, will use attention slicing for the SDXL UNet.
                         This is an experimental feature and is not recommended
