@@ -55,7 +55,8 @@ class VAECache:
         accelerator,
         metadata_backend: MetadataBackend,
         instance_data_root: str,
-        data_backend: BaseDataBackend,
+        image_data_backend: BaseDataBackend,
+        cache_data_backend: BaseDataBackend = None,
         cache_dir="vae_cache",
         resolution: float = 1024,
         maximum_image_size: float = None,
@@ -71,11 +72,14 @@ class VAECache:
         vae_cache_preprocess: bool = False,
     ):
         self.id = id
-        if data_backend.id != id:
+        if image_data_backend.id != id:
             raise ValueError(
-                f"VAECache received incorrect data_backend: {data_backend}"
+                f"VAECache received incorrect image_data_backend: {image_data_backend}"
             )
-        self.data_backend = data_backend
+        self.image_data_backend = image_data_backend
+        self.cache_data_backend = (
+            cache_data_backend if cache_data_backend is not None else image_data_backend
+        )
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
@@ -85,7 +89,7 @@ class VAECache:
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
-        self.data_backend.create_directory(self.cache_dir)
+        self.cache_data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
@@ -160,33 +164,34 @@ class VAECache:
 
     def already_cached(self, filepath: str) -> bool:
         test_path = self.generate_vae_cache_filename(filepath)[0]
-        if self.data_backend.exists(test_path):
+        if self.cache_data_backend.exists(test_path):
             return True
         return False
 
     def _read_from_storage(
         self, filename: str, hide_errors: bool = False
     ) -> torch.Tensor:
-        """Read a cache object from the storage backend.
+        """Read an image or cache object from the storage backend.
 
         Args:
-            filename (str): The path to the cache item, eg. `vae_cache/foo.pt`
+            filename (str): The path to the cache item, eg. `vae_cache/foo.pt` or `instance_data_dir/foo.png`
 
         Returns:
-            torch.Tensor: The cached Tensor object.
+            Image or cache object
         """
         if os.path.splitext(filename)[1] != ".pt":
             try:
-                return self.data_backend.read_image(filename)
+                return self.image_data_backend.read_image(filename)
             except Exception as e:
                 if self.delete_problematic_images:
-                    self.data_backend.delete(filename)
+                    self.metadata_backend.remove_image(filename)
+                    self.image_data_backend.delete(filename)
                     self.debug_log(
                         f"Deleted {filename} because it was problematic: {e}"
                     )
                 raise e
         try:
-            return self.data_backend.torch_load(filename).to("cpu")
+            return self.cache_data_backend.torch_load(filename).to("cpu")
         except Exception as e:
             if hide_errors:
                 self.debug_log(
@@ -212,7 +217,7 @@ class VAECache:
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.id
         ) or StateTracker.set_image_files(
-            self.data_backend.list_files(
+            self.image_data_backend.list_files(
                 instance_data_root=self.instance_data_root,
                 str_pattern="*.[jJpP][pPnN][gG]",
             ),
@@ -222,7 +227,7 @@ class VAECache:
         (
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
             or StateTracker.set_vae_cache_files(
-                self.data_backend.list_files(
+                self.cache_data_backend.list_files(
                     instance_data_root=self.cache_dir,
                     str_pattern="*.pt",
                 ),
@@ -260,7 +265,7 @@ class VAECache:
         if self.accelerator.is_local_main_process:
             self.debug_log("Updating StateTracker with new VAE cache entry list.")
             StateTracker.set_vae_cache_files(
-                self.data_backend.list_files(
+                self.cache_data_backend.list_files(
                     instance_data_root=self.cache_dir,
                     str_pattern="*.pt",
                 ),
@@ -279,7 +284,7 @@ class VAECache:
             if self.accelerator.is_local_main_process:
                 self.debug_log("Updating StateTracker with new VAE cache entry list.")
                 StateTracker.set_vae_cache_files(
-                    self.data_backend.list_files(
+                    self.cache_data_backend.list_files(
                         instance_data_root=self.cache_dir,
                         str_pattern="*.pt",
                     ),
@@ -302,7 +307,9 @@ class VAECache:
             for filename in all_cache_files:
                 full_path = os.path.join(self.cache_dir, filename)
                 self.debug_log(f"Would delete: {full_path}")
-                futures.append(executor.submit(self.data_backend.delete, full_path))
+                futures.append(
+                    executor.submit(self.cache_data_backend.delete, full_path)
+                )
             for future in tqdm(
                 as_completed(futures),
                 total=len(futures),
@@ -433,7 +440,7 @@ class VAECache:
         uncached_image_indices = [
             i
             for i, filename in enumerate(full_filenames)
-            if not self.data_backend.exists(filename)
+            if not self.cache_data_backend.exists(filename)
         ]
         uncached_image_paths = [
             filepaths[i]
@@ -556,7 +563,7 @@ class VAECache:
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
             latents.append(latent_vector.clone())
 
-        self.data_backend.write_batch(filepaths, latents)
+        self.cache_data_backend.write_batch(filepaths, latents)
 
         return latents
 
@@ -813,7 +820,7 @@ class VAECache:
                 # If --delete_problematic_images is supplied, we remove the image now:
                 if self.delete_problematic_images:
                     self.metadata_backend.remove_image(path)
-                    self.data_backend.delete(path)
+                    self.image_data_backend.delete(path)
                 return path, None
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -843,7 +850,7 @@ class VAECache:
             read_queue_item = self.read_queue.get()
             path, aspect_bucket = read_queue_item
             filepaths.append(path)
-        available_filepaths, batch_output = self.data_backend.read_image_batch(
+        available_filepaths, batch_output = self.image_data_backend.read_image_batch(
             filepaths, delete_problematic_images=self.delete_problematic_images
         )
         missing_image_count = len(filepaths) - len(available_filepaths)
