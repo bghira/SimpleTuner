@@ -13,7 +13,7 @@ from queue import Queue
 import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
-from helpers.training.multi_process import _get_rank as get_rank
+from helpers.training.multi_process import _get_rank as get_rank, should_log
 
 logger = logging.getLogger("TextEmbeddingCache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -637,13 +637,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=get_rank()
-            + (
-                self.accelerator.num_processes
-                if self.accelerator.num_processes > 1
-                else 2
-            )
-            + 1,
+            position=get_rank(),
         )
         with torch.no_grad():
             for prompt in tqdm(
@@ -652,7 +646,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
-                position=get_rank(),
+                position=get_rank() + self.accelerator.num_processes + 1,
             ):
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
@@ -774,7 +768,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=0,
+            position=get_rank(),
         )
         with torch.no_grad():
             attention_mask = None
@@ -923,7 +917,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=get_rank() + self.accelerator.num_processes,
+            position=get_rank(),
         )
         with torch.no_grad():
             for prompt in tqdm(
@@ -932,7 +926,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
-                position=get_rank(),
+                position=get_rank() + self.accelerator.num_processes + 1,
             ):
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"

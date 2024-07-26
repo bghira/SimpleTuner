@@ -2,6 +2,7 @@ import json
 import regex as re
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import _get_rank as get_rank
 
 prompts = {
     "alien_landscape": "Alien planet, strange rock formations, glowing plants, bizarre creatures, surreal atmosphere",
@@ -414,6 +415,8 @@ class PromptHandler:
             all_image_files,
             desc="Loading captions",
             total=len(all_image_files),
+            disable=True if get_rank() > 0 else False,
+            leave=False,
             ncols=125,
         ):
             if caption_strategy == "filename":
