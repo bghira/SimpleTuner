@@ -3,13 +3,18 @@ from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
 from helpers.image_manipulation.cropping import crop_handlers
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import should_log
 import logging
 import os
+from tqdm import tqdm
 import random
 import time
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class TrainingSample:
@@ -266,9 +271,10 @@ class TrainingSample:
             available_aspects = self._trim_aspect_bucket_list()
             if len(available_aspects) == 0:
                 selected_aspect = 1.0
-                logger.warning(
-                    "Image dimensions do not fit into the configured aspect buckets. Using square crop."
-                )
+                if should_log():
+                    tqdm.write(
+                        "[WARNING] Image dimensions do not fit into the configured aspect buckets. Using square crop."
+                    )
             else:
                 selected_aspect = random.choice(available_aspects)
         else:

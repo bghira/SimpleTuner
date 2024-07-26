@@ -11,6 +11,7 @@ from torch import Tensor
 import concurrent.futures
 from botocore.config import Config
 from helpers.data_backend.base import BaseDataBackend
+from helpers.training.multi_process import _get_rank as get_rank
 from helpers.image_manipulation.load import load_image
 from io import BytesIO
 
@@ -69,7 +70,7 @@ class S3DataBackend(BaseDataBackend):
         self.write_retry_interval = write_retry_interval
         self.compress_cache = compress_cache
         self.type = "aws"
-        if compress_cache:
+        if compress_cache and get_rank() == 0:
             logging.warning(
                 "Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."
             )
