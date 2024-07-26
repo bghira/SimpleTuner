@@ -1,5 +1,6 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
+from helpers.data_backend.csv import CSVDataBackend
 from helpers.data_backend.base import BaseDataBackend
 from helpers.caching.text_embeds import TextEmbeddingCache
 
@@ -356,6 +357,14 @@ def configure_multi_databackend(
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
             init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+        elif backend["type"] == "csv":
+            init_backend["data_backend"] = get_csv_backend(
+                accelerator,
+                init_backend["id"],
+                init_backend["csv_file"],
+                init_backend["csv_cache_dir"],
+                compress_cache=args.compress_disk_cache,
+            )
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -461,6 +470,20 @@ def configure_multi_databackend(
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
             init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+        elif backend["type"] == "csv":
+            init_backend["data_backend"] = get_csv_backend(
+                accelerator,
+                backend["id"],
+                backend["csv_file"],
+                backend["csv_cache_dir"],
+                compress_cache=args.compress_disk_cache,
+            )
+            init_backend["instance_data_root"] = backend["instance_data_dir"]
+            # Remove trailing slash
+            if init_backend["instance_data_root"][-1] == "/":
+                init_backend["instance_data_root"] = init_backend["instance_data_root"][
+                    :-1
+                ]
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -929,6 +952,24 @@ def get_local_backend(
     """
     return LocalDataBackend(
         accelerator=accelerator, id=identifier, compress_cache=compress_cache
+    )
+
+
+def get_csv_backend(
+    accelerator,
+    id: str,
+    csv_file: str,
+    csv_cache_dir: str,
+    compress_cache: bool = False,
+) -> CSVDataBackend:
+    from pathlib import Path
+
+    return CSVDataBackend(
+        accelerator=accelerator,
+        id=id,
+        csv_file=Path(csv_file),
+        image_cache_loc=csv_cache_dir,
+        compress_cache=compress_cache,
     )
 
 

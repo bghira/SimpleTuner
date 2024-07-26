@@ -184,7 +184,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         If the path prefix isn't in the path, we'll add it.
         """
-        if self.metadata_backend.instance_data_root not in filepath:
+        if (
+            self.metadata_backend.instance_data_root not in filepath
+            and not filepath.startswith("http")
+        ):
             filepath = os.path.join(self.metadata_backend.instance_data_root, filepath)
         image_data = self.data_backend.read_image(filepath)
         return image_data
@@ -233,7 +236,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
-                os.path.join(self.metadata_backend.instance_data_root, image)
+                (
+                    os.path.join(self.metadata_backend.instance_data_root, image)
+                    if not image.startswith("http")
+                    else image
+                )
                 for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
                 if not self.metadata_backend.is_seen(image)
             ]
@@ -242,7 +249,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             for b, images in self.metadata_backend.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
                     [
-                        os.path.join(self.metadata_backend.instance_data_root, image)
+                        (
+                            os.path.join(
+                                self.metadata_backend.instance_data_root, image
+                            )
+                            if not image.startswith("http")
+                            else image
+                        )
                         for image in images
                         if not self.metadata_backend.is_seen(image)
                     ]
@@ -365,6 +378,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         to_yield = []
         for image_path in samples:
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
+            if image_metadata is None:
+                image_metadata = {}
             if (
                 StateTracker.get_args().model_type
                 not in [
@@ -379,8 +394,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )
-            if image_metadata is None:
-                image_metadata = {}
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
