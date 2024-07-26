@@ -552,7 +552,7 @@ def configure_multi_databackend(
             )
         # Do we have a specific VAE embed backend?
         image_embed_backend_id = backend.get("image_embeds", None)
-        image_embed_data_backend = None
+        image_embed_data_backend = init_backend["data_backend"]
         if image_embed_backend_id is not None:
             if image_embed_backend_id not in image_embed_backends:
                 raise ValueError(
