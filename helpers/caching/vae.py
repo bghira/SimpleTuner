@@ -139,16 +139,15 @@ class VAECache:
         base_filename = str(base_filename) + ".pt"
         # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
         subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
-        print(f"Subfolders: {subfolders}")
         if len(subfolders) > 0 and subfolders[0] == "/":
             subfolders = subfolders[1:]
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
-            print(
+            logger.debug(
                 f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
             )
         else:
             full_filename = os.path.join(self.cache_dir, base_filename)
-            print(
+            logger.debug(
                 f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {base_filename})"
             )
         return full_filename, base_filename
