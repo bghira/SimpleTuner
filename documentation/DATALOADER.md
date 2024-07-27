@@ -129,6 +129,10 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 - Like `skip_file_discovery`, this option can be set to prevent repeated lookups of file lists during startup. It takes a boolean value, and if set to be `true`, the generated cache file will not be removed at launch. This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times. Additionally, on S3, backend listing can add up in cost and should be avoided. **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
 
+### `hash_filenames`
+
+- When set, the VAE cache entries' filenames will be hashed. This is not set by default for backwards compatibility, but it allows for datasets with very long filenames to be easily used.
+
 ## Filtering captions
 
 ### `caption_filter_list`
@@ -174,6 +178,7 @@ In order, the lines behave as follows:
     "resolution": 1.0,
     "resolution_type": "area|pixel",
     "minimum_image_size": 1.0,
+    "hash_filenames": true,
     "prepend_instance_prompt": false,
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
