@@ -8,6 +8,7 @@ import requests
 from PIL import Image
 
 from helpers.data_backend.base import BaseDataBackend
+from helpers.image_manipulation.load import load_image
 from helpers.training.multi_process import should_log
 from pathlib import Path
 from io import BytesIO
@@ -32,10 +33,12 @@ def shorten_and_clean_filename(filename: str, no_op: bool):
     return filename
 
 
-def html_to_file_loc(parent_directory: Path, url: str, no_op: bool) -> str:
+def html_to_file_loc(parent_directory: Path, url: str, shorten_filenames: bool) -> str:
     filename = url.split("/")[-1]
     cached_loc = str(
-        parent_directory.joinpath(shorten_and_clean_filename(filename, no_op=no_op))
+        parent_directory.joinpath(
+            shorten_and_clean_filename(filename, no_op=shorten_filenames)
+        )
     )
     return cached_loc
 
@@ -79,7 +82,9 @@ class CSVDataBackend(BaseDataBackend):
             if self.image_cache_loc is not None:
                 # check for cache
                 cached_loc = html_to_file_loc(
-                    self.image_cache_loc, location, no_op=self.shorten_filenames
+                    self.image_cache_loc,
+                    location,
+                    shorten_filenames=self.shorten_filenames,
                 )
                 if os.path.exists(cached_loc):
                     # found cache
@@ -195,7 +200,8 @@ class CSVDataBackend(BaseDataBackend):
         if isinstance(filepath, str):
             filepath = filepath.replace("\x00", "")
         try:
-            image = Image.open(self.read(filepath, as_byteIO=True)).resize((1024, 1024))
+            image_data = self.read(filepath, as_byteIO=True)
+            image = load_image(image_data)
             return image
         except Exception as e:
             import traceback
