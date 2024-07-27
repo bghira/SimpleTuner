@@ -3,6 +3,7 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.image_manipulation.load import load_image
+from helpers.training.multi_process import should_log
 import json
 import logging
 import os
@@ -11,7 +12,10 @@ from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
 
 logger = logging.getLogger("JsonMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+if should_log():
+    target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+else:
+    target_level = "ERROR"
 logger.setLevel(target_level)
 
 
