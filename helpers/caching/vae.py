@@ -146,6 +146,7 @@ class VAECache:
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         test_filepath, _ = self.generate_vae_cache_filename(filepath)
+        print(f"filepath: {filepath}, test_filepath: {test_filepath}")
 
         return self.vae_path_to_image_path.get(test_filepath, None)
 
@@ -340,6 +341,7 @@ class VAECache:
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
         existing_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        print(f"existing: {existing_cache_files}")
         # Convert cache filenames to their corresponding image filenames
         existing_image_filenames = {
             os.path.splitext(
@@ -347,6 +349,7 @@ class VAECache:
             )[0]
             for cache_file in existing_cache_files
         }
+        print(f"existing images: {existing_image_filenames}")
 
         # Identify unprocessed files
         unprocessed_files = [
