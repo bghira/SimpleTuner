@@ -142,21 +142,25 @@ class VAECache:
         if len(subfolders) > 0 and subfolders[0] == "/" and self.cache_dir[0] != "/":
             subfolders = subfolders[1:]
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
-            logger.debug(
-                f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
-            )
+            # logger.debug(
+            #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
+            # )
         else:
             full_filename = os.path.join(self.cache_dir, base_filename)
-            logger.debug(
-                f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {base_filename})"
-            )
+            # logger.debug(
+            #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {base_filename})"
+            # )
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         test_filepath, _ = self.generate_vae_cache_filename(filepath)
-        print(f"filepath: {filepath}, test_filepath: {test_filepath}")
+        result = self.vae_path_to_image_path.get(test_filepath, None)
+        if result is None:
+            raise ValueError(
+                f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). Is the map built? {True if self.vae_path_to_image_path != {} else False}"
+            )
 
-        return self.vae_path_to_image_path.get(test_filepath, None)
+        return result
 
     def build_vae_cache_filename_map(self, all_image_files: list):
         """Build a map of image filepaths to their corresponding cache filenames."""
