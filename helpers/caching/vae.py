@@ -86,6 +86,8 @@ class VAECache:
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        if self.cache_dir.type == "local":
+            self.cache_dir = os.path.abspath(self.cache_dir)
         if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
             # Remove trailing slash
             self.cache_dir = self.cache_dir[:-1]
@@ -146,9 +148,7 @@ class VAECache:
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
         test_filepath, _ = self.generate_vae_cache_filename(filepath)
-        print(
-            f"filepath: {filepath}, test_filepath: {test_filepath} {self.vae_path_to_image_path}"
-        )
+        print(f"filepath: {filepath}, test_filepath: {test_filepath}")
 
         return self.vae_path_to_image_path.get(test_filepath, None)
 
@@ -158,6 +158,8 @@ class VAECache:
         self.vae_path_to_image_path = {}
         for image_file in all_image_files:
             cache_filename, _ = self.generate_vae_cache_filename(image_file)
+            if self.cache_data_backend.type == "local":
+                cache_filename = os.path.abspath(cache_filename)
             self.image_path_to_vae_path[image_file] = cache_filename
             self.vae_path_to_image_path[cache_filename] = image_file
 
