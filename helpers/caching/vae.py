@@ -149,7 +149,7 @@ class VAECache:
 
         return self.vae_path_to_image_path.get(test_filepath, None)
 
-    def _build_vae_cache_filename_map(self, all_image_files: list):
+    def build_vae_cache_filename_map(self, all_image_files: list):
         """Build a map of image filepaths to their corresponding cache filenames."""
         self.image_path_to_vae_path = {}
         self.vae_path_to_image_path = {}
@@ -219,7 +219,6 @@ class VAECache:
             ),
             data_backend_id=self.id,
         )
-        self._build_vae_cache_filename_map(all_image_files)
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
