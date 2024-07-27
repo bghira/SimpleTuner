@@ -352,7 +352,6 @@ class VAECache:
             )[0]
             for cache_file in existing_cache_files
         }
-        print(f"existing images: {existing_image_filenames}")
 
         # Identify unprocessed files
         unprocessed_files = [
