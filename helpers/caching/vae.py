@@ -129,9 +129,8 @@ class VAECache:
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
-        if self.instance_data_root not in filepath:
-            if self.cache_dir in filepath and filepath.endswith(".pt"):
-                return filepath, os.path.basename(filepath)
+        if filepath.endswith(".pt"):
+            return filepath, os.path.basename(filepath)
         # Extract the base name from the filepath and replace the image extension with .pt
         base_filename = os.path.splitext(os.path.basename(filepath))[0]
         if self.hash_filenames:
