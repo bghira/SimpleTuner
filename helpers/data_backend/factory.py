@@ -832,6 +832,12 @@ def configure_multi_databackend(
                 if accelerator.is_local_main_process:
                     init_backend["vaecache"].discover_all_files()
                 accelerator.wait_for_everyone()
+            all_image_files = StateTracker.get_image_files(
+                data_backend_id=init_backend["id"]
+            )
+            init_backend["vaecache"].build_vae_cache_filename_map(
+                all_image_files=all_image_files
+            )
 
         if (
             (
