@@ -16,7 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 from helpers.training.multi_process import _get_rank as get_rank, should_log
 
 logger = logging.getLogger("TextEmbeddingCache")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def _encode_sd3_prompt_with_t5(
