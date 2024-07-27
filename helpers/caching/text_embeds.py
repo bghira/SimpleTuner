@@ -180,7 +180,7 @@ class TextEmbeddingCache:
             StateTracker.get_text_cache_files(data_backend_id=self.id)
             or StateTracker.set_text_cache_files(
                 self.data_backend.list_files(
-                    instance_data_root=self.cache_dir,
+                    instance_data_dir=self.cache_dir,
                     str_pattern="*.pt",
                 ),
                 data_backend_id=self.id,

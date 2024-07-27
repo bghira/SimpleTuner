@@ -128,9 +128,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["caption_strategy"] = backend["caption_strategy"]
     else:
         output["config"]["caption_strategy"] = args.caption_strategy
-    output["config"]["instance_data_root"] = backend.get(
+    output["config"]["instance_data_dir"] = backend.get(
         "instance_data_dir", backend.get("aws_data_prefix", "")
     )
+    if "shorten_filenames" in backend and backend.get("type") == "csv":
+        output["config"]["shorten_filenames"] = backend["shorten_filenames"]
 
     # check if caption_strategy=parquet with metadata_backend=json
     if (
@@ -138,7 +140,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and backend.get("metadata_backend", "json") == "json"
     ):
         raise ValueError(
-            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json."
+            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json. Instead, it is recommended to use the textfile strategy and extract your captions into txt files."
         )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
@@ -358,13 +360,7 @@ def configure_multi_databackend(
             # Ensure we have a trailing slash on the prefix:
             init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
         elif backend["type"] == "csv":
-            init_backend["data_backend"] = get_csv_backend(
-                accelerator,
-                init_backend["id"],
-                init_backend["csv_file"],
-                init_backend["csv_cache_dir"],
-                compress_cache=args.compress_disk_cache,
-            )
+            raise ValueError("Cannot use CSV backend for text embed storage.")
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -471,19 +467,7 @@ def configure_multi_databackend(
             # Ensure we have a trailing slash on the prefix:
             init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
         elif backend["type"] == "csv":
-            init_backend["data_backend"] = get_csv_backend(
-                accelerator,
-                backend["id"],
-                backend["csv_file"],
-                backend["csv_cache_dir"],
-                compress_cache=args.compress_disk_cache,
-            )
-            init_backend["instance_data_root"] = backend["instance_data_dir"]
-            # Remove trailing slash
-            if init_backend["instance_data_root"][-1] == "/":
-                init_backend["instance_data_root"] = init_backend["instance_data_root"][
-                    :-1
-                ]
+            raise ValueError("Cannot use CSV backend for image embed storage.")
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -542,10 +526,10 @@ def configure_multi_databackend(
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
-            init_backend["instance_data_root"] = backend["instance_data_dir"]
+            init_backend["instance_data_dir"] = backend["instance_data_dir"]
             # Remove trailing slash
-            if init_backend["instance_data_root"][-1] == "/":
-                init_backend["instance_data_root"] = init_backend["instance_data_root"][
+            if init_backend["instance_data_dir"][-1] == "/":
+                init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
                     :-1
                 ]
         elif backend["type"] == "aws":
@@ -561,7 +545,23 @@ def configure_multi_databackend(
                 compress_cache=args.compress_disk_cache,
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
-            init_backend["instance_data_root"] = backend["aws_data_prefix"]
+            init_backend["instance_data_dir"] = backend["aws_data_prefix"]
+        elif backend["type"] == "csv":
+            check_csv_config(backend=backend, args=args)
+            init_backend["data_backend"] = get_csv_backend(
+                accelerator=accelerator,
+                id=backend["id"],
+                csv_file=backend["csv_file"],
+                csv_cache_dir=backend["csv_cache_dir"],
+                compress_cache=args.compress_disk_cache,
+                shorten_filenames=backend.get("shorten_filenames", False),
+            )
+            init_backend["instance_data_dir"] = backend["instance_data_dir"]
+            # Remove trailing slash
+            if init_backend["instance_data_dir"][-1] == "/":
+                init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
+                    :-1
+                ]
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -603,7 +603,7 @@ def configure_multi_databackend(
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
         init_backend["metadata_backend"] = BucketManager_cls(
             id=init_backend["id"],
-            instance_data_root=init_backend["instance_data_root"],
+            instance_data_dir=init_backend["instance_data_dir"],
             data_backend=init_backend["data_backend"],
             accelerator=accelerator,
             resolution=backend.get("resolution", args.resolution),
@@ -616,11 +616,11 @@ def configure_multi_databackend(
                 "metadata_update_interval", args.metadata_update_interval
             ),
             cache_file=os.path.join(
-                init_backend["instance_data_root"],
+                init_backend["instance_data_dir"],
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                init_backend["instance_data_root"],
+                init_backend["instance_data_dir"],
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
@@ -789,7 +789,7 @@ def configure_multi_databackend(
             info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions = PromptHandler.get_all_captions(
                 data_backend=init_backend["data_backend"],
-                instance_data_root=init_backend["instance_data_root"],
+                instance_data_dir=init_backend["instance_data_dir"],
                 prepend_instance_prompt=prepend_instance_prompt,
                 instance_prompt=instance_prompt,
                 use_captions=use_captions,
@@ -821,7 +821,7 @@ def configure_multi_databackend(
                 metadata_backend=init_backend["metadata_backend"],
                 image_data_backend=init_backend["data_backend"],
                 cache_data_backend=image_embed_data_backend["data_backend"],
-                instance_data_root=init_backend["instance_data_root"],
+                instance_data_dir=init_backend["instance_data_dir"],
                 delete_problematic_images=backend.get(
                     "delete_problematic_images", args.delete_problematic_images
                 ),
@@ -961,6 +961,7 @@ def get_csv_backend(
     csv_file: str,
     csv_cache_dir: str,
     compress_cache: bool = False,
+    shorten_filenames: bool = False,
 ) -> CSVDataBackend:
     from pathlib import Path
 
@@ -970,7 +971,24 @@ def get_csv_backend(
         csv_file=Path(csv_file),
         image_cache_loc=csv_cache_dir,
         compress_cache=compress_cache,
+        shorten_filenames=shorten_filenames,
     )
+
+
+def check_csv_config(backend: dict, args) -> None:
+    required_keys = {
+        "csv_file": "This is the path to the CSV file containing your image URLs.",
+        "csv_cache_dir": "This is the path to your temporary cache files where images will be stored. This can grow quite large.",
+    }
+    for key in required_keys.keys():
+        if key not in backend:
+            raise ValueError(
+                f"Missing required key {key} in CSV backend config: {required_keys[key]}"
+            )
+    if not args.compress_disk_cache:
+        logger.warning(
+            "You can save more disk space for cache objects by providing --compress_disk_cache and recreating its contents"
+        )
 
 
 def check_aws_config(backend: dict) -> None:

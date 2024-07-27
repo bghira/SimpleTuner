@@ -227,10 +227,10 @@ class PromptHandler:
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id
         )
-        instance_data_root = backend_config.get("instance_data_root")
+        instance_data_dir = backend_config.get("instance_data_dir")
         image_filename_stem = image_path
-        if instance_data_root is not None and instance_data_root in image_filename_stem:
-            image_filename_stem = image_filename_stem.replace(instance_data_root, "")
+        if instance_data_dir is not None and instance_data_dir in image_filename_stem:
+            image_filename_stem = image_filename_stem.replace(instance_data_dir, "")
             if image_filename_stem.startswith("/"):
                 image_filename_stem = image_filename_stem[1:]
 
@@ -386,7 +386,7 @@ class PromptHandler:
 
     @staticmethod
     def get_all_captions(
-        instance_data_root: str,
+        instance_data_dir: str,
         use_captions: bool,
         prepend_instance_prompt: bool,
         data_backend: BaseDataBackend,
@@ -397,7 +397,7 @@ class PromptHandler:
         all_image_files = StateTracker.get_image_files(
             data_backend_id=data_backend.id
         ) or data_backend.list_files(
-            instance_data_root=instance_data_root, str_pattern="*.[jJpP][pPnN][gG]"
+            instance_data_dir=instance_data_dir, str_pattern="*.[jJpP][pPnN][gG]"
         )
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id

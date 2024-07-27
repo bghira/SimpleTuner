@@ -195,7 +195,7 @@ class S3DataBackend(BaseDataBackend):
             for item in response.get("Contents", [])
         ]
 
-    def list_files(self, str_pattern: str, instance_data_root: str = None):
+    def list_files(self, str_pattern: str, instance_data_dir: str = None):
         # Initialize the results list
         results = []
 
@@ -206,8 +206,8 @@ class S3DataBackend(BaseDataBackend):
         paginator = self.client.get_paginator("list_objects_v2")
 
         # We'll use fnmatch to filter based on the provided pattern.
-        if instance_data_root:
-            pattern = os.path.join(instance_data_root or None, str_pattern)
+        if instance_data_dir:
+            pattern = os.path.join(instance_data_dir or None, str_pattern)
         else:
             pattern = str_pattern
 
@@ -215,7 +215,7 @@ class S3DataBackend(BaseDataBackend):
         prefix_dict = {}
         # Log the first few items, alphabetically sorted:
         logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_root} with search pattern: {pattern}"
+            f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_dir} with search pattern: {pattern}"
         )
 
         # Paginating over the entire bucket objects

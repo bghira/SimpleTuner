@@ -25,7 +25,7 @@ class MetadataBackend:
     def __init__(
         self,
         id: str,
-        instance_data_root: str,
+        instance_data_dir: str,
         cache_file: str,
         metadata_file: str,
         data_backend: BaseDataBackend,
@@ -47,7 +47,7 @@ class MetadataBackend:
         self.accelerator = accelerator
         self.data_backend = data_backend
         self.batch_size = batch_size
-        self.instance_data_root = instance_data_root
+        self.instance_data_dir = instance_data_dir
         if cache_file_suffix is not None:
             cache_file = f"{cache_file}_{cache_file_suffix}"
             metadata_file = f"{metadata_file}_{cache_file_suffix}"
@@ -888,12 +888,8 @@ class MetadataBackend:
 
         # Extract the base filename without the extension
         base_filename = os.path.splitext(os.path.basename(cache_file))[0]
-        base_filename_png = os.path.join(
-            self.instance_data_root, f"{base_filename}.png"
-        )
-        base_filename_jpg = os.path.join(
-            self.instance_data_root, f"{base_filename}.jpg"
-        )
+        base_filename_png = os.path.join(self.instance_data_dir, f"{base_filename}.png")
+        base_filename_jpg = os.path.join(self.instance_data_dir, f"{base_filename}.jpg")
         # Check if the base filename is in the correct bucket
         if any(
             base_filename_png in self.aspect_ratio_bucket_indices.get(bucket, set())

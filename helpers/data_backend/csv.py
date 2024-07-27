@@ -8,6 +8,7 @@ import requests
 from PIL import Image
 
 from helpers.data_backend.base import BaseDataBackend
+from helpers.training.multi_process import should_log
 from pathlib import Path
 from io import BytesIO
 import os
@@ -16,19 +17,26 @@ import torch
 from typing import Any, Union, Optional, BinaryIO
 
 logger = logging.getLogger("CSVDataBackend")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
-def shorten_and_clean_filename(filename):
+def shorten_and_clean_filename(filename: str, no_op: bool):
+    if no_op:
+        return filename
     filename = filename.replace("%20", "-").replace(" ", "-")
     if len(filename) > 250:
         filename = filename[:120] + "---" + filename[126:]
     return filename
 
 
-def html_to_file_loc(parent_directory: Path, url: str) -> str:
+def html_to_file_loc(parent_directory: Path, url: str, no_op: bool) -> str:
     filename = url.split("/")[-1]
-    cached_loc = str(parent_directory.joinpath(shorten_and_clean_filename(filename)))
+    cached_loc = str(
+        parent_directory.joinpath(shorten_and_clean_filename(filename, no_op=no_op))
+    )
     return cached_loc
 
 
@@ -38,20 +46,22 @@ class CSVDataBackend(BaseDataBackend):
         accelerator,
         id: str,
         csv_file: Path,
-        compress_cache: bool = True,
+        compress_cache: bool = False,
         image_url_col: str = "Image",
         caption_col: str = "Long Caption",
         image_cache_loc: Optional[str] = None,
+        shorten_filenames: bool = False,
     ):
+        self.id = id
+        self.type = "csv"
+        self.compress_cache = compress_cache
+        self.shorten_filenames = shorten_filenames
         self.csv_file = csv_file
         self.accelerator = accelerator
-        self.id = id
         self.image_url_col = image_url_col
         self.df = pd.read_csv(csv_file, index_col=image_url_col)
         self.df = self.df.groupby(level=0).last()  # deduplicate by index (image loc)
-        self.compress_cache = compress_cache
         self.caption_col = caption_col
-        self.type = "csv"
         self.image_cache_loc = (
             Path(image_cache_loc) if image_cache_loc is not None else None
         )
@@ -60,14 +70,17 @@ class CSVDataBackend(BaseDataBackend):
         """Read and return the content of the file."""
         if isinstance(location, Path):
             location = str(location.resolve())
-        # Openfilepath as BytesIO:
-        if location.endswith(".txt") and location.removesuffix(".txt") in self.df.index:
-            # caption read
-            return self.df.loc[location.removesuffix(".txt"), self.caption_col]
+        ## This is how Arcade-AI handled captions in their CSV backend implementation.
+        ## However, the `caption_backend` should be how the caption is handled.
+        # if location.endswith(".txt") and location.removesuffix(".txt") in self.df.index:
+        #     # caption read
+        #     return self.df.loc[location.removesuffix(".txt"), self.caption_col]
         if location.startswith("http"):
             if self.image_cache_loc is not None:
                 # check for cache
-                cached_loc = html_to_file_loc(self.image_cache_loc, location)
+                cached_loc = html_to_file_loc(
+                    self.image_cache_loc, location, no_op=self.shorten_filenames
+                )
                 if os.path.exists(cached_loc):
                     # found cache
                     location = cached_loc
@@ -93,7 +106,11 @@ class CSVDataBackend(BaseDataBackend):
                 "http"
             ), f"writing to {filepath} is not allowed as it has http in it"
             filepath = Path(filepath)
-        filepath = filepath.parent.joinpath(shorten_and_clean_filename(filepath.name))
+        # Not a huge fan of auto-shortening filenames, as we hash things for that in other cases.
+        # However, this is copied in from the original Arcade-AI CSV backend implementation for compatibility.
+        filepath = filepath.parent.joinpath(
+            shorten_and_clean_filename(filepath.name, no_op=self.shorten_filenames)
+        )
         filepath.parent.mkdir(parents=True, exist_ok=True)
         str_filepath = str(filepath.resolve())
         if str_filepath not in self.df.index:
@@ -116,42 +133,43 @@ class CSVDataBackend(BaseDataBackend):
 
     def delete(self, filepath):
         """Delete the specified file."""
-        if filepath not in self.df.index:
-            raise FileNotFoundError(f"{filepath} not found in csv.")
-        else:
+        if filepath in self.df.index:
             self.df.drop(filepath, inplace=True)
             self.save_state()
         if os.path.exists(filepath):
             logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
-        # Check if file exists:
-        if self.exists(filepath):
+        # Validate that we deleted it correctly.
+        if self.exists(filepath) or filepath in self.df.index:
             raise Exception(f"Failed to delete {filepath}")
 
     def exists(self, filepath):
         """Check if the file exists."""
         if isinstance(filepath, Path):
             filepath = str(filepath.resolve())
-        if filepath.endswith(".txt"):
-            # potentially a caption request
-            if filepath.removesuffix(".txt") in self.df.index:
-                return True
+        ## Part of Arcade-AI's original caption handling.
+        ## We use the caption_backend instead, as normal.
+        ## This means we probably won't use textfiles on CSV backend.
+        # if filepath.endswith(".txt"):
+        #     # potentially a caption request
+        #     if filepath.removesuffix(".txt") in self.df.index:
+        #         return True
         return filepath in self.df.index
 
     def open_file(self, filepath, mode):
         """Open the file in the specified mode."""
         return open(filepath, mode)
 
-    def list_files(self, str_pattern: str, instance_data_root: str = None) -> tuple:
+    def list_files(self, str_pattern: str, instance_data_dir: str = None) -> tuple:
         """
         List all files matching the pattern.
         Creates Path objects of each file found.
         """
         logger.debug(
-            f"LocalDataBackend.list_files: str_pattern={str_pattern}, instance_data_root={instance_data_root}"
+            f"LocalDataBackend.list_files: str_pattern={str_pattern}, instance_data_dir={instance_data_dir}"
         )
-        if instance_data_root is None:
-            raise ValueError("instance_data_root must be specified.")
+        if instance_data_dir is None:
+            raise ValueError("instance_data_dir must be specified.")
 
         filtered_ids = set(
             filter(lambda id: fnmatch.fnmatch(id, str_pattern), list(self.df.index))
@@ -282,15 +300,15 @@ class CSVDataBackend(BaseDataBackend):
 
 if __name__ == "__main__":
     data = CSVDataBackend(
-        None,
-        "test",
-        "/media/second8TBNVME/cache/SimpleTuner/jewelry-v13.csv",
+        accelerator=None,
+        id="test",
+        csv_file="/media/second8TBNVME/cache/SimpleTuner/jewelry-v13.csv",
         image_cache_loc="/media/second8TBNVME/cache/SimpleTuner/csv-data-cache",
         compress_cache=False,
     )
     results = data.list_files(
         "*.[jJpP][pPnN][gG]",
-        instance_data_root="/media/second8TBNVME/cache/SimpleTuner/jewelry-v13",
+        instance_data_dir="/media/second8TBNVME/cache/SimpleTuner/jewelry-v13",
     )[0][2]
     # print(results)
     test = data.exists(

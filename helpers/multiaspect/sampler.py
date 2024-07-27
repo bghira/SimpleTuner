@@ -185,10 +185,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         If the path prefix isn't in the path, we'll add it.
         """
         if (
-            self.metadata_backend.instance_data_root not in filepath
+            self.metadata_backend.instance_data_dir not in filepath
             and not filepath.startswith("http")
         ):
-            filepath = os.path.join(self.metadata_backend.instance_data_root, filepath)
+            filepath = os.path.join(self.metadata_backend.instance_data_dir, filepath)
         image_data = self.data_backend.read_image(filepath)
         return image_data
 
@@ -237,7 +237,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
                 (
-                    os.path.join(self.metadata_backend.instance_data_root, image)
+                    os.path.join(self.metadata_backend.instance_data_dir, image)
                     if not image.startswith("http")
                     else image
                 )
@@ -250,9 +250,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 unseen_images.extend(
                     [
                         (
-                            os.path.join(
-                                self.metadata_backend.instance_data_root, image
-                            )
+                            os.path.join(self.metadata_backend.instance_data_dir, image)
                             if not image.startswith("http")
                             else image
                         )
@@ -425,7 +423,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # strip leading /
         original_sample_path = original_sample_path.lstrip("/")
         full_path = os.path.join(
-            self.metadata_backend.instance_data_root, original_sample_path
+            self.metadata_backend.instance_data_dir, original_sample_path
         )
         conditioning_sample = TrainingSample(
             image=self.data_backend.read_image(full_path),
@@ -444,7 +442,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         outputs = list(samples)
         for sample in samples:
             sample_path = sample["image_path"].split(
-                self.metadata_backend.instance_data_root
+                self.metadata_backend.instance_data_dir
             )[-1]
             conditioning_sample = sampler.get_conditioning_sample(sample_path)
             outputs.append(conditioning_sample)
