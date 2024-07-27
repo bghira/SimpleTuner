@@ -17,6 +17,7 @@ from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
 from queue import Queue
 from concurrent.futures import as_completed
+from hashlib import sha256
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -70,6 +71,7 @@ class VAECache:
         minimum_image_size: int = None,
         max_workers: int = 32,
         vae_cache_preprocess: bool = False,
+        hash_filenames: bool = False,
     ):
         self.id = id
         if image_data_backend.id != id:
@@ -80,6 +82,7 @@ class VAECache:
         self.cache_data_backend = (
             cache_data_backend if cache_data_backend is not None else image_data_backend
         )
+        self.hash_filenames = hash_filenames
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
@@ -125,10 +128,13 @@ class VAECache:
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
         if self.instance_data_root not in filepath:
-            if self.cache_dir in filepath:
+            if self.cache_dir in filepath and filepath.endswith(".pt"):
                 return filepath, os.path.basename(filepath)
         # Extract the base name from the filepath and replace the image extension with .pt
-        base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
+        base_filename = os.path.splitext(os.path.basename(filepath))[0]
+        if self.hash_filenames:
+            base_filename = str(sha256(str(base_filename).encode()).hexdigest())
+        base_filename = str(base_filename) + ".pt"
         # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
         subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
         if len(subfolders) > 0 and subfolders[0] == "/":
@@ -139,31 +145,21 @@ class VAECache:
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
-        generated_names = self.generate_vae_cache_filename(filepath)
-        # self.debug_log(f"VAE cache generated names: {generated_names}")
+        test_filepath, _ = self.generate_vae_cache_filename(filepath)
 
-        # Assuming the first item in generated_names is the one we want:
-        test_filepath = generated_names[0]
+        return self.vae_path_to_image_path.get(test_filepath, None)
 
-        # Remove the .pt extension and replace it with .png for testing:
-        test_filepath_no_ext, _ = os.path.splitext(test_filepath)
-        test_filepath_png = f"{test_filepath_no_ext}.png"
-
-        # More accurate handling of path prefix replacement:
-        if test_filepath_png.startswith(str(self.cache_dir)):
-            # Extract the relative path after the cache_dir
-            relative_path = os.path.relpath(test_filepath_png, self.cache_dir)
-            # Construct the new path by joining the relative path with the instance_data_root
-            test_filepath_png = os.path.join(self.instance_data_root, relative_path)
-            # self.debug_log(f"Converted to image data path: {test_filepath_png}")
-
-        # Prepare the JPG version as well
-        test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
-
-        return test_filepath_png, test_filepath_jpg
+    def _build_vae_cache_filename_map(self, all_image_files: list):
+        """Build a map of image filepaths to their corresponding cache filenames."""
+        self.image_path_to_vae_path = {}
+        self.vae_path_to_image_path = {}
+        for image_file in all_image_files:
+            cache_filename, _ = self.generate_vae_cache_filename(image_file)
+            self.image_path_to_vae_path[image_file] = cache_filename
+            self.vae_path_to_image_path[cache_filename] = image_file
 
     def already_cached(self, filepath: str) -> bool:
-        test_path = self.generate_vae_cache_filename(filepath)[0]
+        test_path = self.image_path_to_vae_path.get(filepath, None)
         if self.cache_data_backend.exists(test_path):
             return True
         return False
@@ -219,10 +215,11 @@ class VAECache:
         ) or StateTracker.set_image_files(
             self.image_data_backend.list_files(
                 instance_data_root=self.instance_data_root,
-                str_pattern="*.[jJpP][pPnN][gG]",
+                str_pattern="*.[tTwWjJpP][iIeEpPnN][fFbBgG][fFpP]?",
             ),
             data_backend_id=self.id,
         )
+        self._build_vae_cache_filename_map(all_image_files)
         # This isn't returned, because we merely check if it's stored, or, store it.
         (
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
@@ -932,14 +929,10 @@ class VAECache:
                 ):
                     statistics["total"] += 1
                     filepath = self._process_raw_filepath(raw_filepath)
-                    (
-                        test_filepath_png,
-                        test_filepath_jpg,
-                    ) = self._image_filename_from_vaecache_filename(filepath)
-                    if (
-                        test_filepath_png not in self.local_unprocessed_files
-                        and test_filepath_jpg not in self.local_unprocessed_files
-                    ):
+                    test_filepath = self._image_filename_from_vaecache_filename(
+                        filepath
+                    )
+                    if test_filepath not in self.local_unprocessed_files:
                         statistics["not_local"] += 1
                         continue
                     try:

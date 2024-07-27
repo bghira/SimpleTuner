@@ -582,16 +582,9 @@ class TrainingSample:
         Returns:
             str: The cache path for the image.
         """
-        metadata_backend = StateTracker.get_data_backend(self.data_backend_id)[
-            "metadata_backend"
-        ]
         vae_cache = StateTracker.get_data_backend(self.data_backend_id)["vaecache"]
-        # remove metadata_backend.instance_data_root in exchange for vae_cache.cache_dir
-        partial_replacement = self._image_path.replace(
-            metadata_backend.instance_data_root, vae_cache.cache_dir
-        )
-        # replace .ext with .pt
-        return os.path.splitext(partial_replacement)[0] + ".pt"
+
+        return vae_cache.image_path_to_vae_path.get(self._image_path, None)
 
     def image_path(self, basename_only=False):
         """

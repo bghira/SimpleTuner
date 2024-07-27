@@ -19,6 +19,7 @@ import logging
 import io
 import time
 import threading
+from tqdm import tqdm
 import queue
 
 logger = logging.getLogger("DataBackendFactory")
@@ -193,17 +194,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 def print_bucket_info(metadata_backend):
     # Print table header
     if get_rank() == 0:
-        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
+        tqdm.write(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
 
         # Print separator
-        print("-" * 30)
+        tqdm.write("-" * 30)
 
         # Print each bucket's information
         for bucket in metadata_backend.aspect_ratio_bucket_indices:
             image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
             if image_count == 0:
                 continue
-            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
+            tqdm.write(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
 def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
@@ -823,6 +824,7 @@ def configure_multi_databackend(
                 max_workers=backend.get("max_workers", 32),
                 process_queue_size=backend.get("process_queue_size", 64),
                 vae_cache_preprocess=args.vae_cache_preprocess,
+                hash_filenames=backend.get("hash_filenames", False),
             )
 
             if args.vae_cache_preprocess:
