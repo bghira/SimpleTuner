@@ -185,7 +185,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         If the path prefix isn't in the path, we'll add it.
         """
         if (
-            self.metadata_backend.instance_data_dir not in filepath
+            self.metadata_backend.instance_data_dir is not None
+            and self.metadata_backend.instance_data_dir not in filepath
             and not filepath.startswith("http")
         ):
             filepath = os.path.join(self.metadata_backend.instance_data_dir, filepath)

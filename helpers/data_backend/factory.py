@@ -85,6 +85,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop"] = backend["crop"]
     else:
         output["config"]["crop"] = False
+    if backend.get("type") == "csv":
+        if "csv_cache_dir" in backend:
+            output["config"]["csv_cache_dir"] = backend["csv_cache_dir"]
+        if "csv_file" in backend:
+            output["config"]["csv_file"] = backend["csv_file"]
+        if "csv_caption_column" in backend:
+            output["config"]["csv_caption_column"] = backend["csv_caption_column"]
     if "crop_aspect" in backend:
         choices = ["square", "preserve", "random"]
         if backend.get("crop_aspect", None) not in choices:
@@ -526,9 +533,18 @@ def configure_multi_databackend(
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
-            init_backend["instance_data_dir"] = backend["instance_data_dir"]
+            init_backend["instance_data_dir"] = backend.get(
+                "instance_data_dir", backend.get("instance_data_root")
+            )
+            if init_backend["instance_data_dir"] is None:
+                raise ValueError(
+                    "A local backend requires instance_data_dir be defined and pointing to the image data directory."
+                )
             # Remove trailing slash
-            if init_backend["instance_data_dir"][-1] == "/":
+            if (
+                init_backend["instance_data_dir"] is not None
+                and init_backend["instance_data_dir"][-1] == "/"
+            ):
                 init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
                     :-1
                 ]
@@ -556,9 +572,15 @@ def configure_multi_databackend(
                 compress_cache=args.compress_disk_cache,
                 shorten_filenames=backend.get("shorten_filenames", False),
             )
-            init_backend["instance_data_dir"] = backend["instance_data_dir"]
+            # init_backend["instance_data_dir"] = backend.get("instance_data_dir", backend.get("instance_data_root", backend.get("csv_cache_dir")))
+            init_backend["instance_data_dir"] = None
+            # if init_backend["instance_data_dir"] is None:
+            #     raise ValueError("CSV backend requires one of instance_data_dir, instance_data_root or csv_cache_dir to be set, as we require a location to place metadata lists.")
             # Remove trailing slash
-            if init_backend["instance_data_dir"][-1] == "/":
+            if (
+                init_backend["instance_data_dir"] is not None
+                and init_backend["instance_data_dir"][-1] == "/"
+            ):
                 init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
                     :-1
                 ]
@@ -601,6 +623,7 @@ def configure_multi_databackend(
                 )
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
+
         init_backend["metadata_backend"] = BucketManager_cls(
             id=init_backend["id"],
             instance_data_dir=init_backend["instance_data_dir"],
@@ -616,11 +639,11 @@ def configure_multi_databackend(
                 "metadata_update_interval", args.metadata_update_interval
             ),
             cache_file=os.path.join(
-                init_backend["instance_data_dir"],
+                backend.get("instance_data_dir", backend.get("csv_cache_dir")),
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                init_backend["instance_data_dir"],
+                backend.get("instance_data_dir", backend.get("csv_cache_dir")),
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
@@ -979,6 +1002,7 @@ def check_csv_config(backend: dict, args) -> None:
     required_keys = {
         "csv_file": "This is the path to the CSV file containing your image URLs.",
         "csv_cache_dir": "This is the path to your temporary cache files where images will be stored. This can grow quite large.",
+        "csv_caption_column": "This is the column in your csv which contains the caption(s) for the samples.",
     }
     for key in required_keys.keys():
         if key not in backend:
@@ -989,6 +1013,9 @@ def check_csv_config(backend: dict, args) -> None:
         logger.warning(
             "You can save more disk space for cache objects by providing --compress_disk_cache and recreating its contents"
         )
+    caption_strategy = backend.get("caption_strategy")
+    if caption_strategy is None or caption_strategy != "csv":
+        raise ValueError("CSV backend requires a caption_strategy of 'csv'.")
 
 
 def check_aws_config(backend: dict) -> None:

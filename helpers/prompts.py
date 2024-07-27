@@ -371,6 +371,8 @@ class PromptHandler:
             )
         elif caption_strategy == "instanceprompt":
             return instance_prompt
+        elif caption_strategy == "csv":
+            return data_backend.get_caption(image_path)
         else:
             raise ValueError(
                 f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
@@ -448,6 +450,8 @@ class PromptHandler:
                     continue
             elif caption_strategy == "instanceprompt":
                 return [instance_prompt]
+            elif caption_strategy == "csv":
+                caption = data_backend.get_caption(image_path)
             else:
                 raise ValueError(
                     f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"

@@ -24,6 +24,10 @@ else:
     logger.setLevel("ERROR")
 
 
+def url_to_filename(url: str) -> str:
+    return url.split("/")[-1]
+
+
 def shorten_and_clean_filename(filename: str, no_op: bool):
     if no_op:
         return filename
@@ -34,7 +38,7 @@ def shorten_and_clean_filename(filename: str, no_op: bool):
 
 
 def html_to_file_loc(parent_directory: Path, url: str, shorten_filenames: bool) -> str:
-    filename = url.split("/")[-1]
+    filename = url_to_filename(url)
     cached_loc = str(
         parent_directory.joinpath(
             shorten_and_clean_filename(filename, no_op=shorten_filenames)
@@ -50,8 +54,9 @@ class CSVDataBackend(BaseDataBackend):
         id: str,
         csv_file: Path,
         compress_cache: bool = False,
-        image_url_col: str = "Image",
-        caption_col: str = "Long Caption",
+        image_url_col: str = "url",
+        caption_column: str = "caption",
+        url_column: str = "url",
         image_cache_loc: Optional[str] = None,
         shorten_filenames: bool = False,
     ):
@@ -64,7 +69,8 @@ class CSVDataBackend(BaseDataBackend):
         self.image_url_col = image_url_col
         self.df = pd.read_csv(csv_file, index_col=image_url_col)
         self.df = self.df.groupby(level=0).last()  # deduplicate by index (image loc)
-        self.caption_col = caption_col
+        self.caption_column = caption_column
+        self.url_column = url_column
         self.image_cache_loc = (
             Path(image_cache_loc) if image_cache_loc is not None else None
         )
@@ -73,11 +79,6 @@ class CSVDataBackend(BaseDataBackend):
         """Read and return the content of the file."""
         if isinstance(location, Path):
             location = str(location.resolve())
-        ## This is how Arcade-AI handled captions in their CSV backend implementation.
-        ## However, the `caption_backend` should be how the caption is handled.
-        # if location.endswith(".txt") and location.removesuffix(".txt") in self.df.index:
-        #     # caption read
-        #     return self.df.loc[location.removesuffix(".txt"), self.caption_col]
         if location.startswith("http"):
             if self.image_cache_loc is not None:
                 # check for cache
@@ -117,9 +118,6 @@ class CSVDataBackend(BaseDataBackend):
             shorten_and_clean_filename(filepath.name, no_op=self.shorten_filenames)
         )
         filepath.parent.mkdir(parents=True, exist_ok=True)
-        str_filepath = str(filepath.resolve())
-        if str_filepath not in self.df.index:
-            self.df.loc[str_filepath] = pd.Series()
         with open(filepath, "wb") as file:
             # Check if data is a Tensor, and if so, save it appropriately
             if isinstance(data, torch.Tensor):
@@ -133,14 +131,12 @@ class CSVDataBackend(BaseDataBackend):
                     f"Received an unknown data type to write to disk. Doing our best: {type(data)}"
                 )
             file.write(data)
-        self.df.loc[filepath] = pd.Series()
-        self.save_state()
 
     def delete(self, filepath):
         """Delete the specified file."""
         if filepath in self.df.index:
             self.df.drop(filepath, inplace=True)
-            self.save_state()
+            # self.save_state()
         if os.path.exists(filepath):
             logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
@@ -152,14 +148,7 @@ class CSVDataBackend(BaseDataBackend):
         """Check if the file exists."""
         if isinstance(filepath, Path):
             filepath = str(filepath.resolve())
-        ## Part of Arcade-AI's original caption handling.
-        ## We use the caption_backend instead, as normal.
-        ## This means we probably won't use textfiles on CSV backend.
-        # if filepath.endswith(".txt"):
-        #     # potentially a caption request
-        #     if filepath.removesuffix(".txt") in self.df.index:
-        #         return True
-        return filepath in self.df.index
+        return filepath in self.df.index or os.path.exists(filepath)
 
     def open_file(self, filepath, mode):
         """Open the file in the specified mode."""
@@ -170,26 +159,33 @@ class CSVDataBackend(BaseDataBackend):
         List all files matching the pattern.
         Creates Path objects of each file found.
         """
+        # print frame contents
         logger.debug(
-            f"LocalDataBackend.list_files: str_pattern={str_pattern}, instance_data_dir={instance_data_dir}"
+            f"CSVDataBackend.list_files: str_pattern={str_pattern}, instance_data_dir={instance_data_dir}"
         )
         if instance_data_dir is None:
-            raise ValueError("instance_data_dir must be specified.")
-
-        filtered_ids = set(
-            filter(lambda id: fnmatch.fnmatch(id, str_pattern), list(self.df.index))
-        )
-        filtered_paths = set(
-            filter(lambda id: "http" not in id and os.path.exists(id), filtered_ids)
-        )
-
+            filtered_paths = set(self.df.index)
+            filtered_ids = set(filtered_paths)
+        else:
+            filtered_ids = set(
+                filter(lambda id: fnmatch.fnmatch(id, str_pattern), list(self.df.index))
+            )
+            filtered_paths = set(
+                filter(lambda id: "http" not in id and os.path.exists(id), filtered_ids)
+            )
         # Group files by their parent directory
         path_dict = {}
         for path in filtered_paths:
-            parent = str(path.parent)
-            if parent not in path_dict:
-                path_dict[parent] = []
-            path_dict[parent].append(str(path.absolute()))
+            if hasattr(path, "parent"):
+                parent = str(path.parent)
+                if parent not in path_dict:
+                    path_dict[parent] = []
+                path_dict[parent].append(str(path.absolute()))
+            else:
+                if "/" not in path_dict:
+                    path_dict["/"] = []
+                if os.path.splitext(str(path))[1] not in [".json", ".csv", ".parquet"]:
+                    path_dict["/"].append(str(path))
 
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         results += [("", [], filtered_ids - filtered_paths)]
@@ -303,24 +299,7 @@ class CSVDataBackend(BaseDataBackend):
     def save_state(self):
         self.df.to_csv(self.csv_file, index_label=self.image_url_col)
 
-
-if __name__ == "__main__":
-    data = CSVDataBackend(
-        accelerator=None,
-        id="test",
-        csv_file="/media/second8TBNVME/cache/SimpleTuner/jewelry-v13.csv",
-        image_cache_loc="/media/second8TBNVME/cache/SimpleTuner/csv-data-cache",
-        compress_cache=False,
-    )
-    results = data.list_files(
-        "*.[jJpP][pPnN][gG]",
-        instance_data_dir="/media/second8TBNVME/cache/SimpleTuner/jewelry-v13",
-    )[0][2]
-    # print(results)
-    test = data.exists(
-        "https://storage.googleapis.com/internal-assets-arcade-ai-prod/xbnwoi287kc/long%20slim%20dangle%20earringss.png.txt"
-    )
-    for file in results:
-        image = data.read_image(file, delete_problematic_images=False)
-        print(image.size, file)
-        # caption = data.read(file + ".txt")
+    def get_caption(self, image_path: str) -> str:
+        if self.caption_column is None:
+            raise ValueError("Cannot retrieve caption from csv, as one is not set.")
+        return self.df.loc[image_path, self.caption_column]

@@ -685,6 +685,7 @@ class MetadataBackend:
                     if result is not None:
                         return result
             return None
+
         return self.image_metadata.get(filepath, None)
 
     def scan_for_metadata(self):
