@@ -156,6 +156,7 @@ class VAECache:
         test_filepath, _ = self.generate_vae_cache_filename(filepath)
         result = self.vae_path_to_image_path.get(test_filepath, None)
         if result is None:
+            logger.debug(f"Mapping: {self.vae_path_to_image_path}")
             raise ValueError(
                 f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). Is the map built? {True if self.vae_path_to_image_path != {} else False}"
             )
