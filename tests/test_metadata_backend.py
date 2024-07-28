@@ -21,7 +21,7 @@ class TestMetadataBackend(unittest.TestCase):
         # Mock image data to simulate reading from the backend
         self.image_path_str = "test_image.jpg"
 
-        self.instance_data_root = "/some/fake/path"
+        self.instance_data_dir = "/some/fake/path"
         self.cache_file = "/some/fake/cache.json"
         self.metadata_file = "/some/fake/metadata.json"
         StateTracker.set_args(MagicMock())
@@ -33,7 +33,7 @@ class TestMetadataBackend(unittest.TestCase):
             with self.assertLogs("JsonMetadataBackend", level="WARNING"):
                 self.metadata_backend = JsonMetadataBackend(
                     id="foo",
-                    instance_data_root=self.instance_data_root,
+                    instance_data_dir=self.instance_data_dir,
                     cache_file=self.cache_file,
                     metadata_file=self.metadata_file,
                     batch_size=1,

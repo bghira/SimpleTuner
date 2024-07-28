@@ -25,7 +25,7 @@ class ParquetMetadataBackend(MetadataBackend):
     def __init__(
         self,
         id: str,
-        instance_data_root: str,
+        instance_data_dir: str,
         cache_file: str,
         metadata_file: str,
         data_backend: BaseDataBackend,
@@ -46,7 +46,7 @@ class ParquetMetadataBackend(MetadataBackend):
         self.is_json_file = self.parquet_path.endswith(".json")
         super().__init__(
             id=id,
-            instance_data_root=instance_data_root,
+            instance_data_dir=instance_data_dir,
             cache_file=cache_file,
             metadata_file=metadata_file,
             data_backend=data_backend,
@@ -107,8 +107,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 if not identifier_includes_extension:
                     filename = os.path.splitext(filename)[0]
                 if not identifier_includes_path:
-                    # strip out self.instance_data_root
-                    filename = filename.replace(self.instance_data_root, "")
+                    # strip out self.instance_data_dir
+                    filename = filename.replace(self.instance_data_dir, "")
                     # any leading /
                     if filename.startswith("/"):
                         filename = filename[1:]
@@ -196,7 +196,7 @@ class ParquetMetadataBackend(MetadataBackend):
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(
-                instance_data_root=self.instance_data_root,
+                instance_data_dir=self.instance_data_dir,
                 str_pattern="*.[jJpP][pPnN][gG]",
             )
             all_image_files = StateTracker.set_image_files(
@@ -447,9 +447,9 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = os.path.splitext(
                     os.path.split(image_path_str)[-1]
                 )[0]
-            if self.instance_data_root in image_path_filtered:
+            if self.instance_data_dir in image_path_filtered:
                 image_path_filtered = image_path_filtered.replace(
-                    self.instance_data_root, ""
+                    self.instance_data_dir, ""
                 )
                 # remove leading /
                 if image_path_filtered.startswith("/"):
@@ -458,7 +458,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = int(image_path_filtered)
 
             logger.debug(
-                f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
+                f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_dir}: {image_path_filtered}."
             )
 
             try:

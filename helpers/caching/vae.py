@@ -55,7 +55,7 @@ class VAECache:
         vae,
         accelerator,
         metadata_backend: MetadataBackend,
-        instance_data_root: str,
+        instance_data_dir: str,
         image_data_backend: BaseDataBackend,
         cache_data_backend: BaseDataBackend = None,
         cache_dir="vae_cache",
@@ -100,7 +100,7 @@ class VAECache:
         self.read_batch_size = read_batch_size
         self.process_queue_size = process_queue_size
         self.vae_batch_size = vae_batch_size
-        self.instance_data_root = instance_data_root
+        self.instance_data_dir = instance_data_dir
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
@@ -136,8 +136,10 @@ class VAECache:
         if self.hash_filenames:
             base_filename = str(sha256(str(base_filename).encode()).hexdigest())
         base_filename = str(base_filename) + ".pt"
-        # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
-        subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
+        # Find the subfolders the sample was in, and replace the instance_data_dir with the cache_dir
+        subfolders = ""
+        if self.instance_data_dir is not None:
+            subfolders = os.path.dirname(filepath).replace(self.instance_data_dir, "")
         if len(subfolders) > 0 and subfolders[0] == "/" and self.cache_dir[0] != "/":
             subfolders = subfolders[1:]
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
@@ -229,7 +231,7 @@ class VAECache:
             data_backend_id=self.id
         ) or StateTracker.set_image_files(
             self.image_data_backend.list_files(
-                instance_data_root=self.instance_data_root,
+                instance_data_dir=self.instance_data_dir,
                 str_pattern="*.[tTwWjJpP][iIeEpPnN][fFbBgG][fFpP]?",
             ),
             data_backend_id=self.id,
@@ -239,7 +241,7 @@ class VAECache:
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
             or StateTracker.set_vae_cache_files(
                 self.cache_data_backend.list_files(
-                    instance_data_root=self.cache_dir,
+                    instance_data_dir=self.cache_dir,
                     str_pattern="*.pt",
                 ),
                 data_backend_id=self.id,
@@ -277,7 +279,7 @@ class VAECache:
             self.debug_log("Updating StateTracker with new VAE cache entry list.")
             StateTracker.set_vae_cache_files(
                 self.cache_data_backend.list_files(
-                    instance_data_root=self.cache_dir,
+                    instance_data_dir=self.cache_dir,
                     str_pattern="*.pt",
                 ),
                 data_backend_id=self.id,
@@ -296,7 +298,7 @@ class VAECache:
                 self.debug_log("Updating StateTracker with new VAE cache entry list.")
                 StateTracker.set_vae_cache_files(
                     self.cache_data_backend.list_files(
-                        instance_data_root=self.cache_dir,
+                        instance_data_dir=self.cache_dir,
                         str_pattern="*.pt",
                     ),
                     data_backend_id=self.id,

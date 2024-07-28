@@ -9,7 +9,7 @@ from helpers.data_backend.base import BaseDataBackend
 
 class TestMultiAspectDataset(unittest.TestCase):
     def setUp(self):
-        self.instance_data_root = "/some/fake/path"
+        self.instance_data_dir = "/some/fake/path"
         self.accelerator = Mock()
         self.metadata_backend = Mock(spec=JsonMetadataBackend)
         self.metadata_backend.__len__ = Mock(return_value=10)
@@ -33,7 +33,7 @@ class TestMultiAspectDataset(unittest.TestCase):
                 datasets=[range(10)],
             )
 
-    def test_init_invalid_instance_data_root(self):
+    def test_init_invalid_instance_data_dir(self):
         MultiAspectDataset(
             id="foo",
             datasets=[range(10)],
