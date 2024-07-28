@@ -68,8 +68,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `type`
 
-- **Values:** `aws` | `local`
-- **Description:** Determines the storage backend (local or cloud) used for this dataset.
+- **Values:** `aws` | `local` | `csv`
+- **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
 
 ### `instance_data_dir` / `aws_data_prefix`
 
@@ -229,6 +229,80 @@ In order, the lines behave as follows:
     "type": "local",
     "cache_dir": "/path/to/textembed_cache"
   }
+]
+```
+
+## Train directly from CSV URL list
+
+**Note: Your CSV must contain the captions for your images.**
+
+> ⚠️ This is an advanced **and** experimental feature, and you may run into problems. If you do, please open an [issue](https://github.com/bghira/simpletuner/issues)!
+
+Instead of manually downloading your data from a URL list, you might wish to plug them in directly to the trainer.
+
+**Note:** It's always better to manually download the image data. Another strategy to save local disk space might be to try [using cloud storage with local encoder caches](#local-cache-with-cloud-dataset) instead.
+
+### Advantages
+
+- No need to directly download the data
+- Can make use of SimpleTuner's caption toolkit to directly caption the URL list
+- Saves on disk space, since only the image embeds (if applicable) and text embeds are stored
+
+### Disadvantages
+
+- Requires a costly and potentially slow aspect bucket scan where each image is downloaded and its metadata collected
+- The downloaded images are cached on-disk, which can grow to be very large. This is an area of improvement to work on, as the cache management in this version is very basic, write-only/delete-never
+- If your dataset has a large number of invalid URLs, these might waste time on resumption as, currently, bad samples are **never** removed from the URL list
+  - **Suggestion:** Run a URL validation task beforehand and remove any bad samples.
+
+### Configuration
+
+Required keys:
+
+- `type: "csv"`
+- `csv_caption_column`
+- `csv_cache_dir`
+- `caption_strategy: "csv"`
+
+```json
+[
+    {
+        "id": "csvtest",
+        "type": "csv",
+        "csv_caption_column": "caption",
+        "csv_file": "/Volumes/ml/dataset/test_list.csv",
+        "csv_cache_dir": "/Volumes/ml/cache/csv/test",
+        "cache_dir_vae": "/Volumes/ml/cache/vae/sdxl",
+        "caption_strategy": "csv",
+        "image_embeds": "image-embeds",
+        "crop": true,
+        "crop_aspect": "square",
+        "crop_style": "center",
+        "resolution": 1024,
+        "maximum_image_size": 1024,
+        "target_downsample_size": 1024,
+        "resolution_type": "pixel",
+        "minimum_image_size": 0.5,
+        "disabled": false,
+        "skip_file_discovery": "",
+        "preserve_data_backend_cache": false,
+        "hash_filenames": true
+    },
+    {
+      "id": "image-embeds",
+      "type": "local"
+    },
+    {
+        "id": "text-embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/Volumes/ml/cache/text/sdxl",
+        "disabled": false,
+        "preserve_data_backend_cache": false,
+        "skip_file_discovery": "",
+        "write_batch_size": 128
+    }
 ]
 ```
 

@@ -577,7 +577,7 @@ class TrainingSample:
         """
         Given an image path, manipulate the prefix and suffix to return its counterpart cache path.
         The image extension will be stripped and replaced with the appropriate value (.pt).
-        If the instance_data_root is found in the path, it will be replaced with the cache_dir.
+        If the instance_data_dir is found in the path, it will be replaced with the cache_dir.
 
         Returns:
             str: The cache path for the image.
