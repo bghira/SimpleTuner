@@ -639,11 +639,17 @@ def configure_multi_databackend(
                 "metadata_update_interval", args.metadata_update_interval
             ),
             cache_file=os.path.join(
-                backend.get("instance_data_dir", backend.get("csv_cache_dir")),
+                backend.get(
+                    "instance_data_dir",
+                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+                ),
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                backend.get("instance_data_dir", backend.get("csv_cache_dir")),
+                backend.get(
+                    "instance_data_dir",
+                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+                ),
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
