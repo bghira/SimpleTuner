@@ -157,9 +157,8 @@ class VAECache:
         test_filepath, _ = self.generate_vae_cache_filename(filepath)
         result = self.vae_path_to_image_path.get(test_filepath, None)
         if result is None:
-            logger.debug(f"Mapping: {self.vae_path_to_image_path}")
             raise ValueError(
-                f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). Is the map built? {True if self.vae_path_to_image_path != {} else False}"
+                f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). This occurs when you toggle the value for hashed_filenames without clearing your VAE cache. If it still occurs after clearing the cache, please open an issue: https://github.com/bghira/simpletuner/issues"
             )
 
         return result
@@ -288,7 +287,7 @@ class VAECache:
         self.debug_log("-> Clearing cache objects")
         self.clear_cache()
         self.debug_log("-> Split tasks between GPU(s)")
-        self.split_cache_between_processes()
+        self.discover_unprocessed_files()
         self.debug_log("-> Load VAE")
         self.init_vae()
         if StateTracker.get_args().vae_cache_preprocess:
@@ -366,13 +365,13 @@ class VAECache:
         }
 
         # Identify unprocessed files
-        unprocessed_files = [
+        self.local_unprocessed_files = [
             file
             for file in all_image_files
             if os.path.splitext(file)[0] not in existing_image_filenames
         ]
 
-        return unprocessed_files
+        return self.local_unprocessed_files
 
     def _reduce_bucket(
         self,
@@ -415,23 +414,6 @@ class VAECache:
         #     f" Our system has {len(self.local_unprocessed_files)} total images in its assigned slice for processing across all buckets."
         # )
         return relevant_files
-
-    def split_cache_between_processes(self):
-        self.local_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        """
-        We used to split the VAE cache between GPU processes, but instead, we split the buckets.
-
-        This code remains as an artifact. It is no longer needed, as it causes a misalignment
-        between the assigned slice for this GPU and its slice of already-processed images.
-        """
-        # # Use the accelerator to split the data
-        # with self.accelerator.split_between_processes(
-        #     all_unprocessed_files
-        # ) as split_files:
-        #     self.local_unprocessed_files = split_files
-        # self.debug_log(
-        #     f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
-        # )
 
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
