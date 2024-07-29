@@ -576,6 +576,7 @@ class TextEmbeddingCache:
             self.model_type == "legacy"
             or self.model_type == "pixart_sigma"
             or self.model_type == "aura_flow"
+            or self.model_type == "smoldit"
         ):
             # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(

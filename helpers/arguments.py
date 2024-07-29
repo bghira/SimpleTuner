@@ -103,6 +103,12 @@ def parse_args(input_args=None):
         help=("This must be set when training an AuraFlow model."),
     )
     parser.add_argument(
+        "--smoldit",
+        action="store_true",
+        default=False,
+        help=("Use the experimental SmolDiT model architecture."),
+    )
+    parser.add_argument(
         "--flow_matching_loss",
         type=str,
         choices=["diffusers", "compatible", "diffusion"],

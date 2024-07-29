@@ -109,8 +109,15 @@ SCHEDULER_NAME_MAP = {
 
 
 def import_model_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
+    pretrained_model_name_or_path: str,
+    revision: str,
+    args,
+    subfolder: str = "text_encoder",
 ):
+    if args.smoldit:
+        from transformers import AutoModelForSeq2SeqLM
+
+        return AutoModelForSeq2SeqLM
     text_encoder_config = PretrainedConfig.from_pretrained(
         pretrained_model_name_or_path, subfolder=subfolder, revision=revision
     )
@@ -143,6 +150,14 @@ def import_model_class_from_model_name_or_path(
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
     try:
+        if args.smoldit:
+            from transformers import AutoTokenizer
+
+            tokenizer_1 = AutoTokenizer.from_pretrained(
+                "EleutherAI/pile-t5-base", pad_token="[PAD]"
+            )
+            return tokenizer_1, tokenizer_2, tokenizer_3
+
         tokenizer_kwargs = {
             "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
             "subfolder": "tokenizer",
@@ -265,6 +280,8 @@ def main():
         StateTracker.set_model_type("legacy")
     if args.kolors:
         StateTracker.set_model_type("kolors")
+    if args.smoldit:
+        StateTracker.set_model_type("smoldit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -412,6 +429,9 @@ def main():
         logger.info("Loading Kolors ChatGLM language model..")
         text_encoder_path = "kwai-kolors/kolors-diffusers"
         text_encoder_subfolder = "text_encoder"
+    elif args.smoldit:
+        text_encoder_path = "EleutherAI/pile-t5-base"
+        text_encoder_subfolder = None
     elif args.pixart_sigma or args.aura_flow:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
@@ -428,18 +448,20 @@ def main():
         text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-            text_encoder_path, args.revision, subfolder=text_encoder_subfolder
+            text_encoder_path, args.revision, args, subfolder=text_encoder_subfolder
         )
     if tokenizer_2 is not None:
         text_encoder_cls_2 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_2",
         )
     if tokenizer_3 is not None and args.sd3:
         text_encoder_cls_3 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_3",
         )
 
@@ -482,7 +504,7 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         text_encoder_variant = args.variant
-        if tokenizer_1 is not None:
+        if tokenizer_1 is not None and not args.smoldit:
             if args.pixart_sigma or args.aura_flow:
                 logger.info(
                     f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
@@ -502,6 +524,11 @@ def main():
                 revision=args.revision,
                 variant=text_encoder_variant,
             )
+        elif args.smoldit:
+            text_encoder_1 = text_encoder_cls_1.from_pretrained(
+                "EleutherAI/pile-t5-base"
+            ).encoder
+            text_encoder_1.eval()
 
         if tokenizer_2 is not None:
             logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
@@ -608,6 +635,15 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.smoldit:
+        logger.info("Loading SmolDiT model..")
+        transformer_variant = None
+        unet = None
+        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTDefaultConfig
+
+        transformer = SmolDiT2DModel(**SmolDiTDefaultConfig)
+        if "lora" in args.model_type:
+            raise ValueError("SmolDiT does not yet support LoRA training.")
     else:
         logger.info("Loading U-net..")
         unet_variant = args.variant
