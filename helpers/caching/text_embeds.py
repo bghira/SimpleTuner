@@ -1020,11 +1020,6 @@ class TextEmbeddingCache:
 
         return prompt_embeds_all, add_text_embeds_all
 
-    def split_cache_between_processes(self, prompts: list):
-        # Use the accelerator to split the data
-        with self.accelerator.split_between_processes(prompts) as split_files:
-            self.prompts = split_files
-
     def __del__(self):
         """Ensure that the batch write thread is properly closed."""
         if self.batch_write_thread.is_alive():
