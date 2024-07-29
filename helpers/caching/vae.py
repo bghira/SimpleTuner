@@ -157,9 +157,8 @@ class VAECache:
         test_filepath, _ = self.generate_vae_cache_filename(filepath)
         result = self.vae_path_to_image_path.get(test_filepath, None)
         if result is None:
-            logger.debug(f"Mapping: {self.vae_path_to_image_path}")
             raise ValueError(
-                f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). Is the map built? {True if self.vae_path_to_image_path != {} else False}"
+                f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). This occurs when you toggle the value for hashed_filenames without clearing your VAE cache. If it still occurs after clearing the cache, please open an issue: https://github.com/bghira/simpletuner/issues"
             )
 
         return result
@@ -366,13 +365,13 @@ class VAECache:
         }
 
         # Identify unprocessed files
-        unprocessed_files = [
+        self.local_unprocessed_files = [
             file
             for file in all_image_files
             if os.path.splitext(file)[0] not in existing_image_filenames
         ]
 
-        return unprocessed_files
+        return self.local_unprocessed_files
 
     def _reduce_bucket(
         self,
