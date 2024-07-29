@@ -2,6 +2,7 @@ from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
 from helpers.data_backend.csv import CSVDataBackend
 from helpers.data_backend.base import BaseDataBackend
+from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
 
 from helpers.training.exceptions import MultiDatasetExhausted
@@ -138,6 +139,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["instance_data_dir"] = backend.get(
         "instance_data_dir", backend.get("aws_data_prefix", "")
     )
+    if "hash_filenames" in backend:
+        output["config"]["hash_filenames"] = backend["hash_filenames"]
     if "shorten_filenames" in backend and backend.get("type") == "csv":
         output["config"]["shorten_filenames"] = backend["shorten_filenames"]
 
@@ -697,30 +700,43 @@ def configure_multi_databackend(
             "target_downsample_size",
             "parquet",
         ]
+        # we will set the latest version by default.
+        current_config_version = latest_config_version()
         if init_backend["metadata_backend"].config != {}:
             prev_config = init_backend["metadata_backend"].config
-            logger.debug(f"Found existing config: {prev_config}")
+            # if the prev config used an old default config version, we will update defaults here.
+            current_config_version = prev_config.get("config_version", None)
+            if current_config_version is None:
+                # backwards compatibility for non-versioned config files, so that we do not enable life-changing options.
+                current_config_version = 1
+            logger.debug(
+                f"Found existing config (version={current_config_version}): {prev_config}"
+            )
             logger.debug(f"Comparing against new config: {init_backend['config']}")
             # Check if any values differ between the 'backend' values and the 'config' values:
             for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
-                if (
-                    key in backend
-                    and prev_config[key] != backend[key]
-                    and key not in excluded_keys
-                ):
-                    if not args.override_dataset_config:
-                        raise Exception(
-                            f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
-                            f"\n-> Expected value {key}={prev_config[key]} differs from current value={backend[key]}."
-                            f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
-                            f"\n{prev_config}"
-                        )
-                    else:
+                if key not in excluded_keys:
+                    if key in backend and prev_config[key] != backend[key]:
+                        if not args.override_dataset_config:
+                            raise Exception(
+                                f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
+                                f"\n-> Expected value {key}={prev_config.get(key)} differs from current value={backend.get(key)}."
+                                f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
+                                f"\n{prev_config}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
+                            )
+                            prev_config[key] = backend[key]
+                    elif key not in backend:
                         logger.warning(
-                            f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
+                            f"Key {key} not found in the current backend config, using the existing value {prev_config[key]}."
                         )
-                        prev_config[key] = backend[key]
+                        init_backend["config"][key] = prev_config[key]
+
+        init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         info_log(f"Configured backend: {init_backend}")
 
@@ -841,6 +857,11 @@ def configure_multi_databackend(
         # Register the backend here so the sampler can be found.
         StateTracker.register_data_backend(init_backend)
 
+        default_hash_option = default("hash_filenames", current_config_version)
+        hash_filenames = init_backend.get("config", {}).get(
+            "hash_filenames", default_hash_option
+        )
+
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             init_backend["vaecache"] = VAECache(
@@ -876,7 +897,7 @@ def configure_multi_databackend(
                 max_workers=backend.get("max_workers", 32),
                 process_queue_size=backend.get("process_queue_size", 64),
                 vae_cache_preprocess=args.vae_cache_preprocess,
-                hash_filenames=backend.get("hash_filenames", False),
+                hash_filenames=hash_filenames,
             )
 
             if args.vae_cache_preprocess:
@@ -921,7 +942,7 @@ def configure_multi_databackend(
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
         ):
-            init_backend["vaecache"].split_cache_between_processes()
+            init_backend["vaecache"].discover_unprocessed_files()
             if args.vae_cache_preprocess:
                 init_backend["vaecache"].process_buckets()
             logger.debug(
