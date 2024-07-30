@@ -25,10 +25,28 @@ from diffusers.utils import logging
 from diffusers.utils.torch_utils import randn_tensor
 
 from helpers.models.smoldit import SmolDiT2DModel
-from diffusers.models.embeddings import get_2d_rotary_pos_embed
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.rescale_noise_cfg
+def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
+    """
+    Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
+    Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
+    """
+    std_text = noise_pred_text.std(
+        dim=list(range(1, noise_pred_text.ndim)), keepdim=True
+    )
+    std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
+    # rescale the results from guidance (fixes overexposure)
+    noise_pred_rescaled = noise_cfg * (std_text / std_cfg)
+    # mix with the original results from guidance by factor guidance_rescale to avoid "plain looking" images
+    noise_cfg = (
+        guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
+    )
+    return noise_cfg
 
 
 def retrieve_timesteps(
@@ -98,6 +116,10 @@ def retrieve_timesteps(
 
 class SmolDiTPipeline(DiffusionPipeline):
     model_cpu_offload_seq = "text_encoder->transformer->vae"
+
+    @property
+    def guidance_rescale(self):
+        return self._guidance_rescale
 
     def __init__(
         self,
@@ -398,6 +420,7 @@ class SmolDiTPipeline(DiffusionPipeline):
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
+        guidance_rescale: float = 0.0,
         callback: Optional[Callable[[int, int, torch.Tensor], None]] = None,
         callback_steps: int = 1,
         max_sequence_length: int = 300,
@@ -527,6 +550,12 @@ class SmolDiTPipeline(DiffusionPipeline):
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + guidance_scale * (
                         noise_pred_text - noise_pred_uncond
+                    )
+
+                if do_classifier_free_guidance and guidance_rescale > 0.0:
+                    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+                    noise_pred = rescale_noise_cfg(
+                        noise_pred, noise_pred_text, guidance_rescale=guidance_rescale
                     )
 
                 # compute previous image: x_t -> x_t-1

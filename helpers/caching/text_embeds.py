@@ -502,7 +502,7 @@ class TextEmbeddingCache:
         Returns:
             Tuple of (prompt_embeds, attention_mask)
         """
-        logger.debug(f"Computing deepfloyd prompt for: {prompt}")
+        logger.debug(f"Computing T5 caption for: {prompt}")
         text_inputs = self.tokenize_t5_prompt(
             prompt, tokenizer_max_length=StateTracker.get_args().tokenizer_max_length
         )
@@ -830,6 +830,7 @@ class TextEmbeddingCache:
                         "deepfloyd" in StateTracker.get_args().model_type
                         or self.model_type == "pixart_sigma"
                         or self.model_type == "aura_flow"
+                        or self.model_type == "smoldit"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(
@@ -841,6 +842,7 @@ class TextEmbeddingCache:
                         if "deepfloyd" not in StateTracker.get_args().model_type:
                             # we have to store the attn mask with the embed for pixart.
                             # aura doesn't require it, but it's just easier to keep.
+                            # smoldit requires the attn mask at inference time 💪🏽
                             prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(

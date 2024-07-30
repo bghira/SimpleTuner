@@ -281,6 +281,9 @@ def main():
     if args.kolors:
         StateTracker.set_model_type("kolors")
     if args.smoldit:
+        from diffusers.models.embeddings import get_2d_rotary_pos_embed
+        from helpers.models.smoldit import get_resize_crop_region_for_grid
+
         StateTracker.set_model_type("smoldit")
 
     StateTracker.set_args(args)
@@ -637,6 +640,8 @@ def main():
         )
     elif args.smoldit:
         logger.info("Loading SmolDiT model..")
+        if args.validation_noise_scheduler is None:
+            args.validation_noise_scheduler = "ddpm"
         transformer_variant = None
         unet = None
         from helpers.models.smoldit import SmolDiT2DModel, SmolDiTDefaultConfig
@@ -983,7 +988,7 @@ def main():
     if args.gradient_checkpointing:
         if unet is not None:
             unet.enable_gradient_checkpointing()
-        if transformer is not None:
+        if transformer is not None and not args.smoldit:
             transformer.enable_gradient_checkpointing()
         if args.controlnet:
             controlnet.enable_gradient_checkpointing()
@@ -1963,6 +1968,27 @@ def main():
                             return_dict=False,
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
+                    elif args.smoldit:
+                        first_latent = noisy_latents[0]
+                        _, height, width = first_latent.shape
+                        grid_height = height // 8 // transformer.config.patch_size
+                        grid_width = width // 8 // transformer.config.patch_size
+                        base_size = 512 // 8 // transformer.config.patch_size
+                        grid_crops_coords = get_resize_crop_region_for_grid(
+                            (grid_height, grid_width), base_size
+                        )
+                        inputs = {
+                            "hidden_states": noisy_latents,
+                            "timestep": timesteps,
+                            "encoder_hidden_states": encoder_hidden_states,
+                            "image_rotary_emb": get_2d_rotary_pos_embed(
+                                transformer.inner_dim
+                                // transformer.config.num_attention_heads,
+                                grid_crops_coords,
+                                (grid_height, grid_width),
+                            ),
+                        }
+                        model_pred = transformer(**inputs).sample
                     elif unet is not None:
                         if args.legacy:
                             # SD 1.5 or 2.x
@@ -2480,6 +2506,39 @@ def main():
                     unet=unet,
                     torch_dtype=weight_dtype,
                 )
+            elif args.smoldit:
+                from helpers.models.smoldit import SmolDiTPipeline
+
+                pipeline = SmolDiTPipeline(
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                    scheduler=None,
+                )
 
             else:
                 sdxl_pipeline_cls = StableDiffusionXLPipeline
@@ -2528,17 +2587,17 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-                if args.validation_noise_scheduler is not None:
-                    pipeline.scheduler = SCHEDULER_NAME_MAP[
-                        args.validation_noise_scheduler
-                    ].from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        revision=args.revision,
-                        subfolder="scheduler",
-                        prediction_type=args.prediction_type,
-                        timestep_spacing=args.training_scheduler_timestep_spacing,
-                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-                    )
+            if args.validation_noise_scheduler is not None:
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    revision=args.revision,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.training_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
