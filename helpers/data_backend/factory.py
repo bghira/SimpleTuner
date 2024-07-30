@@ -25,9 +25,15 @@ from tqdm import tqdm
 import queue
 
 logger = logging.getLogger("DataBackendFactory")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel(logging.ERROR)
 prefetch_log = logging.getLogger("DataBackendPrefetch")
-prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+if should_log():
+    prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+else:
+    prefetch_log.setLevel(logging.ERROR)
 
 # For prefetching.
 
