@@ -1888,9 +1888,10 @@ def main():
                             device=accelerator.device, dtype=weight_dtype
                         ),
                     }
-                elif args.pixart_sigma:
+                elif args.pixart_sigma or args.smoldit:
                     # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
-                    added_cond_kwargs = batch["batch_time_ids"]
+                    if "batch_time_ids" in batch:
+                        added_cond_kwargs = batch["batch_time_ids"]
                     batch["encoder_attention_mask"] = batch[
                         "encoder_attention_mask"
                     ].to(device=accelerator.device, dtype=weight_dtype)
@@ -1981,6 +1982,7 @@ def main():
                             "hidden_states": noisy_latents,
                             "timestep": timesteps,
                             "encoder_hidden_states": encoder_hidden_states,
+                            "encoder_attention_mask": batch["encoder_attention_mask"],
                             "image_rotary_emb": get_2d_rotary_pos_embed(
                                 transformer.inner_dim
                                 // transformer.config.num_attention_heads,
