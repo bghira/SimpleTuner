@@ -1727,7 +1727,7 @@ def main():
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False:
-                logger.info(f"Reached the end of epoch {epoch}")
+                logger.debug(f"Reached the end of epoch {epoch}")
                 break
 
             if batch is None:
