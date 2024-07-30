@@ -70,7 +70,8 @@ def download_and_save(row):
 
 # Run the download in parallel
 with ThreadPoolExecutor() as executor:
-    executor.map(download_and_save, [row for _, row in df.iterrows()])```
+    executor.map(download_and_save, [row for _, row in df.iterrows()])
+```
 
 This script will simultaneously download the images from Pexels and write their captions into the `train/` directory as a txt file.
 
