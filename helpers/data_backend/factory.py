@@ -10,7 +10,7 @@ from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.prompts import PromptHandler
 from helpers.caching.vae import VAECache
-from helpers.training.multi_process import rank_info, _get_rank as get_rank
+from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
@@ -731,9 +731,10 @@ def configure_multi_databackend(
                             )
                             prev_config[key] = backend[key]
                     elif key not in backend:
-                        logger.warning(
-                            f"Key {key} not found in the current backend config, using the existing value {prev_config[key]}."
-                        )
+                        if should_log():
+                            logger.warning(
+                                f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
+                            )
                         init_backend["config"][key] = prev_config[key]
 
         init_backend["config"]["config_version"] = current_config_version
