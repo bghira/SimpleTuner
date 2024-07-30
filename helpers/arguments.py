@@ -603,6 +603,23 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--read_batch_size",
+        type=int,
+        default=25,
+        help=(
+            "Used by the VAE cache to prefetch image data. This is the number of images to read ahead."
+        ),
+    )
+    parser.add_argument(
+        "--image_processing_batch_size",
+        type=int,
+        default=32,
+        help=(
+            "When resizing and cropping images, we do it in parallel using processes or threads."
+            " This defines how many images will be read into the queue before they are processed."
+        ),
+    )
+    parser.add_argument(
         "--enable_multiprocessing",
         default=False,
         action="store_true",
@@ -611,6 +628,12 @@ def parse_args(input_args=None):
             " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
             " Use this option with caution, and monitor your system's memory usage."
         ),
+    )
+    parser.add_argument(
+        "--max_workers",
+        default=32,
+        type=int,
+        help=("How many active threads or processes to run during VAE caching."),
     )
     parser.add_argument(
         "--torch_num_threads",
