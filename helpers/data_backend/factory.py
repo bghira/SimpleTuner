@@ -893,9 +893,12 @@ def configure_multi_databackend(
                 ),
                 vae_batch_size=backend.get("vae_batch_size", args.vae_batch_size),
                 write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+                read_batch_size=backend.get("read_batch_size", args.read_batch_size),
                 cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
-                max_workers=backend.get("max_workers", 32),
-                process_queue_size=backend.get("process_queue_size", 64),
+                max_workers=backend.get("max_workers", args.max_workers),
+                process_queue_size=backend.get(
+                    "image_processing_batch_size", args.image_processing_batch_size
+                ),
                 vae_cache_preprocess=args.vae_cache_preprocess,
                 hash_filenames=hash_filenames,
             )
