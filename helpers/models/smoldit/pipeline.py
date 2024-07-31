@@ -592,7 +592,9 @@ class SmolDiTPipeline(DiffusionPipeline):
 
         if not output_type == "latent":
             image = self.vae.decode(
-                latents / self.vae.config.scaling_factor, return_dict=False
+                latents.to(device=self.vae.device, dtype=self.vae.dtype)
+                / self.vae.config.scaling_factor,
+                return_dict=False,
             )[0]
         else:
             image = latents
