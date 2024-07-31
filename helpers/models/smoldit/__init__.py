@@ -14,6 +14,18 @@ SmolDiTConfigurations = {
         "out_channels": 4,
         "activation_fn": "gelu-approximate",
     },
+    "smoldit-swiglu": {
+        "sample_size": 64,
+        "num_layers": 24,
+        "patch_size": 2,
+        "attention_head_dim": 72,
+        "num_attention_heads": 16,
+        "num_kv_heads": 4,
+        "in_channels": 4,
+        "cross_attention_dim": 768,
+        "out_channels": 4,
+        "activation_fn": "swiglu",
+    },
     "smoldit-base": {
         "sample_size": 64,
         "num_layers": 24,
