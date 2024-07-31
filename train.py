@@ -644,9 +644,14 @@ def main():
             args.validation_noise_scheduler = "ddpm"
         transformer_variant = None
         unet = None
-        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTDefaultConfig
+        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
 
-        transformer = SmolDiT2DModel(**SmolDiTDefaultConfig)
+        if args.smoldit_config not in SmolDiTConfigurations:
+            raise ValueError(
+                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
+            )
+
+        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
         if "lora" in args.model_type:
             raise ValueError("SmolDiT does not yet support LoRA training.")
     else:
@@ -1970,8 +1975,9 @@ def main():
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif args.smoldit:
-                        first_latent = noisy_latents[0]
-                        _, height, width = first_latent.shape
+                        first_latent_shape = noisy_latents[0].shape
+                        height = first_latent_shape[1] * 8
+                        width = first_latent_shape[2] * 8
                         grid_height = height // 8 // transformer.config.patch_size
                         grid_width = width // 8 // transformer.config.patch_size
                         base_size = 512 // 8 // transformer.config.patch_size

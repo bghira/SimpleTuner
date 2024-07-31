@@ -5,6 +5,7 @@ import time
 import logging
 import sys
 import torch
+from helpers.models.smoldit import SmolDiTConfigurationNames
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -107,6 +108,16 @@ def parse_args(input_args=None):
         action="store_true",
         default=False,
         help=("Use the experimental SmolDiT model architecture."),
+    )
+    parser.add_argument(
+        "--smoldit_config",
+        type=str,
+        choices=SmolDiTConfigurationNames,
+        default="smoldit-base",
+        help=(
+            "The SmolDiT configuration to use. This is a list of pre-configured models."
+            " The default is 'smoldit-base'."
+        ),
     )
     parser.add_argument(
         "--flow_matching_loss",

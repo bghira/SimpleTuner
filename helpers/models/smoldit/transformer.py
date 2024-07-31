@@ -154,29 +154,26 @@ class SmolDiTAttention(nn.Module):
 
         # Get key-value heads
         kv_heads = inner_dim // head_dim
-        query = query.view(batch_size, -1, self.num_heads, head_dim)
-        key = key.view(batch_size, -1, kv_heads, head_dim)
-        value = value.view(batch_size, -1, kv_heads, head_dim)
+        query = query.view(batch_size, -1, self.num_heads, head_dim).transpose(1, 2)
+        key = key.view(batch_size, -1, kv_heads, head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, kv_heads, head_dim).transpose(1, 2)
+
+        # GQA
+        if kv_heads != self.num_heads:
+            # if GQA or MQA, repeat the key/value heads to reach the number of query heads.
+            heads_per_kv_head = self.num_heads // kv_heads
+            key = torch.repeat_interleave(key, heads_per_kv_head, dim=1)
+            value = torch.repeat_interleave(value, heads_per_kv_head, dim=1)
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
             query = apply_rotary_emb(query, image_rotary_emb)
+            query = query.to(dtype)
             if not self.is_cross_attention:
                 key = apply_rotary_emb(key, image_rotary_emb)
+                key = query.to(dtype)
 
-        query, key = query.to(dtype), key.to(dtype)
-
-        # perform Grouped-query Attention (GQA)
-        n_rep = self.num_heads // kv_heads
-        if n_rep >= 1:
-            key = key.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
-            value = value.unsqueeze(3).repeat(1, 1, 1, n_rep, 1).flatten(2, 3)
-
-        query = query.transpose(1, 2)
-        key = key.transpose(1, 2)
-        value = value.transpose(1, 2)
-
-        # the output of sdp = (batch, num_heads, seq_len, head_dim)
+        # the output of sdpa = (batch, num_heads, seq_len, head_dim)
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, scale=self.scale
         )
@@ -210,6 +207,7 @@ class SmolDiTBlock(nn.Module):
             sliding_window = sliding_window if not bool(layer_idx % 2) else None
         else:
             sliding_window = None
+
         self.attn1 = SmolDiTAttention(
             query_dim=dim,
             cross_attention_dim=None,

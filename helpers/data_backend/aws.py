@@ -70,10 +70,6 @@ class S3DataBackend(BaseDataBackend):
         self.write_retry_interval = write_retry_interval
         self.compress_cache = compress_cache
         self.type = "aws"
-        if compress_cache and get_rank() == 0:
-            logging.warning(
-                "Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."
-            )
         # AWS buckets might use a region.
         extra_args = {
             "region_name": region_name,

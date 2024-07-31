@@ -16,6 +16,10 @@ from typing import Callable, List, Optional, Union
 
 import torch
 from transformers import T5EncoderModel, T5Tokenizer
+from diffusers.models.embeddings import get_2d_rotary_pos_embed
+from diffusers.pipelines.hunyuandit.pipeline_hunyuandit import (
+    get_resize_crop_region_for_grid,
+)
 
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models import AutoencoderKL
@@ -498,10 +502,23 @@ class SmolDiTPipeline(DiffusionPipeline):
             latents,
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # 6. Prepare rotary embeddings.
+        grid_height = height // 8 // self.transformer.config.patch_size
+        grid_width = width // 8 // self.transformer.config.patch_size
+        base_size = 512 // 8 // self.transformer.config.patch_size
+        grid_crops_coords = get_resize_crop_region_for_grid(
+            (grid_height, grid_width), base_size
+        )
+        image_rotary_emb = get_2d_rotary_pos_embed(
+            self.transformer.inner_dim // self.transformer.config.num_attention_heads,
+            grid_crops_coords,
+            (grid_height, grid_width),
+        )
+
+        # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
-        # 7. Denoising loop
+        # 8. Denoising loop
         num_warmup_steps = max(
             len(timesteps) - num_inference_steps * self.scheduler.order, 0
         )
@@ -542,6 +559,7 @@ class SmolDiTPipeline(DiffusionPipeline):
                     encoder_hidden_states=prompt_embeds,
                     encoder_attention_mask=prompt_attention_mask,
                     timestep=current_timestep,
+                    image_rotary_emb=image_rotary_emb,
                     return_dict=False,
                 )[0]
 

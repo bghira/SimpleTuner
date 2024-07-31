@@ -1,18 +1,57 @@
 from helpers.models.smoldit.transformer import SmolDiT2DModel
 from helpers.models.smoldit.pipeline import SmolDiTPipeline
 
-SmolDiTDefaultConfig = {
-    "sample_size": 64,
-    "num_layers": 16,
-    "patch_size": 2,
-    "attention_head_dim": 64,
-    "num_attention_heads": 32,
-    "num_kv_heads": 8,
-    "in_channels": 4,
-    "cross_attention_dim": 768,
-    "out_channels": 4,
-    "activation_fn": "gelu-approximate",
+SmolDiTConfigurations = {
+    "smoldit-small": {
+        "sample_size": 64,
+        "num_layers": 18,
+        "patch_size": 2,
+        "attention_head_dim": 64,
+        "num_attention_heads": 16,
+        "num_kv_heads": 4,
+        "in_channels": 4,
+        "cross_attention_dim": 768,
+        "out_channels": 4,
+        "activation_fn": "gelu-approximate",
+    },
+    "smoldit-base": {
+        "sample_size": 64,
+        "num_layers": 24,
+        "patch_size": 2,
+        "attention_head_dim": 72,
+        "num_attention_heads": 16,
+        "num_kv_heads": 4,
+        "in_channels": 4,
+        "cross_attention_dim": 768,
+        "out_channels": 4,
+        "activation_fn": "gelu-approximate",
+    },
+    "smoldit-large": {
+        "sample_size": 64,
+        "num_layers": 30,
+        "patch_size": 2,
+        "attention_head_dim": 72,
+        "num_attention_heads": 32,
+        "num_kv_heads": 8,
+        "in_channels": 4,
+        "cross_attention_dim": 768,
+        "out_channels": 4,
+        "activation_fn": "gelu-approximate",
+    },
+    "smoldit-huge": {
+        "sample_size": 64,
+        "num_layers": 36,
+        "patch_size": 2,
+        "attention_head_dim": 96,
+        "num_attention_heads": 64,
+        "num_kv_heads": 16,
+        "in_channels": 4,
+        "cross_attention_dim": 768,
+        "out_channels": 4,
+        "activation_fn": "gelu-approximate",
+    },
 }
+SmolDiTConfigurationNames = list(SmolDiTConfigurations.keys())
 
 
 def get_resize_crop_region_for_grid(src, tgt_size):
