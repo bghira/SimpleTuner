@@ -373,6 +373,7 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get("max_pool_connections", 128),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -480,6 +481,7 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get("max_pool_connections", 128),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -570,6 +572,7 @@ def configure_multi_databackend(
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
                 compress_cache=args.compress_disk_cache,
+                max_pool_connections=backend.get("max_pool_connections", 128),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             init_backend["instance_data_dir"] = backend["aws_data_prefix"]
@@ -1087,6 +1090,7 @@ def get_aws_backend(
     accelerator,
     identifier: str,
     compress_cache: bool = False,
+    max_pool_connections: int = 128,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -1097,6 +1101,7 @@ def get_aws_backend(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         compress_cache=compress_cache,
+        max_pool_connections=max_pool_connections,
     )
 
 
