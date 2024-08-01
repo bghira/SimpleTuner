@@ -184,6 +184,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
+        and not args.smoldit
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -202,6 +203,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
+        and not args.smoldit
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -371,6 +373,9 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -478,6 +483,9 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -568,6 +576,9 @@ def configure_multi_databackend(
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
                 compress_cache=args.compress_disk_cache,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             init_backend["instance_data_dir"] = backend["aws_data_prefix"]
@@ -1085,6 +1096,7 @@ def get_aws_backend(
     accelerator,
     identifier: str,
     compress_cache: bool = False,
+    max_pool_connections: int = 128,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -1095,6 +1107,7 @@ def get_aws_backend(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         compress_cache=compress_cache,
+        max_pool_connections=max_pool_connections,
     )
 
 

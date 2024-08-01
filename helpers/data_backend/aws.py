@@ -60,6 +60,7 @@ class S3DataBackend(BaseDataBackend):
         read_retry_interval: int = 5,
         write_retry_interval: int = 5,
         compress_cache: bool = False,
+        max_pool_connections: int = 128,
     ):
         self.id = id
         self.accelerator = accelerator
@@ -69,11 +70,8 @@ class S3DataBackend(BaseDataBackend):
         self.write_retry_limit = write_retry_limit
         self.write_retry_interval = write_retry_interval
         self.compress_cache = compress_cache
+        self.max_pool_connections = max_pool_connections
         self.type = "aws"
-        if compress_cache and get_rank() == 0:
-            logging.warning(
-                "Torch cache compression is untested for AWS backends. Open an issue report at https://github.com/bghira/simpletuner/issues/new if you encounter any problems."
-            )
         # AWS buckets might use a region.
         extra_args = {
             "region_name": region_name,
@@ -83,7 +81,7 @@ class S3DataBackend(BaseDataBackend):
             extra_args = {
                 "endpoint_url": endpoint_url,
             }
-        s3_config = Config(max_pool_connections=100)
+        s3_config = Config(max_pool_connections=self.max_pool_connections)
         self.client = boto3.client(
             "s3",
             aws_access_key_id=aws_access_key_id,

@@ -10,7 +10,7 @@ readme = "README.md"
 python = ">=3.9,<3.13"
 torch = ">=2.3.0"
 torchvision = "^0.18.0+cu121"
-diffusers = {git = "https://github.com/huggingface/diffusers"}
+diffusers = {git = "https://github.com/bghira/diffusers", rev = "feature/lavender-flow-complete"}
 transformers = "^4.38.2"
 datasets = "^2.14.3"
 xformers = "^0.0.26.post1"

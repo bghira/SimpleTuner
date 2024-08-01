@@ -22,7 +22,7 @@ compel = "^2"
 dadaptation = "^3"
 datasets = "^2"
 deepspeed = "^0.14"
-diffusers = "^0.27"
+diffusers = {git = "https://github.com/bghira/diffusers", rev = "feature/lavender-flow-complete"}
 iterutils = "^0.1"
 numpy = "^1"
 open-clip-torch = "^2"

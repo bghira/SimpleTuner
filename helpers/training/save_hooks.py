@@ -420,6 +420,12 @@ class SaveHookManager:
                         load_model = AuraFlowTransformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
+                    elif self.args.smoldit:
+                        from helpers.models.smoldit import SmolDiT2DModel
+
+                        load_model = SmolDiT2DModel.from_pretrained(
+                            input_dir, subfolder="transformer"
+                        )
                     elif self.unet is not None:
                         merge_safetensors_files(os.path.join(input_dir, "unet"))
                         load_model = UNet2DConditionModel.from_pretrained(

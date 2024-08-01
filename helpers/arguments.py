@@ -5,6 +5,7 @@ import time
 import logging
 import sys
 import torch
+from helpers.models.smoldit import SmolDiTConfigurationNames
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -101,6 +102,22 @@ def parse_args(input_args=None):
         action="store_true",
         default=False,
         help=("This must be set when training an AuraFlow model."),
+    )
+    parser.add_argument(
+        "--smoldit",
+        action="store_true",
+        default=False,
+        help=("Use the experimental SmolDiT model architecture."),
+    )
+    parser.add_argument(
+        "--smoldit_config",
+        type=str,
+        choices=SmolDiTConfigurationNames,
+        default="smoldit-base",
+        help=(
+            "The SmolDiT configuration to use. This is a list of pre-configured models."
+            " The default is 'smoldit-base'."
+        ),
     )
     parser.add_argument(
         "--flow_matching_loss",
@@ -634,6 +651,15 @@ def parse_args(input_args=None):
         default=32,
         type=int,
         help=("How many active threads or processes to run during VAE caching."),
+    )
+    parser.add_argument(
+        "--aws_max_pool_connections",
+        type=int,
+        default=128,
+        help=(
+            "When using AWS backends, the maximum number of connections to keep open to the S3 bucket at a single time."
+            " This should be greater or equal to the max_workers and aspect bucket worker count values."
+        ),
     )
     parser.add_argument(
         "--torch_num_threads",
@@ -1735,7 +1761,7 @@ def parse_args(input_args=None):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if args.train_batch_size > 16:
+        if not args.smoldit and args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."

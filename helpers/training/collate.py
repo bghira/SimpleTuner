@@ -185,6 +185,7 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl, is_sd3: bool = 
             if (
                 StateTracker.get_args().pixart_sigma
                 or StateTracker.get_args().aura_flow
+                or StateTracker.get_args().smoldit
             ):
                 # PixArt requires the attn mask be returned, too.
                 prompt_embeds, attn_mask = prompt_embeds
@@ -217,6 +218,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
     is_aura_flow = text_embed_cache.model_type == "aura_flow"
+    is_smoldit = text_embed_cache.model_type == "smoldit"
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
@@ -241,7 +243,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         prompt_embeds = [t[0] for t in embeddings]
         add_text_embeds = [t[1] for t in embeddings]
         return (torch.stack(prompt_embeds), torch.stack(add_text_embeds))
-    elif is_pixart_sigma or is_aura_flow:
+    elif is_pixart_sigma or is_aura_flow or is_smoldit:
         # the tuples here are the text encoder hidden states and the attention masks
         # TODO: determine whether AuraFlow requires these conjoined
         prompt_embeds, attn_masks = [], []
@@ -434,7 +436,10 @@ def collate_fn(batch):
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
         attn_mask = add_text_embeds_all
-    elif StateTracker.get_model_type() == "aura_flow":
+    elif (
+        StateTracker.get_model_type() == "aura_flow"
+        or StateTracker.get_model_type() == "smoldit"
+    ):
         attn_mask = add_text_embeds_all
 
     return {

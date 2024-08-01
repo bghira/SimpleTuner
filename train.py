@@ -109,8 +109,15 @@ SCHEDULER_NAME_MAP = {
 
 
 def import_model_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
+    pretrained_model_name_or_path: str,
+    revision: str,
+    args,
+    subfolder: str = "text_encoder",
 ):
+    if args.smoldit:
+        from transformers import AutoModelForSeq2SeqLM
+
+        return AutoModelForSeq2SeqLM
     text_encoder_config = PretrainedConfig.from_pretrained(
         pretrained_model_name_or_path, subfolder=subfolder, revision=revision
     )
@@ -143,6 +150,14 @@ def import_model_class_from_model_name_or_path(
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
     try:
+        if args.smoldit:
+            from transformers import AutoTokenizer
+
+            tokenizer_1 = AutoTokenizer.from_pretrained(
+                "EleutherAI/pile-t5-base", pad_token="[PAD]"
+            )
+            return tokenizer_1, tokenizer_2, tokenizer_3
+
         tokenizer_kwargs = {
             "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
             "subfolder": "tokenizer",
@@ -265,6 +280,11 @@ def main():
         StateTracker.set_model_type("legacy")
     if args.kolors:
         StateTracker.set_model_type("kolors")
+    if args.smoldit:
+        from diffusers.models.embeddings import get_2d_rotary_pos_embed
+        from helpers.models.smoldit import get_resize_crop_region_for_grid
+
+        StateTracker.set_model_type("smoldit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -412,6 +432,9 @@ def main():
         logger.info("Loading Kolors ChatGLM language model..")
         text_encoder_path = "kwai-kolors/kolors-diffusers"
         text_encoder_subfolder = "text_encoder"
+    elif args.smoldit:
+        text_encoder_path = "EleutherAI/pile-t5-base"
+        text_encoder_subfolder = None
     elif args.pixart_sigma or args.aura_flow:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
@@ -428,18 +451,20 @@ def main():
         text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-            text_encoder_path, args.revision, subfolder=text_encoder_subfolder
+            text_encoder_path, args.revision, args, subfolder=text_encoder_subfolder
         )
     if tokenizer_2 is not None:
         text_encoder_cls_2 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_2",
         )
     if tokenizer_3 is not None and args.sd3:
         text_encoder_cls_3 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_3",
         )
 
@@ -482,7 +507,7 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         text_encoder_variant = args.variant
-        if tokenizer_1 is not None:
+        if tokenizer_1 is not None and not args.smoldit:
             if args.pixart_sigma or args.aura_flow:
                 logger.info(
                     f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
@@ -502,6 +527,11 @@ def main():
                 revision=args.revision,
                 variant=text_encoder_variant,
             )
+        elif args.smoldit:
+            text_encoder_1 = text_encoder_cls_1.from_pretrained(
+                "EleutherAI/pile-t5-base"
+            ).encoder
+            text_encoder_1.eval()
 
         if tokenizer_2 is not None:
             logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
@@ -608,6 +638,22 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
+    elif args.smoldit:
+        logger.info("Loading SmolDiT model..")
+        if args.validation_noise_scheduler is None:
+            args.validation_noise_scheduler = "ddpm"
+        transformer_variant = None
+        unet = None
+        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
+
+        if args.smoldit_config not in SmolDiTConfigurations:
+            raise ValueError(
+                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
+            )
+
+        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
+        if "lora" in args.model_type:
+            raise ValueError("SmolDiT does not yet support LoRA training.")
     else:
         logger.info("Loading U-net..")
         unet_variant = args.variant
@@ -947,7 +993,7 @@ def main():
     if args.gradient_checkpointing:
         if unet is not None:
             unet.enable_gradient_checkpointing()
-        if transformer is not None:
+        if transformer is not None and not args.smoldit:
             transformer.enable_gradient_checkpointing()
         if args.controlnet:
             controlnet.enable_gradient_checkpointing()
@@ -1686,7 +1732,7 @@ def main():
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False:
-                logger.info(f"Reached the end of epoch {epoch}")
+                logger.debug(f"Reached the end of epoch {epoch}")
                 break
 
             if batch is None:
@@ -1847,9 +1893,10 @@ def main():
                             device=accelerator.device, dtype=weight_dtype
                         ),
                     }
-                elif args.pixart_sigma:
+                elif args.pixart_sigma or args.smoldit:
                     # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
-                    added_cond_kwargs = batch["batch_time_ids"]
+                    if "batch_time_ids" in batch:
+                        added_cond_kwargs = batch["batch_time_ids"]
                     batch["encoder_attention_mask"] = batch[
                         "encoder_attention_mask"
                     ].to(device=accelerator.device, dtype=weight_dtype)
@@ -1927,6 +1974,29 @@ def main():
                             return_dict=False,
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
+                    elif args.smoldit:
+                        first_latent_shape = noisy_latents[0].shape
+                        height = first_latent_shape[1] * 8
+                        width = first_latent_shape[2] * 8
+                        grid_height = height // 8 // transformer.config.patch_size
+                        grid_width = width // 8 // transformer.config.patch_size
+                        base_size = 512 // 8 // transformer.config.patch_size
+                        grid_crops_coords = get_resize_crop_region_for_grid(
+                            (grid_height, grid_width), base_size
+                        )
+                        inputs = {
+                            "hidden_states": noisy_latents,
+                            "timestep": timesteps,
+                            "encoder_hidden_states": encoder_hidden_states,
+                            "encoder_attention_mask": batch["encoder_attention_mask"],
+                            "image_rotary_emb": get_2d_rotary_pos_embed(
+                                transformer.inner_dim
+                                // transformer.config.num_attention_heads,
+                                grid_crops_coords,
+                                (grid_height, grid_width),
+                            ),
+                        }
+                        model_pred = transformer(**inputs).sample
                     elif unet is not None:
                         if args.legacy:
                             # SD 1.5 or 2.x
@@ -2444,6 +2514,39 @@ def main():
                     unet=unet,
                     torch_dtype=weight_dtype,
                 )
+            elif args.smoldit:
+                from helpers.models.smoldit import SmolDiTPipeline
+
+                pipeline = SmolDiTPipeline(
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                    scheduler=None,
+                )
 
             else:
                 sdxl_pipeline_cls = StableDiffusionXLPipeline
@@ -2492,17 +2595,17 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-                if args.validation_noise_scheduler is not None:
-                    pipeline.scheduler = SCHEDULER_NAME_MAP[
-                        args.validation_noise_scheduler
-                    ].from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        revision=args.revision,
-                        subfolder="scheduler",
-                        prediction_type=args.prediction_type,
-                        timestep_spacing=args.training_scheduler_timestep_spacing,
-                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-                    )
+            if args.validation_noise_scheduler is not None:
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    revision=args.revision,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.training_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )

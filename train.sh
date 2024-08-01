@@ -172,6 +172,9 @@ fi
 if [ -n "$KOLORS" ] && [[ "$KOLORS" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --kolors"
 fi
+if [ -n "$SMOLDIT" ] && [[ "$SMOLDIT" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --smoldit"
+fi
 
 export EMA_ARGS=""
 if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
