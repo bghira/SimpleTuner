@@ -653,6 +653,15 @@ def parse_args(input_args=None):
         help=("How many active threads or processes to run during VAE caching."),
     )
     parser.add_argument(
+        "--aws_max_pool_connections",
+        type=int,
+        default=128,
+        help=(
+            "When using AWS backends, the maximum number of connections to keep open to the S3 bucket at a single time."
+            " This should be greater or equal to the max_workers and aspect bucket worker count values."
+        ),
+    )
+    parser.add_argument(
         "--torch_num_threads",
         type=int,
         default=8,
