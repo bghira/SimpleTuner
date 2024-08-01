@@ -101,7 +101,6 @@ class StateTracker:
             "sdxl",
             "sd3",
             "pixart_sigma",
-            "aura_flow",
             "kolors",
             "smoldit",
         ]:

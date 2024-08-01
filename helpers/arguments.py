@@ -98,12 +98,6 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Kolors model."),
     )
     parser.add_argument(
-        "--aura_flow",
-        action="store_true",
-        default=False,
-        help=("This must be set when training an AuraFlow model."),
-    )
-    parser.add_argument(
         "--smoldit",
         action="store_true",
         default=False,
@@ -125,48 +119,9 @@ def parse_args(input_args=None):
         choices=["diffusers", "compatible", "diffusion"],
         default="diffusers",
         help=(
-            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementations provided"
-            " by StabilityAI and AuraFlow. This experimental option allows switching loss calculations to be compatible with those."
+            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
+            " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_target",
-        type=str,
-        choices=["any", "dit", "mmdit"],
-        default="dit",
-        help=(
-            "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
-            " The default option 'all' means all blocks will be trained. 'dit' will train only the standard DiT blocks,"
-            " and 'mmdit' will train only the MM-DiT blocks. Experimentation will likely prove fruitful,"
-            " as these LoRAs train quickly. The default is 'all'."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_freeze_direction",
-        type=str,
-        choices=["up", "down"],
-        default="up",
-        help=(
-            "When freezing the AuraFlow model, you can freeze it 'up' from the bottom, or 'down' from the top."
-            " The default value is 'up' which will freeze the model from layer 11 to 31 by default."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_first_unfrozen_dit_layer",
-        type=int,
-        default=11,
-        help=(
-            "Due to the size of the AuraFlow model, by default only the 20th layer and up will be trained."
-            " More layers can be excluded to speed up training or reduce VRAM consumption further."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_first_unfrozen_mmdit_layer",
-        type=int,
-        default=0,
-        help=(
-            "By default, AuraFlow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
         ),
     )
     parser.add_argument(
@@ -1803,7 +1758,7 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.sd3 or args.aura_flow:
+    if args.sd3:
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
@@ -1874,23 +1829,6 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
-    t5_max_length = 120
-    if args.aura_flow and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > t5_max_length
-    ):
-        if not args.i_know_what_i_am_doing:
-            warning_log(
-                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
-            )
-            args.tokenizer_max_length = t5_max_length
-        else:
-            warning_log(
-                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
-            )
     t5_max_length = 77
     if args.sd3 and (
         args.tokenizer_max_length is None
@@ -1913,7 +1851,7 @@ def parse_args(input_args=None):
         args.ema_device = "cpu"
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3 or args.aura_flow:
+        if args.pixart_sigma or args.sd3:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."

@@ -246,11 +246,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
-        elif (
-            model_type == "pixart_sigma"
-            or model_type == "aura_flow"
-            or model_type == "smoldit"
-        ):
+        elif model_type == "pixart_sigma" or model_type == "smoldit":
             # we use the legacy encoder but we return no pooled embeds.
             validation_negative_prompt_embeds = (
                 embed_cache.compute_embeddings_for_prompts(
@@ -429,7 +425,7 @@ class Validation:
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
         self.flow_matching = (
-            self.args.sd3 or self.args.aura_flow
+            self.args.sd3
         ) and self.args.flow_matching_loss != "diffusion"
 
         self._update_state()
@@ -554,23 +550,6 @@ class Validation:
             from helpers.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
-        elif model_type == "aura_flow":
-            if self.args.controlnet:
-                raise Exception(
-                    "AuraFlow ControlNet inference validation is not yet supported."
-                )
-            if self.args.validation_using_datasets:
-                raise Exception(
-                    "AuraFlow inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-                )
-            try:
-                from helpers.aura_flow.pipeline import AuraFlowPipeline
-            except Exception:
-                logger.error(
-                    "Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
-                )
-
-            return AuraFlowPipeline
         elif model_type == "smoldit":
             from helpers.models.smoldit import SmolDiTPipeline
 
@@ -626,7 +605,6 @@ class Validation:
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "aura_flow"
             or StateTracker.get_model_type() == "smoldit"
         ):
             self.validation_negative_pooled_embeds = None
@@ -634,7 +612,7 @@ class Validation:
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if any([self.args.aura_flow, self.args.pixart_sigma, self.args.smoldit]):
+            if any([self.args.pixart_sigma, self.args.smoldit]):
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -710,7 +688,6 @@ class Validation:
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
         if (
             StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "aura_flow"
             or StateTracker.get_model_type() == "smoldit"
         ):
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
@@ -941,10 +918,6 @@ class Validation:
                 extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
                 extra_pipeline_kwargs["text_encoder"] = self.text_encoder_1
                 extra_pipeline_kwargs["scheduler"] = self.setup_scheduler()
-
-            if self.args.aura_flow:
-                extra_pipeline_kwargs["tokenizer"] = None
-                extra_pipeline_kwargs["text_encoder"] = None
 
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
@@ -1191,7 +1164,6 @@ class Validation:
                         logger.debug(f"Device for {key}: {value.device}")
                 if (
                     StateTracker.get_model_type() == "pixart_sigma"
-                    or StateTracker.get_model_type() == "aura_flow"
                     or StateTracker.get_model_type() == "smoldit"
                 ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
