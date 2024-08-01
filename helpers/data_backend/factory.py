@@ -10,7 +10,7 @@ from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.prompts import PromptHandler
 from helpers.caching.vae import VAECache
-from helpers.training.multi_process import rank_info, _get_rank as get_rank
+from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
@@ -25,9 +25,15 @@ from tqdm import tqdm
 import queue
 
 logger = logging.getLogger("DataBackendFactory")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel(logging.ERROR)
 prefetch_log = logging.getLogger("DataBackendPrefetch")
-prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+if should_log():
+    prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+else:
+    prefetch_log.setLevel(logging.ERROR)
 
 # For prefetching.
 
@@ -178,6 +184,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
+        and not args.smoldit
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -196,6 +203,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
+        and not args.smoldit
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -365,6 +373,9 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -472,6 +483,9 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
@@ -562,6 +576,9 @@ def configure_multi_databackend(
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
                 compress_cache=args.compress_disk_cache,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             init_backend["instance_data_dir"] = backend["aws_data_prefix"]
@@ -731,9 +748,10 @@ def configure_multi_databackend(
                             )
                             prev_config[key] = backend[key]
                     elif key not in backend:
-                        logger.warning(
-                            f"Key {key} not found in the current backend config, using the existing value {prev_config[key]}."
-                        )
+                        if should_log():
+                            logger.warning(
+                                f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
+                            )
                         init_backend["config"][key] = prev_config[key]
 
         init_backend["config"]["config_version"] = current_config_version
@@ -891,11 +909,14 @@ def configure_multi_databackend(
                     "minimum_image_size",
                     args.minimum_image_size,
                 ),
-                vae_batch_size=args.vae_batch_size,
-                write_batch_size=args.write_batch_size,
+                vae_batch_size=backend.get("vae_batch_size", args.vae_batch_size),
+                write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+                read_batch_size=backend.get("read_batch_size", args.read_batch_size),
                 cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
-                max_workers=backend.get("max_workers", 32),
-                process_queue_size=backend.get("process_queue_size", 64),
+                max_workers=backend.get("max_workers", args.max_workers),
+                process_queue_size=backend.get(
+                    "image_processing_batch_size", args.image_processing_batch_size
+                ),
                 vae_cache_preprocess=args.vae_cache_preprocess,
                 hash_filenames=hash_filenames,
             )
@@ -1075,6 +1096,7 @@ def get_aws_backend(
     accelerator,
     identifier: str,
     compress_cache: bool = False,
+    max_pool_connections: int = 128,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -1085,6 +1107,7 @@ def get_aws_backend(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         compress_cache=compress_cache,
+        max_pool_connections=max_pool_connections,
     )
 
 

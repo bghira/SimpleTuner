@@ -172,6 +172,35 @@ fi
 if [ -n "$KOLORS" ] && [[ "$KOLORS" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --kolors"
 fi
+if [ -n "$SMOLDIT" ] && [[ "$SMOLDIT" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --smoldit"
+fi
+
+
+if [ -z "$MAX_WORKERS" ]; then
+    printf "MAX_WORKERS not set, defaulting to 32.\n"
+    export MAX_WORKERS=32
+fi
+if [ -z "$READ_BATCH_SIZE" ]; then
+    printf "READ_BATCH_SIZE not set, defaulting to 25.\n"
+    export READ_BATCH_SIZE=25
+fi
+if [ -z "$WRITE_BATCH_SIZE" ]; then
+    printf "WRITE_BATCH_SIZE not set, defaulting to 64.\n"
+    export WRITE_BATCH_SIZE=64
+fi
+if [ -z "$AWS_MAX_POOL_CONNECTIONS" ]; then
+    printf "AWS_MAX_POOL_CONNECTIONS not set, defaulting to 128.\n"
+    export AWS_MAX_POOL_CONNECTIONS=128
+fi
+if [ -z "$TORCH_NUM_THREADS" ]; then
+    printf "TORCH_NUM_THREADS not set, defaulting to 8.\n"
+    export TORCH_NUM_THREADS=8
+fi
+if [ -z "$IMAGE_PROCESSING_BATCH_SIZE" ]; then
+    printf "IMAGE_PROCESSING_BATCH_SIZE not set, defaulting to 32.\n"
+    export IMAGE_PROCESSING_BATCH_SIZE=32
+fi
 
 export EMA_ARGS=""
 if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
@@ -321,7 +350,8 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
     ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
-    --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
+    --train_batch="${TRAIN_BATCH_SIZE}" --max_workers=$MAX_WORKERS --read_batch_size=$READ_BATCH_SIZE --write_batch_size=$WRITE_BATCH_SIZE --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
+    --torch_num_threads=${TORCH_NUM_THREADS} --image_processing_batch_size=${IMAGE_PROCESSING_BATCH_SIZE} --vae_batch_size=$VAE_BATCH_SIZE \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
     --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
     --resolution_type="${RESOLUTION_TYPE}" \

@@ -614,7 +614,7 @@ class VAECache:
 
             # Process Pool Execution
             processed_images = []
-            with ThreadPoolExecutor() as executor:
+            with ThreadPoolExecutor(self.max_workers) as executor:
                 futures = [
                     executor.submit(
                         prepare_sample,
@@ -905,7 +905,7 @@ class VAECache:
             shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
 
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             for bucket in shuffled_keys:
                 relevant_files = self._reduce_bucket(
                     bucket, aspect_bucket_cache, processed_images, do_shuffle

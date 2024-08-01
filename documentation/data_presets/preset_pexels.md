@@ -22,19 +22,31 @@ Place this file into `/home/user/training/photo-concept-bucket`:
 
 `download.py`
 ```py
-import os
-import pandas as pd
-import requests
 from concurrent.futures import ThreadPoolExecutor
 import pyarrow.parquet as pq
+import os
+import requests
+from PIL import Image
+from io import BytesIO
 
 # Load the Parquet file
-parquet_file = 'photo_concept_bucket.parquet'
+parquet_file = 'photo-concept-bucket.parquet'
 df = pq.read_table(parquet_file).to_pandas()
 
 # Define the output directory
 output_dir = 'train'
 os.makedirs(output_dir, exist_ok=True)
+
+def resize_for_condition_image(input_image: Image, resolution: int):
+    input_image = input_image.convert("RGB")
+    W, H = input_image.size
+    k = float(resolution) / min(H, W)
+    H *= k
+    W *= k
+    H = int(round(H / 64.0)) * 64
+    W = int(round(W / 64.0)) * 64
+    img = input_image.resize((W, H), resample=Image.LANCZOS)
+    return img
 
 def download_and_save(row):
     img_url = row['url']
@@ -45,9 +57,9 @@ def download_and_save(row):
         # Download the image
         img_response = requests.get(img_url)
         if img_response.status_code == 200:
+            img = Image.open(BytesIO(img_response.content))
             img_path = os.path.join(output_dir, f"{img_id}.png")
-            with open(img_path, 'wb') as img_file:
-                img_file.write(img_response.content)
+            img.save(img_path)
         
         # Write the caption to a text file
         caption_path = os.path.join(output_dir, f"{img_id}.txt")

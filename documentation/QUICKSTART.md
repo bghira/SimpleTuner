@@ -12,10 +12,6 @@ For a fun and lightweight model, see [this quickstart guide](/documentation/quic
 
 An SDXL-like U-net based architecture that uses a language model called ChatGLM for its text parsing can be found [here](/documentation/quickstart/KOLORS.md)
 
-## AuraFlow
-
-A full tutorial to start training an AuraFlow model is available in [this quickstart guide](/documentation/quickstart/AURAFLOW.md)
-
 ## Stable Diffusion 3
 
 For personalisation of the Stable Diffusion 3 model family, see [this quickstart guide](/documentation/quickstart/SD3.md)

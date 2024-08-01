@@ -5,6 +5,7 @@ import time
 import logging
 import sys
 import torch
+from helpers.models.smoldit import SmolDiTConfigurationNames
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -97,10 +98,20 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Kolors model."),
     )
     parser.add_argument(
-        "--aura_flow",
+        "--smoldit",
         action="store_true",
         default=False,
-        help=("This must be set when training an AuraFlow model."),
+        help=("Use the experimental SmolDiT model architecture."),
+    )
+    parser.add_argument(
+        "--smoldit_config",
+        type=str,
+        choices=SmolDiTConfigurationNames,
+        default="smoldit-base",
+        help=(
+            "The SmolDiT configuration to use. This is a list of pre-configured models."
+            " The default is 'smoldit-base'."
+        ),
     )
     parser.add_argument(
         "--flow_matching_loss",
@@ -108,48 +119,9 @@ def parse_args(input_args=None):
         choices=["diffusers", "compatible", "diffusion"],
         default="diffusers",
         help=(
-            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementations provided"
-            " by StabilityAI and AuraFlow. This experimental option allows switching loss calculations to be compatible with those."
+            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
+            " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_target",
-        type=str,
-        choices=["any", "dit", "mmdit"],
-        default="dit",
-        help=(
-            "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
-            " The default option 'all' means all blocks will be trained. 'dit' will train only the standard DiT blocks,"
-            " and 'mmdit' will train only the MM-DiT blocks. Experimentation will likely prove fruitful,"
-            " as these LoRAs train quickly. The default is 'all'."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_freeze_direction",
-        type=str,
-        choices=["up", "down"],
-        default="up",
-        help=(
-            "When freezing the AuraFlow model, you can freeze it 'up' from the bottom, or 'down' from the top."
-            " The default value is 'up' which will freeze the model from layer 11 to 31 by default."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_first_unfrozen_dit_layer",
-        type=int,
-        default=11,
-        help=(
-            "Due to the size of the AuraFlow model, by default only the 20th layer and up will be trained."
-            " More layers can be excluded to speed up training or reduce VRAM consumption further."
-        ),
-    )
-    parser.add_argument(
-        "--aura_flow_first_unfrozen_mmdit_layer",
-        type=int,
-        default=0,
-        help=(
-            "By default, AuraFlow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
         ),
     )
     parser.add_argument(
@@ -603,6 +575,23 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--read_batch_size",
+        type=int,
+        default=25,
+        help=(
+            "Used by the VAE cache to prefetch image data. This is the number of images to read ahead."
+        ),
+    )
+    parser.add_argument(
+        "--image_processing_batch_size",
+        type=int,
+        default=32,
+        help=(
+            "When resizing and cropping images, we do it in parallel using processes or threads."
+            " This defines how many images will be read into the queue before they are processed."
+        ),
+    )
+    parser.add_argument(
         "--enable_multiprocessing",
         default=False,
         action="store_true",
@@ -610,6 +599,21 @@ def parse_args(input_args=None):
             "If set, will use processes instead of threads during metadata caching operations."
             " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
             " Use this option with caution, and monitor your system's memory usage."
+        ),
+    )
+    parser.add_argument(
+        "--max_workers",
+        default=32,
+        type=int,
+        help=("How many active threads or processes to run during VAE caching."),
+    )
+    parser.add_argument(
+        "--aws_max_pool_connections",
+        type=int,
+        default=128,
+        help=(
+            "When using AWS backends, the maximum number of connections to keep open to the S3 bucket at a single time."
+            " This should be greater or equal to the max_workers and aspect bucket worker count values."
         ),
     )
     parser.add_argument(
@@ -1712,7 +1716,7 @@ def parse_args(input_args=None):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if args.train_batch_size > 16:
+        if not args.smoldit and args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
@@ -1754,7 +1758,7 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.sd3 or args.aura_flow:
+    if args.sd3:
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
@@ -1825,23 +1829,6 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
-    t5_max_length = 120
-    if args.aura_flow and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > t5_max_length
-    ):
-        if not args.i_know_what_i_am_doing:
-            warning_log(
-                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
-            )
-            args.tokenizer_max_length = t5_max_length
-        else:
-            warning_log(
-                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
-            )
     t5_max_length = 77
     if args.sd3 and (
         args.tokenizer_max_length is None
@@ -1864,7 +1851,7 @@ def parse_args(input_args=None):
         args.ema_device = "cpu"
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3 or args.aura_flow:
+        if args.pixart_sigma or args.sd3:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."

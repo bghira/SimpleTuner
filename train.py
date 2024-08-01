@@ -109,8 +109,15 @@ SCHEDULER_NAME_MAP = {
 
 
 def import_model_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
+    pretrained_model_name_or_path: str,
+    revision: str,
+    args,
+    subfolder: str = "text_encoder",
 ):
+    if args.smoldit:
+        from transformers import AutoModelForSeq2SeqLM
+
+        return AutoModelForSeq2SeqLM
     text_encoder_config = PretrainedConfig.from_pretrained(
         pretrained_model_name_or_path, subfolder=subfolder, revision=revision
     )
@@ -143,6 +150,14 @@ def import_model_class_from_model_name_or_path(
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
     try:
+        if args.smoldit:
+            from transformers import AutoTokenizer
+
+            tokenizer_1 = AutoTokenizer.from_pretrained(
+                "EleutherAI/pile-t5-base", pad_token="[PAD]"
+            )
+            return tokenizer_1, tokenizer_2, tokenizer_3
+
         tokenizer_kwargs = {
             "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
             "subfolder": "tokenizer",
@@ -153,11 +168,6 @@ def get_tokenizers(args):
             from transformers import T5Tokenizer
 
             tokenizer_cls = T5Tokenizer
-            is_t5_model = True
-        elif args.aura_flow:
-            from transformers import LlamaTokenizerFast
-
-            tokenizer_cls = LlamaTokenizerFast
             is_t5_model = True
         elif args.kolors:
             from diffusers import ChatGLMTokenizer
@@ -208,7 +218,7 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
-    if not any([args.pixart_sigma, args.aura_flow, args.kolors]):
+    if not any([args.pixart_sigma, args.kolors]):
         try:
             tokenizer_2 = CLIPTokenizer.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -259,12 +269,15 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
-    if args.aura_flow:
-        StateTracker.set_model_type("aura_flow")
     if args.legacy:
         StateTracker.set_model_type("legacy")
     if args.kolors:
         StateTracker.set_model_type("kolors")
+    if args.smoldit:
+        from diffusers.models.embeddings import get_2d_rotary_pos_embed
+        from helpers.models.smoldit import get_resize_crop_region_for_grid
+
+        StateTracker.set_model_type("smoldit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -412,7 +425,10 @@ def main():
         logger.info("Loading Kolors ChatGLM language model..")
         text_encoder_path = "kwai-kolors/kolors-diffusers"
         text_encoder_subfolder = "text_encoder"
-    elif args.pixart_sigma or args.aura_flow:
+    elif args.smoldit:
+        text_encoder_path = "EleutherAI/pile-t5-base"
+        text_encoder_subfolder = None
+    elif args.pixart_sigma:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
             if args.pretrained_t5_model_name_or_path is not None
@@ -428,25 +444,27 @@ def main():
         text_encoder_subfolder = "text_encoder"
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-            text_encoder_path, args.revision, subfolder=text_encoder_subfolder
+            text_encoder_path, args.revision, args, subfolder=text_encoder_subfolder
         )
     if tokenizer_2 is not None:
         text_encoder_cls_2 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_2",
         )
     if tokenizer_3 is not None and args.sd3:
         text_encoder_cls_3 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_3",
         )
 
     # Load scheduler and models
     flow_matching = False
-    if (args.sd3 or args.aura_flow) and args.flow_matching_loss != "diffusion":
-        # Stable Diffusion 3 and AuraFlow use rectified flow.
+    if args.sd3 and args.flow_matching_loss != "diffusion":
+        # Stable Diffusion 3 uses rectified flow.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
 
@@ -482,10 +500,10 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         text_encoder_variant = args.variant
-        if tokenizer_1 is not None:
-            if args.pixart_sigma or args.aura_flow:
+        if tokenizer_1 is not None and not args.smoldit:
+            if args.pixart_sigma:
                 logger.info(
-                    f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                    f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
             elif args.kolors:
                 logger.info(
@@ -502,6 +520,11 @@ def main():
                 revision=args.revision,
                 variant=text_encoder_variant,
             )
+        elif args.smoldit:
+            text_encoder_1 = text_encoder_cls_1.from_pretrained(
+                "EleutherAI/pile-t5-base"
+            ).encoder
+            text_encoder_1.eval()
 
         if tokenizer_2 is not None:
             logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
@@ -594,20 +617,22 @@ def main():
             subfolder="transformer",
             **pretrained_load_args,
         )
-    elif args.aura_flow:
-        try:
-            from diffusers.models import AuraFlowTransformer2DModel
-        except:
-            raise Exception(
-                "The AuraFlow model is not available in this release. Please update to the latest version of Diffusers: https://github.com/huggingface/diffusers/pull/8796"
+    elif args.smoldit:
+        logger.info("Loading SmolDiT model..")
+        if args.validation_noise_scheduler is None:
+            args.validation_noise_scheduler = "ddpm"
+        transformer_variant = None
+        unet = None
+        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
+
+        if args.smoldit_config not in SmolDiTConfigurations:
+            raise ValueError(
+                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
             )
 
-        unet = None
-        transformer = AuraFlowTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
+        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
+        if "lora" in args.model_type:
+            raise ValueError("SmolDiT does not yet support LoRA training.")
     else:
         logger.info("Loading U-net..")
         unet_variant = args.variant
@@ -630,26 +655,17 @@ def main():
         model_type_label = "Stable Diffusion 3"
     if args.pixart_sigma:
         model_type_label = "PixArt Sigma"
-    if args.aura_flow:
-        model_type_label = "AuraFlow"
     if args.legacy:
         model_type_label = "Stable Diffusion 1.x/2.x"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
     if args.kolors:
         model_type_label = "Kwai Kolors"
-    AURA_DIT_BLOCKS_REGEX = (
-        r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
-    )
-    AURA_MMDIT_BLOCKS_REGEX = (
-        r"joint_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
-    )
 
     if args.controlnet:
         if any(
             [
                 args.pixart_sigma,
-                args.aura_flow,
                 args.sd3,
                 args.kolors,
                 StateTracker.is_sdxl_refiner(),
@@ -707,12 +723,6 @@ def main():
             unet.add_adapter(unet_lora_config)
         if transformer is not None:
             target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
-            if args.aura_flow:
-                target_modules = ["to_k", "to_q", "to_v", "to_out.0", "to_add_out"]
-                if args.aura_flow_target == "dit":
-                    target_modules = AURA_DIT_BLOCKS_REGEX
-                elif args.aura_flow_target == "mmdit":
-                    target_modules = AURA_MMDIT_BLOCKS_REGEX
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=args.lora_alpha,
@@ -730,7 +740,7 @@ def main():
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma, args.aura_flow]
+        [args.sd3, args.pixart_sigma]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
@@ -764,17 +774,6 @@ def main():
                 "Unknown results will occur when finetuning the text encoder alongside ControlNet."
             )
 
-    if "lora" not in args.model_type and args.aura_flow:
-        # we might want to just train a piece of the whole aura model.
-        transformer = freeze_transformer_blocks(
-            transformer,
-            target_blocks=args.aura_flow_target,
-            freeze_direction=args.aura_flow_freeze_direction,
-            first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
-            first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
-            use_bitfit=True if args.layer_freeze_strategy == "bitfit" else False,
-        )
-
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in bfloat16 to avoid NaN losses.
     vae_dtype = torch.bfloat16
@@ -805,9 +804,7 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel and not any(
-        [args.sd3, args.pixart_sigma, args.aura_flow, args.kolors]
-    ):
+    if not args.disable_compel and not any([args.sd3, args.pixart_sigma, args.kolors]):
         # Only CLIP works with prompt weighting.
         prompt_handler = PromptHandler(
             args=args,
@@ -947,7 +944,7 @@ def main():
     if args.gradient_checkpointing:
         if unet is not None:
             unet.enable_gradient_checkpointing()
-        if transformer is not None:
+        if transformer is not None and not args.smoldit:
             transformer.enable_gradient_checkpointing()
         if args.controlnet:
             controlnet.enable_gradient_checkpointing()
@@ -1142,7 +1139,7 @@ def main():
                 filter(lambda p: p.requires_grad, transformer.parameters())
             )
         if args.train_text_encoder:
-            if args.sd3 or args.aura_flow or args.pixart_sigma:
+            if args.sd3 or args.pixart_sigma:
                 raise ValueError(
                     f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
@@ -1218,13 +1215,7 @@ def main():
                     else (
                         SD3Transformer2DModel
                         if args.sd3
-                        else (
-                            PixArtTransformer2DModel
-                            if args.pixart_sigma
-                            else (
-                                AuraFlowTransformer2DModel if args.aura_flow else None
-                            )
-                        )
+                        else (PixArtTransformer2DModel if args.pixart_sigma else None)
                     )
                 ),
                 model_config=(
@@ -1686,7 +1677,7 @@ def main():
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False:
-                logger.info(f"Reached the end of epoch {epoch}")
+                logger.debug(f"Reached the end of epoch {epoch}")
                 break
 
             if batch is None:
@@ -1780,7 +1771,6 @@ def main():
 
                 if flow_matching:
                     # Add noise according to flow matching.
-                    # TODO: Determine whether AuraFlow benefits from this.
                     sigmas = get_sd3_sigmas(
                         accelerator,
                         noise_scheduler_copy,
@@ -1835,7 +1825,7 @@ def main():
                     )
 
                 # Predict the noise residual and compute loss
-                if args.sd3 or args.aura_flow:
+                if args.sd3:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
                 elif StateTracker.get_model_type() == "sdxl" or args.kolors:
@@ -1847,9 +1837,10 @@ def main():
                             device=accelerator.device, dtype=weight_dtype
                         ),
                     }
-                elif args.pixart_sigma:
+                elif args.pixart_sigma or args.smoldit:
                     # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
-                    added_cond_kwargs = batch["batch_time_ids"]
+                    if "batch_time_ids" in batch:
+                        added_cond_kwargs = batch["batch_time_ids"]
                     batch["encoder_attention_mask"] = batch[
                         "encoder_attention_mask"
                     ].to(device=accelerator.device, dtype=weight_dtype)
@@ -1907,16 +1898,6 @@ def main():
                             ),
                             return_dict=False,
                         )[0]
-                    elif args.aura_flow:
-                        # AuraFlow also uses a MM-DiT model where the VAE-produced
-                        #  image embeds are passed in with the TE-produced text embeds.
-                        # Print the dtypes/shapes:
-                        model_pred = transformer(
-                            hidden_states=noisy_latents,
-                            encoder_hidden_states=encoder_hidden_states,
-                            timestep=timesteps,
-                            return_dict=False,
-                        )[0]
                     elif args.pixart_sigma:
                         model_pred = transformer(
                             noisy_latents,
@@ -1927,6 +1908,29 @@ def main():
                             return_dict=False,
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
+                    elif args.smoldit:
+                        first_latent_shape = noisy_latents[0].shape
+                        height = first_latent_shape[1] * 8
+                        width = first_latent_shape[2] * 8
+                        grid_height = height // 8 // transformer.config.patch_size
+                        grid_width = width // 8 // transformer.config.patch_size
+                        base_size = 512 // 8 // transformer.config.patch_size
+                        grid_crops_coords = get_resize_crop_region_for_grid(
+                            (grid_height, grid_width), base_size
+                        )
+                        inputs = {
+                            "hidden_states": noisy_latents,
+                            "timestep": timesteps,
+                            "encoder_hidden_states": encoder_hidden_states,
+                            "encoder_attention_mask": batch["encoder_attention_mask"],
+                            "image_rotary_emb": get_2d_rotary_pos_embed(
+                                transformer.inner_dim
+                                // transformer.config.num_attention_heads,
+                                grid_crops_coords,
+                                (grid_height, grid_width),
+                            ),
+                        }
+                        model_pred = transformer(**inputs).sample
                     elif unet is not None:
                         if args.legacy:
                             # SD 1.5 or 2.x
@@ -2252,7 +2256,7 @@ def main():
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
-            if args.sd3 or args.pixart_sigma or args.aura_flow:
+            if args.sd3 or args.pixart_sigma:
                 transformer_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(transformer)
                 )
@@ -2265,7 +2269,7 @@ def main():
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_1)
                 )
-                if not args.aura_flow and not args.pixart_sigma:
+                if not args.pixart_sigma:
                     text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
                     text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
                         get_peft_model_state_dict(text_encoder_2)
@@ -2376,40 +2380,6 @@ def main():
                     logger.debug(
                         f"Setting scheduler to Euler for SD3. Config: {pipeline.scheduler.config}"
                     )
-            elif args.aura_flow:
-                from diffusers import AuraFlowPipeline
-
-                pipeline = AuraFlowPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    text_encoder=text_encoder_1
-                    or (
-                        text_encoder_cls_1.from_pretrained(
-                            args.pretrained_model_name_or_path,
-                            subfolder="text_encoder",
-                            revision=args.revision,
-                            variant=args.variant,
-                        )
-                        if args.save_text_encoder
-                        else None
-                    ),
-                    tokenizer=tokenizer_1,
-                    vae=vae
-                    or (
-                        AutoencoderKL.from_pretrained(
-                            vae_path,
-                            subfolder=(
-                                "vae"
-                                if args.pretrained_vae_model_name_or_path is None
-                                else None
-                            ),
-                            revision=args.revision,
-                            variant=args.variant,
-                            force_upcast=False,
-                        )
-                    ),
-                    transformer=transformer,
-                    torch_dtype=weight_dtype,
-                )
             elif args.legacy:
                 from diffusers import StableDiffusionPipeline
 
@@ -2443,6 +2413,39 @@ def main():
                     ),
                     unet=unet,
                     torch_dtype=weight_dtype,
+                )
+            elif args.smoldit:
+                from helpers.models.smoldit import SmolDiTPipeline
+
+                pipeline = SmolDiTPipeline(
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                    scheduler=None,
                 )
 
             else:
@@ -2492,17 +2495,17 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-                if args.validation_noise_scheduler is not None:
-                    pipeline.scheduler = SCHEDULER_NAME_MAP[
-                        args.validation_noise_scheduler
-                    ].from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        revision=args.revision,
-                        subfolder="scheduler",
-                        prediction_type=args.prediction_type,
-                        timestep_spacing=args.training_scheduler_timestep_spacing,
-                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-                    )
+            if args.validation_noise_scheduler is not None:
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    revision=args.revision,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.training_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )

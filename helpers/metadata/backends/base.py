@@ -6,6 +6,7 @@ import torch
 from helpers.data_backend.base import BaseDataBackend
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import should_log
 from multiprocessing import Process, Queue
 from threading import Thread
 from pathlib import Path
@@ -18,7 +19,10 @@ import numpy as np
 from threading import Semaphore
 
 logger = logging.getLogger("BaseMetadataBackend")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class MetadataBackend:
@@ -324,7 +328,7 @@ class MetadataBackend:
             num_batches = len(images) // effective_batch_size
             trimmed_images = images[: num_batches * effective_batch_size]
             logger.debug(f"Trimmed from {len(images)} to {len(trimmed_images)}")
-            if len(trimmed_images) == 0:
+            if len(trimmed_images) == 0 and should_log():
                 logger.error(
                     f"Bucket {bucket} has no images after trimming because {len(images)} images are not enough to satisfy an effective batch size of {effective_batch_size}."
                     " Lower your batch size, increase repeat count, or increase data pool size."

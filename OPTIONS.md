@@ -23,11 +23,6 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Enable PixArt Sigma training quirks/overrides.
 - **Why**: PixArt is similar to SD3 and DeepFloyd in one way or another, and needs special treatment at validation, training, and inference time. Use this option to enable PixArt training support. PixArt does not support ControlNet, LoRA, or `--validation_using_datasets`
 
-### `--aura_flow`
-
-- **What**: Enable AuraFlow training quirks/overrides.
-- **Why**: As a flow-matching model, AuraFlow has several unique needs. This option must be enabled to load and train an AuraFlow model.
-
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from huggingface.co/models.
@@ -241,12 +236,8 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                [--legacy] [--kolors] [--aura_flow]
+                [--legacy] [--kolors]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
-                [--aura_flow_target {any,dit,mmdit}]
-                [--aura_flow_freeze_direction {up,down}]
-                [--aura_flow_first_unfrozen_dit_layer AURA_FLOW_FIRST_UNFROZEN_DIT_LAYER]
-                [--aura_flow_first_unfrozen_mmdit_layer AURA_FLOW_FIRST_UNFROZEN_MMDIT_LAYER]
                 [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
                 [--weighting_scheme {sigma_sqrt,logit_normal,mode,none}]
@@ -405,7 +396,6 @@ options:
                         Diffusion 1.x or 2.x model.
   --kolors              This option must be provided when training a Kolors
                         model.
-  --aura_flow           This must be set when training an AuraFlow model.
   --flow_matching_loss {diffusers,compatible,diffusion}
                         A discrepancy exists between the Diffusers
                         implementation of flow matching and the minimal
@@ -414,29 +404,6 @@ options:
                         calculations to be compatible with those.
                         Additionally, 'diffusion' is offered as an option to
                         reparameterise a model to v_prediction loss.
-  --aura_flow_target {any,dit,mmdit}
-                        Aura Diffusion contains joint attention MM-DiT blocks
-                        as well as standard DiT. When training a LoRA, we can
-                        limit the blocks trained. The default option 'all'
-                        means all blocks will be trained. 'dit' will train
-                        only the standard DiT blocks, and 'mmdit' will train
-                        only the MM-DiT blocks. Experimentation will likely
-                        prove fruitful, as these LoRAs train quickly. The
-                        default is 'all'.
-  --aura_flow_freeze_direction {up,down}
-                        When freezing the AuraFlow model, you can freeze it
-                        'up' from the bottom, or 'down' from the top. The
-                        default value is 'up' which will freeze the model from
-                        layer 11 to 31 by default.
-  --aura_flow_first_unfrozen_dit_layer AURA_FLOW_FIRST_UNFROZEN_DIT_LAYER
-                        Due to the size of the AuraFlow model, by default only
-                        the 20th layer and up will be trained. More layers can
-                        be excluded to speed up training or reduce VRAM
-                        consumption further.
-  --aura_flow_first_unfrozen_mmdit_layer AURA_FLOW_FIRST_UNFROZEN_MMDIT_LAYER
-                        By default, AuraFlow's MM-DiT blocks are not trained
-                        as they are very large and training them is
-                        unnecessary for finetuning.
   --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.

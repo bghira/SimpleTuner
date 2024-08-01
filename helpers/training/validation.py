@@ -246,7 +246,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
-        elif model_type == "pixart_sigma" or model_type == "aura_flow":
+        elif model_type == "pixart_sigma" or model_type == "smoldit":
             # we use the legacy encoder but we return no pooled embeds.
             validation_negative_prompt_embeds = (
                 embed_cache.compute_embeddings_for_prompts(
@@ -425,7 +425,7 @@ class Validation:
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
         self.flow_matching = (
-            self.args.sd3 or self.args.aura_flow
+            self.args.sd3
         ) and self.args.flow_matching_loss != "diffusion"
 
         self._update_state()
@@ -550,23 +550,10 @@ class Validation:
             from helpers.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
-        elif model_type == "aura_flow":
-            if self.args.controlnet:
-                raise Exception(
-                    "AuraFlow ControlNet inference validation is not yet supported."
-                )
-            if self.args.validation_using_datasets:
-                raise Exception(
-                    "AuraFlow inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
-                )
-            try:
-                from helpers.aura_flow.pipeline import AuraFlowPipeline
-            except Exception:
-                logger.error(
-                    "Could not import AuraFlow pipeline. Perhaps you need a git-source version of Diffusers."
-                )
+        elif model_type == "smoldit":
+            from helpers.models.smoldit import SmolDiTPipeline
 
-            return AuraFlowPipeline
+            return SmolDiTPipeline
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
@@ -618,14 +605,14 @@ class Validation:
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "aura_flow"
+            or StateTracker.get_model_type() == "smoldit"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if self.args.pixart_sigma or self.args.aura_flow:
+            if any([self.args.pixart_sigma, self.args.smoldit]):
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -649,9 +636,8 @@ class Validation:
             # )
             if (
                 self.prompt_handler is not None
-                and not self.deepfloyd
-                and not self.args.pixart_sigma
-                and not self.flow_matching
+                and StateTracker.get_model_type() in ["sdxl", "legacy"]
+                and "deepfloyd" not in StateTracker.get_args().model_type
             ):
                 # for SDXL and earlier SD models we optionally use Compel for prompt upweighting/long prompt parsing.
                 for text_encoder in self.prompt_handler.text_encoders:
@@ -702,7 +688,7 @@ class Validation:
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
         if (
             StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "aura_flow"
+            or StateTracker.get_model_type() == "smoldit"
         ):
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
@@ -844,10 +830,18 @@ class Validation:
 
     def setup_scheduler(self):
         if self.args.validation_noise_scheduler is None:
+            print("no scheduler")
+            return
+        if self.flow_matching:
+            # NO TOUCHIE FOR FLOW-MATCHING.
+            # Touchie for diffusion though.
             return
 
         scheduler_args = {}
-        if "variance_type" in self.pipeline.scheduler.config:
+        if (
+            self.pipeline is not None
+            and "variance_type" in self.pipeline.scheduler.config
+        ):
             variance_type = self.pipeline.scheduler.config.variance_type
 
             if variance_type in ["learned", "learned_range"]:
@@ -856,12 +850,7 @@ class Validation:
             scheduler_args["variance_type"] = variance_type
         if self.deepfloyd:
             self.args.validation_noise_scheduler = "ddpm"
-        if self.flow_matching:
-            # NO TOUCHIE FOR FLOW-MATCHING.
-            # Touchie for diffusion though.
-            return
-
-        self.pipeline.scheduler = SCHEDULER_NAME_MAP[
+        scheduler = SCHEDULER_NAME_MAP[
             self.args.validation_noise_scheduler
         ].from_pretrained(
             self.args.pretrained_model_name_or_path,
@@ -872,6 +861,9 @@ class Validation:
             rescale_betas_zero_snr=self.args.rescale_betas_zero_snr,
             **scheduler_args,
         )
+        if self.pipeline is not None:
+            self.pipeline.scheduler = scheduler
+        return scheduler
 
     def setup_pipeline(self, validation_type, enable_ema_model: bool = True):
         if validation_type == "intermediary" and self.args.use_ema:
@@ -919,9 +911,13 @@ class Validation:
                     extra_pipeline_kwargs["text_encoder_2"] = None
                     extra_pipeline_kwargs["tokenizer_2"] = None
 
-            if self.args.aura_flow:
-                extra_pipeline_kwargs["tokenizer"] = None
-                extra_pipeline_kwargs["text_encoder"] = None
+            if self.args.smoldit:
+                extra_pipeline_kwargs["transformer"] = unwrap_model(
+                    self.accelerator, self.transformer
+                )
+                extra_pipeline_kwargs["tokenizer"] = self.tokenizer_1
+                extra_pipeline_kwargs["text_encoder"] = self.text_encoder_1
+                extra_pipeline_kwargs["scheduler"] = self.setup_scheduler()
 
             if self.args.controlnet:
                 # ControlNet training has an additional adapter thingy.
@@ -970,9 +966,23 @@ class Validation:
             while attempt < 3:
                 attempt += 1
                 try:
-                    self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
+                    if self.args.smoldit:
+                        self.pipeline = pipeline_cls(
+                            vae=self.vae,
+                            transformer=unwrap_model(
+                                self.accelerator, self.transformer
+                            ),
+                            tokenizer=self.tokenizer_1,
+                            text_encoder=self.text_encoder_1,
+                            scheduler=self.setup_scheduler(),
+                        )
+                    else:
+                        self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
                 except Exception as e:
+                    import traceback
+
                     logger.error(e)
+                    logger.error(traceback.format_exc())
                     continue
                 return None
             if self.args.validation_torch_compile:
@@ -1154,7 +1164,7 @@ class Validation:
                         logger.debug(f"Device for {key}: {value.device}")
                 if (
                     StateTracker.get_model_type() == "pixart_sigma"
-                    or StateTracker.get_model_type() == "aura_flow"
+                    or StateTracker.get_model_type() == "smoldit"
                 ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]
