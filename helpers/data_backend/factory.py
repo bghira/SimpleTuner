@@ -247,7 +247,11 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 
     bytes_string = data_backend.read(parquet_path)
     pq = io.BytesIO(bytes_string)
-    df = pd.read_parquet(pq)
+    if parquet_path.endswith(".jsonl"):
+        df = pd.read_json(pq, lines=True)
+    else:
+        df = pd.read_parquet(pq)
+
     caption_column = parquet_config.get(
         "caption_column", args.parquet_caption_column or "description"
     )
