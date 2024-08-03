@@ -163,9 +163,6 @@ fi
 if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --pixart_sigma"
 fi
-if [ -n "$AURA_FLOW" ] && [[ "$AURA_FLOW" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aura_flow"
-fi
 if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
 fi
@@ -174,6 +171,9 @@ if [ -n "$KOLORS" ] && [[ "$KOLORS" == "true" ]]; then
 fi
 if [ -n "$SMOLDIT" ] && [[ "$SMOLDIT" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --smoldit"
+fi
+if [ -n "$FLUX" ] && [[ "$FLUX" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux"
 fi
 
 

@@ -98,6 +98,12 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Kolors model."),
     )
     parser.add_argument(
+        "--flux",
+        action="store_true",
+        default=False,
+        help=("This option must be provided when training a Flux model."),
+    )
+    parser.add_argument(
         "--smoldit",
         action="store_true",
         default=False,
@@ -1738,12 +1744,12 @@ def parse_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.legacy
+        and any([args.legacy, args.flux])
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
-        error_log(
-            f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
+        warning_log(
+            f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible. Please use a compatible VAE to eliminate this warning. The baked-in VAE will be used, instead."
         )
         args.pretrained_vae_model_name_or_path = None
     if (
@@ -1844,7 +1850,20 @@ def parse_args(input_args=None):
                 f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
             )
             warning_log(
-                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+            )
+    if args.flux and (
+        args.tokenizer_max_length is None or int(args.tokenizer_max_length) > 256
+    ):
+        if not args.i_know_what_i_am_doing:
+            warning_log(f"Updating T5 XXL tokeniser max length to 256 for Flux.")
+            args.tokenizer_max_length = 256
+        else:
+            warning_log(
+                f"-!- SD3 supports a max length of 256 tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+            )
+            warning_log(
+                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
             )
 
     if args.use_ema and args.ema_cpu_only:

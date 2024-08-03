@@ -155,7 +155,9 @@ def compute_latents(filepaths, data_backend_id: str):
     return latents
 
 
-def compute_single_embedding(caption, text_embed_cache, is_sdxl, is_sd3: bool = False):
+def compute_single_embedding(
+    caption, text_embed_cache, is_sdxl, is_sd3: bool = False, is_flux: bool = False
+):
     """Worker function to compute embedding for a single caption."""
     if caption == "" or not caption:
         # Grab the default text embed backend for null caption.
@@ -177,6 +179,11 @@ def compute_single_embedding(caption, text_embed_cache, is_sdxl, is_sd3: bool = 
             text_embed_cache.compute_embeddings_for_sd3_prompts(prompts=[caption])
         )
         return prompt_embeds[0], pooled_prompt_embeds[0]
+    elif is_flux:
+        prompt_embeds, pooled_prompt_embeds, time_ids = (
+            text_embed_cache.compute_embeddings_for_flux_prompts(prompts=[caption])
+        )
+        return prompt_embeds[0], pooled_prompt_embeds[0], time_ids[0]
     else:
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
@@ -214,6 +221,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
     is_smoldit = text_embed_cache.model_type == "smoldit"
+    is_flux = text_embed_cache.model_type == "flux"
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
@@ -224,6 +232,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
                 [text_embed_cache] * len(captions),
                 [is_sdxl] * len(captions),
                 [is_sd3] * len(captions),
+                [is_flux] * len(captions),
             )
         )
 
@@ -248,6 +257,16 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             # some tensors are already expanded due to the way they were saved
             prompt_embeds = [t.squeeze(0) for t in prompt_embeds]
         return (torch.stack(prompt_embeds), torch.stack(attn_masks))
+    elif is_flux:
+        # Separate the tuples
+        prompt_embeds = [t[0] for t in embeddings]
+        add_text_embeds = [t[1] for t in embeddings]
+        time_ids = [t[2] for t in embeddings]
+        return (
+            torch.stack(prompt_embeds),
+            torch.stack(add_text_embeds),
+            torch.stack(time_ids),
+        )
     else:
         # Separate the tuples
         prompt_embeds = [t[0] for t in embeddings]
@@ -410,10 +429,16 @@ def collate_fn(batch):
     text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
         "text_embed_cache"
     ]
-    prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
-        captions, text_embed_cache
-    )
     batch_time_ids = None
+    if StateTracker.get_args().flux:
+        debug_log("Compute and stack Flux time ids")
+        prompt_embeds_all, add_text_embeds_all, batch_time_ids = (
+            compute_prompt_embeddings(captions, text_embed_cache)
+        )
+    else:
+        prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
+            captions, text_embed_cache
+        )
     attn_mask = None
     if (
         StateTracker.get_model_type() == "sdxl"

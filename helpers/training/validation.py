@@ -261,6 +261,22 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
+        elif model_type == "flux":
+            (
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+                validation_negative_time_ids,
+            ) = embed_cache.compute_embeddings_for_prompts(
+                [StateTracker.get_args().validation_negative_prompt],
+                load_from_cache=False,
+            )
+            return (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+                validation_negative_time_ids,
+            )
         else:
             raise ValueError(f"Unknown model type '{model_type}'")
 
@@ -563,10 +579,25 @@ class Validation:
             or StateTracker.get_model_type() == "sd3"
             or StateTracker.get_model_type() == "kolors"
         ):
-            (
-                current_validation_prompt_embeds,
-                current_validation_pooled_embeds,
-            ) = self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
+            _embed = self.embed_cache.compute_embeddings_for_prompts(
+                [validation_prompt]
+            )
+            current_validation_time_ids = None
+            if len(_embed) == 2:
+                (
+                    current_validation_prompt_embeds,
+                    current_validation_pooled_embeds,
+                ) = _embed
+            elif len(_embed) == 3:
+                (
+                    current_validation_prompt_embeds,
+                    current_validation_pooled_embeds,
+                    current_validation_time_ids,
+                ) = _embed
+            else:
+                raise ValueError(
+                    f"Unexpected number of embeddings returned from cache: {_embed}"
+                )
             if (
                 self.prompt_handler is not None
                 and not StateTracker.get_model_type() == "sd3"
@@ -593,6 +624,10 @@ class Validation:
             current_validation_pooled_embeds = current_validation_pooled_embeds.to(
                 device=self.accelerator.device, dtype=self.weight_dtype
             )
+            if current_validation_time_ids is not None:
+                current_validation_time_ids = current_validation_time_ids.to(
+                    device=self.accelerator.device, dtype=self.weight_dtype
+                )
             self.validation_negative_pooled_embeds = (
                 self.validation_negative_pooled_embeds.to(
                     device=self.accelerator.device, dtype=self.weight_dtype
@@ -602,6 +637,8 @@ class Validation:
             prompt_embeds["negative_pooled_prompt_embeds"] = (
                 self.validation_negative_pooled_embeds
             )
+            if current_validation_time_ids is not None:
+                prompt_embeds["time_ids"] = current_validation_time
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
