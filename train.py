@@ -1949,7 +1949,7 @@ def main():
                             transformer_config = transformer.config
                         else:
                             transformer_config = original_config 
-                        if transformer_config and getattr(transformer_config, 'guidance_embeds', False):
+                        if transformer_config is not None and getattr(transformer_config, 'guidance_embeds', False):
                             guidance = torch.tensor(
                                 [guidance_scale], device=accelerator.device
                             )
