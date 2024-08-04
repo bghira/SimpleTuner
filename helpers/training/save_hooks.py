@@ -175,7 +175,7 @@ class SaveHookManager:
         if self.args.flux:
             FluxPipeline.save_lora_weights(
                 output_dir,
-                transformer_lora_layers=unet_lora_layers_to_save,
+                transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
         if self.args.sd3:
