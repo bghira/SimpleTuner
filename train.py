@@ -766,7 +766,7 @@ def main():
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma]
+        [args.sd3, args.pixart_sigma, args.flux, args.kolors]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
