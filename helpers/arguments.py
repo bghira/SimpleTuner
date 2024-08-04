@@ -1356,11 +1356,18 @@ def parse_args(input_args=None):
             " is now to use fp32 gradients, which is slower, but provides more accurate updates."
         ),
     )
-    # parser.add_argument(
-    #     "--base_model_precision",
-    #     type=str,
-    #     choices=["normal", "fp4", "fp8-bnb", "fp8-effm"]
-    # )
+    parser.add_argument(
+        "--base_model_precision",
+        type=str,
+        default="no_change",
+        choices=["no_change", "fp4-bnb", "fp8-bnb", "fp8-quanto"],
+        help=(
+            "When training a LoRA, you might want to quantise the base model to a lower precision to save more VRAM."
+            " The default value, 'no_change', does not quantise any weights."
+            " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
+            " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+        ),
+    )
     parser.add_argument(
         "--local_rank",
         type=int,
