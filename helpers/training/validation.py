@@ -441,8 +441,8 @@ class Validation:
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
         self.flow_matching = (
-            self.args.sd3
-        ) and self.args.flow_matching_loss != "diffusion"
+            self.args.sd3 and self.args.flow_matching_loss != "diffusion"
+        ) or self.args.flux
 
         self._update_state()
 
