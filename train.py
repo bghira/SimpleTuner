@@ -674,13 +674,14 @@ def main():
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
-
+    lock_weight_dtype = False
     if (
         not disable_accelerator
         and "lora" in args.model_type
         and args.base_model_precision != "no_change"
     ):
-        if args.base_model_precision == "fp8-quanto":
+        lock_weight_dtype = True
+        if "quanto" in args.base_model_precision:
             logger.info("Loading Quanto for LoRA training.")
             try:
                 from quanto import freeze, qfloat8, qint8, quantize, qint4, qint2
@@ -688,14 +689,19 @@ def main():
                 raise ImportError(
                     f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
                 )
+            weight_quant = qint8
+            if args.base_model_precision == "int4-quanto":
+                weight_quant = qint4
+            if args.base_model_precision == "int2-quanto":
+                weight_quant = qint2
             if transformer is not None:
                 logger.info("Quantising transformer")
-                quantize(transformer, weights=qfloat8)
+                quantize(transformer, weights=weight_quant)
                 logger.info("Freezing the base transformer model.")
                 freeze(transformer)
             if unet is not None:
                 logger.info("Quantising unet")
-                quantize(unet, weights=qfloat8)
+                quantize(unet, weights=weight_quant)
                 logger.info("Freezing the base U-net model.")
                 freeze(unet)
             if torch.backends.mps.is_available():
@@ -705,17 +711,17 @@ def main():
             else:
                 if text_encoder_1 is not None:
                     logger.info("Quantising text encoder 1")
-                    quantize(text_encoder_1, weights=qfloat8)
+                    quantize(text_encoder_1, weights=weight_quant)
                     logger.info("Freezing the text encoder model.")
                     freeze(text_encoder_1)
                 if text_encoder_2 is not None:
                     logger.info("Quantising text encoder 2")
-                    quantize(text_encoder_2, weights=qfloat8)
+                    quantize(text_encoder_2, weights=weight_quant)
                     logger.info("Freezing the 2nd text encoder model.")
                     freeze(text_encoder_2)
                 if text_encoder_3 is not None:
                     logger.info("Quantising text encoder 3")
-                    quantize(text_encoder_3, weights=qfloat8)
+                    quantize(text_encoder_3, weights=weight_quant)
                     logger.info("Freezing the 3rd text encoder model.")
                     freeze(text_encoder_3)
 
@@ -807,9 +813,15 @@ def main():
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
     )
     if unet is not None:
-        unet.to(accelerator.device, dtype=weight_dtype)
+        if lock_weight_dtype:
+            unet.to(accelerator.device)
+        else:
+            unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
-        transformer.to(accelerator.device, dtype=weight_dtype)
+        if lock_weight_dtype:
+            transformer.to(accelerator.device)
+        else:
+            transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
         [args.sd3, args.pixart_sigma, args.flux, args.kolors]
     ):

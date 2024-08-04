@@ -1360,7 +1360,14 @@ def parse_args(input_args=None):
         "--base_model_precision",
         type=str,
         default="no_change",
-        choices=["no_change", "fp4-bnb", "fp8-bnb", "fp8-quanto"],
+        choices=[
+            "no_change",
+            "fp4-bnb",
+            "fp8-bnb",
+            "fp8-quanto",
+            "int4-quanto",
+            "int2-quanto",
+        ],
         help=(
             "When training a LoRA, you might want to quantise the base model to a lower precision to save more VRAM."
             " The default value, 'no_change', does not quantise any weights."
