@@ -48,6 +48,7 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Most models are trainable on a 24G GPU, or even down to 16G at lower base resolutions.
   - LoRA training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
 - DeepSpeed integration allowing for [training SDXL's full u-net on 12G of VRAM](/documentation/DEEPSPEED.md), albeit very slowly.
+- Quantised LoRA training, using low-precision base model or text encoder weights to reduce VRAM consumption while still allowing DreamBooth.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
 - For only SDXL and SD 1.x/2.x, full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
@@ -63,6 +64,7 @@ Preliminary training support for Flux.1 is included:
 - LoRA or full tuning via DeepSpeed ZeRO
 - ControlNet training is not yet supported
 - Train either Schnell or Dev models
+- Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
 
 See [hardware requirements](#flux1-dev-schnell).
 

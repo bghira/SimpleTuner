@@ -673,6 +673,28 @@ def main():
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
+    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+    lock_weight_dtype = False
+    is_quantised = False
+    if (
+        not disable_accelerator
+        and "lora" in args.model_type
+        and args.base_model_precision != "no_change"
+    ):
+        lock_weight_dtype = True
+        is_quantised = True
+        if "quanto" in args.base_model_precision:
+            try:
+                from optimum.quanto import QTensor
+            except ImportError as e:
+                raise ImportError(
+                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+                )
+            from helpers.training.quantisation import quantoise
+
+            quantoise(
+                unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args
+            )
 
     model_type_label = "SDXL"
     if StateTracker.is_sdxl_refiner():
@@ -762,9 +784,15 @@ def main():
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
     )
     if unet is not None:
-        unet.to(accelerator.device, dtype=weight_dtype)
+        if lock_weight_dtype:
+            unet.to(accelerator.device)
+        else:
+            unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
-        transformer.to(accelerator.device, dtype=weight_dtype)
+        if lock_weight_dtype:
+            transformer.to(accelerator.device)
+        else:
+            transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
         [args.sd3, args.pixart_sigma, args.flux, args.kolors]
     ):
@@ -1078,10 +1106,16 @@ def main():
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.adam_bfloat16:
-        logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
-        from helpers.training import adam_bfloat16
+        if is_quantised:
+            logger.error(
+                f"Quantised models do not support bfloat16 optimizers. Reverting to AdamW. You may use other optimizers, such as Adafactor."
+            )
+            optimizer_class = torch.optim.AdamW
+        else:
+            logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
+            from helpers.training import adam_bfloat16
 
-        optimizer_class = adam_bfloat16.AdamWBF16
+            optimizer_class = adam_bfloat16.AdamWBF16
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["lr"] = args.learning_rate
     elif args.use_8bit_adam:
@@ -1283,7 +1317,6 @@ def main():
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
-    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
         if "train_dataloader" not in backend:
@@ -1943,11 +1976,13 @@ def main():
                         )
                         guidance_scale = 3  # >>> ????? <<<
                         transformer_config = None
-                        if hasattr(transformer, 'module'):
+                        if hasattr(transformer, "module"):
                             transformer_config = transformer.module.config
-                        elif hasattr(transformer, 'config'):
+                        elif hasattr(transformer, "config"):
                             transformer_config = transformer.config
-                        if transformer_config is not None and getattr(transformer_config, 'guidance_embeds', False):
+                        if transformer_config is not None and getattr(
+                            transformer_config, "guidance_embeds", False
+                        ):
                             guidance = torch.tensor(
                                 [guidance_scale], device=accelerator.device
                             )
@@ -2065,14 +2100,14 @@ def main():
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
 
-                if flow_matching:
-                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                    # Preconditioning of the model outputs.
-                    if args.flow_matching_loss == "diffusers":
-                        model_pred = model_pred * (-sigmas) + noisy_latents
-                    elif args.flow_matching_loss == "compatible":
-                        # we shouldn't mess with the model prediction.
-                        pass
+                # if we're quantising with quanto, we need to dequantise the result
+                if "quanto" in args.base_model_precision:
+                    if hasattr(model_pred, "dequantize") and isinstance(
+                        model_pred, QTensor
+                    ):
+                        # print(f"dequantizing the prediction: {model_pred.dtype}")
+                        model_pred = model_pred.dequantize()
+                        # print(f"new dtype: {model_pred.dtype}")
 
                 if args.flux:
                     # print(f'unpack: {model_pred.shape}')
