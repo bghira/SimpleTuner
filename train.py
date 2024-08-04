@@ -865,7 +865,7 @@ def main():
             text_encoders=[text_encoder_1, text_encoder_2],
             tokenizers=[tokenizer_1, tokenizer_2],
             accelerator=accelerator,
-            model_type="sdxl",
+            model_type=StateTracker.get_model_type(),
         )
 
     try:
@@ -931,11 +931,25 @@ def main():
             memory_before_unload = 0
         if accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
+
+        if text_encoder_1 is not None:
+            text_encoder_1 = text_encoder_1.to(
+                "cpu" if torch.backends.mps.is_available() else "meta"
+            )
+        if text_encoder_2 is not None:
+            text_encoder_2 = text_encoder_2.to(
+                "cpu" if torch.backends.mps.is_available() else "meta"
+            )
+        if text_encoder_3 is not None:
+            text_encoder_3 = text_encoder_3.to(
+                "cpu" if torch.backends.mps.is_available() else "meta"
+            )
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
         text_encoder_3 = None
         text_encoders = []
+        prompt_handler.text_encoders = []
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
