@@ -9,11 +9,13 @@
 - [Design Philosophy](#design-philosophy)
 - [Tutorial](#tutorial)
 - [Features](#features)
+  - [Flux](#flux1)
   - [PixArt Sigma](#pixart-sigma)
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
   - [Stable Diffusion 3.0](#stable-diffusion-3)
   - [Kwai Kolors](#kwai-kolors)
 - [Hardware Requirements](#hardware-requirements)
+  - [Flux](#flux1-dev-schnell)
   - [SDXL](#sdxl-1024px)
   - [Stable Diffusion (Legacy)](#stable-diffusion-2x-768px)
 - [Scripts](#scripts)
@@ -53,6 +55,16 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Webhook support for updating eg. Discord channels with your training progress, validations, and errors
 - Integration with the [Hugging Face Hub](https://huggingface.co) for seamless model upload and nice automatically-generated model cards.
 
+### Flux.1
+
+Preliminary training support for Flux.1 is included:
+
+- Low loss training using SD3 style loss calculations
+- LoRA or full tuning via DeepSpeed ZeRO
+- ControlNet training is not yet supported
+- Train either Schnell or Dev models
+
+See [hardware requirements](#flux1-dev-schnell).
 
 ### PixArt Sigma
 
@@ -103,6 +115,15 @@ Without EMA, more care must be taken not to drastically change the model leading
 - AMD - SDXL LoRA and UNet are verified working on a 7900 XTX 24GB. Lacking `xformers`, it will likely use more memory than Nvidia equivalents
 - Apple - LoRA and full u-net tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
   - You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
+
+### Flux.1 [dev, schnell]
+
+- A100-40G (LoRA, rank-16 or lower)
+- A100-80G (LoRA, up to rank-256)
+- 3x A100-80G (Full tuning, DeepSpeed ZeRO 1)
+- 1x A100-80G (Full tuning, DeepSpeed ZeRO 3)
+
+Flux prefers being trained with multiple GPUs.
 
 ### SDXL, 1024px
 

@@ -1356,6 +1356,11 @@ def parse_args(input_args=None):
             " is now to use fp32 gradients, which is slower, but provides more accurate updates."
         ),
     )
+    # parser.add_argument(
+    #     "--base_model_precision",
+    #     type=str,
+    #     choices=["normal", "fp4", "fp8-bnb", "fp8-effm"]
+    # )
     parser.add_argument(
         "--local_rank",
         type=int,
