@@ -27,6 +27,7 @@ try:
         StableDiffusion3Pipeline,
         SD3Transformer2DModel,
         StableDiffusionPipeline,
+        FluxPipeline,
     )
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
@@ -171,7 +172,13 @@ class SaveHookManager:
             if weights:
                 weights.pop()
 
-        if self.args.sd3:
+        if self.args.flux:
+            FluxPipeline.save_lora_weights(
+                output_dir,
+                transformer_lora_layers=transformer_lora_layers_to_save,
+                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+            )
+        elif self.args.sd3:
             StableDiffusion3Pipeline.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
@@ -276,8 +283,11 @@ class SaveHookManager:
             else:
                 raise ValueError(f"unexpected save model: {model.__class__}")
 
-        if self.args.sd3:
-            lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+        if self.args.sd3 or self.args.flux:
+            if self.args.sd3:
+                lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
+            elif self.args.flux:
+                lora_state_dict = FluxPipeline.lora_state_dict(input_dir)
             transformer_state_dict = {
                 f'{k.replace("transformer.", "")}': v
                 for k, v in lora_state_dict.items()

@@ -15,3 +15,7 @@ An SDXL-like U-net based architecture that uses a language model called ChatGLM 
 ## Stable Diffusion 3
 
 For personalisation of the Stable Diffusion 3 model family, see [this quickstart guide](/documentation/quickstart/SD3.md)
+
+## Flux.1
+
+For training of the enormous monster known as Flux, see [its specific quickstart guide](/documentation/quickstart/FLUX.md)

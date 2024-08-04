@@ -339,12 +339,12 @@ class TrainingSample:
         if self.original_size:
             return self.original_size[0] * self.original_size[1]
 
-    def _should_downsample_before_crop(self) -> bool:
+    def _should_resize_before_crop(self) -> bool:
         """
-        If the options to do so are enabled, we will downsample before cropping.
+        If the options to do so are enabled, or, the image require it; we will resize before cropping.
 
         Returns:
-            bool: True if the image should be downsampled before cropping, False otherwise.
+            bool: True if the image should be resized before cropping, False otherwise.
         """
         if (
             not self.crop_enabled
@@ -356,9 +356,19 @@ class TrainingSample:
             return (
                 self.current_size[0] > self.pixel_resolution
                 or self.current_size[1] > self.pixel_resolution
+            ) or (
+                self.current_size[0] < self.pixel_resolution
+                or self.current_size[1] < self.pixel_resolution
             )
         elif self.data_backend_config.get("resolution_type") == "area":
-            return self.area() > self.target_area
+            should_resize = (
+                self.area() > self.target_area
+                or self.area() < self.target_area
+                or self.current_size[0] < self.target_size[0]
+                or self.current_size[1] < self.target_size[1]
+            )
+            logger.debug(f"Should resize? {should_resize}")
+            return should_resize
         else:
             raise ValueError(
                 f"Unknown resolution type: {self.data_backend_config.get('resolution_type')}"
@@ -402,8 +412,9 @@ class TrainingSample:
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
-        if self._should_downsample_before_crop():
+        if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
+            logger.debug(f"resizing to {target_downsample_size}")
             self.resize(target_downsample_size)
         return self
 
@@ -441,13 +452,19 @@ class TrainingSample:
         )
         if self.crop_enabled:
             if self.crop_aspect == "square":
-                self.aspect_ratio = 1.0
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
                 _, self.intermediary_size, _ = self.target_size_calculator(
                     self.aspect_ratio, self.resolution, self.original_size
                 )
+                self.aspect_ratio = 1.0
                 self.correct_intermediary_square_size()
-                return self.target_size, self.intermediary_size, self.aspect_ratio
+                square_crop_metadata = (
+                    self.target_size,
+                    self.intermediary_size,
+                    self.aspect_ratio,
+                )
+                logger.debug(f"Square crop metadata: {square_crop_metadata}")
+                return square_crop_metadata
         if self.crop_enabled and self.crop_aspect == "random":
             # Grab a random aspect ratio from a list.
             self.aspect_ratio = self._select_random_aspect()
@@ -499,12 +516,17 @@ class TrainingSample:
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
         if self.image is not None:
+            logger.debug(f"setting image: {self.image.size}")
             self.cropper.set_image(self.image)
+        logger.debug(f"Cropper size updating to {self.current_size}")
         self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
         self.image, self.crop_coordinates = self.cropper.crop(
             self.target_size[0], self.target_size[1]
         )
         self.current_size = self.target_size
+        logger.debug(
+            f"Cropped to {self.image.size if self.image is not None else self.current_size} via crop coordinates {self.crop_coordinates} {'resulting in current_size of' if self.image is not None else ''} {self.current_size if self.image is not None else ''}"
+        )
         return self
 
     def resize(self, size: tuple = None):
@@ -524,6 +546,9 @@ class TrainingSample:
                 )
             size = self.target_size
             if self.target_size != self.intermediary_size:
+                logger.debug(
+                    f"we have to crop because target size {self.target_size} != intermediary size {self.intermediary_size}"
+                )
                 # Now we can resize the image to the intermediary size.
                 if self.image is not None:
                     self.image = self.image.resize(
@@ -538,6 +563,7 @@ class TrainingSample:
                 self.image, self.crop_coordinates = self.cropper.crop(
                     self.target_size[0], self.target_size[1]
                 )
+                logger.debug(f"crop coordinates: {self.crop_coordinates}")
                 return self
 
         if self.image and hasattr(self.image, "resize"):
@@ -546,6 +572,9 @@ class TrainingSample:
                 self.image.size
             )
         self.current_size = size
+        logger.debug(
+            f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})"
+        )
         return self
 
     def get_image(self):

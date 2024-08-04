@@ -59,7 +59,7 @@ There, you will need to modify the following variables:
 - `USE_DORA` - Set this to `true` if you wish to train DoRA.
 - `KOLORS` - Set this to `true`.
 - `MODEL_NAME` - Set this to `Kwai-Kolors/Kolors-diffusers`.
-- `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - Set this to `1024x1024` for this example.
   - Additionally, Kolors was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - Use whatever value you are comfortable with for testing at inference time. Set this between `4.2` to `6.4`.
@@ -77,7 +77,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-In your `BASE_DIR` directory, create a multidatabackend.json:
+In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 
 ```json
 [
@@ -111,7 +111,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
 ]
 ```
 
-Then, navigate to the `BASE_DIR` directory and create a `datasets` directory:
+Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
 
 ```bash
 mkdir -p datasets

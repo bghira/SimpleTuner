@@ -103,6 +103,7 @@ class StateTracker:
             "pixart_sigma",
             "kolors",
             "smoldit",
+            "flux",
         ]:
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
