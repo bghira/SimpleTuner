@@ -714,7 +714,7 @@ def main():
         if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
 
-        logger.info("Using LoRA training mode.")
+        logger.info(f"Using LoRA training mode (rank={args.lora_rank})")
         if webhook_handler is not None:
             webhook_handler.send(message="Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
