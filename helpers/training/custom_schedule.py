@@ -66,13 +66,17 @@ def get_sd3_sigmas(
     accelerator, noise_scheduler_copy, timesteps, n_dim=4, dtype=torch.float32
 ):
     sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
+    # print(f'sigmas: {sigmas.shape}')
     schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
     timesteps = timesteps.to(accelerator.device)
     step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+    # print(f'step_indices: {step_indices}')
 
     sigma = sigmas[step_indices].flatten()
     while len(sigma.shape) < n_dim:
+        # print('unsqueeze')
         sigma = sigma.unsqueeze(-1)
+    # print('return')
     return sigma
 
 
