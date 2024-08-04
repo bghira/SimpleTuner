@@ -675,12 +675,14 @@ def main():
         )
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     lock_weight_dtype = False
+    is_quantised = False
     if (
         not disable_accelerator
         and "lora" in args.model_type
         and args.base_model_precision != "no_change"
     ):
         lock_weight_dtype = True
+        is_quantised = True
         if "quanto" in args.base_model_precision:
             try:
                 from optimum.quanto import QTensor
@@ -1104,10 +1106,16 @@ def main():
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.adam_bfloat16:
-        logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
-        from helpers.training import adam_bfloat16
+        if is_quantised:
+            logger.error(
+                f"Quantised models do not support bfloat16 optimizers. Reverting to AdamW. You may use other optimizers, such as Adafactor."
+            )
+            optimizer_class = torch.optim.AdamW
+        else:
+            logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
+            from helpers.training import adam_bfloat16
 
-        optimizer_class = adam_bfloat16.AdamWBF16
+            optimizer_class = adam_bfloat16.AdamWBF16
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["lr"] = args.learning_rate
     elif args.use_8bit_adam:
@@ -1968,11 +1976,13 @@ def main():
                         )
                         guidance_scale = 3  # >>> ????? <<<
                         transformer_config = None
-                        if hasattr(transformer, 'module'):
+                        if hasattr(transformer, "module"):
                             transformer_config = transformer.module.config
-                        elif hasattr(transformer, 'config'):
+                        elif hasattr(transformer, "config"):
                             transformer_config = transformer.config
-                        if transformer_config is not None and getattr(transformer_config, 'guidance_embeds', False):
+                        if transformer_config is not None and getattr(
+                            transformer_config, "guidance_embeds", False
+                        ):
                             guidance = torch.tensor(
                                 [guidance_scale], device=accelerator.device
                             )

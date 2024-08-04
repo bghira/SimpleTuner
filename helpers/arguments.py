@@ -1720,7 +1720,11 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if not args.adam_bfloat16 and not args.i_know_what_i_am_doing:
+    if (
+        args.base_model_precision == "no_change"
+        and not args.adam_bfloat16
+        and not args.i_know_what_i_am_doing
+    ):
         raise ValueError(
             "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
             " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
@@ -1729,11 +1733,15 @@ def parse_args(input_args=None):
             " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
         )
 
-    if not args.i_know_what_i_am_doing and (
-        args.use_prodigy_optimizer
-        or args.use_dadapt_optimizer
-        or args.use_adafactor_optimizer
-        or args.use_8bit_adam
+    if (
+        not args.i_know_what_i_am_doing
+        and args.base_model_precision == "no_change"
+        and (
+            args.use_prodigy_optimizer
+            or args.use_dadapt_optimizer
+            or args.use_adafactor_optimizer
+            or args.use_8bit_adam
+        )
     ):
         raise ValueError(
             "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
@@ -1744,7 +1752,12 @@ def parse_args(input_args=None):
         )
 
     if torch.backends.mps.is_available():
-        if not args.unet_attention_slice and not args.legacy:
+        if (
+            not args.flux
+            and not args.sd3
+            and not args.unet_attention_slice
+            and not args.legacy
+        ):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
@@ -1878,15 +1891,22 @@ def parse_args(input_args=None):
             warning_log(
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
             )
+    if "schnell" in args.pretrained_model_name_or_path.lower():
+        model_max_seq_length = 256
+    elif "dev" in args.pretrained_model_name_or_path.lower():
+        model_max_seq_length = 512
     if args.flux and (
-        args.tokenizer_max_length is None or int(args.tokenizer_max_length) > 256
+        args.tokenizer_max_length is None
+        or int(args.tokenizer_max_length) > model_max_seq_length
     ):
         if not args.i_know_what_i_am_doing:
-            warning_log(f"Updating T5 XXL tokeniser max length to 256 for Flux.")
-            args.tokenizer_max_length = 256
+            warning_log(
+                f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
+            )
+            args.tokenizer_max_length = model_max_seq_length
         else:
             warning_log(
-                f"-!- SD3 supports a max length of 256 tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
             )
             warning_log(
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."

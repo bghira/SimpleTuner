@@ -274,7 +274,7 @@ class TextEmbeddingCache:
             prompt=prompt,
             prompt_2=prompt,
             device=self.accelerator.device,
-            max_sequence_length=256,
+            max_sequence_length=StateTracker.get_args().tokenizer_max_length,
         )
 
         return prompt_embeds, pooled_prompt_embeds, time_ids
