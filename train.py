@@ -1942,7 +1942,7 @@ def main():
                             width=latents.shape[3],
                         )
                         guidance_scale = 3  # >>> ????? <<<
-                        original_config = transformer.config if hasattr(transformer, 'config') else None
+                        transformer_config = None
                         if hasattr(transformer, 'module'):
                             transformer_config = transformer.module.config
                         elif hasattr(transformer, 'config'):
