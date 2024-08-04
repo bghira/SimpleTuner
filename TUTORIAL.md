@@ -289,9 +289,7 @@ Here's a breakdown of what each environment variable does:
 
 #### Data Locations
 
-- `BASE_DIR`, `OUTPUT_DIR`: Directories for the training data, instance data, and output models.
-  - `BASE_DIR` - Used for populating other variables, mostly.
-  - `OUTPUT_DIR` - Where the model pipeline results are stored during training, and after it completes.
+- `OUTPUT_DIR` - Where the model pipeline results are stored during training, and after it completes.
 
 #### Training Parameters
 
