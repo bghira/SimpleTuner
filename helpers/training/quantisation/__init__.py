@@ -9,7 +9,7 @@ else:
     logger.setLevel(logging.ERROR)
 
 try:
-    from quanto import freeze, quantize, qfloat8, qint8, qint4, qint2, QTensor
+    from optimum.quanto import freeze, quantize, qfloat8, qint8, qint4, qint2, QTensor
 except ImportError as e:
     raise ImportError(
         f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
