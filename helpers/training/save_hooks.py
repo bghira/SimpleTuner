@@ -178,7 +178,7 @@ class SaveHookManager:
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
-        if self.args.sd3:
+        elif self.args.sd3:
             StableDiffusion3Pipeline.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
