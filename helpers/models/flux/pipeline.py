@@ -753,6 +753,11 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         )
         self._num_timesteps = len(timesteps)
 
+        latents = latents.to(self.transformer.device)
+        latent_image_ids = latent_image_ids.to(self.transformer.device)
+        timesteps = timesteps.to(self.transformer.device)
+        text_ids = text_ids.to(self.transformer.device)
+
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -764,18 +769,24 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
-                    guidance = torch.tensor([guidance_scale], device=device)
+                    guidance = torch.tensor([guidance_scale], device=self.transformer.device)
                     guidance = guidance.expand(latents.shape[0])
                 else:
                     guidance = None
 
                 noise_pred = self.transformer(
-                    hidden_states=latents,
+                    hidden_states=latents.to(
+                        device=self.transformer.device, dtype=self.transformer.dtype
+                    ),
                     # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                     timestep=timestep / 1000,
                     guidance=guidance,
-                    pooled_projections=pooled_prompt_embeds,
-                    encoder_hidden_states=prompt_embeds,
+                    pooled_projections=pooled_prompt_embeds.to(
+                        device=self.transformer.device, dtype=self.transformer.dtype
+                    ),
+                    encoder_hidden_states=prompt_embeds.to(
+                        device=self.transformer.device, dtype=self.transformer.dtype
+                    ),
                     txt_ids=text_ids,
                     img_ids=latent_image_ids,
                     joint_attention_kwargs=self.joint_attention_kwargs,
