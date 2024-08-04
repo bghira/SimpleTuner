@@ -32,7 +32,7 @@ class TestCollateFn(unittest.TestCase):
         ]
         # Mock StateTracker.get_args() to return a mock object with required attributes
         StateTracker.set_args(
-            MagicMock(caption_dropout_probability=0.5, controlnet=False)
+            MagicMock(caption_dropout_probability=0.5, controlnet=False, flux=False)
         )
         fake_accelerator = MagicMock(device="cpu")
         StateTracker.set_accelerator(fake_accelerator)
