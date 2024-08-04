@@ -218,9 +218,14 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
+    from transformers import T5TokenizerFast
+
     if not any([args.pixart_sigma, args.kolors]):
         try:
-            tokenizer_2 = CLIPTokenizer.from_pretrained(
+            tokenizer_2_cls = CLIPTokenizer
+            if args.flux:
+                tokenizer_2_cls = T5TokenizerFast
+            tokenizer_2 = tokenizer_2_cls.from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="tokenizer_2",
                 revision=args.revision,
@@ -234,9 +239,9 @@ def get_tokenizers(args):
                         "Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
                     )
                     args.validation_using_datasets = True
-        except:
+        except Exception as e:
             logger.warning(
-                "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
+                f"Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue: {e}"
             )
         if not tokenizer_1 and not tokenizer_2:
             raise Exception("Failed to load tokenizer")
@@ -246,8 +251,6 @@ def get_tokenizers(args):
 
     if args.sd3:
         try:
-            from transformers import T5TokenizerFast
-
             tokenizer_3 = T5TokenizerFast.from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="tokenizer_3",
@@ -267,6 +270,8 @@ def main():
     torch.set_num_threads(args.torch_num_threads)
     if args.sd3:
         StateTracker.set_model_type("sd3")
+    if args.flux:
+        StateTracker.set_model_type("flux")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
     if args.legacy:
@@ -428,6 +433,9 @@ def main():
     elif args.smoldit:
         text_encoder_path = "EleutherAI/pile-t5-base"
         text_encoder_subfolder = None
+    elif args.flux:
+        text_encoder_path = args.pretrained_model_name_or_path
+        text_encoder_subfolder = "text_encoder"
     elif args.pixart_sigma:
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
@@ -463,7 +471,7 @@ def main():
 
     # Load scheduler and models
     flow_matching = False
-    if args.sd3 and args.flow_matching_loss != "diffusion":
+    if (args.sd3 and args.flow_matching_loss != "diffusion") or args.flux:
         # Stable Diffusion 3 uses rectified flow.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -505,6 +513,10 @@ def main():
                 logger.info(
                     f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
                 )
+            elif args.flux:
+                logger.info(
+                    f"Loading OpenAI CLIP-L text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
+                )
             elif args.kolors:
                 logger.info(
                     f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
@@ -527,7 +539,12 @@ def main():
             text_encoder_1.eval()
 
         if tokenizer_2 is not None:
-            logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
+            if args.flux:
+                logger.info(
+                    f"Loading T5 XXL v1.1 text encoder from {args.pretrained_model_name_or_path}/text_encoder_2.."
+                )
+            else:
+                logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
             text_encoder_2 = text_encoder_cls_2.from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="text_encoder_2",
@@ -604,6 +621,15 @@ def main():
                 f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
             )
         transformer = SD3Transformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
+    elif args.flux:
+        from diffusers.models import FluxTransformer2DModel
+
+        unet = None
+        transformer = FluxTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
             **pretrained_load_args,
@@ -838,14 +864,25 @@ def main():
         sys.exit(0)
 
     if accelerator.is_main_process:
-        (
-            validation_prompts,
-            validation_shortnames,
-            validation_negative_prompt_embeds,
-            validation_negative_pooled_embeds,
-        ) = prepare_validation_prompt_list(
-            args=args, embed_cache=StateTracker.get_default_text_embed_cache()
-        )
+        if args.flux:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+                validation_negative_time_ids,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
+        else:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
     else:
         validation_prompts = None
         validation_shortnames = None
@@ -1775,7 +1812,7 @@ def main():
                         accelerator,
                         noise_scheduler_copy,
                         timesteps,
-                        n_dim=latents.ndim,
+                        n_dim=latents.ndim if not args.flux else 3,
                         dtype=latents.dtype,
                     )
                     noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
@@ -1886,6 +1923,69 @@ def main():
                             raise Exception(
                                 "ControlNet predictions for transformer models are not yet implemented."
                             )
+                    elif args.flux:
+                        # handle guidance
+                        from helpers.models.flux import (
+                            prepare_latent_image_ids,
+                            pack_latents,
+                            unpack_latents,
+                        )
+
+                        noisy_latents = pack_latents(
+                            noisy_latents,
+                            batch_size=latents.shape[0],
+                            num_channels_latents=latents.shape[1],
+                            height=latents.shape[2],
+                            width=latents.shape[3],
+                        )
+                        guidance_scale = 3  # >>> ????? <<<
+                        if transformer.config.guidance_embeds:
+                            guidance = torch.tensor(
+                                [guidance_scale], device=accelerator.device
+                            )
+                            guidance = guidance.expand(latents.shape[0])
+                        else:
+                            guidance = None
+                        img_ids = prepare_latent_image_ids(
+                            latents.shape[0],
+                            latents.shape[2],
+                            latents.shape[3],
+                            accelerator.device,
+                            weight_dtype,
+                        )
+                        timesteps = (
+                            torch.tensor(timesteps)
+                            .expand(len(noisy_latents))
+                            .to(device=accelerator.device)
+                            / 1000
+                        )
+
+                        text_ids = torch.zeros(
+                            noisy_latents.shape[0], batch["prompt_embeds"].shape[1], 3
+                        ).to(device=accelerator.device, dtype=weight_dtype)
+
+                        model_pred = transformer(
+                            hidden_states=noisy_latents.to(
+                                dtype=weight_dtype, device=accelerator.device
+                            ),
+                            # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
+                            timestep=timesteps,
+                            guidance=guidance,
+                            pooled_projections=batch["add_text_embeds"].to(
+                                device=accelerator.device, dtype=weight_dtype
+                            ),
+                            encoder_hidden_states=batch["prompt_embeds"].to(
+                                device=accelerator.device, dtype=weight_dtype
+                            ),
+                            txt_ids=text_ids.to(
+                                device=accelerator.device, dtype=weight_dtype
+                            ),
+                            img_ids=img_ids,
+                            joint_attention_kwargs=None,
+                            return_dict=False,
+                        )[0]
+                        # print(f'actual prediction shape: {model_pred.shape}')
+
                     elif args.sd3:
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
@@ -1909,7 +2009,7 @@ def main():
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif args.smoldit:
-                        first_latent_shape = noisy_latents[0].shape
+                        first_latent_shape = noisy_latents.shape
                         height = first_latent_shape[1] * 8
                         width = first_latent_shape[2] * 8
                         grid_height = height // 8 // transformer.config.patch_size
@@ -1963,6 +2063,14 @@ def main():
                     elif args.flow_matching_loss == "compatible":
                         # we shouldn't mess with the model prediction.
                         pass
+
+                if args.flux:
+                    model_pred = unpack_latents(
+                        model_pred,
+                        height=latents.shape[2] * 8,
+                        width=latents.shape[3] * 8,
+                        vae_scale_factor=16,
+                    )
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
