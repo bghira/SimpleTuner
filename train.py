@@ -1815,15 +1815,17 @@ def main():
                         n_dim=latents.ndim if not args.flux else 3,
                         dtype=latents.dtype,
                     )
-                    noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
+                    noisy_latents = (
+                        1.0 - sigmas
+                    ) * latents.float() + sigmas * noise.float()
                     # is equal to:
                     # zt = (1 - texp) * x + texp * z1
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
                     noisy_latents = noise_scheduler.add_noise(
-                        latents, noise, timesteps
-                    ).to(accelerator.device)
+                        latents.float(), noise.float(), timesteps
+                    ).to(device=accelerator.device, dtype=weight_dtype)
 
                 encoder_hidden_states = batch["prompt_embeds"].to(
                     dtype=weight_dtype, device=accelerator.device
