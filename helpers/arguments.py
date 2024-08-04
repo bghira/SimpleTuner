@@ -6,6 +6,7 @@ import logging
 import sys
 import torch
 from helpers.models.smoldit import SmolDiTConfigurationNames
+from helpers.training import quantised_precision_levels
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -1360,14 +1361,7 @@ def parse_args(input_args=None):
         "--base_model_precision",
         type=str,
         default="no_change",
-        choices=[
-            "no_change",
-            "fp4-bnb",
-            "fp8-bnb",
-            "fp8-quanto",
-            "int4-quanto",
-            "int2-quanto",
-        ],
+        choices=quantised_precision_levels,
         help=(
             "When training a LoRA, you might want to quantise the base model to a lower precision to save more VRAM."
             " The default value, 'no_change', does not quantise any weights."
@@ -1375,6 +1369,19 @@ def parse_args(input_args=None):
             " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
         ),
     )
+    for i in range(1, 4):
+        parser.add_argument(
+            f"--text_encoder_{i}_precision",
+            type=str,
+            default=None,
+            choices=quantised_precision_levels,
+            help=(
+                f"When training a LoRA, you might want to quantise text encoder {i} to a lower precision to save more VRAM."
+                " The default value is to follow base_model_precision (no_change)."
+                " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
+                " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+            ),
+        )
     parser.add_argument(
         "--local_rank",
         type=int,
