@@ -13,6 +13,11 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Choices: lora, full, deepfloyd, deepfloyd-lora, deepfloyd-stage2, deepfloyd-stage2-lora. Default: lora
 - **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
 
+## `--flux`
+
+- **What**: Enable Flux training style.
+- **Why**: Flux is an enormous model and uses flow-matching. We must take careful considerations when handling its text embeds and validations.
+
 ### `--sd3`
 
 - **What**: Enable Stable Diffusion 3 training quirks/overrides.
@@ -236,7 +241,8 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                [--legacy] [--kolors]
+                [--legacy] [--kolors] [--flux] [--smoldit]
+                [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
@@ -274,7 +280,10 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--override_dataset_config] [--cache_dir_text CACHE_DIR_TEXT]
                 [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
                 DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
-                [--enable_multiprocessing]
+                [--read_batch_size READ_BATCH_SIZE]
+                [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
+                [--enable_multiprocessing] [--max_workers MAX_WORKERS]
+                [--aws_max_pool_connections AWS_MAX_POOL_CONNECTIONS]
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
@@ -396,14 +405,20 @@ options:
                         Diffusion 1.x or 2.x model.
   --kolors              This option must be provided when training a Kolors
                         model.
+  --flux                This option must be provided when training a Flux
+                        model.
+  --smoldit             Use the experimental SmolDiT model architecture.
+  --smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}
+                        The SmolDiT configuration to use. This is a list of
+                        pre-configured models. The default is 'smoldit-base'.
   --flow_matching_loss {diffusers,compatible,diffusion}
                         A discrepancy exists between the Diffusers
                         implementation of flow matching and the minimal
-                        implementations provided by StabilityAI and AuraFlow.
-                        This experimental option allows switching loss
-                        calculations to be compatible with those.
-                        Additionally, 'diffusion' is offered as an option to
-                        reparameterise a model to v_prediction loss.
+                        implementation provided by StabilityAI. This
+                        experimental option allows switching loss calculations
+                        to be compatible with those. Additionally, 'diffusion'
+                        is offered as an option to reparameterise a model to
+                        v_prediction loss.
   --pixart_sigma        This must be set when training a PixArt Sigma model.
   --sd3                 This option must be provided when training a Stable
                         Diffusion 3 model.
@@ -669,12 +684,28 @@ options:
                         objects are written. This mostly applies to S3, but
                         some shared server filesystems may benefit as well,
                         eg. Ceph. Default: 64.
+  --read_batch_size READ_BATCH_SIZE
+                        Used by the VAE cache to prefetch image data. This is
+                        the number of images to read ahead.
+  --image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE
+                        When resizing and cropping images, we do it in
+                        parallel using processes or threads. This defines how
+                        many images will be read into the queue before they
+                        are processed.
   --enable_multiprocessing
                         If set, will use processes instead of threads during
                         metadata caching operations. For some systems,
                         multiprocessing may be faster than threading, but will
                         consume a lot more memory. Use this option with
                         caution, and monitor your system's memory usage.
+  --max_workers MAX_WORKERS
+                        How many active threads or processes to run during VAE
+                        caching.
+  --aws_max_pool_connections AWS_MAX_POOL_CONNECTIONS
+                        When using AWS backends, the maximum number of
+                        connections to keep open to the S3 bucket at a single
+                        time. This should be greater or equal to the
+                        max_workers and aspect bucket worker count values.
   --torch_num_threads TORCH_NUM_THREADS
                         The number of threads to use for PyTorch operations.
                         This is not the same as the number of workers.
