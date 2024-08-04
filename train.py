@@ -673,6 +673,51 @@ def main():
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
+    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+
+    if (
+        not disable_accelerator
+        and "lora" in args.model_type
+        and args.base_model_precision != "no_change"
+    ):
+        if args.base_model_precision == "fp8-quanto":
+            logger.info("Loading Quanto for LoRA training.")
+            try:
+                from quanto import freeze, qfloat8, qint8, quantize, qint4, qint2
+            except ImportError as e:
+                raise ImportError(
+                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+                )
+            if transformer is not None:
+                logger.info("Quantising transformer")
+                quantize(transformer, weights=qfloat8)
+                logger.info("Freezing the base transformer model.")
+                freeze(transformer)
+            if unet is not None:
+                logger.info("Quantising unet")
+                quantize(unet, weights=qfloat8)
+                logger.info("Freezing the base U-net model.")
+                freeze(unet)
+            if torch.backends.mps.is_available():
+                logger.warning(
+                    "MPS doesn't support dtype float8_e4m3n, so, we will not quantise the text encoders."
+                )
+            else:
+                if text_encoder_1 is not None:
+                    logger.info("Quantising text encoder 1")
+                    quantize(text_encoder_1, weights=qfloat8)
+                    logger.info("Freezing the text encoder model.")
+                    freeze(text_encoder_1)
+                if text_encoder_2 is not None:
+                    logger.info("Quantising text encoder 2")
+                    quantize(text_encoder_2, weights=qfloat8)
+                    logger.info("Freezing the 2nd text encoder model.")
+                    freeze(text_encoder_2)
+                if text_encoder_3 is not None:
+                    logger.info("Quantising text encoder 3")
+                    quantize(text_encoder_3, weights=qfloat8)
+                    logger.info("Freezing the 3rd text encoder model.")
+                    freeze(text_encoder_3)
 
     model_type_label = "SDXL"
     if StateTracker.is_sdxl_refiner():
@@ -1283,7 +1328,6 @@ def main():
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
-    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
         if "train_dataloader" not in backend:
