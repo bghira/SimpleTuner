@@ -1942,7 +1942,14 @@ def main():
                             width=latents.shape[3],
                         )
                         guidance_scale = 3  # >>> ????? <<<
-                        if transformer.config.guidance_embeds:
+                        original_config = transformer.config if hasattr(transformer, 'config') else None
+                        if hasattr(transformer, 'module'):
+                            transformer_config = transformer.module.config
+                        elif hasattr(transformer, 'config'):
+                            transformer_config = transformer.config
+                        else:
+                            transformer_config = original_config 
+                        if transformer_config and getattr(transformer_config, 'guidance_embeds', False):
                             guidance = torch.tensor(
                                 [guidance_scale], device=accelerator.device
                             )
