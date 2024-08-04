@@ -534,7 +534,6 @@ def configure_multi_databackend(
         info_log(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
-        info_log(f"Configured backend: {init_backend}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],
@@ -730,6 +729,7 @@ def configure_multi_databackend(
             if current_config_version is None:
                 # backwards compatibility for non-versioned config files, so that we do not enable life-changing options.
                 current_config_version = 1
+
             logger.debug(
                 f"Found existing config (version={current_config_version}): {prev_config}"
             )
@@ -883,6 +883,9 @@ def configure_multi_databackend(
         hash_filenames = init_backend.get("config", {}).get(
             "hash_filenames", default_hash_option
         )
+        init_backend["config"]["hash_filenames"] = hash_filenames
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+        logger.debug(f"Hashing filenames: {hash_filenames}")
 
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
@@ -974,6 +977,8 @@ def configure_multi_databackend(
                 f"Encoding images during training: {not args.vae_cache_preprocess}"
             )
             accelerator.wait_for_everyone()
+
+        info_log(f"Configured backend: {init_backend}")
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()

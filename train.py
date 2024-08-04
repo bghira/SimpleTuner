@@ -714,7 +714,7 @@ def main():
         if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
 
-        logger.info("Using LoRA training mode.")
+        logger.info(f"Using LoRA training mode (rank={args.lora_rank})")
         if webhook_handler is not None:
             webhook_handler.send(message="Using LoRA training mode.")
         # now we will add new LoRA weights to the attention layers
@@ -766,7 +766,7 @@ def main():
     if transformer is not None:
         transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma]
+        [args.sd3, args.pixart_sigma, args.flux, args.kolors]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
@@ -1815,6 +1815,7 @@ def main():
                         n_dim=latents.ndim if not args.flux else 3,
                         dtype=latents.dtype,
                     )
+                    # print(f'shapes: {sigmas.shape}, {latents.shape}, {noise.shape}')
                     noisy_latents = (
                         1.0 - sigmas
                     ) * latents.float() + sigmas * noise.float()
@@ -2067,6 +2068,7 @@ def main():
                         pass
 
                 if args.flux:
+                    # print(f'unpack: {model_pred.shape}')
                     model_pred = unpack_latents(
                         model_pred,
                         height=latents.shape[2] * 8,
@@ -2366,35 +2368,39 @@ def main():
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
-            if args.sd3 or args.pixart_sigma:
+            if transformer is not None:
                 transformer_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(transformer)
                 )
-            else:
+            elif unet is not None:
                 unet_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(unet)
                 )
+            else:
+                raise Exception(
+                    "Couldn't locate the unet or transformer model for export."
+                )
+
             if args.train_text_encoder:
                 text_encoder_1 = accelerator.unwrap_model(text_encoder_1)
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_1)
                 )
-                if not args.pixart_sigma:
+                if text_encoder_2 is not None:
                     text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
                     text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
                         get_peft_model_state_dict(text_encoder_2)
                     )
-                    if args.sd3:
+                    if text_encoder_3 is not None:
                         text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
-                        # text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
-                        #     get_peft_model_state_dict(text_encoder_3)
-                        # )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
                 # text_encoder_3_lora_layers = None
 
             if args.flux:
+                from diffusers.pipelines import FluxPipeline
+
                 FluxPipeline.save_lora_weights(
                     save_directory=args.output_dir,
                     transformer_lora_layers=transformer_lora_layers,
