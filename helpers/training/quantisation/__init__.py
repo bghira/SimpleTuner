@@ -16,10 +16,16 @@ except ImportError as e:
     )
 
 
-def _quanto_model(model, model_precision):
+def _quanto_model(model, model_precision, base_model_precision=None):
+    if model_precision is None:
+        model_precision = base_model_precision
     if model is None:
-
         return
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return
+
+    logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     if model_precision == "int2-quanto":
         weight_quant = qint2
     elif model_precision == "int4-quanto":
@@ -46,33 +52,19 @@ def _quanto_model(model, model_precision):
 
 def quantoise(unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args):
     logger.info("Loading Quanto for LoRA training. This may take a few minutes.")
-    if transformer is not None and "quanto" in args.base_model_precision:
-        logger.info("Quantising transformer")
+    if transformer is not None:
         _quanto_model(transformer, args.base_model_precision)
-    if unet is not None and "quanto" in args.base_model_precision:
-        logger.info("Quantising U-net")
+    if unet is not None:
         _quanto_model(unet, args.base_model_precision)
-    text_enc_precision = (
-        args.text_encoder_1_precision
-        if args.text_encoder_1_precision is not None
-        else args.base_model_precision
-    )
-    if text_encoder_1 is not None and "quanto" in text_enc_precision:
-        logger.info("Quantising text encoder 1")
-        _quanto_model(text_encoder_1, text_enc_precision)
-    text_enc_precision = (
-        args.text_encoder_2_precision
-        if args.text_encoder_2_precision is not None
-        else args.base_model_precision
-    )
-    if text_encoder_2 is not None and "quanto" in text_enc_precision:
-        logger.info("Quantising text encoder 2")
-        _quanto_model(text_encoder_2, text_enc_precision)
-    text_enc_precision = (
-        args.text_encoder_3_precision
-        if args.text_encoder_3_precision is not None
-        else args.base_model_precision
-    )
-    if text_encoder_3 is not None and "quanto" in text_enc_precision:
-        logger.info("Quantising text encoder 3")
-        _quanto_model(text_encoder_3, text_enc_precision)
+    if text_encoder_1 is not None:
+        _quanto_model(
+            text_encoder_1, args.text_encoder_1_precision, args.base_model_precision
+        )
+    if text_encoder_2 is not None:
+        _quanto_model(
+            text_encoder_2, args.text_encoder_2_precision, args.base_model_precision
+        )
+    if text_encoder_3 is not None:
+        _quanto_model(
+            text_encoder_3, args.text_encoder_3_precision, args.base_model_precision
+        )
