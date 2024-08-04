@@ -3,7 +3,6 @@ import logging
 from io import BytesIO
 from typing import Union, IO, Any
 
-import cv2
 import numpy as np
 
 from PIL import Image, PngImagePlugin
@@ -11,6 +10,26 @@ from PIL import Image, PngImagePlugin
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
+
+try:
+    import cv2
+except Exception as e:
+    if "libGL" in str(e):
+        print(
+            "An error occurred while importing OpenCV2 due to a missing LibGL dependency on your system or container."
+            " Unfortunately, this is not a dependency that SimpleTuner can include during install time."
+            "\nFor Ubuntu systems, you can typically resolve this by running the following command:\n"
+            "sudo apt-get install libgl1-mesa-glx"
+            "\nor, if that does not work:\n"
+            "sudo apt-get install libgl1-mesa-dri"
+            "\nIf all else fails, you may need to contact the support department for your chosen platform."
+            " You can find the full error message at the end of debug.log inside the SimpleTuner directory."
+        )
+        from sys import exit
+
+        exit(1)
+    else:
+        raise e
 
 
 LARGE_ENOUGH_NUMBER = 100
