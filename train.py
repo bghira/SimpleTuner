@@ -682,48 +682,17 @@ def main():
     ):
         lock_weight_dtype = True
         if "quanto" in args.base_model_precision:
-            logger.info("Loading Quanto for LoRA training.")
             try:
-                from quanto import freeze, qfloat8, qint8, quantize, qint4, qint2
+                from quanto import QTensor
             except ImportError as e:
                 raise ImportError(
                     f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
                 )
-            weight_quant = qint8
-            if args.base_model_precision == "int4-quanto":
-                weight_quant = qint4
-            if args.base_model_precision == "int2-quanto":
-                weight_quant = qint2
-            if transformer is not None:
-                logger.info("Quantising transformer")
-                quantize(transformer, weights=weight_quant)
-                logger.info("Freezing the base transformer model.")
-                freeze(transformer)
-            if unet is not None:
-                logger.info("Quantising unet")
-                quantize(unet, weights=weight_quant)
-                logger.info("Freezing the base U-net model.")
-                freeze(unet)
-            if torch.backends.mps.is_available():
-                logger.warning(
-                    "MPS doesn't support dtype float8_e4m3n, so, we will not quantise the text encoders."
-                )
-            else:
-                if text_encoder_1 is not None:
-                    logger.info("Quantising text encoder 1")
-                    quantize(text_encoder_1, weights=weight_quant)
-                    logger.info("Freezing the text encoder model.")
-                    freeze(text_encoder_1)
-                if text_encoder_2 is not None:
-                    logger.info("Quantising text encoder 2")
-                    quantize(text_encoder_2, weights=weight_quant)
-                    logger.info("Freezing the 2nd text encoder model.")
-                    freeze(text_encoder_2)
-                if text_encoder_3 is not None:
-                    logger.info("Quantising text encoder 3")
-                    quantize(text_encoder_3, weights=weight_quant)
-                    logger.info("Freezing the 3rd text encoder model.")
-                    freeze(text_encoder_3)
+            from helpers.training.quantisation import quantoise
+
+            quantoise(
+                unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args
+            )
 
     model_type_label = "SDXL"
     if StateTracker.is_sdxl_refiner():
@@ -2120,6 +2089,15 @@ def main():
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
+
+                # if we're quantising with quanto, we need to dequantise the result
+                if "quanto" in args.base_model_precision:
+                    if hasattr(model_pred, "dequantize") and isinstance(
+                        model_pred, QTensor
+                    ):
+                        print(f"dequantizing the prediction: {model_pred.dtype}")
+                        model_pred = model_pred.dequantize()
+                        print(f"new dtype: {model_pred.dtype}")
 
                 if flow_matching:
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
