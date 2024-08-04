@@ -683,7 +683,7 @@ def main():
         lock_weight_dtype = True
         if "quanto" in args.base_model_precision:
             try:
-                from quanto import QTensor
+                from optimum.quanto import QTensor
             except ImportError as e:
                 raise ImportError(
                     f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
@@ -2095,18 +2095,9 @@ def main():
                     if hasattr(model_pred, "dequantize") and isinstance(
                         model_pred, QTensor
                     ):
-                        print(f"dequantizing the prediction: {model_pred.dtype}")
+                        # print(f"dequantizing the prediction: {model_pred.dtype}")
                         model_pred = model_pred.dequantize()
-                        print(f"new dtype: {model_pred.dtype}")
-
-                if flow_matching:
-                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                    # Preconditioning of the model outputs.
-                    if args.flow_matching_loss == "diffusers":
-                        model_pred = model_pred * (-sigmas) + noisy_latents
-                    elif args.flow_matching_loss == "compatible":
-                        # we shouldn't mess with the model prediction.
-                        pass
+                        # print(f"new dtype: {model_pred.dtype}")
 
                 if args.flux:
                     # print(f'unpack: {model_pred.shape}')
