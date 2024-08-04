@@ -730,6 +730,9 @@ def configure_multi_databackend(
             if current_config_version is None:
                 # backwards compatibility for non-versioned config files, so that we do not enable life-changing options.
                 current_config_version = 1
+                init_backend["config"]["hash_filenames"] = False
+            if "hash_filenames" not in prev_config and current_config_version < 2:
+                init_backend["config"]["hash_filenames"] = False
             logger.debug(
                 f"Found existing config (version={current_config_version}): {prev_config}"
             )
