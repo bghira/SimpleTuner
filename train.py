@@ -2394,7 +2394,13 @@ def main():
                 text_encoder_2_lora_layers = None
                 # text_encoder_3_lora_layers = None
 
-            if args.sd3:
+            if args.flux:
+                FluxPipeline.save_lora_weights(
+                    save_directory=args.output_dir,
+                    transformer_lora_layers=transformer_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                )
+            elif args.sd3:
                 StableDiffusion3Pipeline.save_lora_weights(
                     save_directory=args.output_dir,
                     transformer_lora_layers=transformer_lora_layers,
