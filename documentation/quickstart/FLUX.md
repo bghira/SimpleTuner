@@ -78,7 +78,7 @@ There, you will need to modify the following variables:
 - `FLUX` - Set this to `true`.
 - `MODEL_NAME` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will *probably* need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
-- `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As Flux is a 1024px model, you can set this to `1024x1024`.
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
 - `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.
@@ -91,7 +91,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-In your `BASE_DIR` directory, create a multidatabackend.json:
+In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 
 ```json
 [
@@ -125,7 +125,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
 ]
 ```
 
-Then, navigate to the `BASE_DIR` directory and create a `datasets` directory:
+Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
 
 ```bash
 apt -y install git-lfs
