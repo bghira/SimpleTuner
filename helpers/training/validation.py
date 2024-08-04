@@ -524,6 +524,16 @@ class Validation:
             if self.args.validation_using_datasets:
                 return StableDiffusionXLImg2ImgPipeline
             return StableDiffusionXLPipeline
+        elif model_type == "flux":
+            from helpers.models.flux import FluxPipeline
+
+            if self.args.controlnet:
+                raise NotImplementedError("Flux ControlNet is not yet supported.")
+            if self.args.validation_using_datasets:
+                raise NotImplementedError(
+                    "Flux inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
+                )
+            return FluxPipeline
         elif model_type == "kolors":
             if self.args.controlnet:
                 raise NotImplementedError("Kolors ControlNet is not yet supported.")
@@ -570,6 +580,10 @@ class Validation:
             from helpers.models.smoldit import SmolDiTPipeline
 
             return SmolDiTPipeline
+        else:
+            raise NotImplementedError(
+                f"Model type {model_type} not implemented for validation."
+            )
 
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
@@ -578,6 +592,7 @@ class Validation:
             StateTracker.get_model_type() == "sdxl"
             or StateTracker.get_model_type() == "sd3"
             or StateTracker.get_model_type() == "kolors"
+            or StateTracker.get_model_type() == "flux"
         ):
             _embed = self.embed_cache.compute_embeddings_for_prompts(
                 [validation_prompt]
@@ -601,6 +616,7 @@ class Validation:
             if (
                 self.prompt_handler is not None
                 and not StateTracker.get_model_type() == "sd3"
+                and not StateTracker.get_model_type() == "flux"
             ):
                 for text_encoder in self.prompt_handler.text_encoders:
                     # Can't remember why we move this to the GPU right here..
@@ -637,8 +653,8 @@ class Validation:
             prompt_embeds["negative_pooled_prompt_embeds"] = (
                 self.validation_negative_pooled_embeds
             )
-            if current_validation_time_ids is not None:
-                prompt_embeds["time_ids"] = current_validation_time
+            # if current_validation_time_ids is not None:
+            #     prompt_embeds["time_ids"] = current_validation_time_ids
         elif (
             StateTracker.get_model_type() == "legacy"
             or StateTracker.get_model_type() == "pixart_sigma"
@@ -1145,6 +1161,7 @@ class Validation:
                     self.args.pixart_sigma,
                     self.flow_matching,
                     self.args.kolors,
+                    self.args.flux,
                 ]
             ):
                 extra_validation_kwargs["guidance_rescale"] = (
@@ -1199,6 +1216,13 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
+                if StateTracker.get_model_type() == "flux":
+                    if "negative_prompt" in pipeline_kwargs:
+                        del pipeline_kwargs["negative_prompt"]
+                    if "negative_prompt_embeds" in pipeline_kwargs:
+                        del pipeline_kwargs["negative_prompt_embeds"]
+                    if "negative_pooled_prompt_embeds" in pipeline_kwargs:
+                        del pipeline_kwargs["negative_pooled_prompt_embeds"]
                 if (
                     StateTracker.get_model_type() == "pixart_sigma"
                     or StateTracker.get_model_type() == "smoldit"

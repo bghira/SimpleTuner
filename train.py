@@ -471,7 +471,7 @@ def main():
 
     # Load scheduler and models
     flow_matching = False
-    if args.sd3 and args.flow_matching_loss != "diffusion":
+    if (args.sd3 and args.flow_matching_loss != "diffusion") or args.flux:
         # Stable Diffusion 3 uses rectified flow.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -1812,7 +1812,7 @@ def main():
                         accelerator,
                         noise_scheduler_copy,
                         timesteps,
-                        n_dim=latents.ndim,
+                        n_dim=latents.ndim if not args.flux else 3,
                         dtype=latents.dtype,
                     )
                     noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
@@ -1925,10 +1925,20 @@ def main():
                             )
                     elif args.flux:
                         # handle guidance
-                        from helpers.models.flux import prepare_latent_image_ids
+                        from helpers.models.flux import (
+                            prepare_latent_image_ids,
+                            pack_latents,
+                            unpack_latents,
+                        )
 
+                        noisy_latents = pack_latents(
+                            noisy_latents,
+                            batch_size=latents.shape[0],
+                            num_channels_latents=latents.shape[1],
+                            height=latents.shape[2],
+                            width=latents.shape[3],
+                        )
                         guidance_scale = 3  # >>> ????? <<<
-                        print(f"latents: {latents.shape}")
                         if transformer.config.guidance_embeds:
                             guidance = torch.tensor(
                                 [guidance_scale], device=accelerator.device
@@ -1937,29 +1947,25 @@ def main():
                         else:
                             guidance = None
                         img_ids = prepare_latent_image_ids(
-                            len(latents),
-                            latents[0].shape[0],
-                            latents[0].shape[1],
+                            latents.shape[0],
+                            latents.shape[2],
+                            latents.shape[3],
                             accelerator.device,
                             weight_dtype,
                         )
                         timesteps = (
                             torch.tensor(timesteps)
-                            .expand(len(latents))
+                            .expand(len(noisy_latents))
                             .to(device=accelerator.device)
                             / 1000
                         )
-                        print(f"Shapes:")
-                        print(f"-> latents: {latents.shape}")
-                        print(f"-> timesteps: {timesteps}")
-                        print(f"-> guidance: {guidance}")
-                        print(f"-> pooled embeds shape: {add_text_embeds.shape}")
-                        print(f"-> text embeds shape: {encoder_hidden_states.shape}")
-                        print(f"-> txt_ids: {batch['batch_time_ids'].shape}")
-                        print(f"-> img_ids: {img_ids.shape}")
+
+                        text_ids = torch.zeros(
+                            noisy_latents.shape[0], batch["prompt_embeds"].shape[1], 3
+                        ).to(device=accelerator.device, dtype=weight_dtype)
 
                         model_pred = transformer(
-                            hidden_states=latents.to(
+                            hidden_states=noisy_latents.to(
                                 dtype=weight_dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
@@ -1971,13 +1977,15 @@ def main():
                             encoder_hidden_states=batch["prompt_embeds"].to(
                                 device=accelerator.device, dtype=weight_dtype
                             ),
-                            txt_ids=batch["batch_time_ids"].to(
+                            txt_ids=text_ids.to(
                                 device=accelerator.device, dtype=weight_dtype
                             ),
                             img_ids=img_ids,
                             joint_attention_kwargs=None,
                             return_dict=False,
                         )[0]
+                        # print(f'actual prediction shape: {model_pred.shape}')
+
                     elif args.sd3:
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
@@ -2001,7 +2009,7 @@ def main():
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
                     elif args.smoldit:
-                        first_latent_shape = noisy_latents[0].shape
+                        first_latent_shape = noisy_latents.shape
                         height = first_latent_shape[1] * 8
                         width = first_latent_shape[2] * 8
                         grid_height = height // 8 // transformer.config.patch_size
@@ -2055,6 +2063,14 @@ def main():
                     elif args.flow_matching_loss == "compatible":
                         # we shouldn't mess with the model prediction.
                         pass
+
+                if args.flux:
+                    model_pred = unpack_latents(
+                        model_pred,
+                        height=latents.shape[2] * 8,
+                        width=latents.shape[3] * 8,
+                        vae_scale_factor=16,
+                    )
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (

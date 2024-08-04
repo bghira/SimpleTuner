@@ -403,7 +403,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
         text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(
-            device=device, dtype=self.text_encoder.dtype
+            device=device, dtype=prompt_embeds.dtype
         )
 
         return prompt_embeds, pooled_prompt_embeds, text_ids
@@ -822,7 +822,10 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents, return_dict=False)[0]
+            image = self.vae.decode(
+                latents.to(device=self.vae.device, dtype=self.vae.dtype),
+                return_dict=False,
+            )[0]
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
