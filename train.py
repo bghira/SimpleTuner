@@ -1812,7 +1812,7 @@ def main():
                         accelerator,
                         noise_scheduler_copy,
                         timesteps,
-                        n_dim=latents.ndim if not args.flux else 3,
+                        n_dim=latents.ndim,
                         dtype=latents.dtype,
                     )
                     # print(f'shapes: {sigmas.shape}, {latents.shape}, {noise.shape}')
@@ -1934,7 +1934,7 @@ def main():
                             unpack_latents,
                         )
 
-                        noisy_latents = pack_latents(
+                        packed_noisy_latents = pack_latents(
                             noisy_latents,
                             batch_size=latents.shape[0],
                             num_channels_latents=latents.shape[1],
@@ -1963,17 +1963,19 @@ def main():
                         )
                         timesteps = (
                             torch.tensor(timesteps)
-                            .expand(len(noisy_latents))
+                            .expand(noisy_latents.shape[0])
                             .to(device=accelerator.device)
                             / 1000
                         )
 
                         text_ids = torch.zeros(
-                            noisy_latents.shape[0], batch["prompt_embeds"].shape[1], 3
+                            packed_noisy_latents.shape[0],
+                            batch["prompt_embeds"].shape[1],
+                            3,
                         ).to(device=accelerator.device, dtype=weight_dtype)
 
                         model_pred = transformer(
-                            hidden_states=noisy_latents.to(
+                            hidden_states=packed_noisy_latents.to(
                                 dtype=weight_dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
@@ -2080,6 +2082,17 @@ def main():
                         width=latents.shape[3] * 8,
                         vae_scale_factor=16,
                     )
+                if flow_matching:
+                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+                    # Preconditioning of the model outputs.
+                    # print(f"preconditioning shape: {model_pred.shape}")
+                    original_shape = model_pred.shape
+                    if args.flow_matching_loss == "diffusers":
+                        # print(f"post-preconditioning shape: {original_shape} * (-{sigmas}) + {noisy_latents.shape}")
+                        model_pred = model_pred * (-sigmas) + noisy_latents
+                    elif args.flow_matching_loss == "compatible":
+                        # we shouldn't mess with the model prediction.
+                        pass
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
