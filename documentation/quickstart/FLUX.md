@@ -210,16 +210,16 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 - Quantising the model isn't a bad thing
   - It allows you to push higher batch sizes and possibly obtain a better result
   - It unlocks the non-bf16 optimisers for use, such as Prodigy, Adafactor, Dadaptation, AdamW, and AdamW8Bit
-- As usual, fp8 quantisation runs more slowly than int8 and might have a worse result due to the use of `e4m3fn` in Quanto
-  - fp16 training similarly is bad for Flux, as it benefits and demands the range of bf16
+- As usual, **fp8 quantisation runs more slowly** than **int8** and might have a worse result due to the use of `e4m3fn` in Quanto
+  - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
-- Larger rank models might be undesirable on a 12B model due to their training dynamics.
-  - Try a smaller network first (rank-1, rank-4) and work your way up - they'll train faster.
+- Larger rank models might be undesirable on a 12B model due to the general training dynamics of large models.
+  - Try a smaller network first (rank-1, rank-4) and work your way up - they'll train faster, and might do everything you need.
 - When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
   - Overtrain with low quality data
   - Use too high of a learning rate
   - Select a bad optimiser
-  - Overtraining (in general)
-  - Undertraining (also)
+  - Overtraining (in general), a low-capacity network with too many images
+  - Undertraining (also), a high-capacity network with too few images
   - Using weird aspect ratios or training data sizes
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
