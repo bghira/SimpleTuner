@@ -736,7 +736,8 @@ def main():
         text_encoder_2 = None
         text_encoder_3 = None
         text_encoders = []
-        prompt_handler.text_encoders = []
+        if prompt_handler is not None:
+            prompt_handler.text_encoders = []
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
@@ -947,7 +948,7 @@ def main():
         else:
             transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma, args.flux, args.kolors]
+        [args.sd3, args.pixart_sigma, args.flux, args.smoldit]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
