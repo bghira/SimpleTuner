@@ -199,3 +199,27 @@ This will begin the text embed and VAE output caching to disk.
 For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
 
 **Note:** It's unclear whether training on multi-aspect buckets works correctly for Flux at the moment. It's recommended to use `crop_style=random` and `crop_aspect=square`.
+
+## Notes & troubleshooting tips
+
+- A model as large as 12B has empirically performed better with lower learning rates.
+  - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
+- Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
+  - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
+  - Adafactor works, reducing VRAM to ~24G or further with sub-1024x1024 training
+- Quantising the model isn't a bad thing
+  - It allows you to push higher batch sizes and possibly obtain a better result
+  - It unlocks the non-bf16 optimisers for use, such as Prodigy, Adafactor, Dadaptation, AdamW, and AdamW8Bit
+- As usual, fp8 quantisation runs more slowly than int8 and might have a worse result due to the use of `e4m3fn` in Quanto
+  - fp16 training similarly is bad for Flux, as it benefits and demands the range of bf16
+  - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
+- Larger rank models might be undesirable on a 12B model due to their training dynamics.
+  - Try a smaller network first (rank-1, rank-4) and work your way up - they'll train faster.
+- When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
+  - Overtrain with low quality data
+  - Use too high of a learning rate
+  - Select a bad optimiser
+  - Overtraining (in general)
+  - Undertraining (also)
+  - Using weird aspect ratios or training data sizes
+- Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
