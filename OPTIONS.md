@@ -272,8 +272,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--vae_dtype {default,fp16,fp32,bf16}]
                 [--vae_batch_size VAE_BATCH_SIZE]
                 [--vae_cache_scan_behaviour {recreate,sync}]
-                [--vae_cache_ondemand] [--compress_disk_cache]
-                [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
+                [--vae_cache_preprocess] [--vae_cache_ondemand]
+                [--compress_disk_cache] [--aspect_bucket_disable_rebuild]
+                [--keep_vae_loaded]
                 [--skip_file_discovery SKIP_FILE_DISCOVERY]
                 [--revision REVISION] [--variant VARIANT]
                 [--preserve_data_backend_cache] [--use_dora]
@@ -609,6 +610,9 @@ options:
                         matches its latent size. The recommended behaviour is
                         to use the default value and allow the cache to be
                         recreated.
+  --vae_cache_preprocess
+                        This option is deprecated and will be removed in a
+                        future release. Use --vae_cache_ondemand instead.
   --vae_cache_ondemand  By default, will batch-encode images before training.
                         For some situations, ondemand may be desired, but it
                         greatly slows training and increases memory pressure.

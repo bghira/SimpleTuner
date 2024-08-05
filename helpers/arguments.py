@@ -448,6 +448,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--vae_cache_preprocess",
+        action="store_true",
+        default=True,
+        help=(
+            "This option is deprecated and will be removed in a future release. Use --vae_cache_ondemand instead."
+        ),
+    )
+    parser.add_argument(
         "--vae_cache_ondemand",
         action="store_true",
         default=False,
