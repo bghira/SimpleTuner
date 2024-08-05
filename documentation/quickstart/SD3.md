@@ -66,6 +66,35 @@ There are a few more if using a Mac M-series machine:
 - `MIXED_PRECISION` should be set to `no`.
 - `USE_XFORMERS` should be set to `false`.
 
+#### Quantised model training
+
+Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements well below the requirements of base SDXL training.
+
+Inside your SimpleTuner venv:
+
+```bash
+pip install optimum-quanto
+```
+
+```bash
+# choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
+# int8-quanto was tested with a single subject dreambooth LoRA.
+# fp8-quanto does not work on Apple systems. you must use int levels.
+# int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
+# may the gods have mercy on your soul, should you push things Too Far.
+export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
+
+# Maybe you want the text encoders to remain full precision so your text embeds are cake.
+# We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
+# Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
+
+# When you're quantising the model, we're not in pure bf16 anymore.
+# Since adamw_bf16 will never work with this setup, select another optimiser.
+# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
+export OPTIMIZER="adafactor" # or maybe prodigy
+```
+
 #### Dataset considerations
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS` as well as more than `VAE_BATCH_SIZE`. The dataset will not be useable if it is too small.

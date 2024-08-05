@@ -1328,7 +1328,8 @@ class Validation:
                 logger.debug(
                     "Skipping EMA model restoration for validation, as enable_ema_model=False."
                 )
-        if not self.args.keep_vae_loaded and self.args.vae_cache_preprocess:
+        if not self.args.keep_vae_loaded and not self.args.vae_cache_ondemand:
+            self.vae = self.vae.to("cpu")
             self.vae = None
         self.pipeline = None
         if torch.cuda.is_available():

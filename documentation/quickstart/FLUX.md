@@ -84,6 +84,35 @@ There, you will need to modify the following variables:
 - `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
 
+#### Quantised model training
+
+Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training Flux on just 20GB.
+
+Inside your SimpleTuner venv:
+
+```bash
+pip install optimum-quanto
+```
+
+```bash
+# choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
+# int8-quanto was tested with a single subject dreambooth LoRA.
+# fp8-quanto does not work on Apple systems. you must use int levels.
+# int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
+# may the gods have mercy on your soul, should you push things Too Far.
+export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
+
+# Maybe you want the text encoders to remain full precision so your text embeds are cake.
+# We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
+# Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
+
+# When you're quantising the model, we're not in pure bf16 anymore.
+# Since adamw_bf16 will never work with this setup, select another optimiser.
+# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
+export OPTIMIZER="adafactor" # or maybe prodigy
+```
+
 
 #### Dataset considerations
 
@@ -170,3 +199,27 @@ This will begin the text embed and VAE output caching to disk.
 For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
 
 **Note:** It's unclear whether training on multi-aspect buckets works correctly for Flux at the moment. It's recommended to use `crop_style=random` and `crop_aspect=square`.
+
+## Notes & troubleshooting tips
+
+- A model as large as 12B has empirically performed better with lower learning rates.
+  - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
+- Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
+  - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
+  - Adafactor works, reducing VRAM to ~24G or further with sub-1024x1024 training
+- Quantising the model isn't a bad thing
+  - It allows you to push higher batch sizes and possibly obtain a better result
+  - It unlocks the non-bf16 optimisers for use, such as Prodigy, Adafactor, Dadaptation, AdamW, and AdamW8Bit
+- As usual, **fp8 quantisation runs more slowly** than **int8** and might have a worse result due to the use of `e4m3fn` in Quanto
+  - fp16 training similarly is bad for Flux; this model wants the range of bf16
+  - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
+- Larger rank models might be undesirable on a 12B model due to the general training dynamics of large models.
+  - Try a smaller network first (rank-1, rank-4) and work your way up - they'll train faster, and might do everything you need.
+- When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
+  - Overtrain with low quality data
+  - Use too high of a learning rate
+  - Select a bad optimiser
+  - Overtraining (in general), a low-capacity network with too many images
+  - Undertraining (also), a high-capacity network with too few images
+  - Using weird aspect ratios or training data sizes
+- Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.

@@ -6,6 +6,7 @@ import logging
 import sys
 import torch
 from helpers.models.smoldit import SmolDiTConfigurationNames
+from helpers.training import quantised_precision_levels
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -449,10 +450,17 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--vae_cache_preprocess",
         action="store_true",
+        default=True,
+        help=(
+            "This option is deprecated and will be removed in a future release. Use --vae_cache_ondemand instead."
+        ),
+    )
+    parser.add_argument(
+        "--vae_cache_ondemand",
+        action="store_true",
         default=False,
         help=(
-            "By default, will encode images during training. For some situations, pre-processing may be desired."
-            " To revert to the old behaviour, supply --vae_cache_preprocess=false."
+            "By default, will batch-encode images before training. For some situations, ondemand may be desired, but it greatly slows training and increases memory pressure."
         ),
     )
     parser.add_argument(
@@ -1356,11 +1364,31 @@ def parse_args(input_args=None):
             " is now to use fp32 gradients, which is slower, but provides more accurate updates."
         ),
     )
-    # parser.add_argument(
-    #     "--base_model_precision",
-    #     type=str,
-    #     choices=["normal", "fp4", "fp8-bnb", "fp8-effm"]
-    # )
+    parser.add_argument(
+        "--base_model_precision",
+        type=str,
+        default="no_change",
+        choices=quantised_precision_levels,
+        help=(
+            "When training a LoRA, you might want to quantise the base model to a lower precision to save more VRAM."
+            " The default value, 'no_change', does not quantise any weights."
+            " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
+            " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+        ),
+    )
+    for i in range(1, 4):
+        parser.add_argument(
+            f"--text_encoder_{i}_precision",
+            type=str,
+            default=None,
+            choices=quantised_precision_levels,
+            help=(
+                f"When training a LoRA, you might want to quantise text encoder {i} to a lower precision to save more VRAM."
+                " The default value is to follow base_model_precision (no_change)."
+                " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
+                " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+            ),
+        )
     parser.add_argument(
         "--local_rank",
         type=int,
@@ -1699,7 +1727,11 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if not args.adam_bfloat16 and not args.i_know_what_i_am_doing:
+    if (
+        args.base_model_precision == "no_change"
+        and not args.adam_bfloat16
+        and not args.i_know_what_i_am_doing
+    ):
         raise ValueError(
             "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
             " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
@@ -1708,11 +1740,15 @@ def parse_args(input_args=None):
             " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
         )
 
-    if not args.i_know_what_i_am_doing and (
-        args.use_prodigy_optimizer
-        or args.use_dadapt_optimizer
-        or args.use_adafactor_optimizer
-        or args.use_8bit_adam
+    if (
+        not args.i_know_what_i_am_doing
+        and args.base_model_precision == "no_change"
+        and (
+            args.use_prodigy_optimizer
+            or args.use_dadapt_optimizer
+            or args.use_adafactor_optimizer
+            or args.use_8bit_adam
+        )
     ):
         raise ValueError(
             "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
@@ -1723,7 +1759,12 @@ def parse_args(input_args=None):
         )
 
     if torch.backends.mps.is_available():
-        if not args.unet_attention_slice and not args.legacy:
+        if (
+            not args.flux
+            and not args.sd3
+            and not args.unet_attention_slice
+            and not args.legacy
+        ):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
@@ -1857,15 +1898,22 @@ def parse_args(input_args=None):
             warning_log(
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
             )
+    if "schnell" in args.pretrained_model_name_or_path.lower():
+        model_max_seq_length = 256
+    elif "dev" in args.pretrained_model_name_or_path.lower():
+        model_max_seq_length = 512
     if args.flux and (
-        args.tokenizer_max_length is None or int(args.tokenizer_max_length) > 256
+        args.tokenizer_max_length is None
+        or int(args.tokenizer_max_length) > model_max_seq_length
     ):
         if not args.i_know_what_i_am_doing:
-            warning_log(f"Updating T5 XXL tokeniser max length to 256 for Flux.")
-            args.tokenizer_max_length = 256
+            warning_log(
+                f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
+            )
+            args.tokenizer_max_length = model_max_seq_length
         else:
             warning_log(
-                f"-!- SD3 supports a max length of 256 tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
             )
             warning_log(
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."

@@ -924,11 +924,11 @@ def configure_multi_databackend(
                 process_queue_size=backend.get(
                     "image_processing_batch_size", args.image_processing_batch_size
                 ),
-                vae_cache_preprocess=args.vae_cache_preprocess,
+                vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
 
-            if args.vae_cache_preprocess:
+            if not args.vae_cache_ondemand:
                 info_log(f"(id={init_backend['id']}) Discovering cache objects..")
                 if accelerator.is_local_main_process:
                     init_backend["vaecache"].discover_all_files()
@@ -966,16 +966,14 @@ def configure_multi_databackend(
         accelerator.wait_for_everyone()
 
         if (
-            args.vae_cache_preprocess
+            not args.vae_cache_ondemand
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
         ):
             init_backend["vaecache"].discover_unprocessed_files()
-            if args.vae_cache_preprocess:
+            if not args.vae_cache_ondemand:
                 init_backend["vaecache"].process_buckets()
-            logger.debug(
-                f"Encoding images during training: {not args.vae_cache_preprocess}"
-            )
+            logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
 
         info_log(f"Configured backend: {init_backend}")
