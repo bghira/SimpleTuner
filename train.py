@@ -2024,7 +2024,12 @@ def main():
                             height=latents.shape[2],
                             width=latents.shape[3],
                         )
-                        guidance_scale = 3  # >>> ????? <<<
+                        if args.flux_guidance_mode == "constant":
+                            guidance_scale = float(args.flux_guidance_value)
+                        elif args.flux_guidance_mode == "random-range":
+                            guidance_scale = random.uniform(
+                                args.flux_guidance_min, args.flux_guidance_max
+                            )
                         transformer_config = None
                         if hasattr(transformer, "module"):
                             transformer_config = transformer.module.config
