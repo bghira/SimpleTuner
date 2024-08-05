@@ -162,8 +162,8 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--weighting_scheme",
         type=str,
-        default="none",
-        choices=["sigma_sqrt", "logit_normal", "mode", "none"],
+        default="cosmap",
+        choices=["sigma_sqrt", "logit_normal", "mode", "cosmap", "none"],
         help=(
             "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
             " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
@@ -1741,7 +1741,8 @@ def parse_args(input_args=None):
         )
 
     model_is_bf16 = (
-        args.base_model_precision == "no_change" and args.mixed_precision == "bf16"
+        args.base_model_precision == "no_change"
+        and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
     ) or (
         args.base_model_precision != "no_change"
         and args.base_model_default_dtype == "bf16"
