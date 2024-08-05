@@ -19,7 +19,7 @@ def _model_load(args, repo_id: str = None):
             f"model_id = '{args.pretrained_model_name_or_path}'"
             f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
             f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
-            f"\pipeline.load_adapter(adapter_id)"
+            f"\pipeline.load_lora_weights(adapter_id)"
         )
     else:
         output = (
