@@ -948,7 +948,7 @@ def main():
         else:
             transformer.to(accelerator.device, dtype=weight_dtype)
     if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma, args.flux, args.smoldit]
+        [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
     ):
         logger.info("Enabling xformers memory-efficient attention.")
         if is_xformers_available():
