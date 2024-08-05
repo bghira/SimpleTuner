@@ -137,7 +137,7 @@ def compute_latents(filepaths, data_backend_id: str):
             latents = deepfloyd_pixels(filepaths, data_backend_id)
 
             return latents
-        if not StateTracker.get_args().vae_cache_preprocess:
+        if StateTracker.get_args().vae_cache_ondemand:
             latents = StateTracker.get_vaecache(id=data_backend_id).encode_images(
                 [None] * len(filepaths), filepaths
             )

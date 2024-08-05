@@ -272,7 +272,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--vae_dtype {default,fp16,fp32,bf16}]
                 [--vae_batch_size VAE_BATCH_SIZE]
                 [--vae_cache_scan_behaviour {recreate,sync}]
-                [--vae_cache_preprocess] [--compress_disk_cache]
+                [--vae_cache_ondemand] [--compress_disk_cache]
                 [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
                 [--skip_file_discovery SKIP_FILE_DISCOVERY]
                 [--revision REVISION] [--variant VARIANT]
@@ -356,6 +356,10 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_disable_unconditional] [--disable_compel]
                 [--enable_watermark] [--mixed_precision {bf16,no}]
                 [--gradient_precision {unmodified,fp32}]
+                [--base_model_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--text_encoder_1_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--text_encoder_2_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--text_encoder_3_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
                 [--local_rank LOCAL_RANK]
                 [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
@@ -605,11 +609,9 @@ options:
                         matches its latent size. The recommended behaviour is
                         to use the default value and allow the cache to be
                         recreated.
-  --vae_cache_preprocess
-                        By default, will encode images during training. For
-                        some situations, pre-processing may be desired. To
-                        revert to the old behaviour, supply
-                        --vae_cache_preprocess=false.
+  --vae_cache_ondemand  By default, will batch-encode images before training.
+                        For some situations, ondemand may be desired, but it
+                        greatly slows training and increases memory pressure.
   --compress_disk_cache
                         If set, will gzip-compress the disk cache for Pytorch
                         files. This will save substantial disk space, but may
@@ -1095,6 +1097,38 @@ options:
                         accumulation steps are enabled is now to use fp32
                         gradients, which is slower, but provides more accurate
                         updates.
+  --base_model_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+                        When training a LoRA, you might want to quantise the
+                        base model to a lower precision to save more VRAM. The
+                        default value, 'no_change', does not quantise any
+                        weights. Using 'fp4-bnb' or 'fp8-bnb' will require
+                        Bits n Bytes for quantisation (NVIDIA, maybe AMD).
+                        Using 'fp8-quanto' will require Quanto for
+                        quantisation (Apple Silicon, NVIDIA, AMD).
+  --text_encoder_1_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+                        When training a LoRA, you might want to quantise text
+                        encoder 1 to a lower precision to save more VRAM. The
+                        default value is to follow base_model_precision
+                        (no_change). Using 'fp4-bnb' or 'fp8-bnb' will require
+                        Bits n Bytes for quantisation (NVIDIA, maybe AMD).
+                        Using 'fp8-quanto' will require Quanto for
+                        quantisation (Apple Silicon, NVIDIA, AMD).
+  --text_encoder_2_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+                        When training a LoRA, you might want to quantise text
+                        encoder 2 to a lower precision to save more VRAM. The
+                        default value is to follow base_model_precision
+                        (no_change). Using 'fp4-bnb' or 'fp8-bnb' will require
+                        Bits n Bytes for quantisation (NVIDIA, maybe AMD).
+                        Using 'fp8-quanto' will require Quanto for
+                        quantisation (Apple Silicon, NVIDIA, AMD).
+  --text_encoder_3_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+                        When training a LoRA, you might want to quantise text
+                        encoder 3 to a lower precision to save more VRAM. The
+                        default value is to follow base_model_precision
+                        (no_change). Using 'fp4-bnb' or 'fp8-bnb' will require
+                        Bits n Bytes for quantisation (NVIDIA, maybe AMD).
+                        Using 'fp8-quanto' will require Quanto for
+                        quantisation (Apple Silicon, NVIDIA, AMD).
   --local_rank LOCAL_RANK
                         For distributed training: local_rank
   --enable_xformers_memory_efficient_attention

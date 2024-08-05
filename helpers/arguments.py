@@ -448,12 +448,11 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--vae_cache_preprocess",
+        "--vae_cache_ondemand",
         action="store_true",
         default=False,
         help=(
-            "By default, will encode images during training. For some situations, pre-processing may be desired."
-            " To revert to the old behaviour, supply --vae_cache_preprocess=false."
+            "By default, will batch-encode images before training. For some situations, ondemand may be desired, but it greatly slows training and increases memory pressure."
         ),
     )
     parser.add_argument(

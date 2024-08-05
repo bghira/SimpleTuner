@@ -1425,7 +1425,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded and args.vae_cache_preprocess:
+    if not args.keep_vae_loaded and not args.vae_cache_ondemand:
         if torch.cuda.is_available():
             memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():

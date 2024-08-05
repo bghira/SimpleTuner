@@ -70,7 +70,7 @@ class VAECache:
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
         max_workers: int = 32,
-        vae_cache_preprocess: bool = False,
+        vae_cache_ondemand: bool = False,
         hash_filenames: bool = False,
     ):
         self.id = id
@@ -107,7 +107,7 @@ class VAECache:
         if not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
-        self.vae_cache_preprocess = vae_cache_preprocess
+        self.vae_cache_ondemand = vae_cache_ondemand
 
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
@@ -290,7 +290,7 @@ class VAECache:
         self.discover_unprocessed_files()
         self.debug_log("-> Load VAE")
         self.init_vae()
-        if StateTracker.get_args().vae_cache_preprocess:
+        if not StateTracker.get_args().vae_cache_ondemand:
             self.debug_log("-> Process VAE cache")
             self.process_buckets()
             if self.accelerator.is_local_main_process:
@@ -451,7 +451,7 @@ class VAECache:
         ]
         missing_image_pixel_values = []
         written_latents = []
-        if len(missing_images) > 0 and not self.vae_cache_preprocess:
+        if len(missing_images) > 0 and self.vae_cache_ondemand:
             missing_image_paths = [filepaths[i] for i in missing_images]
             missing_image_data_generator = self._read_from_storage_concurrently(
                 missing_image_paths, hide_errors=True
@@ -484,7 +484,7 @@ class VAECache:
         if (
             len(uncached_image_indices) > 0
             and load_from_cache
-            and self.vae_cache_preprocess
+            and not self.vae_cache_ondemand
         ):
             # We wanted only uncached images. Something went wrong.
             raise Exception(
@@ -495,9 +495,7 @@ class VAECache:
         if load_from_cache:
             # If all images are cached, simply load them
             latents = [
-                self._read_from_storage(
-                    filename, hide_errors=not self.vae_cache_preprocess
-                )
+                self._read_from_storage(filename, hide_errors=self.vae_cache_ondemand)
                 for filename in full_filenames
                 if filename not in uncached_images
             ]
