@@ -411,18 +411,19 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    is_quantized = False if args.base_model_precision == "no_change" else True
+    is_quantized = (
+        False
+        if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
+        else True
+    )
     weight_dtype = (
         torch.bfloat16
         if (
-            args.mixed_precision == "bf16"
+            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
             or (args.base_model_default_dtype == "bf16" and is_quantized)
         )
         else torch.float32
     )
-    if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
-        weight_dtype = torch.float32
-        args.adam_bfloat16 = False
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load scheduler, tokenizer and models.
@@ -694,14 +695,8 @@ def main():
     if args.kolors:
         model_type_label = "Kwai Kolors"
 
-    lock_weight_dtype = False
     enable_adamw_bf16 = True
-    if (
-        not disable_accelerator
-        and "lora" in args.model_type
-        and args.base_model_precision != "no_change"
-    ):
-        lock_weight_dtype = True
+    if not disable_accelerator and is_quantized:
         if args.base_model_default_dtype != "fp32":
             logger.info(f"Moving model to {weight_dtype} precision")
             if unet is not None:
@@ -800,28 +795,16 @@ def main():
             )
             transformer.add_adapter(transformer_lora_config)
 
-    # if is_quantized:
-    #     logger.info("Quantising the entire model PLUS the adapter..")
-    #     # If we run this here, we'll see an error when assigning dtypes, since the base model is already quantised.
-    #     if "quanto" in args.base_model_precision:
-    #         quantoise(
-    #             unet,
-    #             transformer,
-    #             text_encoder_1=None,
-    #             text_encoder_2=None,
-    #             text_encoder_3=None,
-    #             args=args
-    #         )
     logger.info(
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
     )
     if unet is not None:
-        if lock_weight_dtype:
+        if is_quantized:
             unet.to(accelerator.device)
         else:
             unet.to(accelerator.device, dtype=weight_dtype)
     if transformer is not None:
-        if lock_weight_dtype:
+        if is_quantized:
             transformer.to(accelerator.device)
         else:
             transformer.to(accelerator.device, dtype=weight_dtype)
