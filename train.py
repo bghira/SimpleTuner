@@ -674,27 +674,6 @@ def main():
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
         )
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
-    lock_weight_dtype = False
-    is_quantised = False
-    if (
-        not disable_accelerator
-        and "lora" in args.model_type
-        and args.base_model_precision != "no_change"
-    ):
-        lock_weight_dtype = True
-        is_quantised = True
-        if "quanto" in args.base_model_precision:
-            try:
-                from optimum.quanto import QTensor
-            except ImportError as e:
-                raise ImportError(
-                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-                )
-            from helpers.training.quantisation import quantoise
-
-            quantoise(
-                unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args
-            )
 
     model_type_label = "SDXL"
     if StateTracker.is_sdxl_refiner():
@@ -779,6 +758,15 @@ def main():
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)
+    lock_weight_dtype = False
+    is_quantised = False
+    if (
+        not disable_accelerator
+        and "lora" in args.model_type
+        and args.base_model_precision != "no_change"
+    ):
+        lock_weight_dtype = True
+        is_quantised = True
 
     logger.info(
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
@@ -1564,7 +1552,19 @@ def main():
     #     lr_scheduler = get_lr_scheduler(
     #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     #     )
+    if is_quantised:
+        if "quanto" in args.base_model_precision:
+            try:
+                from optimum.quanto import QTensor
+            except ImportError as e:
+                raise ImportError(
+                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+                )
+            from helpers.training.quantisation import quantoise
 
+            quantoise(
+                unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args
+            )
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
