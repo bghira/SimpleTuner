@@ -105,6 +105,36 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Flux model."),
     )
     parser.add_argument(
+        "--flux_guidance_mode",
+        type=str,
+        choices=["constant", "random-range"],
+        default="constant",
+        help=(
+            "Flux has a 'guidance' value used during training time that reflects the CFG range of your training samples."
+            " The default mode 'constant' will use a single value for every sample."
+            " The mode 'random-range' will randomly select a value from the range of the CFG for each sample."
+            " Set the range using --flux_guidance_min and --flux_guidance_max."
+        ),
+    )
+    parser.add_argument(
+        "--flux_guidance_value",
+        type=float,
+        default=3.0,
+        help=(
+            "When using --flux_guidance_mode=constant, this value will be used for every input sample."
+        ),
+    )
+    parser.add_argument(
+        "--flux_guidance_min",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--flux_guidance_max",
+        type=float,
+        default=4.0,
+    )
+    parser.add_argument(
         "--smoldit",
         action="store_true",
         default=False,
