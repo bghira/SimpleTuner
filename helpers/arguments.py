@@ -1376,6 +1376,19 @@ def parse_args(input_args=None):
             " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
         ),
     )
+    parser.add_argument(
+        "--base_model_default_dtype",
+        type=str,
+        default="bf16",
+        choices=["bf16", "fp32"],
+        help=(
+            "Unlike --mixed_precision, this value applies specifically for the default weights of your quantised base model."
+            " When quantised, not every parameter can or should be quantised down to the target precision."
+            " By default, we use bf16 weights for the base model - but this can be changed to fp32 to enable"
+            " the use of other optimizers than adamw_bf16. However, this uses marginally more memory,"
+            " and may not be necessary for your use case."
+        ),
+    )
     for i in range(1, 4):
         parser.add_argument(
             f"--text_encoder_{i}_precision",
@@ -1727,36 +1740,52 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if (
-        args.base_model_precision == "no_change"
-        and not args.adam_bfloat16
-        and not args.i_know_what_i_am_doing
-    ):
-        raise ValueError(
-            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
-            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
-            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
-            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
-            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
+    model_is_bf16 = (
+        args.base_model_precision == "no_change" and args.mixed_precision == "bf16"
+    ) or (
+        args.base_model_precision != "no_change"
+        and args.base_model_default_dtype == "bf16"
+    )
+    model_is_quantized = args.base_model_precision != "no_change"
+    non_bf16_optimizers_enabled = any(
+        [
+            args.use_prodigy_optimizer,
+            args.use_dadapt_optimizer,
+            args.use_adafactor_optimizer,
+            args.use_8bit_adam,
+        ]
+    )
+    using_bf16_optimizer = args.adam_bfloat16
+    incompatible_configuration = (
+        (model_is_bf16 and not using_bf16_optimizer)
+        or (not model_is_bf16 and using_bf16_optimizer)
+        or (using_bf16_optimizer and non_bf16_optimizers_enabled)
+    )
+    # print(f"Model is bf16: {model_is_bf16}, Model is quantized: {model_is_quantized}, Using bf16 optimizer: {using_bf16_optimizer}, Incompatible configuration: {incompatible_configuration}")
+    if incompatible_configuration and not args.i_know_what_i_am_doing:
+        enabled_optimizers = (
+            f"\n -> Enabled optimizer(s): "
+            f"{'Prodigy, ' if args.use_prodigy_optimizer else ''}"
+            f"{'Dadapt, ' if args.use_dadapt_optimizer else ''}"
+            f"{'Adafactor, ' if args.use_adafactor_optimizer else ''}"
+            f"{'8-bit Adam, ' if args.use_8bit_adam else ''}"
+            f"{'AdamW BF16, ' if args.adam_bfloat16 else ''}"
         )
 
-    if (
-        not args.i_know_what_i_am_doing
-        and args.base_model_precision == "no_change"
-        and (
-            args.use_prodigy_optimizer
-            or args.use_dadapt_optimizer
-            or args.use_adafactor_optimizer
-            or args.use_8bit_adam
-        )
-    ):
-        raise ValueError(
-            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
-            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
-            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
-            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
-            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
-        )
+        if not model_is_quantized:
+            raise ValueError(
+                "Your configuration is requesting an incompatible dtype and optimizer combination."
+                f"\n--adam_bfloat16 is {'provided, but you could switch your OPTIMIZER value to something else to resolve this' if (using_bf16_optimizer and not non_bf16_optimizers_enabled) else 'provided in addition to a request for another optimizer. Check your value for OPTIMIZER' if non_bf16_optimizers_enabled else 'not provided, but it should be'}."
+                f"{enabled_optimizers if non_bf16_optimizers_enabled else ''}"
+                f"\n--mixed_precision {'is bf16, but you could change it to fp32 to use a different optimizer' if args.mixed_precision == 'bf16' else 'could be set to bf16 to save memory, requiring AdamWBF16'}. This value is referred to as MIXED_PRECISION in config.env."
+            )
+        else:
+            raise ValueError(
+                "Your configuration is requesting an incompatible dtype and optimizer combination."
+                f"\n--base_model_default_dtype is set to bf16. You could resolve this by switching it to fp32, at the cost of more VRAM. This would be placed in TRAINER_EXTRA_ARGS."
+                f"\n--adam_bfloat16 {'could alternatively be provided to resolve the situation' if not args.adam_bfloat16 else 'correctly provided... but there is another optimizer enabled'}. Check your value for OPTIMIZER."
+                f"\n--mixed_precision is {'bf16, as expected' if args.mixed_precision == 'bf16' else 'not bf16, but it should be'}. This value is referred to as MIXED_PRECISION in config.env."
+            )
 
     if torch.backends.mps.is_available():
         if (

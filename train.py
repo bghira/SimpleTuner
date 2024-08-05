@@ -411,7 +411,15 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.bfloat16
+    is_quantized = False if args.base_model_precision == "no_change" else True
+    weight_dtype = (
+        torch.bfloat16
+        if (
+            args.mixed_precision == "bf16"
+            or (args.base_model_default_dtype == "bf16" and is_quantized)
+        )
+        else torch.float32
+    )
     if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
         weight_dtype = torch.float32
         args.adam_bfloat16 = False
@@ -610,10 +618,11 @@ def main():
         "revision": args.revision,
         "variant": args.variant,
     }
+    unet = None
+    transformer = None
     if args.sd3:
         # Stable Diffusion 3 uses a Diffusion transformer.
         logger.info("Loading Stable Diffusion 3 diffusion transformer..")
-        unet = None
         try:
             from diffusers import SD3Transformer2DModel
         except Exception as e:
@@ -628,7 +637,6 @@ def main():
     elif args.flux:
         from diffusers.models import FluxTransformer2DModel
 
-        unet = None
         transformer = FluxTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
@@ -637,7 +645,6 @@ def main():
     elif args.pixart_sigma:
         from diffusers.models import PixArtTransformer2DModel
 
-        unet = None
         transformer = PixArtTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
@@ -648,7 +655,6 @@ def main():
         if args.validation_noise_scheduler is None:
             args.validation_noise_scheduler = "ddpm"
         transformer_variant = None
-        unet = None
         from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
 
         if args.smoldit_config not in SmolDiTConfigurations:
@@ -668,7 +674,6 @@ def main():
             == "kwai-kolors/kolors-diffusers"
         ):
             unet_variant = "fp16"
-        transformer = None
         pretrained_load_args["variant"] = unet_variant
         unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
@@ -688,6 +693,42 @@ def main():
         model_type_label = "DeepFloyd-IF"
     if args.kolors:
         model_type_label = "Kwai Kolors"
+
+    lock_weight_dtype = False
+    enable_adamw_bf16 = True
+    if (
+        not disable_accelerator
+        and "lora" in args.model_type
+        and args.base_model_precision != "no_change"
+    ):
+        lock_weight_dtype = True
+        if args.base_model_default_dtype != "fp32":
+            logger.info(f"Moving model to {weight_dtype} precision")
+            if unet is not None:
+                unet.to("cpu", dtype=weight_dtype)
+            if transformer is not None:
+                transformer.to("cpu", dtype=weight_dtype)
+        else:
+            logger.info("Keeping some base model weights in fp32.")
+            enable_adamw_bf16 = False
+        if "quanto" in args.base_model_precision:
+            try:
+                from optimum.quanto import QTensor
+            except ImportError as e:
+                raise ImportError(
+                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+                )
+            from helpers.training.quantisation import quantoise
+
+            # we'll quantise pretty much everything but the adapter, if we execute this here.
+            quantoise(
+                unet=unet,
+                transformer=transformer,
+                text_encoder_1=text_encoder_1,
+                text_encoder_2=text_encoder_2,
+                text_encoder_3=text_encoder_3,
+                args=args,
+            )
 
     if args.controlnet:
         if any(
@@ -758,18 +799,21 @@ def main():
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)
-    lock_weight_dtype = False
-    is_quantised = False
-    if (
-        not disable_accelerator
-        and "lora" in args.model_type
-        and args.base_model_precision != "no_change"
-    ):
-        lock_weight_dtype = True
-        is_quantised = True
 
+    # if is_quantized:
+    #     logger.info("Quantising the entire model PLUS the adapter..")
+    #     # If we run this here, we'll see an error when assigning dtypes, since the base model is already quantised.
+    #     if "quanto" in args.base_model_precision:
+    #         quantoise(
+    #             unet,
+    #             transformer,
+    #             text_encoder_1=None,
+    #             text_encoder_2=None,
+    #             text_encoder_3=None,
+    #             args=args
+    #         )
     logger.info(
-        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
+        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
     )
     if unet is not None:
         if lock_weight_dtype:
@@ -1108,9 +1152,9 @@ def main():
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.adam_bfloat16:
-        if is_quantised:
+        if is_quantized and not enable_adamw_bf16:
             logger.error(
-                f"Quantised models do not support bfloat16 optimizers. Reverting to AdamW. You may use other optimizers, such as Adafactor."
+                f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Reverting to AdamW. You may use other optimizers, such as Adafactor."
             )
             optimizer_class = torch.optim.AdamW
         else:
@@ -1347,6 +1391,7 @@ def main():
             unet = results[0]
         elif transformer is not None:
             transformer = results[0]
+
         if args.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
@@ -1526,7 +1571,17 @@ def main():
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = global_resume_step
             logger.info(f"Resuming from global_step {global_resume_step}.")
-
+            # if is_quantized:
+            #     if "quanto" in args.base_model_precision:
+            #         # if we loaded any adapters, we have to re-quantise those here.
+            #         quantoise(
+            #             unwrap_model(accelerator, unet),
+            #             unwrap_model(accelerator, transformer),
+            #             text_encoder_1=text_encoder_1 if args.train_text_encoder else None,
+            #             text_encoder_2=text_encoder_2 if args.train_text_encoder else None,
+            #             text_encoder_3=text_encoder_3 if args.train_text_encoder else None,
+            #             args=args
+            #         )
     # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
         if "sampler" in backend:
@@ -1552,19 +1607,16 @@ def main():
     #     lr_scheduler = get_lr_scheduler(
     #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     #     )
-    if is_quantised:
-        if "quanto" in args.base_model_precision:
-            try:
-                from optimum.quanto import QTensor
-            except ImportError as e:
-                raise ImportError(
-                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-                )
-            from helpers.training.quantisation import quantoise
-
-            quantoise(
-                unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args
-            )
+    # if is_quantized:
+    #     if "quanto" in args.base_model_precision:
+    #         quantoise(
+    #             unwrap_model(accelerator, unet),
+    #             unwrap_model(accelerator, transformer),
+    #             text_encoder_1=None,
+    #             text_encoder_2=None,
+    #             text_encoder_3=None,
+    #             args=args
+    #         )
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
@@ -2023,22 +2075,21 @@ def main():
                             batch["prompt_embeds"].shape[1],
                             3,
                         ).to(device=accelerator.device, dtype=weight_dtype)
-
                         model_pred = transformer(
                             hidden_states=packed_noisy_latents.to(
-                                dtype=weight_dtype, device=accelerator.device
+                                dtype=transformer.dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                             timestep=timesteps,
                             guidance=guidance,
                             pooled_projections=batch["add_text_embeds"].to(
-                                device=accelerator.device, dtype=weight_dtype
+                                device=accelerator.device, dtype=transformer.dtype
                             ),
                             encoder_hidden_states=batch["prompt_embeds"].to(
-                                device=accelerator.device, dtype=weight_dtype
+                                device=accelerator.device, dtype=transformer.dtype
                             ),
                             txt_ids=text_ids.to(
-                                device=accelerator.device, dtype=weight_dtype
+                                device=accelerator.device, dtype=transformer.dtype
                             ),
                             img_ids=img_ids,
                             joint_attention_kwargs=None,
