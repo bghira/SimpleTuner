@@ -615,6 +615,144 @@ def main():
         webhook_handler.send(
             message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
+
+    # The VAE is in bfloat16 to avoid NaN losses.
+    vae_dtype = torch.bfloat16
+    if hasattr(args, "vae_dtype"):
+        logger.info(
+            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
+        )
+        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+        if args.vae_dtype == "bf16":
+            vae_dtype = torch.bfloat16
+        elif args.vae_dtype == "fp16":
+            raise ValueError(
+                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
+            )
+        elif args.vae_dtype == "fp32":
+            vae_dtype = torch.float32
+        elif args.vae_dtype == "none" or args.vae_dtype == "default":
+            vae_dtype = torch.bfloat16
+    if args.pretrained_vae_model_name_or_path is not None:
+        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    else:
+        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
+        vae.to(accelerator.device, dtype=vae_dtype)
+    StateTracker.set_vae_dtype(vae_dtype)
+    StateTracker.set_vae(vae)
+    logger.info("Loaded VAE into VRAM.")
+
+    # Create a DataBackend, so that we can access our dataset.
+    prompt_handler = None
+    if not args.disable_compel and not any([args.sd3, args.pixart_sigma, args.kolors]):
+        # Only CLIP works with prompt weighting.
+        prompt_handler = PromptHandler(
+            args=args,
+            text_encoders=[text_encoder_1, text_encoder_2],
+            tokenizers=[tokenizer_1, tokenizer_2],
+            accelerator=accelerator,
+            model_type=StateTracker.get_model_type(),
+        )
+
+    try:
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message="Configuring data backends... (this may take a while!)"
+            )
+        configure_multi_databackend(
+            args,
+            accelerator=accelerator,
+            text_encoders=text_encoders,
+            tokenizers=tokenizers,
+            prompt_handler=prompt_handler,
+        )
+    except Exception as e:
+        import traceback
+
+        logger.error(f"{e}, traceback: {traceback.format_exc()}")
+        if webhook_handler is not None:
+            webhook_handler.send(
+                message=f"Failed to load data backends: {e}", message_level="critical"
+            )
+
+        sys.exit(0)
+
+    if accelerator.is_main_process:
+        if args.flux:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+                validation_negative_time_ids,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
+        else:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
+    else:
+        validation_prompts = None
+        validation_shortnames = None
+        validation_negative_prompt_embeds = None
+        validation_negative_pooled_embeds = None
+    accelerator.wait_for_everyone()
+
+    if args.model_type == "full" or not args.train_text_encoder:
+        # Grab GPU memory used:
+        if torch.cuda.is_available():
+            memory_before_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_before_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            logger.warning(
+                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
+            )
+            memory_before_unload = 0
+        if accelerator.is_main_process:
+            logger.info("Unloading text encoders, as they are not being trained.")
+
+        if text_encoder_1 is not None:
+            text_encoder_1 = text_encoder_1.to(
+                "cpu" if torch.backends.mps.is_available() else "meta"
+            )
+        if text_encoder_2 is not None:
+            text_encoder_2 = text_encoder_2.to(
+                "cpu" if torch.backends.mps.is_available() else "meta"
+            )
+        if text_encoder_3 is not None:
+            text_encoder_3 = text_encoder_3.to(
+                "cpu" if torch.backends.mps.is_available() else "meta"
+            )
+        del text_encoder_1, text_encoder_2, text_encoder_3
+        text_encoder_1 = None
+        text_encoder_2 = None
+        text_encoder_3 = None
+        text_encoders = []
+        prompt_handler.text_encoders = []
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            if "text_embed_cache" in backend:
+                backend["text_embed_cache"].text_encoders = None
+        reclaim_memory()
+        if torch.cuda.is_available():
+            memory_after_unload = torch.cuda.memory_allocated() / 1024**3
+        elif torch.backends.mps.is_available():
+            memory_after_unload = torch.mps.current_allocated_memory() / 1024**3
+        else:
+            memory_after_unload = 0
+        memory_saved = memory_after_unload - memory_before_unload
+        logger.info(
+            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+            " The real memories were the friends we trained a model on along the way."
+        )
+
     pretrained_load_args = {
         "revision": args.revision,
         "variant": args.variant,
@@ -842,144 +980,6 @@ def main():
             logger.warning(
                 "Unknown results will occur when finetuning the text encoder alongside ControlNet."
             )
-
-    # Move vae, unet and text_encoder to device and cast to weight_dtype
-    # The VAE is in bfloat16 to avoid NaN losses.
-    vae_dtype = torch.bfloat16
-    if hasattr(args, "vae_dtype"):
-        logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
-        )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            raise ValueError(
-                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-            )
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.bfloat16
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    StateTracker.set_vae_dtype(vae_dtype)
-    StateTracker.set_vae(vae)
-    logger.info("Loaded VAE into VRAM.")
-
-    # Create a DataBackend, so that we can access our dataset.
-    prompt_handler = None
-    if not args.disable_compel and not any([args.sd3, args.pixart_sigma, args.kolors]):
-        # Only CLIP works with prompt weighting.
-        prompt_handler = PromptHandler(
-            args=args,
-            text_encoders=[text_encoder_1, text_encoder_2],
-            tokenizers=[tokenizer_1, tokenizer_2],
-            accelerator=accelerator,
-            model_type=StateTracker.get_model_type(),
-        )
-
-    try:
-        if webhook_handler is not None:
-            webhook_handler.send(
-                message="Configuring data backends... (this may take a while!)"
-            )
-        configure_multi_databackend(
-            args,
-            accelerator=accelerator,
-            text_encoders=text_encoders,
-            tokenizers=tokenizers,
-            prompt_handler=prompt_handler,
-        )
-    except Exception as e:
-        import traceback
-
-        logger.error(f"{e}, traceback: {traceback.format_exc()}")
-        if webhook_handler is not None:
-            webhook_handler.send(
-                message=f"Failed to load data backends: {e}", message_level="critical"
-            )
-
-        sys.exit(0)
-
-    if accelerator.is_main_process:
-        if args.flux:
-            (
-                validation_prompts,
-                validation_shortnames,
-                validation_negative_prompt_embeds,
-                validation_negative_pooled_embeds,
-                validation_negative_time_ids,
-            ) = prepare_validation_prompt_list(
-                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
-            )
-        else:
-            (
-                validation_prompts,
-                validation_shortnames,
-                validation_negative_prompt_embeds,
-                validation_negative_pooled_embeds,
-            ) = prepare_validation_prompt_list(
-                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
-            )
-    else:
-        validation_prompts = None
-        validation_shortnames = None
-        validation_negative_prompt_embeds = None
-        validation_negative_pooled_embeds = None
-    accelerator.wait_for_everyone()
-
-    if args.model_type == "full" or not args.train_text_encoder:
-        # Grab GPU memory used:
-        if torch.cuda.is_available():
-            memory_before_unload = torch.cuda.memory_allocated() / 1024**3
-        elif torch.backends.mps.is_available():
-            memory_before_unload = torch.mps.current_allocated_memory() / 1024**3
-        else:
-            logger.warning(
-                "CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions."
-            )
-            memory_before_unload = 0
-        if accelerator.is_main_process:
-            logger.info("Unloading text encoders, as they are not being trained.")
-
-        if text_encoder_1 is not None:
-            text_encoder_1 = text_encoder_1.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
-        if text_encoder_2 is not None:
-            text_encoder_2 = text_encoder_2.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
-        if text_encoder_3 is not None:
-            text_encoder_3 = text_encoder_3.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
-        del text_encoder_1, text_encoder_2, text_encoder_3
-        text_encoder_1 = None
-        text_encoder_2 = None
-        text_encoder_3 = None
-        text_encoders = []
-        prompt_handler.text_encoders = []
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            if "text_embed_cache" in backend:
-                backend["text_embed_cache"].text_encoders = None
-        reclaim_memory()
-        if torch.cuda.is_available():
-            memory_after_unload = torch.cuda.memory_allocated() / 1024**3
-        elif torch.backends.mps.is_available():
-            memory_after_unload = torch.mps.current_allocated_memory() / 1024**3
-        else:
-            memory_after_unload = 0
-        memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-            " The real memories were the friends we trained a model on along the way."
-        )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
