@@ -159,6 +159,6 @@ Detailed setup information is available in the [installation documentation](/INS
 
 Enable debug logs for a more detailed insight by adding `export SIMPLETUNER_LOG_LEVEL=DEBUG` to your environment file.
 
-For performance analysis of the training loop, setting `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` will have timestamps that hilight any issues in your configuration.
+For performance analysis of the training loop, setting `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` will have timestamps that highlight any issues in your configuration.
 
 For a comprehensive list of options available, consult [this documentation](/OPTIONS.md).
