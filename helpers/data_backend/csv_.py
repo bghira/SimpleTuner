@@ -197,7 +197,7 @@ class CSVDataBackend(BaseDataBackend):
             filepath = filepath.replace("\x00", "")
         try:
             image_data = self.read(filepath, as_byteIO=True)
-            image = load_image(image_data).resize((1024, 1024))
+            image = load_image(image_data)
             return image
         except Exception as e:
             import traceback
@@ -303,25 +303,3 @@ class CSVDataBackend(BaseDataBackend):
         if self.caption_column is None:
             raise ValueError("Cannot retrieve caption from csv, as one is not set.")
         return self.df.loc[image_path, self.caption_column]
-
-
-if __name__ == "__main__":
-    data = CSVDataBackend(
-        None,
-        id="test",
-        csv_file=Path("/media/second8TBNVME/cache/SimpleTuner/sd3/jewelry-v15.csv"),
-        image_cache_loc="/media/second8TBNVME/cache/SimpleTuner/image-cache",
-        url_column="Image",
-        caption_column="Long Caption",
-        compress_cache=False,
-        hash_filenames=True,
-    )
-    results = \
-    data.list_files("*.[jJpP][pPnN][gG]", instance_data_dir="/media/second8TBNVME/cache/SimpleTuner/jewelry-v15")[0][2]
-    # print(results)
-    test = data.exists(
-        "https://storage.googleapis.com/internal-assets-arcade-ai-prod/xbnwoi287kc/long%20slim%20dangle%20earringss.png.txt")
-    for file in results:
-        image = data.read_image(file, delete_problematic_images=False)
-        print(image.size, file)
-        caption = data.get_caption(file)
