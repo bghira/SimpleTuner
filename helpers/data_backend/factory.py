@@ -1040,6 +1040,8 @@ def get_csv_backend(
     id: str,
     csv_file: str,
     csv_cache_dir: str,
+    url_column: str,
+    caption_column: str,
     compress_cache: bool = False,
     hash_filenames: bool = False,
 ) -> CSVDataBackend:
