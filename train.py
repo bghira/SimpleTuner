@@ -1436,6 +1436,7 @@ def main():
             )
             memory_before_unload = 0
 
+        vae = vae.to("cpu" if torch.backends.mps.is_available() else "meta")
         del vae
         vae = None
 
@@ -1452,7 +1453,7 @@ def main():
             memory_after_unload = 0
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
-            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
+            f"After nuking the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
 
     # Train!
