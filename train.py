@@ -1549,17 +1549,7 @@ def main():
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = global_resume_step
             logger.info(f"Resuming from global_step {global_resume_step}.")
-            # if is_quantized:
-            #     if "quanto" in args.base_model_precision:
-            #         # if we loaded any adapters, we have to re-quantise those here.
-            #         quantoise(
-            #             unwrap_model(accelerator, unet),
-            #             unwrap_model(accelerator, transformer),
-            #             text_encoder_1=text_encoder_1 if args.train_text_encoder else None,
-            #             text_encoder_2=text_encoder_2 if args.train_text_encoder else None,
-            #             text_encoder_3=text_encoder_3 if args.train_text_encoder else None,
-            #             args=args
-            #         )
+
     # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
         if "sampler" in backend:
@@ -1585,16 +1575,7 @@ def main():
     #     lr_scheduler = get_lr_scheduler(
     #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     #     )
-    # if is_quantized:
-    #     if "quanto" in args.base_model_precision:
-    #         quantoise(
-    #             unwrap_model(accelerator, unet),
-    #             unwrap_model(accelerator, transformer),
-    #             text_encoder_1=None,
-    #             text_encoder_2=None,
-    #             text_encoder_3=None,
-    #             args=args
-    #         )
+
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
