@@ -51,13 +51,13 @@ poetry install --no-root -C install/rocm
 
 #### Custom Diffusers build
 
-For LoRA support in Diffusers, the current main branch does not yet have this merged in.
+For LoRA support in Diffusers, the latest release does not yet have Flux LoRA support, so we must install directly from the main branch.
 
 To obtain the correct build, run the following commands:
 
 ```bash
 pip uninstall diffusers
-pip install git+https://github.com/huggingface/diffusers@lora-support-flux
+pip install git+https://github.com/huggingface/diffusers
 ```
 
 ### Setting up the environment
@@ -223,3 +223,5 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
   - Undertraining (also), a high-capacity network with too few images
   - Using weird aspect ratios or training data sizes
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
+- We're overriding `--max_grad_norm` on all DiT models currently - providing the flag `--i_know_what_im_doing` will allow you to bypass this limit and experiment with higher gradient norm scales
+  - The low value keeps the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution
