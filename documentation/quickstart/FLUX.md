@@ -1,5 +1,7 @@
 ## Flux[dev] / Flux[schnell] Quickstart
 
+![image](https://github.com/user-attachments/assets/6409d790-3bb4-457c-a4b4-a51a45fc91d1)
+
 In this example, we'll be training a Flux.1 LoRA model using the SimpleTuner toolkit.
 
 ### Hardware requirements
@@ -202,6 +204,9 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
+- Schnell training really needs a bit more time in the oven - currently, the results do not look good
+- Dev LoRAs run just fine on Schnell
+- Dev+Schnell merge 50/50 just fine, and the LoRAs can possibly be trained from that, which will then run on Schnell **or** Dev
 - A model as large as 12B has empirically performed better with lower learning rates.
   - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
