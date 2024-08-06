@@ -1,5 +1,7 @@
 ## Flux[dev] / Flux[schnell] Quickstart
 
+![image](https://github.com/user-attachments/assets/6409d790-3bb4-457c-a4b4-a51a45fc91d1)
+
 In this example, we'll be training a Flux.1 LoRA model using the SimpleTuner toolkit.
 
 ### Hardware requirements
@@ -51,13 +53,13 @@ poetry install --no-root -C install/rocm
 
 #### Custom Diffusers build
 
-For LoRA support in Diffusers, the current main branch does not yet have this merged in.
+For LoRA support in Diffusers, the latest release does not yet have Flux LoRA support, so we must install directly from the main branch.
 
 To obtain the correct build, run the following commands:
 
 ```bash
 pip uninstall diffusers
-pip install git+https://github.com/huggingface/diffusers@lora-support-flux
+pip install git+https://github.com/huggingface/diffusers
 ```
 
 ### Setting up the environment
@@ -202,6 +204,9 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
+- Schnell training really needs a bit more time in the oven - currently, the results do not look good
+- Dev LoRAs run just fine on Schnell
+- Dev+Schnell merge 50/50 just fine, and the LoRAs can possibly be trained from that, which will then run on Schnell **or** Dev
 - A model as large as 12B has empirically performed better with lower learning rates.
   - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
@@ -223,3 +228,5 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
   - Undertraining (also), a high-capacity network with too few images
   - Using weird aspect ratios or training data sizes
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
+- We're overriding `--max_grad_norm` on all DiT models currently - providing the flag `--i_know_what_im_doing` will allow you to bypass this limit and experiment with higher gradient norm scales
+  - The low value keeps the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution
