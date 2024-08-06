@@ -340,6 +340,7 @@ def configure_multi_databackend(
     #    now we configure the text embed backends    #
     ###                                            ###
     default_text_embed_backend_id = None
+    text_embed_cache_dir_paths = []
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is None or dataset_type != "text_embeds":
@@ -363,6 +364,9 @@ def configure_multi_databackend(
         init_backend = init_backend_config(backend, args, accelerator)
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
+            text_embed_cache_dir_paths.append(
+                backend.get("cache_dir", args.cache_dir_text)
+            )
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
@@ -889,6 +893,14 @@ def configure_multi_databackend(
 
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
+            vae_cache_dir = init_backend.get("cache_dir_vae", None)
+            if (
+                vae_cache_dir is not None
+                and vae_cache_dir in text_embed_cache_dir_paths
+            ):
+                raise ValueError(
+                    f"VAE image embed cache directory {init_backend['cache_dir_vae']} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
+                )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 vae=StateTracker.get_vae(),
