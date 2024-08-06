@@ -883,8 +883,8 @@ def configure_multi_databackend(
         # Register the backend here so the sampler can be found.
         StateTracker.register_data_backend(init_backend)
 
-        default_hash_option = default("hash_filenames", current_config_version)
-        hash_filenames = init_backend.get("config", {}).get(
+        default_hash_option = True
+        hash_filenames = init_backend["config"].get(
             "hash_filenames", default_hash_option
         )
         init_backend["config"]["hash_filenames"] = hash_filenames
