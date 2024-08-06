@@ -411,10 +411,19 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.bfloat16
-    if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
-        weight_dtype = torch.float32
-        args.adam_bfloat16 = False
+    is_quantized = (
+        False
+        if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
+        else True
+    )
+    weight_dtype = (
+        torch.bfloat16
+        if (
+            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+            or (args.base_model_default_dtype == "bf16" and is_quantized)
+        )
+        else torch.float32
+    )
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load scheduler, tokenizer and models.
@@ -606,229 +615,7 @@ def main():
         webhook_handler.send(
             message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
-    pretrained_load_args = {
-        "revision": args.revision,
-        "variant": args.variant,
-    }
-    if args.sd3:
-        # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
-        unet = None
-        try:
-            from diffusers import SD3Transformer2DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer = SD3Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.flux:
-        from diffusers.models import FluxTransformer2DModel
 
-        unet = None
-        transformer = FluxTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.pixart_sigma:
-        from diffusers.models import PixArtTransformer2DModel
-
-        unet = None
-        transformer = PixArtTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.smoldit:
-        logger.info("Loading SmolDiT model..")
-        if args.validation_noise_scheduler is None:
-            args.validation_noise_scheduler = "ddpm"
-        transformer_variant = None
-        unet = None
-        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
-
-        if args.smoldit_config not in SmolDiTConfigurations:
-            raise ValueError(
-                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
-            )
-
-        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
-        if "lora" in args.model_type:
-            raise ValueError("SmolDiT does not yet support LoRA training.")
-    else:
-        logger.info("Loading U-net..")
-        unet_variant = args.variant
-        if (
-            args.kolors
-            and args.pretrained_model_name_or_path.lower()
-            == "kwai-kolors/kolors-diffusers"
-        ):
-            unet_variant = "fp16"
-        transformer = None
-        pretrained_load_args["variant"] = unet_variant
-        unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
-        )
-    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
-    lock_weight_dtype = False
-    is_quantised = False
-    if (
-        not disable_accelerator
-        and "lora" in args.model_type
-        and args.base_model_precision != "no_change"
-    ):
-        lock_weight_dtype = True
-        is_quantised = True
-        if "quanto" in args.base_model_precision:
-            try:
-                from optimum.quanto import QTensor
-            except ImportError as e:
-                raise ImportError(
-                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-                )
-            from helpers.training.quantisation import quantoise
-
-            quantoise(
-                unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args
-            )
-
-    model_type_label = "SDXL"
-    if StateTracker.is_sdxl_refiner():
-        model_type_label = "SDXL Refiner"
-    if args.sd3:
-        model_type_label = "Stable Diffusion 3"
-    if args.pixart_sigma:
-        model_type_label = "PixArt Sigma"
-    if args.legacy:
-        model_type_label = "Stable Diffusion 1.x/2.x"
-    if "deepfloyd" in args.model_type:
-        model_type_label = "DeepFloyd-IF"
-    if args.kolors:
-        model_type_label = "Kwai Kolors"
-
-    if args.controlnet:
-        if any(
-            [
-                args.pixart_sigma,
-                args.sd3,
-                args.kolors,
-                StateTracker.is_sdxl_refiner(),
-                "deepfloyd" in args.model_type,
-            ]
-        ):
-            raise ValueError(
-                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
-            )
-        logger.info("Creating the controlnet..")
-        if args.controlnet_model_name_or_path:
-            logger.info("Loading existing controlnet weights")
-            controlnet = ControlNetModel.from_pretrained(
-                args.controlnet_model_name_or_path
-            )
-        else:
-            logger.info("Initializing controlnet weights from unet")
-            controlnet = ControlNetModel.from_unet(unet)
-    elif "lora" in args.model_type:
-        if args.pixart_sigma:
-            raise Exception(f"{model_type_label} does not support LoRA model training.")
-
-        logger.info(f"Using LoRA training mode (rank={args.lora_rank})")
-        if webhook_handler is not None:
-            webhook_handler.send(message="Using LoRA training mode.")
-        # now we will add new LoRA weights to the attention layers
-        # Set correct lora layers
-        if transformer is not None:
-            transformer.requires_grad_(False)
-        if unet is not None:
-            unet.requires_grad_(False)
-        lora_initialisation_style = True
-        if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
-            lora_initialisation_style = args.lora_init_method
-        lora_weight_init_type = (
-            "gaussian"
-            if torch.backends.mps.is_available()
-            else lora_initialisation_style
-        )
-        if args.use_dora:
-            logger.warning(
-                "DoRA support is experimental and not very thoroughly tested."
-            )
-            lora_weight_init_type = "gaussian"
-        if unet is not None:
-            unet_lora_config = LoraConfig(
-                r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
-                lora_dropout=args.lora_dropout,
-                init_lora_weights=lora_weight_init_type,
-                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-                use_dora=args.use_dora,
-            )
-            logger.info("Adding LoRA adapter to the unet model..")
-            unet.add_adapter(unet_lora_config)
-        if transformer is not None:
-            target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
-            transformer_lora_config = LoraConfig(
-                r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
-                init_lora_weights=lora_weight_init_type,
-                target_modules=target_modules,
-                use_dora=args.use_dora,
-            )
-            transformer.add_adapter(transformer_lora_config)
-
-    logger.info(
-        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
-    )
-    if unet is not None:
-        if lock_weight_dtype:
-            unet.to(accelerator.device)
-        else:
-            unet.to(accelerator.device, dtype=weight_dtype)
-    if transformer is not None:
-        if lock_weight_dtype:
-            transformer.to(accelerator.device)
-        else:
-            transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma, args.flux, args.kolors]
-    ):
-        logger.info("Enabling xformers memory-efficient attention.")
-        if is_xformers_available():
-            import xformers  # type: ignore # noqa
-
-            if unet is not None:
-                unet.enable_xformers_memory_efficient_attention()
-            if transformer is not None:
-                transformer.enable_xformers_memory_efficient_attention()
-            if args.controlnet:
-                controlnet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError(
-                "xformers is not available. Make sure it is installed correctly"
-            )
-    elif args.enable_xformers_memory_efficient_attention:
-        logger.warning(
-            "xformers is not enabled, as it is incompatible with this model type."
-        )
-
-    if args.controlnet:
-        # We freeze the base u-net for controlnet training.
-        if unet is not None:
-            unet.requires_grad_(False)
-        if transformer is not None:
-            transformer.requires_grad_(False)
-        controlnet.train()
-        controlnet.to(device=accelerator.device, dtype=weight_dtype)
-        if args.train_text_encoder:
-            logger.warning(
-                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
-            )
-
-    # Move vae, unet and text_encoder to device and cast to weight_dtype
     # The VAE is in bfloat16 to avoid NaN losses.
     vae_dtype = torch.bfloat16
     if hasattr(args, "vae_dtype"):
@@ -949,7 +736,8 @@ def main():
         text_encoder_2 = None
         text_encoder_3 = None
         text_encoders = []
-        prompt_handler.text_encoders = []
+        if prompt_handler is not None:
+            prompt_handler.text_encoders = []
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
@@ -965,6 +753,234 @@ def main():
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
             " The real memories were the friends we trained a model on along the way."
         )
+
+    pretrained_load_args = {
+        "revision": args.revision,
+        "variant": args.variant,
+    }
+    unet = None
+    transformer = None
+    if args.sd3:
+        # Stable Diffusion 3 uses a Diffusion transformer.
+        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
+        try:
+            from diffusers import SD3Transformer2DModel
+        except Exception as e:
+            logger.error(
+                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
+            )
+        transformer = SD3Transformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
+    elif args.flux:
+        from diffusers.models import FluxTransformer2DModel
+
+        transformer = FluxTransformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
+    elif args.pixart_sigma:
+        from diffusers.models import PixArtTransformer2DModel
+
+        transformer = PixArtTransformer2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
+    elif args.smoldit:
+        logger.info("Loading SmolDiT model..")
+        if args.validation_noise_scheduler is None:
+            args.validation_noise_scheduler = "ddpm"
+        transformer_variant = None
+        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
+
+        if args.smoldit_config not in SmolDiTConfigurations:
+            raise ValueError(
+                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
+            )
+
+        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
+        if "lora" in args.model_type:
+            raise ValueError("SmolDiT does not yet support LoRA training.")
+    else:
+        logger.info("Loading U-net..")
+        unet_variant = args.variant
+        if (
+            args.kolors
+            and args.pretrained_model_name_or_path.lower()
+            == "kwai-kolors/kolors-diffusers"
+        ):
+            unet_variant = "fp16"
+        pretrained_load_args["variant"] = unet_variant
+        unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
+        )
+    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+
+    model_type_label = "SDXL"
+    if StateTracker.is_sdxl_refiner():
+        model_type_label = "SDXL Refiner"
+    if args.sd3:
+        model_type_label = "Stable Diffusion 3"
+    if args.pixart_sigma:
+        model_type_label = "PixArt Sigma"
+    if args.legacy:
+        model_type_label = "Stable Diffusion 1.x/2.x"
+    if "deepfloyd" in args.model_type:
+        model_type_label = "DeepFloyd-IF"
+    if args.kolors:
+        model_type_label = "Kwai Kolors"
+
+    enable_adamw_bf16 = True
+    if not disable_accelerator and is_quantized:
+        if args.base_model_default_dtype != "fp32":
+            logger.info(f"Moving model to {weight_dtype} precision")
+            if unet is not None:
+                unet.to("cpu", dtype=weight_dtype)
+            if transformer is not None:
+                transformer.to("cpu", dtype=weight_dtype)
+        else:
+            logger.info("Keeping some base model weights in fp32.")
+            enable_adamw_bf16 = False
+        if "quanto" in args.base_model_precision:
+            try:
+                from optimum.quanto import QTensor
+            except ImportError as e:
+                raise ImportError(
+                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+                )
+            from helpers.training.quantisation import quantoise
+
+            # we'll quantise pretty much everything but the adapter, if we execute this here.
+            quantoise(
+                unet=unet,
+                transformer=transformer,
+                text_encoder_1=text_encoder_1,
+                text_encoder_2=text_encoder_2,
+                text_encoder_3=text_encoder_3,
+                args=args,
+            )
+
+    if args.controlnet:
+        if any(
+            [
+                args.pixart_sigma,
+                args.sd3,
+                args.kolors,
+                StateTracker.is_sdxl_refiner(),
+                "deepfloyd" in args.model_type,
+            ]
+        ):
+            raise ValueError(
+                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
+            )
+        logger.info("Creating the controlnet..")
+        if args.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            controlnet = ControlNetModel.from_pretrained(
+                args.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from unet")
+            controlnet = ControlNetModel.from_unet(unet)
+    elif "lora" in args.model_type:
+        if args.pixart_sigma:
+            raise Exception(f"{model_type_label} does not support LoRA model training.")
+
+        logger.info(f"Using LoRA training mode (rank={args.lora_rank})")
+        if webhook_handler is not None:
+            webhook_handler.send(message="Using LoRA training mode.")
+        # now we will add new LoRA weights to the attention layers
+        # Set correct lora layers
+        if transformer is not None:
+            transformer.requires_grad_(False)
+        if unet is not None:
+            unet.requires_grad_(False)
+        lora_initialisation_style = True
+        if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
+            lora_initialisation_style = args.lora_init_method
+        lora_weight_init_type = (
+            "gaussian"
+            if torch.backends.mps.is_available()
+            else lora_initialisation_style
+        )
+        if args.use_dora:
+            logger.warning(
+                "DoRA support is experimental and not very thoroughly tested."
+            )
+            lora_weight_init_type = "gaussian"
+        if unet is not None:
+            unet_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                lora_dropout=args.lora_dropout,
+                init_lora_weights=lora_weight_init_type,
+                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                use_dora=args.use_dora,
+            )
+            logger.info("Adding LoRA adapter to the unet model..")
+            unet.add_adapter(unet_lora_config)
+        if transformer is not None:
+            target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
+            transformer_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=args.lora_alpha,
+                init_lora_weights=lora_weight_init_type,
+                target_modules=target_modules,
+                use_dora=args.use_dora,
+            )
+            transformer.add_adapter(transformer_lora_config)
+
+    logger.info(
+        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
+    )
+    if unet is not None:
+        if is_quantized:
+            unet.to(accelerator.device)
+        else:
+            unet.to(accelerator.device, dtype=weight_dtype)
+    if transformer is not None:
+        if is_quantized:
+            transformer.to(accelerator.device)
+        else:
+            transformer.to(accelerator.device, dtype=weight_dtype)
+    if args.enable_xformers_memory_efficient_attention and not any(
+        [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
+    ):
+        logger.info("Enabling xformers memory-efficient attention.")
+        if is_xformers_available():
+            import xformers  # type: ignore # noqa
+
+            if unet is not None:
+                unet.enable_xformers_memory_efficient_attention()
+            if transformer is not None:
+                transformer.enable_xformers_memory_efficient_attention()
+            if args.controlnet:
+                controlnet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
+    elif args.enable_xformers_memory_efficient_attention:
+        logger.warning(
+            "xformers is not enabled, as it is incompatible with this model type."
+        )
+
+    if args.controlnet:
+        # We freeze the base u-net for controlnet training.
+        if unet is not None:
+            unet.requires_grad_(False)
+        if transformer is not None:
+            transformer.requires_grad_(False)
+        controlnet.train()
+        controlnet.to(device=accelerator.device, dtype=weight_dtype)
+        if args.train_text_encoder:
+            logger.warning(
+                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
+            )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -1120,9 +1136,9 @@ def main():
         extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
         extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
     elif args.adam_bfloat16:
-        if is_quantised:
+        if is_quantized and not enable_adamw_bf16:
             logger.error(
-                f"Quantised models do not support bfloat16 optimizers. Reverting to AdamW. You may use other optimizers, such as Adafactor."
+                f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Reverting to AdamW. You may use other optimizers, such as Adafactor."
             )
             optimizer_class = torch.optim.AdamW
         else:
@@ -1359,6 +1375,7 @@ def main():
             unet = results[0]
         elif transformer is not None:
             transformer = results[0]
+
         if args.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
@@ -1538,7 +1555,17 @@ def main():
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = global_resume_step
             logger.info(f"Resuming from global_step {global_resume_step}.")
-
+            # if is_quantized:
+            #     if "quanto" in args.base_model_precision:
+            #         # if we loaded any adapters, we have to re-quantise those here.
+            #         quantoise(
+            #             unwrap_model(accelerator, unet),
+            #             unwrap_model(accelerator, transformer),
+            #             text_encoder_1=text_encoder_1 if args.train_text_encoder else None,
+            #             text_encoder_2=text_encoder_2 if args.train_text_encoder else None,
+            #             text_encoder_3=text_encoder_3 if args.train_text_encoder else None,
+            #             args=args
+            #         )
     # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
         if "sampler" in backend:
@@ -1564,7 +1591,16 @@ def main():
     #     lr_scheduler = get_lr_scheduler(
     #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     #     )
-
+    # if is_quantized:
+    #     if "quanto" in args.base_model_precision:
+    #         quantoise(
+    #             unwrap_model(accelerator, unet),
+    #             unwrap_model(accelerator, transformer),
+    #             text_encoder_1=None,
+    #             text_encoder_2=None,
+    #             text_encoder_3=None,
+    #             args=args
+    #         )
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
@@ -1989,7 +2025,12 @@ def main():
                             height=latents.shape[2],
                             width=latents.shape[3],
                         )
-                        guidance_scale = 3  # >>> ????? <<<
+                        if args.flux_guidance_mode == "constant":
+                            guidance_scale = float(args.flux_guidance_value)
+                        elif args.flux_guidance_mode == "random-range":
+                            guidance_scale = random.uniform(
+                                args.flux_guidance_min, args.flux_guidance_max
+                            )
                         transformer_config = None
                         if hasattr(transformer, "module"):
                             transformer_config = transformer.module.config
@@ -2023,22 +2064,21 @@ def main():
                             batch["prompt_embeds"].shape[1],
                             3,
                         ).to(device=accelerator.device, dtype=weight_dtype)
-
                         model_pred = transformer(
                             hidden_states=packed_noisy_latents.to(
-                                dtype=weight_dtype, device=accelerator.device
+                                dtype=transformer.dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                             timestep=timesteps,
                             guidance=guidance,
                             pooled_projections=batch["add_text_embeds"].to(
-                                device=accelerator.device, dtype=weight_dtype
+                                device=accelerator.device, dtype=transformer.dtype
                             ),
                             encoder_hidden_states=batch["prompt_embeds"].to(
-                                device=accelerator.device, dtype=weight_dtype
+                                device=accelerator.device, dtype=transformer.dtype
                             ),
                             txt_ids=text_ids.to(
-                                device=accelerator.device, dtype=weight_dtype
+                                device=accelerator.device, dtype=transformer.dtype
                             ),
                             img_ids=img_ids,
                             joint_attention_kwargs=None,
