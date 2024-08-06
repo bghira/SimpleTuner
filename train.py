@@ -720,17 +720,11 @@ def main():
             logger.info("Unloading text encoders, as they are not being trained.")
 
         if text_encoder_1 is not None:
-            text_encoder_1 = text_encoder_1.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
+            text_encoder_1 = text_encoder_1.to("cpu")
         if text_encoder_2 is not None:
-            text_encoder_2 = text_encoder_2.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
+            text_encoder_2 = text_encoder_2.to("cpu")
         if text_encoder_3 is not None:
-            text_encoder_3 = text_encoder_3.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
+            text_encoder_3 = text_encoder_3.to("cpu")
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
@@ -1453,7 +1447,7 @@ def main():
             )
             memory_before_unload = 0
 
-        vae = vae.to("cpu" if torch.backends.mps.is_available() else "meta")
+        vae = vae.to("cpu")
         del vae
         vae = None
 
