@@ -132,7 +132,9 @@ class SaveHookManager:
             self.denoiser_class = UNet2DConditionModel
             self.denoiser_subdir = "unet"
             self.pipeline_class = (
-                StableDiffusionXLPipeline if self.args.sdxl else StableDiffusionPipeline
+                StableDiffusionXLPipeline
+                if StateTracker.get_model_type() == "sdxl"
+                else StableDiffusionPipeline
             )
         elif self.transformer is not None:
             if args.sd3:
