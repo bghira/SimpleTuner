@@ -409,8 +409,6 @@ def main():
             * accelerator.num_processes
         )
 
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
     is_quantized = (
         False
         if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
@@ -540,10 +538,12 @@ def main():
                 subfolder=text_encoder_subfolder,
                 revision=args.revision,
                 variant=text_encoder_variant,
+                torch_dtype=weight_dtype,
             )
         elif args.smoldit:
             text_encoder_1 = text_encoder_cls_1.from_pretrained(
-                "EleutherAI/pile-t5-base"
+                "EleutherAI/pile-t5-base",
+                torch_dtype=weight_dtype,
             ).encoder
             text_encoder_1.eval()
 
@@ -558,6 +558,7 @@ def main():
                 args.pretrained_model_name_or_path,
                 subfolder="text_encoder_2",
                 revision=args.revision,
+                torch_dtype=weight_dtype,
                 variant=args.variant,
             )
         if tokenizer_3 is not None and args.sd3:
@@ -565,6 +566,7 @@ def main():
             text_encoder_3 = text_encoder_cls_3.from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="text_encoder_3",
+                torch_dtype=weight_dtype,
                 revision=args.revision,
                 variant=args.variant,
             )
@@ -720,17 +722,11 @@ def main():
             logger.info("Unloading text encoders, as they are not being trained.")
 
         if text_encoder_1 is not None:
-            text_encoder_1 = text_encoder_1.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
+            text_encoder_1 = text_encoder_1.to("cpu")
         if text_encoder_2 is not None:
-            text_encoder_2 = text_encoder_2.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
+            text_encoder_2 = text_encoder_2.to("cpu")
         if text_encoder_3 is not None:
-            text_encoder_3 = text_encoder_3.to(
-                "cpu" if torch.backends.mps.is_available() else "meta"
-            )
+            text_encoder_3 = text_encoder_3.to("cpu")
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
@@ -780,6 +776,7 @@ def main():
         transformer = FluxTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
+            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.pixart_sigma:
@@ -788,6 +785,7 @@ def main():
         transformer = PixArtTransformer2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
+            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.smoldit:
@@ -834,17 +832,27 @@ def main():
     if args.kolors:
         model_type_label = "Kwai Kolors"
 
-    enable_adamw_bf16 = True
+    enable_adamw_bf16 = True if weight_dtype == torch.bfloat16 else False
     if not disable_accelerator and is_quantized:
-        if args.base_model_default_dtype != "fp32":
-            logger.info(f"Moving model to {weight_dtype} precision")
-            if unet is not None:
-                unet.to("cpu", dtype=weight_dtype)
-            if transformer is not None:
-                transformer.to("cpu", dtype=weight_dtype)
-        else:
-            logger.info("Keeping some base model weights in fp32.")
+        if args.base_model_default_dtype == "fp32":
+            base_weight_dtype = torch.float32
             enable_adamw_bf16 = False
+        elif args.base_model_default_dtype == "bf16":
+            base_weight_dtype = torch.bfloat16
+            enable_adamw_bf16 = True
+        if unet is not None and unet.dtype != base_weight_dtype:
+            logger.info(
+                f"Moving U-net from {unet.dtype} to {base_weight_dtype} precision"
+            )
+            unet.to("cpu", dtype=base_weight_dtype)
+        elif transformer is not None and transformer.dtype != base_weight_dtype:
+            logger.info(
+                f"Moving transformer from {transformer.dtype} to {base_weight_dtype} precision"
+            )
+            transformer.to("cpu", dtype=base_weight_dtype)
+        else:
+            logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
+
         if "quanto" in args.base_model_precision:
             try:
                 from optimum.quanto import QTensor
@@ -933,54 +941,12 @@ def main():
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)
-
-    logger.info(
-        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
-    )
-    if unet is not None:
-        if is_quantized:
-            unet.to(accelerator.device)
-        else:
-            unet.to(accelerator.device, dtype=weight_dtype)
-    if transformer is not None:
-        if is_quantized:
-            transformer.to(accelerator.device)
-        else:
-            transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
-    ):
-        logger.info("Enabling xformers memory-efficient attention.")
-        if is_xformers_available():
-            import xformers  # type: ignore # noqa
-
-            if unet is not None:
-                unet.enable_xformers_memory_efficient_attention()
-            if transformer is not None:
-                transformer.enable_xformers_memory_efficient_attention()
-            if args.controlnet:
-                controlnet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError(
-                "xformers is not available. Make sure it is installed correctly"
-            )
-    elif args.enable_xformers_memory_efficient_attention:
-        logger.warning(
-            "xformers is not enabled, as it is incompatible with this model type."
-        )
-
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
         if unet is not None:
             unet.requires_grad_(False)
         if transformer is not None:
             transformer.requires_grad_(False)
-        controlnet.train()
-        controlnet.to(device=accelerator.device, dtype=weight_dtype)
-        if args.train_text_encoder:
-            logger.warning(
-                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
-            )
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -1453,7 +1419,7 @@ def main():
             )
             memory_before_unload = 0
 
-        vae = vae.to("cpu" if torch.backends.mps.is_available() else "meta")
+        vae = vae.to("cpu")
         del vae
         vae = None
 
@@ -1555,17 +1521,7 @@ def main():
             if hasattr(lr_scheduler, "last_step"):
                 lr_scheduler.last_step = global_resume_step
             logger.info(f"Resuming from global_step {global_resume_step}.")
-            # if is_quantized:
-            #     if "quanto" in args.base_model_precision:
-            #         # if we loaded any adapters, we have to re-quantise those here.
-            #         quantoise(
-            #             unwrap_model(accelerator, unet),
-            #             unwrap_model(accelerator, transformer),
-            #             text_encoder_1=text_encoder_1 if args.train_text_encoder else None,
-            #             text_encoder_2=text_encoder_2 if args.train_text_encoder else None,
-            #             text_encoder_3=text_encoder_3 if args.train_text_encoder else None,
-            #             args=args
-            #         )
+
     # Log the current state of each data backend.
     for _, backend in StateTracker.get_data_backends().items():
         if "sampler" in backend:
@@ -1591,16 +1547,7 @@ def main():
     #     lr_scheduler = get_lr_scheduler(
     #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     #     )
-    # if is_quantized:
-    #     if "quanto" in args.base_model_precision:
-    #         quantoise(
-    #             unwrap_model(accelerator, unet),
-    #             unwrap_model(accelerator, transformer),
-    #             text_encoder_1=None,
-    #             text_encoder_2=None,
-    #             text_encoder_3=None,
-    #             args=args
-    #         )
+
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
@@ -1624,6 +1571,50 @@ def main():
                 }
             },
         )
+
+    logger.info(
+        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
+    )
+    if unet is not None:
+        if is_quantized:
+            unet.to(accelerator.device)
+        else:
+            unet.to(accelerator.device, dtype=weight_dtype)
+    if transformer is not None:
+        if is_quantized:
+            transformer.to(accelerator.device)
+        else:
+            transformer.to(accelerator.device, dtype=weight_dtype)
+    if args.enable_xformers_memory_efficient_attention and not any(
+        [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
+    ):
+        logger.info("Enabling xformers memory-efficient attention.")
+        if is_xformers_available():
+            import xformers  # type: ignore # noqa
+
+            if unet is not None:
+                unet.enable_xformers_memory_efficient_attention()
+            if transformer is not None:
+                transformer.enable_xformers_memory_efficient_attention()
+            if args.controlnet:
+                controlnet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
+    elif args.enable_xformers_memory_efficient_attention:
+        logger.warning(
+            "xformers is not enabled, as it is incompatible with this model type."
+        )
+
+    if args.controlnet:
+        controlnet.train()
+        controlnet.to(device=accelerator.device, dtype=weight_dtype)
+        if args.train_text_encoder:
+            logger.warning(
+                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
+            )
+
     initial_msg = "\n***** Running training *****"
     total_num_batches = sum(
         [

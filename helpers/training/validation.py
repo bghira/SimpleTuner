@@ -1004,8 +1004,16 @@ class Validation:
                     )
                     extra_pipeline_kwargs["tokenizer_3"] = self.tokenizer_3
 
-            if self.vae is None:
+            if self.vae is None or not hasattr(self.vae, "device"):
                 extra_pipeline_kwargs["vae"] = self.init_vae()
+            if (
+                "vae" in extra_pipeline_kwargs
+                and extra_pipeline_kwargs.get("vae") is not None
+                and extra_pipeline_kwargs["vae"].device != self.accelerator.device
+            ):
+                extra_pipeline_kwargs["vae"] = extra_pipeline_kwargs["vae"].to(
+                    self.accelerator.device
+                )
 
             pipeline_kwargs = {
                 "pretrained_model_name_or_path": self.args.pretrained_model_name_or_path,
