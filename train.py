@@ -140,7 +140,7 @@ def import_model_class_from_model_name_or_path(
 
         return UMT5EncoderModel
     elif model_class == "ChatGLMModel":
-         from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
+        from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 
         return ChatGLMModel
     else:
