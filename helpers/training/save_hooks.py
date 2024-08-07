@@ -119,7 +119,7 @@ class SaveHookManager:
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
         self.ema_model_cls = None
         self.ema_model_subdir = None
-        
+
         if unet is not None:
             self.ema_model_subdir = "unet_ema"
             self.ema_model_cls = UNet2DConditionModel
@@ -135,13 +135,13 @@ class SaveHookManager:
             self.pipeline_class = PIPELINE_MAPPING["sd3"]
         elif self.args.legacy:
             self.pipeline_class = PIPELINE_MAPPING["legacy"]
-        elif self.flux:
+        elif self.args.flux:
             self.pipeline_class = PIPELINE_MAPPING["flux"]
         else:
             self.pipeline_class = PIPELINE_MAPPING["sdxl"]
-        
+
         logger.info(f"Pipeline class set to: {self.pipeline_class.__name__}.")
-            
+
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
@@ -298,15 +298,13 @@ class SaveHookManager:
         else:
             key_to_replace = "unet"
             lora_state_dict, _ = self.pipeline_class.lora_state_dict(input_dir)
-        
+
         denoiser_state_dict = {
             f'{k.replace(f"{key_to_replace}.", "")}': v
             for k, v in lora_state_dict.items()
             if k.startswith(f"{key_to_replace}.")
         }
-        denoiser_state_dict = convert_unet_state_dict_to_peft(
-            denoiser_state_dict
-        )
+        denoiser_state_dict = convert_unet_state_dict_to_peft(denoiser_state_dict)
         incompatible_keys = set_peft_model_state_dict(
             denoiser, denoiser_state_dict, adapter_name="default"
         )
@@ -333,7 +331,7 @@ class SaveHookManager:
                 prefix="text_encoder_2.",
                 text_encoder=text_encoder_two_,
             )
-            
+
         logger.info("Completed loading LoRA weights.")
 
     def _load_full_model(self, models, input_dir):
@@ -372,10 +370,7 @@ class SaveHookManager:
                             logger.info(
                                 "Unloading text encoders for full SD3 training without --train_text_encoder"
                             )
-                            (
-                                self.text_encoder_1,
-                                self.text_encoder_2
-                            ) = (None, None)
+                            (self.text_encoder_1, self.text_encoder_2) = (None, None)
                         load_model = SD3Transformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
