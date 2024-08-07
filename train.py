@@ -409,8 +409,6 @@ def main():
             * accelerator.num_processes
         )
 
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
     is_quantized = (
         False
         if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
