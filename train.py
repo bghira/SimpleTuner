@@ -140,7 +140,7 @@ def import_model_class_from_model_name_or_path(
 
         return UMT5EncoderModel
     elif model_class == "ChatGLMModel":
-        from diffusers import ChatGLMModel
+         from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 
         return ChatGLMModel
     else:
@@ -170,7 +170,7 @@ def get_tokenizers(args):
             tokenizer_cls = T5Tokenizer
             is_t5_model = True
         elif args.kolors:
-            from diffusers import ChatGLMTokenizer
+            from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
             tokenizer_cls = ChatGLMTokenizer
             tokenizer_1 = tokenizer_cls.from_pretrained(
@@ -435,7 +435,7 @@ def main():
     tokenizers = []
     if args.kolors:
         logger.info("Loading Kolors ChatGLM language model..")
-        text_encoder_path = "kwai-kolors/kolors-diffusers"
+        text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     elif args.smoldit:
         text_encoder_path = "EleutherAI/pile-t5-base"
