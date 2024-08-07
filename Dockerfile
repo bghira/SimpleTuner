@@ -1,5 +1,5 @@
 # SimpleTuner needs CU141
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM 12.4.1-cudnn-devel-ubuntu22.04
 
 # /workspace is the default volume for Runpod & other hosts
 WORKDIR /workspace
@@ -41,9 +41,6 @@ RUN apt-get install -y python3.10-venv
 
 # Ensure SSH access. Not needed for Runpod but is required on Vast and other Docker hosts
 EXPOSE 22/tcp
-
-# CUDNN9
-RUN libcudnn9 libcudnn9-dev
 
 # Python
 RUN apt-get update -y && apt-get install -y python3 python3-pip
