@@ -324,15 +324,13 @@ class SaveHookManager:
         else:
             key_to_replace = "unet"
             lora_state_dict, _ = self.pipeline_class.lora_state_dict(input_dir)
-        
+
         denoiser_state_dict = {
             f'{k.replace(f"{key_to_replace}.", "")}': v
             for k, v in lora_state_dict.items()
             if k.startswith(f"{key_to_replace}.")
         }
-        denoiser_state_dict = convert_unet_state_dict_to_peft(
-            denoiser_state_dict
-        )
+        denoiser_state_dict = convert_unet_state_dict_to_peft(denoiser_state_dict)
         incompatible_keys = set_peft_model_state_dict(
             denoiser, denoiser_state_dict, adapter_name="default"
         )
@@ -359,7 +357,7 @@ class SaveHookManager:
                 prefix="text_encoder_2.",
                 text_encoder=text_encoder_two_,
             )
-            
+
         logger.info("Completed loading LoRA weights.")
 
     def _load_full_model(self, models, input_dir):

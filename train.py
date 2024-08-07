@@ -140,7 +140,7 @@ def import_model_class_from_model_name_or_path(
 
         return UMT5EncoderModel
     elif model_class == "ChatGLMModel":
-        from diffusers import ChatGLMModel
+        from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 
         return ChatGLMModel
     else:
@@ -170,7 +170,7 @@ def get_tokenizers(args):
             tokenizer_cls = T5Tokenizer
             is_t5_model = True
         elif args.kolors:
-            from diffusers import ChatGLMTokenizer
+            from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
             tokenizer_cls = ChatGLMTokenizer
             tokenizer_1 = tokenizer_cls.from_pretrained(
@@ -435,7 +435,7 @@ def main():
     tokenizers = []
     if args.kolors:
         logger.info("Loading Kolors ChatGLM language model..")
-        text_encoder_path = "kwai-kolors/kolors-diffusers"
+        text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     elif args.smoldit:
         text_encoder_path = "EleutherAI/pile-t5-base"
@@ -618,32 +618,27 @@ def main():
             message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
 
-    # The VAE is in bfloat16 to avoid NaN losses.
-    vae_dtype = torch.bfloat16
-    if hasattr(args, "vae_dtype"):
+    if vae is not None:
+        # The VAE is in bfloat16 to avoid NaN losses.
+        vae_dtype = torch.bfloat16
+        if hasattr(args, "vae_dtype"):
+            # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+            if args.vae_dtype == "bf16":
+                vae_dtype = torch.bfloat16
+            elif args.vae_dtype == "fp16":
+                raise ValueError(
+                    "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
+                )
+            elif args.vae_dtype == "fp32":
+                vae_dtype = torch.float32
+            elif args.vae_dtype == "none" or args.vae_dtype == "default":
+                vae_dtype = torch.bfloat16
         logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
+            f"Loading VAE onto accelerator, converting from {vae.dtype} to {vae_dtype}"
         )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            raise ValueError(
-                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-            )
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.bfloat16
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    StateTracker.set_vae_dtype(vae_dtype)
+        StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    logger.info("Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
@@ -1306,7 +1301,6 @@ def main():
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
-        text_encoder_3=text_encoder_3,
         use_deepspeed_optimizer=use_deepspeed_optimizer,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
