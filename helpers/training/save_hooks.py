@@ -10,6 +10,7 @@ from peft.utils import get_peft_model_state_dict
 
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
+from helpers.models.smoldit import SmolDiT2DModel, SmolDiTPipeline
 import os
 import logging
 import shutil
@@ -28,6 +29,9 @@ try:
         SD3Transformer2DModel,
         StableDiffusionPipeline,
         FluxPipeline,
+        PixArtSigmaPipeline,
+        ControlNetModel,
+        HunyuanDiTPipeline
     )
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
@@ -41,20 +45,20 @@ except Exception as e:
     raise e
 
 try:
+    from diffusers.models import FluxTransformer2DModel
+except Exception as e:
+    logger.error(
+        f"Can not load FluxTransformer2DModel model class. This release requires the latest version of Diffusers: {e}"
+    )
+    raise e
+
+try:
     from diffusers.models import HunyuanDiT2DModel
 except Exception as e:
     logger.error(
         f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
     )
     raise e
-
-
-PIPELINE_MAPPING = {
-    "flux": FluxPipeline,
-    "sd3": StableDiffusion3Pipeline,
-    "legacy": StableDiffusionPipeline,
-    "sdxl": StableDiffusionXLPipeline,
-}
 
 
 def merge_safetensors_files(directory):
@@ -109,6 +113,9 @@ class SaveHookManager:
         accelerator,
         use_deepspeed_optimizer,
     ):
+        if self.unet is not  None and self.transformer is not None:
+            raise ValueError("Both `unet` and `transformer` cannot be set.")
+        
         self.args = args
         self.unet = unet
         self.transformer = transformer
@@ -117,9 +124,40 @@ class SaveHookManager:
         self.ema_model = ema_model
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
+
+        self.denoiser_class = None
+        self.denoiser_subdir = None
+        self.pipeline_class = None
+        if self.unet is not None:
+            self.denoiser_class = UNet2DConditionModel
+            self.denoiser_subdir = "unet"
+            self.pipeline_class = StableDiffusionXLPipeline if self.args.sdxl else StableDiffusionPipeline
+        elif self.transformer is not None:
+            if args.sd3:
+                self.denoiser_class = SD3Transformer2DModel
+                self.pipeline_class = StableDiffusion3Pipeline
+            elif args.flux:
+                self.denoiser_class = FluxTransformer2DModel 
+                self.pipeline_class = FluxPipeline
+            elif args.hunyuan_dit:
+                self.denoiser_class = HunyuanDiT2DModel
+                self.pipeline_class = HunyuanDiTPipeline
+            elif args.pixart:
+                self.denoiser_class = PixArtTransformer2DModel
+                self.pipeline_class = PixArtSigmaPipeline
+            elif args.smoldit:
+                self.denoiser_class = SmolDiT2DModel
+                self.pipeline_class = SmolDiTPipeline
+            self.denoiser_subdir = "transformer"
+        
+        if args.controlnet is not None:
+            self.denoiser_class = ControlNetModel
+            self.denoiser_subdir = "controlnet"
+        logger.info(f"Denoiser class set to: {self.denoiser_class.__name__}.")
+        logger.info(f"Pipeline class set to: {self.pipeline_class.__name__}.")
+        
         self.ema_model_cls = None
         self.ema_model_subdir = None
-
         if unet is not None:
             self.ema_model_subdir = "unet_ema"
             self.ema_model_cls = UNet2DConditionModel
@@ -129,19 +167,7 @@ class SaveHookManager:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
-
-        self.pipeline_class = None
-        if self.args.sd3:
-            self.pipeline_class = PIPELINE_MAPPING["sd3"]
-        elif self.args.legacy:
-            self.pipeline_class = PIPELINE_MAPPING["legacy"]
-        elif self.args.flux:
-            self.pipeline_class = PIPELINE_MAPPING["flux"]
-        else:
-            self.pipeline_class = PIPELINE_MAPPING["sdxl"]
-
-        logger.info(f"Pipeline class set to: {self.pipeline_class.__name__}.")
-
+            
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
@@ -350,52 +376,22 @@ class SaveHookManager:
                     model = models.pop()
 
                     # load diffusers style into model
-                    if self.args.controlnet:
-                        from diffusers import ControlNetModel
-
-                        merge_safetensors_files(os.path.join(input_dir, "controlnet"))
-                        load_model = ControlNetModel.from_pretrained(
-                            input_dir, subfolder="controlnet"
+                    if self.args.controlnet or self.args.unet:
+                        merge_safetensors_files(os.path.join(input_dir, self.denoiser_subdir))
+                    
+                    load_model = self.denoiser_class.from_pretrained(
+                        input_dir, subfolder=self.denoiser_subdir
+                    )
+                    if self.args.sd3 and not self.args.train_text_encoder:
+                        logger.info(
+                            "Unloading text encoders for full SD3 training without --train_text_encoder"
                         )
-                    elif self.args.sd3:
-                        # Load a stable diffusion 3 checkpoint
-                        try:
-                            from diffusers import SD3Transformer2DModel
-                        except Exception as e:
-                            logger.error(
-                                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-                            )
-                            raise e
-                        if not self.args.train_text_encoder:
-                            logger.info(
-                                "Unloading text encoders for full SD3 training without --train_text_encoder"
-                            )
-                            (self.text_encoder_1, self.text_encoder_2) = (None, None)
-                        load_model = SD3Transformer2DModel.from_pretrained(
-                            input_dir, subfolder="transformer"
-                        )
-                    elif self.args.pixart_sigma:
-                        # load pixart sigma checkpoint
-                        load_model = PixArtTransformer2DModel.from_pretrained(
-                            input_dir, subfolder="transformer"
-                        )
-                    elif hasattr(self.args, "hunyuan_dit") and self.args.hunyuan_dit:
-                        load_model = HunyuanDiT2DModel.from_pretrained(
-                            input_dir, subfolder="transformer"
-                        )
-                    elif self.args.smoldit:
-                        from helpers.models.smoldit import SmolDiT2DModel
-
-                        load_model = SmolDiT2DModel.from_pretrained(
-                            input_dir, subfolder="transformer"
-                        )
-                    elif self.unet is not None:
-                        merge_safetensors_files(os.path.join(input_dir, "unet"))
-                        load_model = UNet2DConditionModel.from_pretrained(
-                            input_dir, subfolder="unet"
-                        )
+                        (
+                            self.text_encoder_1,
+                            self.text_encoder_2
+                        ) = (None, None)
+                        
                     model.register_to_config(**load_model.config)
-
                     model.load_state_dict(load_model.state_dict())
                     del load_model
                 except Exception as e:
