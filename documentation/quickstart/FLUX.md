@@ -25,7 +25,7 @@ python --version
 Clone the SimpleTuner repository and set up the python venv:
 
 ```bash
-git clone --branch=main https://github.com/bghira/SimpleTuner.git
+git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
@@ -36,7 +36,7 @@ source .venv/bin/activate
 pip install -U poetry pip
 ```
 
-**Note:** We're currently relying on the `main` branch here, but after the next release, we'll use the `release` branch instead.
+**Note:** We're currently relying on the `release` branch here, but the `main` branch contains experimental features that might have better results or lower memory use.
 
 Depending on your system, you will run one of 3 commands:
 
