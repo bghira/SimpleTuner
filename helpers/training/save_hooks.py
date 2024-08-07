@@ -31,7 +31,7 @@ try:
         FluxPipeline,
         PixArtSigmaPipeline,
         ControlNetModel,
-        HunyuanDiTPipeline
+        HunyuanDiTPipeline,
     )
 except ImportError:
     logger.error("This release requires the latest version of Diffusers.")
@@ -113,12 +113,12 @@ class SaveHookManager:
         accelerator,
         use_deepspeed_optimizer,
     ):
-        if self.unet is not  None and self.transformer is not None:
-            raise ValueError("Both `unet` and `transformer` cannot be set.")
-        
+
         self.args = args
         self.unet = unet
         self.transformer = transformer
+        if self.unet is not None and self.transformer is not None:
+            raise ValueError("Both `unet` and `transformer` cannot be set.")
         self.text_encoder_1 = text_encoder_1
         self.text_encoder_2 = text_encoder_2
         self.ema_model = ema_model
@@ -131,13 +131,15 @@ class SaveHookManager:
         if self.unet is not None:
             self.denoiser_class = UNet2DConditionModel
             self.denoiser_subdir = "unet"
-            self.pipeline_class = StableDiffusionXLPipeline if self.args.sdxl else StableDiffusionPipeline
+            self.pipeline_class = (
+                StableDiffusionXLPipeline if self.args.sdxl else StableDiffusionPipeline
+            )
         elif self.transformer is not None:
             if args.sd3:
                 self.denoiser_class = SD3Transformer2DModel
                 self.pipeline_class = StableDiffusion3Pipeline
             elif args.flux:
-                self.denoiser_class = FluxTransformer2DModel 
+                self.denoiser_class = FluxTransformer2DModel
                 self.pipeline_class = FluxPipeline
             elif args.hunyuan_dit:
                 self.denoiser_class = HunyuanDiT2DModel
@@ -149,13 +151,13 @@ class SaveHookManager:
                 self.denoiser_class = SmolDiT2DModel
                 self.pipeline_class = SmolDiTPipeline
             self.denoiser_subdir = "transformer"
-        
+
         if args.controlnet is not None:
             self.denoiser_class = ControlNetModel
             self.denoiser_subdir = "controlnet"
         logger.info(f"Denoiser class set to: {self.denoiser_class.__name__}.")
         logger.info(f"Pipeline class set to: {self.pipeline_class.__name__}.")
-        
+
         self.ema_model_cls = None
         self.ema_model_subdir = None
         if unet is not None:
@@ -167,7 +169,7 @@ class SaveHookManager:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
-            
+
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
@@ -377,8 +379,10 @@ class SaveHookManager:
 
                     # load diffusers style into model
                     if self.args.controlnet or self.args.unet:
-                        merge_safetensors_files(os.path.join(input_dir, self.denoiser_subdir))
-                    
+                        merge_safetensors_files(
+                            os.path.join(input_dir, self.denoiser_subdir)
+                        )
+
                     load_model = self.denoiser_class.from_pretrained(
                         input_dir, subfolder=self.denoiser_subdir
                     )
@@ -386,11 +390,8 @@ class SaveHookManager:
                         logger.info(
                             "Unloading text encoders for full SD3 training without --train_text_encoder"
                         )
-                        (
-                            self.text_encoder_1,
-                            self.text_encoder_2
-                        ) = (None, None)
-                        
+                        (self.text_encoder_1, self.text_encoder_2) = (None, None)
+
                     model.register_to_config(**load_model.config)
                     model.load_state_dict(load_model.state_dict())
                     del load_model
