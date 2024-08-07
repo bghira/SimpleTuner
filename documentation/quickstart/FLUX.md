@@ -109,10 +109,14 @@ export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
 
-# When you're quantising the model, we're not in pure bf16 anymore.
-# Since adamw_bf16 will never work with this setup, select another optimiser.
-# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
-export OPTIMIZER="adafactor" # or maybe prodigy
+# When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
+# If you'd like to use another optimizer, you can override this with --base_model_default_dtype=fp32.
+# option one:
+export OPTIMIZER="adamw_bf16" # or maybe prodigy
+# option two:
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
+#export OPTIMIZER="adafactor" # or maybe prodigy
+
 ```
 
 
