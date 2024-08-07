@@ -8,7 +8,6 @@ from diffusers.utils import (
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 
-from diffusers import UNet2DConditionModel
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
 import os
@@ -24,6 +23,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
     from diffusers import (
+        UNet2DConditionModel,
         StableDiffusion3Pipeline,
         SD3Transformer2DModel,
         StableDiffusionPipeline,
@@ -47,6 +47,14 @@ except Exception as e:
         f"Can not load Hunyuan DiT model class. This release requires the latest version of Diffusers: {e}"
     )
     raise e
+
+
+PIPELINE_MAPPING = {
+    "flux": FluxPipeline,
+    "sd3": StableDiffusion3Pipeline,
+    "legacy": StableDiffusionPipeline,
+    "sdxl": StableDiffusionXLPipeline,
+}
 
 
 def merge_safetensors_files(directory):
@@ -98,7 +106,6 @@ class SaveHookManager:
         ema_model,
         text_encoder_1,
         text_encoder_2,
-        text_encoder_3,
         accelerator,
         use_deepspeed_optimizer,
     ):
@@ -107,12 +114,12 @@ class SaveHookManager:
         self.transformer = transformer
         self.text_encoder_1 = text_encoder_1
         self.text_encoder_2 = text_encoder_2
-        self.text_encoder_3 = text_encoder_3
         self.ema_model = ema_model
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
         self.ema_model_cls = None
         self.ema_model_subdir = None
+        
         if unet is not None:
             self.ema_model_subdir = "unet_ema"
             self.ema_model_cls = UNet2DConditionModel
@@ -123,6 +130,18 @@ class SaveHookManager:
             elif self.args.pixart_sigma:
                 self.ema_model_cls = PixArtTransformer2DModel
 
+        self.pipeline_class = None
+        if self.args.sd3:
+            self.pipeline_class = PIPELINE_MAPPING["sd3"]
+        elif self.args.legacy:
+            self.pipeline_class = PIPELINE_MAPPING["legacy"]
+        elif self.flux:
+            self.pipeline_class = PIPELINE_MAPPING["flux"]
+        else:
+            self.pipeline_class = PIPELINE_MAPPING["sdxl"]
+        
+        logger.info(f"Pipeline class set to: {self.pipeline_class.__name__}.")
+            
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
@@ -150,12 +169,6 @@ class SaveHookManager:
                 text_encoder_2_lora_layers_to_save = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(model)
                 )
-            # elif isinstance(
-            #     model, type(unwrap_model(self.accelerator, self.text_encoder_3))
-            # ):
-            #     text_encoder_3_lora_layers_to_save = convert_state_dict_to_diffusers(
-            #         get_peft_model_state_dict(model)
-            #     )
 
             elif not isinstance(
                 model, type(unwrap_model(self.accelerator, HunyuanDiT2DModel))
@@ -173,29 +186,27 @@ class SaveHookManager:
                 weights.pop()
 
         if self.args.flux:
-            FluxPipeline.save_lora_weights(
+            self.pipeline_class.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
         elif self.args.sd3:
-            StableDiffusion3Pipeline.save_lora_weights(
+            self.pipeline_class.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
-                # SD3 doesn't support text encoder training.
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
                 text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
-                # text_encoder_3_lora_layers_to_save=text_encoder_3_lora_layers_to_save,
             )
         elif self.args.legacy:
-            StableDiffusionPipeline.save_lora_weights(
+            self.pipeline_class.save_lora_weights(
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
                 transformer_lora_layers=transformer_lora_layers_to_save,
             )
         else:
-            StableDiffusionXLPipeline.save_lora_weights(
+            self.pipeline_class.save_lora_weights(
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
@@ -255,19 +266,21 @@ class SaveHookManager:
         logger.info(f"Loading LoRA weights from Path: {input_dir}")
         unet_ = None
         transformer_ = None
+        denoiser = None
         text_encoder_one_ = None
         text_encoder_two_ = None
-        text_encoder_three_ = None
 
         while len(models) > 0:
             model = models.pop()
 
             if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
                 unet_ = model
+                denoiser = unet_
             elif isinstance(
                 model, type(unwrap_model(self.accelerator, self.transformer))
             ):
                 transformer_ = model
+                denoiser = transformer_
             elif isinstance(
                 model, type(unwrap_model(self.accelerator, self.text_encoder_1))
             ):
@@ -276,42 +289,28 @@ class SaveHookManager:
                 model, type(unwrap_model(self.accelerator, self.text_encoder_2))
             ):
                 text_encoder_two_ = model
-            elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.text_encoder_3))
-            ):
-                text_encoder_three_ = model
             else:
                 raise ValueError(f"unexpected save model: {model.__class__}")
 
         if self.args.sd3 or self.args.flux:
-            if self.args.sd3:
-                lora_state_dict = StableDiffusion3Pipeline.lora_state_dict(input_dir)
-            elif self.args.flux:
-                lora_state_dict = FluxPipeline.lora_state_dict(input_dir)
-            transformer_state_dict = {
-                f'{k.replace("transformer.", "")}': v
-                for k, v in lora_state_dict.items()
-                if k.startswith("unet.")
-            }
-            transformer_state_dict = convert_unet_state_dict_to_peft(
-                transformer_state_dict
-            )
-            incompatible_keys = set_peft_model_state_dict(
-                transformer_, transformer_state_dict, adapter_name="default"
-            )
-
+            key_to_replace = "transformer"
+            lora_state_dict = self.pipeline_class.lora_state_dict(input_dir)
         else:
-            lora_state_dict, network_alphas = LoraLoaderMixin.lora_state_dict(input_dir)
+            key_to_replace = "unet"
+            lora_state_dict, _ = self.pipeline_class.lora_state_dict(input_dir)
+        
+        denoiser_state_dict = {
+            f'{k.replace(f"{key_to_replace}.", "")}': v
+            for k, v in lora_state_dict.items()
+            if k.startswith(f"{key_to_replace}.")
+        }
+        denoiser_state_dict = convert_unet_state_dict_to_peft(
+            denoiser_state_dict
+        )
+        incompatible_keys = set_peft_model_state_dict(
+            denoiser, denoiser_state_dict, adapter_name="default"
+        )
 
-            unet_state_dict = {
-                f'{k.replace("unet.", "")}': v
-                for k, v in lora_state_dict.items()
-                if k.startswith("unet.")
-            }
-            unet_state_dict = convert_unet_state_dict_to_peft(unet_state_dict)
-            incompatible_keys = set_peft_model_state_dict(
-                unet_ or self.unet, unet_state_dict, adapter_name="default"
-            )
         if incompatible_keys is not None:
             # check only for unexpected keys
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
@@ -334,12 +333,7 @@ class SaveHookManager:
                 prefix="text_encoder_2.",
                 text_encoder=text_encoder_two_,
             )
-            if self.args.sd3:
-                _set_state_dict_into_text_encoder(
-                    lora_state_dict,
-                    prefix="text_encoder_3.",
-                    text_encoder=text_encoder_three_,
-                )
+            
         logger.info("Completed loading LoRA weights.")
 
     def _load_full_model(self, models, input_dir):
@@ -380,9 +374,8 @@ class SaveHookManager:
                             )
                             (
                                 self.text_encoder_1,
-                                self.text_encoder_2,
-                                self.text_encoder_3,
-                            ) = (None, None, None)
+                                self.text_encoder_2
+                            ) = (None, None)
                         load_model = SD3Transformer2DModel.from_pretrained(
                             input_dir, subfolder="transformer"
                         )
