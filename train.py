@@ -618,32 +618,27 @@ def main():
             message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
 
-    # The VAE is in bfloat16 to avoid NaN losses.
-    vae_dtype = torch.bfloat16
-    if hasattr(args, "vae_dtype"):
+    if vae is not None:
+        # The VAE is in bfloat16 to avoid NaN losses.
+        vae_dtype = torch.bfloat16
+        if hasattr(args, "vae_dtype"):
+            # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+            if args.vae_dtype == "bf16":
+                vae_dtype = torch.bfloat16
+            elif args.vae_dtype == "fp16":
+                raise ValueError(
+                    "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
+                )
+            elif args.vae_dtype == "fp32":
+                vae_dtype = torch.float32
+            elif args.vae_dtype == "none" or args.vae_dtype == "default":
+                vae_dtype = torch.bfloat16
         logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
+            f"Loading VAE onto accelerator, converting from {vae.dtype} to {vae_dtype}"
         )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            raise ValueError(
-                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-            )
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.bfloat16
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    StateTracker.set_vae_dtype(vae_dtype)
+        StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    logger.info("Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
