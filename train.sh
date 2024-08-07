@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
+
 # Pull the default config.
 [ -f "config/config.env.example" ] && source config/config.env.example
 # Pull config from config.env
 [ -f "config/config.env" ] && source config/config.env
+
+# If the user has not provided VENV_PATH, we will assume $(pwd)/.venv
+if [ -z "${VENV_PATH}" ]; then
+    export VENV_PATH="$(pwd)/.venv"
+fi
+if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
+    export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)"
+    # if it's not empty, we will add it to LD_LIBRARY_PATH at the front:
+    if [ -n "${NVJITLINK_PATH}" ]; then
+        export LD_LIBRARY_PATH="${NVJITLINK_PATH}:${LD_LIBRARY_PATH}"
+    fi
+    echo $NVJITLINK_PATH
+fi
 
 export PLATFORM
 PLATFORM=$(uname -s)
