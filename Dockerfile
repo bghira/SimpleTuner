@@ -43,7 +43,7 @@ RUN apt-get install -y python3.10-venv
 EXPOSE 22/tcp
 
 # CUDNN9
-RUN cudnn9-cuda-12 libcudnn9 libcudnn9-dev
+RUN libcudnn9 libcudnn9-dev
 
 # Python
 RUN apt-get update -y && apt-get install -y python3 python3-pip
