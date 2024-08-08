@@ -2,6 +2,22 @@ import torch
 from helpers.models.flux.pipeline import FluxPipeline
 
 
+def update_flux_schedule_to_fast(args, noise_scheduler_to_copy):
+    if args.flux_fast_schedule:
+        # 4-step noise schedule [0.7, 0.1, 0.1, 0.1] from SD3-Turbo paper
+        print(f"sigmas before: {noise_scheduler_copy.sigmas}")
+        for i in range(0, 250):
+            noise_scheduler_copy.sigmas[i] = 1.0
+        for i in range(250, 500):
+            noise_scheduler_copy.sigmas[i] = 0.3
+        for i in range(500, 750):
+            noise_scheduler_copy.sigmas[i] = 0.2
+        for i in range(750, 1000):
+            noise_scheduler_copy.sigmas[i] = 0.1
+        print(f"sigmas after: {noise_scheduler_copy.sigmas}")
+    return noise_scheduler_to_copy
+
+
 def pack_latents(latents, batch_size, num_channels_latents, height, width):
     latents = latents.view(
         batch_size, num_channels_latents, height // 2, 2, width // 2, 2

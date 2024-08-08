@@ -272,6 +272,12 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.flux:
         StateTracker.set_model_type("flux")
+        from helpers.models.flux import (
+            prepare_latent_image_ids,
+            pack_latents,
+            unpack_latents,
+            update_flux_schedule_to_fast,
+        )
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
     if args.legacy:
@@ -486,7 +492,11 @@ def main():
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="scheduler"
         )
-        noise_scheduler_copy = copy.deepcopy(noise_scheduler)
+        noise_scheduler_copy = copy.deepcopy(
+            update_flux_schedule_to_fast(
+                args=args, noise_scheduler_to_copy=noise_scheduler
+            )
+        )
 
     else:
         if args.legacy:
@@ -1854,6 +1864,17 @@ def main():
                         )
                     else:
                         u = torch.rand(size=(bsz,), device="cpu")
+                    if args.flux_fast_schedule:
+                        # We need to train only timesteps [1, 0.75, 0.5, 0.25] based on SD3-Turbo paper
+                        quarter_step = int(
+                            noise_scheduler_copy.config.num_train_timesteps / 4
+                        )
+                        indices = ((u * 4).long() + 1) * quarter_step - 1
+                        # indices = (u * 4).long() * quarter_step - 1
+                    else:
+                        indices = (
+                            u * noise_scheduler_copy.config.num_train_timesteps
+                        ).long()
 
                     indices = (
                         u * noise_scheduler_copy.config.num_train_timesteps
@@ -2008,12 +2029,6 @@ def main():
                             )
                     elif args.flux:
                         # handle guidance
-                        from helpers.models.flux import (
-                            prepare_latent_image_ids,
-                            pack_latents,
-                            unpack_latents,
-                        )
-
                         packed_noisy_latents = pack_latents(
                             noisy_latents,
                             batch_size=latents.shape[0],

@@ -118,6 +118,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--flux_fast_schedule",
+        action="store_true",
+        help=(
+            "An experimental feature to train Flux.1S using a noise schedule closer to what it was trained with,"
+            " which has improved results in short experiments. Thanks to @mhirki for the contribution."
+        ),
+    )
+    parser.add_argument(
         "--flux_guidance_mode",
         type=str,
         choices=["constant", "random-range"],
