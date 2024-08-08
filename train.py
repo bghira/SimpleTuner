@@ -1080,7 +1080,7 @@ def main():
     if use_deepspeed_optimizer:
         logger.info("Using DeepSpeed optimizer.")
         optimizer_class = accelerate.utils.DummyOptim
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
@@ -1099,7 +1099,7 @@ def main():
             logger.warn(
                 "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
             )
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["beta3"] = args.prodigy_beta3
         extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
@@ -1120,7 +1120,7 @@ def main():
 
             optimizer_class = adam_bfloat16.AdamWBF16
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -1132,7 +1132,7 @@ def main():
 
         optimizer_class = bnb.optim.AdamW8bit
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
     elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
         logger.info("Using D-Adaptation optimizer.")
         try:
@@ -1154,7 +1154,7 @@ def main():
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
             extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["lr"] = float(args.learning_rate)
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         logger.info("Using Adafactor optimizer.")
@@ -1174,7 +1174,7 @@ def main():
             extra_optimizer_args["scale_parameter"] = False
             extra_optimizer_args["warmup_init"] = True
         else:
-            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["lr"] = float(args.learning_rate)
             extra_optimizer_args["relative_step"] = False
             extra_optimizer_args["scale_parameter"] = False
             extra_optimizer_args["warmup_init"] = False
@@ -1182,7 +1182,7 @@ def main():
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
 
     if args.model_type == "full":
         if args.controlnet:
@@ -1218,15 +1218,16 @@ def main():
                     f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
             else:
-                params_to_optimize = (
-                    params_to_optimize
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_1.parameters())
-                    )
-                    + list(
+                # add the first text encoder's parameters
+                params_to_optimize = params_to_optimize + list(
+                    filter(lambda p: p.requires_grad, text_encoder_1.parameters())
+                )
+                # if text_encoder_2 is not None, add its parameters
+                if text_encoder_2 is None and not args.flux:
+                    # but not flux. it has t5 as enc 2.
+                    params_to_optimize = params_to_optimize + list(
                         filter(lambda p: p.requires_grad, text_encoder_2.parameters())
                     )
-                )
 
     if use_deepspeed_optimizer:
         optimizer = optimizer_class(params_to_optimize)
@@ -1242,11 +1243,9 @@ def main():
             )
             # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
             # --learning_rate
-            params_to_optimize[1]["lr"] = args.learning_rate
-            params_to_optimize[2]["lr"] = args.learning_rate
-            if args.sd3:
-                # Third text encoder.
-                params_to_optimize[3]["lr"] = args.learning_rate
+            params_to_optimize[1]["lr"] = float(args.learning_rate)
+            if text_encoder_2 is not None:
+                params_to_optimize[2]["lr"] = float(args.learning_rate)
 
         optimizer = optimizer_class(
             params_to_optimize,
