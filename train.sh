@@ -10,7 +10,7 @@ if [ -z "${VENV_PATH}" ]; then
     export VENV_PATH="$(pwd)/.venv"
 fi
 if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
-    export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)"
+    export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)/lib"
     # if it's not empty, we will add it to LD_LIBRARY_PATH at the front:
     if [ -n "${NVJITLINK_PATH}" ]; then
         export LD_LIBRARY_PATH="${NVJITLINK_PATH}:${LD_LIBRARY_PATH}"
