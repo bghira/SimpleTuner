@@ -47,7 +47,7 @@ source .venv/bin/activate
 pip install -U poetry pip
 ```
 
-**Note:** We're currently relying on the `release` branch here; the `main` branch contains experimental features that might have better results or lower memory use.
+**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
 
 Depending on your system, you will run one of 3 commands:
 
