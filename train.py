@@ -828,6 +828,7 @@ def main():
         model_type_label = "Kwai Kolors"
 
     enable_adamw_bf16 = True if weight_dtype == torch.bfloat16 else False
+    base_weight_dtype = weight_dtype
     if not disable_accelerator and is_quantized:
         if args.base_model_default_dtype == "fp32":
             base_weight_dtype = torch.float32
@@ -2059,22 +2060,22 @@ def main():
                             packed_noisy_latents.shape[0],
                             batch["prompt_embeds"].shape[1],
                             3,
-                        ).to(device=accelerator.device, dtype=weight_dtype)
+                        ).to(device=accelerator.device, dtype=base_weight_dtype)
                         model_pred = transformer(
                             hidden_states=packed_noisy_latents.to(
-                                dtype=transformer.dtype, device=accelerator.device
+                                dtype=base_weight_dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                             timestep=timesteps,
                             guidance=guidance,
                             pooled_projections=batch["add_text_embeds"].to(
-                                device=accelerator.device, dtype=transformer.dtype
+                                device=accelerator.device, dtype=base_weight_dtype
                             ),
                             encoder_hidden_states=batch["prompt_embeds"].to(
-                                device=accelerator.device, dtype=transformer.dtype
+                                device=accelerator.device, dtype=base_weight_dtype
                             ),
                             txt_ids=text_ids.to(
-                                device=accelerator.device, dtype=transformer.dtype
+                                device=accelerator.device, dtype=base_weight_dtype
                             ),
                             img_ids=img_ids,
                             joint_attention_kwargs=None,
