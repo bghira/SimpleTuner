@@ -7,7 +7,12 @@
 
 # If the user has not provided VENV_PATH, we will assume $(pwd)/.venv
 if [ -z "${VENV_PATH}" ]; then
-    export VENV_PATH="$(pwd)/.venv"
+    # what if we have VIRTUAL_ENV? use that instead
+    if [ -n "${VIRTUAL_ENV}" ]; then
+        export VENV_PATH="${VIRTUAL_ENV}"
+    else
+        export VENV_PATH="$(pwd)/.venv"
+    fi
 fi
 if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
     export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)/lib"
