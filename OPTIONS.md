@@ -241,12 +241,17 @@ This is a basic overview meant to help you get started. For a complete list of o
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                [--legacy] [--kolors] [--flux] [--smoldit]
+                [--legacy] [--kolors] [--flux]
+                [--flux_lora_target {mmdit,all}] [--flux_fast_schedule]
+                [--flux_guidance_mode {constant,random-range}]
+                [--flux_guidance_value FLUX_GUIDANCE_VALUE]
+                [--flux_guidance_min FLUX_GUIDANCE_MIN]
+                [--flux_guidance_max FLUX_GUIDANCE_MAX] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
-                [--weighting_scheme {sigma_sqrt,logit_normal,mode,none}]
+                [--weighting_scheme {sigma_sqrt,logit_normal,mode,cosmap,none}]
                 [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
                 [--mode_scale MODE_SCALE] [--lora_type {Standard}]
                 [--lora_init_type {default,gaussian,loftq}]
@@ -357,10 +362,11 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_disable_unconditional] [--disable_compel]
                 [--enable_watermark] [--mixed_precision {bf16,no}]
                 [--gradient_precision {unmodified,fp32}]
-                [--base_model_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
-                [--text_encoder_1_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
-                [--text_encoder_2_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
-                [--text_encoder_3_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--base_model_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--base_model_default_dtype {bf16,fp32}]
+                [--text_encoder_1_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--text_encoder_2_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--text_encoder_3_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
                 [--local_rank LOCAL_RANK]
                 [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
@@ -412,6 +418,31 @@ options:
                         model.
   --flux                This option must be provided when training a Flux
                         model.
+  --flux_lora_target {mmdit,all}
+                        Flux has single and joint attention blocks. The single
+                        attention blocks deal with text inputs and are not
+                        transformed by LoRA by default. All attention blocks
+                        are trained by default. If 'mmdit' is provided, the
+                        text input layers will not be trained. This is roughly
+                        equivalent to not training the text encoder(s) in
+                        earlier models.
+  --flux_fast_schedule  An experimental feature to train Flux.1S using a noise
+                        schedule closer to what it was trained with, which has
+                        improved results in short experiments. Thanks to
+                        @mhirki for the contribution.
+  --flux_guidance_mode {constant,random-range}
+                        Flux has a 'guidance' value used during training time
+                        that reflects the CFG range of your training samples.
+                        The default mode 'constant' will use a single value
+                        for every sample. The mode 'random-range' will
+                        randomly select a value from the range of the CFG for
+                        each sample. Set the range using --flux_guidance_min
+                        and --flux_guidance_max.
+  --flux_guidance_value FLUX_GUIDANCE_VALUE
+                        When using --flux_guidance_mode=constant, this value
+                        will be used for every input sample.
+  --flux_guidance_min FLUX_GUIDANCE_MIN
+  --flux_guidance_max FLUX_GUIDANCE_MAX
   --smoldit             Use the experimental SmolDiT model architecture.
   --smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}
                         The SmolDiT configuration to use. This is a list of
@@ -441,7 +472,7 @@ options:
                         prevents expansion of SD3 Medium's prompt length, as
                         it will unnecessarily attend to every token in the
                         prompt embed, even masked positions.
-  --weighting_scheme {sigma_sqrt,logit_normal,mode,none}
+  --weighting_scheme {sigma_sqrt,logit_normal,mode,cosmap,none}
                         Stable Diffusion 3 used either uniform sampling of
                         timesteps with post-prediction loss weighting, or a
                         weighted timestep selection by mode or log-normal
@@ -1101,7 +1132,7 @@ options:
                         accumulation steps are enabled is now to use fp32
                         gradients, which is slower, but provides more accurate
                         updates.
-  --base_model_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --base_model_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
                         When training a LoRA, you might want to quantise the
                         base model to a lower precision to save more VRAM. The
                         default value, 'no_change', does not quantise any
@@ -1109,7 +1140,17 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_1_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --base_model_default_dtype {bf16,fp32}
+                        Unlike --mixed_precision, this value applies
+                        specifically for the default weights of your quantised
+                        base model. When quantised, not every parameter can or
+                        should be quantised down to the target precision. By
+                        default, we use bf16 weights for the base model - but
+                        this can be changed to fp32 to enable the use of other
+                        optimizers than adamw_bf16. However, this uses
+                        marginally more memory, and may not be necessary for
+                        your use case.
+  --text_encoder_1_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
                         When training a LoRA, you might want to quantise text
                         encoder 1 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1117,7 +1158,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_2_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --text_encoder_2_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
                         When training a LoRA, you might want to quantise text
                         encoder 2 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1125,7 +1166,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_3_precision {no_change,fp4-bnb,fp8-bnb,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --text_encoder_3_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
                         When training a LoRA, you might want to quantise text
                         encoder 3 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision

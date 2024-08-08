@@ -6,15 +6,26 @@ In this example, we'll be training a Flux.1 LoRA model using the SimpleTuner too
 
 ### Hardware requirements
 
-When you're training every component of the model, a rank-16 LoRA ends up using a bit more than 40GB of VRAM for training.
+Flux requires a lot of **system RAM** in addition to GPU memory. Simply quantising the model at startup requires about 50GB of system memory. If it takes an excessively long time, you may need to assess your hardware's capabilities and whether any changes are needed.
 
-You'll need at minimum, a single A40 GPU, or, ideally, multiple A6000s. Luckily, these are readily available through providers such as TensorDock for extremely low rates (<$2/hr).
+When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using:
+- a bit more than 32G VRAM when not quantising the base model
+- a bit more than 20G VRAM when quantising to int8 + bf16 base/LoRA weights
+- a bit more than 13G VRAM when quantising to int2 + bf16 base/LoRA weights
+
+To have reliable results, you'll need: 
+- **at minimum** a single 3090 or V100 GPU
+- **ideally** multiple A6000s
+
+Luckily, these are readily available through providers such as TensorDock for extremely low rates (<$2/hr for A6000s, <$1/hr for 3090s>).
 
 **Unlike other models, AMD and Apple GPUs do not work for training Flux.**
 
 ### Prerequisites
 
-Make sure that you have python installed. You can check this by running:
+Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11.
+
+You can check this by running:
 
 ```bash
 python --version
@@ -25,7 +36,7 @@ python --version
 Clone the SimpleTuner repository and set up the python venv:
 
 ```bash
-git clone --branch=main https://github.com/bghira/SimpleTuner.git
+git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
@@ -36,7 +47,7 @@ source .venv/bin/activate
 pip install -U poetry pip
 ```
 
-**Note:** We're currently relying on the `main` branch here, but after the next release, we'll use the `release` branch instead.
+**Note:** We're currently relying on the `release` branch here; the `main` branch contains experimental features that might have better results or lower memory use.
 
 Depending on your system, you will run one of 3 commands:
 
@@ -85,6 +96,7 @@ There, you will need to modify the following variables:
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
 - `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
+  - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
 
 #### Quantised model training
 
@@ -109,10 +121,14 @@ export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
 
-# When you're quantising the model, we're not in pure bf16 anymore.
-# Since adamw_bf16 will never work with this setup, select another optimiser.
-# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
-export OPTIMIZER="adafactor" # or maybe prodigy
+# When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
+# If you'd like to use another optimizer, you can override this with --base_model_default_dtype=fp32.
+# option one:
+export OPTIMIZER="adamw_bf16" # or maybe prodigy
+# option two:
+#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
+#export OPTIMIZER="adafactor" # or maybe prodigy
+
 ```
 
 
@@ -204,29 +220,43 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
-- Schnell training really needs a bit more time in the oven - currently, the results do not look good
-- Dev LoRAs run just fine on Schnell
-- Dev+Schnell merge 50/50 just fine, and the LoRAs can possibly be trained from that, which will then run on Schnell **or** Dev
-- A model as large as 12B has empirically performed better with lower learning rates.
-  - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
+### Quantisation
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
   - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
   - Adafactor works, reducing VRAM to ~24G or further with sub-1024x1024 training
 - Quantising the model isn't a bad thing
   - It allows you to push higher batch sizes and possibly obtain a better result
   - It unlocks the non-bf16 optimisers for use, such as Prodigy, Adafactor, Dadaptation, AdamW, and AdamW8Bit
+  - Full model tuning has been compared to quantised and it behaves nearly the same - any issues you will encounter with quanto will happen without.
 - As usual, **fp8 quantisation runs more slowly** than **int8** and might have a worse result due to the use of `e4m3fn` in Quanto
   - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
-- Larger rank models might be undesirable on a 12B model due to the general training dynamics of large models.
+
+### Crashing
+- If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.
+  - Try loading the `--base_model_precision=bf16` but if that does not work, you might just need more memory..
+
+### Schnell
+- Direct Schnell training really needs a bit more time in the oven - currently, the results do not look good
+- Training a LoRA on Dev will then run just fine on Schnell
+- Dev+Schnell merge 50/50 just fine, and the LoRAs can possibly be trained from that, which will then run on Schnell **or** Dev
+
+### Learning rates
+- A model as large as 12B has empirically performed better with **lower learning rates.**
+  - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
+- Ranks as large as 64 through 128 might be undesirable on a 12B model due to general difficulties that scale up with the size of the base model.
   - Try a smaller network first (rank-1, rank-4) and work your way up - they'll train faster, and might do everything you need.
-- When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
-  - Overtrain with low quality data
-  - Use too high of a learning rate
-  - Select a bad optimiser
-  - Overtraining (in general), a low-capacity network with too many images
-  - Undertraining (also), a high-capacity network with too few images
-  - Using weird aspect ratios or training data sizes
-- Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
 - We're overriding `--max_grad_norm` on all DiT models currently - providing the flag `--i_know_what_im_doing` will allow you to bypass this limit and experiment with higher gradient norm scales
   - The low value keeps the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution
+
+### Image artifacts
+When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
+- Overtrain with low quality data
+- Use too high of a learning rate
+- Select a bad optimiser
+- Overtraining (in general), a low-capacity network with too many images
+- Undertraining (also), a high-capacity network with too few images
+- Using weird aspect ratios or training data sizes
+
+### Aspect bucketing
+- Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.

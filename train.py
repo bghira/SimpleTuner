@@ -140,7 +140,7 @@ def import_model_class_from_model_name_or_path(
 
         return UMT5EncoderModel
     elif model_class == "ChatGLMModel":
-        from diffusers import ChatGLMModel
+        from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 
         return ChatGLMModel
     else:
@@ -170,7 +170,7 @@ def get_tokenizers(args):
             tokenizer_cls = T5Tokenizer
             is_t5_model = True
         elif args.kolors:
-            from diffusers import ChatGLMTokenizer
+            from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
             tokenizer_cls = ChatGLMTokenizer
             tokenizer_1 = tokenizer_cls.from_pretrained(
@@ -272,6 +272,12 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.flux:
         StateTracker.set_model_type("flux")
+        from helpers.models.flux import (
+            prepare_latent_image_ids,
+            pack_latents,
+            unpack_latents,
+            update_flux_schedule_to_fast,
+        )
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
     if args.legacy:
@@ -435,7 +441,7 @@ def main():
     tokenizers = []
     if args.kolors:
         logger.info("Loading Kolors ChatGLM language model..")
-        text_encoder_path = "kwai-kolors/kolors-diffusers"
+        text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
     elif args.smoldit:
         text_encoder_path = "EleutherAI/pile-t5-base"
@@ -486,7 +492,11 @@ def main():
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
             args.pretrained_model_name_or_path, subfolder="scheduler"
         )
-        noise_scheduler_copy = copy.deepcopy(noise_scheduler)
+        noise_scheduler_copy = copy.deepcopy(
+            update_flux_schedule_to_fast(
+                args=args, noise_scheduler_to_copy=noise_scheduler
+            )
+        )
 
     else:
         if args.legacy:
@@ -618,32 +628,27 @@ def main():
             message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
 
-    # The VAE is in bfloat16 to avoid NaN losses.
-    vae_dtype = torch.bfloat16
-    if hasattr(args, "vae_dtype"):
+    if vae is not None:
+        # The VAE is in bfloat16 to avoid NaN losses.
+        vae_dtype = torch.bfloat16
+        if hasattr(args, "vae_dtype"):
+            # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+            if args.vae_dtype == "bf16":
+                vae_dtype = torch.bfloat16
+            elif args.vae_dtype == "fp16":
+                raise ValueError(
+                    "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
+                )
+            elif args.vae_dtype == "fp32":
+                vae_dtype = torch.float32
+            elif args.vae_dtype == "none" or args.vae_dtype == "default":
+                vae_dtype = torch.bfloat16
         logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
+            f"Loading VAE onto accelerator, converting from {vae.dtype} to {vae_dtype}"
         )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            raise ValueError(
-                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-            )
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.bfloat16
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    StateTracker.set_vae_dtype(vae_dtype)
+        StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    logger.info("Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
@@ -833,6 +838,7 @@ def main():
         model_type_label = "Kwai Kolors"
 
     enable_adamw_bf16 = True if weight_dtype == torch.bfloat16 else False
+    base_weight_dtype = weight_dtype
     if not disable_accelerator and is_quantized:
         if args.base_model_default_dtype == "fp32":
             base_weight_dtype = torch.float32
@@ -933,6 +939,17 @@ def main():
             unet.add_adapter(unet_lora_config)
         if transformer is not None:
             target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
+            if args.flux and args.flux_lora_target == "all":
+                target_modules = [
+                    "to_k",
+                    "to_q",
+                    "to_v",
+                    "add_k_proj",
+                    "add_q_proj",
+                    "add_v_proj",
+                    "to_out.0",
+                    "to_add_out.0",
+                ]
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=args.lora_alpha,
@@ -1073,7 +1090,7 @@ def main():
     if use_deepspeed_optimizer:
         logger.info("Using DeepSpeed optimizer.")
         optimizer_class = accelerate.utils.DummyOptim
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
@@ -1092,7 +1109,7 @@ def main():
             logger.warn(
                 "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
             )
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["beta3"] = args.prodigy_beta3
         extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
@@ -1113,7 +1130,7 @@ def main():
 
             optimizer_class = adam_bfloat16.AdamWBF16
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
     elif args.use_8bit_adam:
         logger.info("Using 8bit AdamW optimizer.")
         try:
@@ -1125,7 +1142,7 @@ def main():
 
         optimizer_class = bnb.optim.AdamW8bit
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
     elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
         logger.info("Using D-Adaptation optimizer.")
         try:
@@ -1147,7 +1164,7 @@ def main():
             args.learning_rate = args.dadaptation_learning_rate
             extra_optimizer_args["decouple"] = True
             extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["lr"] = float(args.learning_rate)
 
     elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
         logger.info("Using Adafactor optimizer.")
@@ -1167,7 +1184,7 @@ def main():
             extra_optimizer_args["scale_parameter"] = False
             extra_optimizer_args["warmup_init"] = True
         else:
-            extra_optimizer_args["lr"] = args.learning_rate
+            extra_optimizer_args["lr"] = float(args.learning_rate)
             extra_optimizer_args["relative_step"] = False
             extra_optimizer_args["scale_parameter"] = False
             extra_optimizer_args["warmup_init"] = False
@@ -1175,7 +1192,7 @@ def main():
         logger.info("Using AdamW optimizer.")
         optimizer_class = torch.optim.AdamW
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
+        extra_optimizer_args["lr"] = float(args.learning_rate)
 
     if args.model_type == "full":
         if args.controlnet:
@@ -1211,15 +1228,16 @@ def main():
                     f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
             else:
-                params_to_optimize = (
-                    params_to_optimize
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_1.parameters())
-                    )
-                    + list(
+                # add the first text encoder's parameters
+                params_to_optimize = params_to_optimize + list(
+                    filter(lambda p: p.requires_grad, text_encoder_1.parameters())
+                )
+                # if text_encoder_2 is not None, add its parameters
+                if text_encoder_2 is None and not args.flux:
+                    # but not flux. it has t5 as enc 2.
+                    params_to_optimize = params_to_optimize + list(
                         filter(lambda p: p.requires_grad, text_encoder_2.parameters())
                     )
-                )
 
     if use_deepspeed_optimizer:
         optimizer = optimizer_class(params_to_optimize)
@@ -1235,11 +1253,9 @@ def main():
             )
             # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
             # --learning_rate
-            params_to_optimize[1]["lr"] = args.learning_rate
-            params_to_optimize[2]["lr"] = args.learning_rate
-            if args.sd3:
-                # Third text encoder.
-                params_to_optimize[3]["lr"] = args.learning_rate
+            params_to_optimize[1]["lr"] = float(args.learning_rate)
+            if text_encoder_2 is not None:
+                params_to_optimize[2]["lr"] = float(args.learning_rate)
 
         optimizer = optimizer_class(
             params_to_optimize,
@@ -1306,7 +1322,6 @@ def main():
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
-        text_encoder_3=text_encoder_3,
         use_deepspeed_optimizer=use_deepspeed_optimizer,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
@@ -1849,6 +1864,17 @@ def main():
                         )
                     else:
                         u = torch.rand(size=(bsz,), device="cpu")
+                    if args.flux_fast_schedule:
+                        # We need to train only timesteps [1, 0.75, 0.5, 0.25] based on SD3-Turbo paper
+                        quarter_step = int(
+                            noise_scheduler_copy.config.num_train_timesteps / 4
+                        )
+                        indices = ((u * 4).long() + 1) * quarter_step - 1
+                        # indices = (u * 4).long() * quarter_step - 1
+                    else:
+                        indices = (
+                            u * noise_scheduler_copy.config.num_train_timesteps
+                        ).long()
 
                     indices = (
                         u * noise_scheduler_copy.config.num_train_timesteps
@@ -2003,12 +2029,6 @@ def main():
                             )
                     elif args.flux:
                         # handle guidance
-                        from helpers.models.flux import (
-                            prepare_latent_image_ids,
-                            pack_latents,
-                            unpack_latents,
-                        )
-
                         packed_noisy_latents = pack_latents(
                             noisy_latents,
                             batch_size=latents.shape[0],
@@ -2054,22 +2074,22 @@ def main():
                             packed_noisy_latents.shape[0],
                             batch["prompt_embeds"].shape[1],
                             3,
-                        ).to(device=accelerator.device, dtype=weight_dtype)
+                        ).to(device=accelerator.device, dtype=base_weight_dtype)
                         model_pred = transformer(
                             hidden_states=packed_noisy_latents.to(
-                                dtype=transformer.dtype, device=accelerator.device
+                                dtype=base_weight_dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                             timestep=timesteps,
                             guidance=guidance,
                             pooled_projections=batch["add_text_embeds"].to(
-                                device=accelerator.device, dtype=transformer.dtype
+                                device=accelerator.device, dtype=base_weight_dtype
                             ),
                             encoder_hidden_states=batch["prompt_embeds"].to(
-                                device=accelerator.device, dtype=transformer.dtype
+                                device=accelerator.device, dtype=base_weight_dtype
                             ),
                             txt_ids=text_ids.to(
-                                device=accelerator.device, dtype=transformer.dtype
+                                device=accelerator.device, dtype=base_weight_dtype
                             ),
                             img_ids=img_ids,
                             joint_attention_kwargs=None,
