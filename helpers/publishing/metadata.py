@@ -19,7 +19,7 @@ def _model_load(args, repo_id: str = None):
             f"model_id = '{args.pretrained_model_name_or_path}'"
             f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
             f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
-            f"\pipeline.load_lora_weights(adapter_id)"
+            f"\npipeline.load_lora_weights(adapter_id)"
         )
     else:
         output = (
@@ -34,6 +34,36 @@ def _torch_device():
     return """'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'"""
 
 
+def _negative_prompt(args, in_call: bool = False):
+    if args.flux:
+        return ""
+    if not in_call:
+        return f"negative_prompt = '{args.validation_negative_prompt}'"
+    return "\n    negative_prompt=negative_prompt,"
+
+
+def _guidance_rescale(args):
+    if any([args.sd3, args.flux, args.pixart_sigma]):
+        return ""
+    return f"\n    guidance_rescale={args.validation_guidance_rescale},"
+
+
+def _validation_resolution(args):
+    if args.validation_resolution == "" or args.validation_resolution is None:
+        return f"    width=1024,\n" f"    height=1024,"
+    resolutions = [args.validation_resolution]
+    if "," in args.validation_resolution:
+        # split the resolution into a list of resolutions
+        resolutions = args.validation_resolution.split(",")
+    for resolution in resolutions:
+        if "x" in resolution:
+            return (
+                f"    width={resolution.split('x')[0]},\n"
+                f"    height={resolution.split('x')[1]},"
+            )
+        return f"    width={resolution},\n" f"    height={resolution},"
+
+
 def code_example(args, repo_id: str = None):
     """Return a string with the code example."""
     code_example = f"""
@@ -43,18 +73,15 @@ def code_example(args, repo_id: str = None):
 {_model_load(args, repo_id)}
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
-negative_prompt = "{args.validation_negative_prompt}"
+{_negative_prompt(args)}
 
 pipeline.to({_torch_device()})
 image = pipeline(
-    prompt=prompt,
-    negative_prompt='{args.validation_negative_prompt}',
+    prompt=prompt,{_negative_prompt(args, in_call=True) if not args.flux else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
-    width=1152,
-    height=768,
-    guidance_scale={args.validation_guidance},
-    guidance_rescale={args.validation_guidance_rescale},
+    {_validation_resolution(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}
 ).images[0]
 image.save("output.png", format="PNG")
 ```
