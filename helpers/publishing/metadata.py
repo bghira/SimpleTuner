@@ -14,6 +14,9 @@ def _model_imports(args):
 
 
 def _model_load(args, repo_id: str = None):
+    hf_user_name = StateTracker.get_hf_username()
+    if hf_user_name is None:
+        repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     if "lora" in args.model_type:
         output = (
             f"model_id = '{args.pretrained_model_name_or_path}'"

@@ -386,6 +386,15 @@ def main():
             from helpers.publishing.huggingface import HubManager
 
             hub_manager = HubManager(config=args)
+        try:
+            import huggingface_hub
+
+            StateTracker.set_hf_user(huggingface_hub.whoami())
+            logger.info(
+                f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log into Hugging Face Hub: {e}")
 
     vae_path = (
         args.pretrained_model_name_or_path
