@@ -859,25 +859,24 @@ def main():
             transformer.to("cpu", dtype=base_weight_dtype)
         else:
             logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
-
-        if "quanto" in args.base_model_precision:
-            try:
-                from optimum.quanto import QTensor
-            except ImportError as e:
-                raise ImportError(
-                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-                )
-            from helpers.training.quantisation import quantoise
-
-            # we'll quantise pretty much everything but the adapter, if we execute this here.
-            quantoise(
-                unet=unet,
-                transformer=transformer,
-                text_encoder_1=text_encoder_1,
-                text_encoder_2=text_encoder_2,
-                text_encoder_3=text_encoder_3,
-                args=args,
+    if "quanto" in args.base_model_precision:
+        try:
+            from optimum.quanto import QTensor
+        except ImportError as e:
+            raise ImportError(
+                f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
             )
+        from helpers.training.quantisation import quantoise
+
+        # we'll quantise pretty much everything but the adapter, if we execute this here.
+        quantoise(
+            unet=unet,
+            transformer=transformer,
+            text_encoder_1=text_encoder_1,
+            text_encoder_2=text_encoder_2,
+            text_encoder_3=text_encoder_3,
+            args=args,
+        )
 
     if args.controlnet:
         if any(
@@ -915,18 +914,20 @@ def main():
         if unet is not None:
             unet.requires_grad_(False)
         lora_initialisation_style = True
-        if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
-            lora_initialisation_style = args.lora_init_method
-        lora_weight_init_type = (
-            "gaussian"
-            if torch.backends.mps.is_available()
-            else lora_initialisation_style
-        )
+        if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
+            if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
+                logger.error(
+                    "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
+                )
+            else:
+                lora_initialisation_style = (
+                    args.lora_init_type if args.lora_init_type != "default" else True
+                )
         if args.use_dora:
             logger.warning(
                 "DoRA support is experimental and not very thoroughly tested."
             )
-            lora_weight_init_type = "gaussian"
+            lora_weight_init_type = "default"
         if unet is not None:
             unet_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -934,7 +935,7 @@ def main():
                     args.lora_alpha if args.lora_alpha is not None else args.lora_rank
                 ),
                 lora_dropout=args.lora_dropout,
-                init_lora_weights=lora_weight_init_type,
+                init_lora_weights=lora_initialisation_style,
                 target_modules=["to_k", "to_q", "to_v", "to_out.0"],
                 use_dora=args.use_dora,
             )
@@ -958,7 +959,7 @@ def main():
                 lora_alpha=(
                     args.lora_alpha if args.lora_alpha is not None else args.lora_rank
                 ),
-                init_lora_weights=lora_weight_init_type,
+                init_lora_weights=lora_initialisation_style,
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
@@ -1590,6 +1591,24 @@ def main():
                     "allow_val_change": True,
                 }
             },
+        )
+    if "quanto" in args.base_model_precision:
+        try:
+            from optimum.quanto import QTensor
+        except ImportError as e:
+            raise ImportError(
+                f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+            )
+        from helpers.training.quantisation import quantoise
+
+        # we'll quantise pretty much everything but the adapter, if we execute this here.
+        quantoise(
+            unet=unet,
+            transformer=transformer,
+            text_encoder_1=text_encoder_1,
+            text_encoder_2=text_encoder_2,
+            text_encoder_3=text_encoder_3,
+            args=args,
         )
 
     logger.info(

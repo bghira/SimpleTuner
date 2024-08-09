@@ -256,8 +256,8 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lora_init_type",
         type=str,
-        choices=["default", "gaussian", "loftq"],
-        default="default",
+        choices=["default", "gaussian", "loftq", "olora", "pissa"],
+        default="loftq",
         help=(
             "The initialization type for the LoRA model. 'default' will use Microsoft's initialization method,"
             " 'gaussian' will use a Gaussian scaled distribution, and 'loftq' will use LoftQ initialization."
@@ -275,7 +275,8 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lora_alpha",
         type=float,
-        default=16,
+        required=False,
+        default=None,
         help=(
             "The alpha value for the LoRA model. This is the learning rate for the LoRA update matrices."
         ),
@@ -1854,12 +1855,6 @@ def parse_args(input_args=None):
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
                 "\nPlease reduce the batch size to 12 or lower."
-            )
-            sys.exit(1)
-        if args.lora_init_type == "loftq":
-            error_log(
-                "Because MacOS is not yet supported by Bits and Bytes, we cannot use LoftQ for weight initialisation."
-                " Use 'gaussian' or 'default' instead."
             )
             sys.exit(1)
 
