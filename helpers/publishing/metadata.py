@@ -50,7 +50,7 @@ def _guidance_rescale(args):
 
 def _validation_resolution(args):
     if args.validation_resolution == "" or args.validation_resolution is None:
-        return f"    width=1024,\n" f"    height=1024,"
+        return f"width=1024,\n" f"    height=1024,"
     resolutions = [args.validation_resolution]
     if "," in args.validation_resolution:
         # split the resolution into a list of resolutions
@@ -58,10 +58,10 @@ def _validation_resolution(args):
     for resolution in resolutions:
         if "x" in resolution:
             return (
-                f"    width={resolution.split('x')[0]},\n"
+                f"width={resolution.split('x')[0]},\n"
                 f"    height={resolution.split('x')[1]},"
             )
-        return f"    width={resolution},\n" f"    height={resolution},"
+        return f"width={resolution},\n" f"    height={resolution},"
 
 
 def code_example(args, repo_id: str = None):
@@ -214,7 +214,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if StateTracker.get_args().sd3 else StateTracker.get_args().prediction_type}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().sd3 or StateTracker.get_args().flux) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
 - Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}
