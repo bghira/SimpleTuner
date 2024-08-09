@@ -282,6 +282,8 @@ def main():
         StateTracker.set_model_type("pixart_sigma")
     if args.legacy:
         StateTracker.set_model_type("legacy")
+    if args.hunyuan_dit:
+        StateTracker.set_model_type("hunyuan_dit")
     if args.kolors:
         StateTracker.set_model_type("kolors")
     if args.smoldit:
@@ -793,6 +795,15 @@ def main():
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
+    elif args.hunyuan_dit:
+        from diffusers import HunyuanDiT2DModel
+
+        unet = None
+        transformer = HunyuanDiT2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
+            **pretrained_load_args,
+        )
     elif args.smoldit:
         logger.info("Loading SmolDiT model..")
         if args.validation_noise_scheduler is None:
@@ -834,6 +845,8 @@ def main():
         model_type_label = "Stable Diffusion 1.x/2.x"
     if "deepfloyd" in args.model_type:
         model_type_label = "DeepFloyd-IF"
+    if args.hunyuan_dit:
+        model_type_label = "Hunyuan DiT"
     if args.kolors:
         model_type_label = "Kwai Kolors"
 
@@ -884,6 +897,7 @@ def main():
                 args.pixart_sigma,
                 args.sd3,
                 args.kolors,
+                args.hunyuan_dit,
                 StateTracker.is_sdxl_refiner(),
                 "deepfloyd" in args.model_type,
             ]

@@ -220,6 +220,10 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     )
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
+    is_hunyuan_dit = text_embed_cache.model_type == "hunyuan_dit"
+
+    if is_hunyuan_dit:
+        raise ValueError("`compute_prompt_embeddings()` is not yet supported for 'hunyuan_dit'.")
     is_smoldit = text_embed_cache.model_type == "smoldit"
     is_flux = text_embed_cache.model_type == "flux"
 

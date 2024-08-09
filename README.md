@@ -97,6 +97,10 @@ Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn'
 
 See the [Stable Diffusion 3 Quickstart](/documentation/quickstart/SD3.md) to get going.
 
+### Hunyian-DiT
+
+_Placeholder text._
+
 ### Kwai Kolors
 
 An SDXL-based model with ChatGLM (General Language Model) 6B as its text encoder, **doubling** the hidden dimension size and substantially increasing the level of local detail included in the prompt embeds.
