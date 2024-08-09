@@ -1,6 +1,5 @@
 from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
 from helpers.training.wrappers import unwrap_model
-from diffusers.loaders import LoraLoaderMixin
 from diffusers.utils import (
     convert_state_dict_to_diffusers,
     convert_unet_state_dict_to_peft,
