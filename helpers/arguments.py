@@ -1377,9 +1377,7 @@ def parse_args(input_args=None):
         "--disable_compel",
         action="store_true",
         help=(
-            "If provided, validation pipeline prompts will be handled using the typical prompt encoding strategy."
-            " Otherwise, the default behaviour is to use Compel for prompt embed generation."
-            " Note that the training input text embeds are not generated using Compel, and will be truncated to 77 tokens."
+            "This option does nothing. It is deprecated and will be removed in a future release."
         ),
     )
     parser.add_argument(

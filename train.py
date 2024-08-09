@@ -661,16 +661,6 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel and not any([args.sd3, args.pixart_sigma, args.kolors]):
-        # Only CLIP works with prompt weighting.
-        prompt_handler = PromptHandler(
-            args=args,
-            text_encoders=[text_encoder_1, text_encoder_2],
-            tokenizers=[tokenizer_1, tokenizer_2],
-            accelerator=accelerator,
-            model_type=StateTracker.get_model_type(),
-        )
-
     try:
         if webhook_handler is not None:
             webhook_handler.send(
