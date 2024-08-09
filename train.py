@@ -930,7 +930,9 @@ def main():
         if unet is not None:
             unet_lora_config = LoraConfig(
                 r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
+                lora_alpha=(
+                    args.lora_alpha if args.lora_alpha is not None else args.lora_rank
+                ),
                 lora_dropout=args.lora_dropout,
                 init_lora_weights=lora_weight_init_type,
                 target_modules=["to_k", "to_q", "to_v", "to_out.0"],
@@ -953,7 +955,9 @@ def main():
                 ]
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
+                lora_alpha=(
+                    args.lora_alpha if args.lora_alpha is not None else args.lora_rank
+                ),
                 init_lora_weights=lora_weight_init_type,
                 target_modules=target_modules,
                 use_dora=args.use_dora,
