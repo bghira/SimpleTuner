@@ -175,7 +175,7 @@ def parse_args(input_args=None):
         "--flow_matching_loss",
         type=str,
         choices=["diffusers", "compatible", "diffusion"],
-        default="diffusers",
+        default="compatible",
         help=(
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
             " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
