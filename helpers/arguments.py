@@ -1981,7 +1981,7 @@ def parse_args(input_args=None):
             )
     flux_version = "dev"
     if "schnell" in args.pretrained_model_name_or_path.lower():
-        flux_verison = "schnell"
+        flux_version = "schnell"
         model_max_seq_length = 256
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
