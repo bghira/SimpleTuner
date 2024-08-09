@@ -1979,25 +1979,41 @@ def parse_args(input_args=None):
             warning_log(
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
             )
+    flux_version = "dev"
     if "schnell" in args.pretrained_model_name_or_path.lower():
+        flux_verison = "schnell"
         model_max_seq_length = 256
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
-    if args.flux and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > model_max_seq_length
-    ):
-        if not args.i_know_what_i_am_doing:
+    if args.flux:
+        if (
+            args.tokenizer_max_length is None
+            or int(args.tokenizer_max_length) > model_max_seq_length
+        ):
+            if not args.i_know_what_i_am_doing:
+                warning_log(
+                    f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
+                )
+                args.tokenizer_max_length = model_max_seq_length
+            else:
+                warning_log(
+                    f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                )
+                warning_log(
+                    f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
+                )
+        if flux_version == "dev":
+            if args.validation_num_inference_steps > 28:
+                warning_log(
+                    "Flux Dev expects around 28 or fewer inference steps. Consider limiting --validation_num_inference_steps to 28."
+                )
+            if args.validation_num_inference_steps < 15:
+                warning_log(
+                    "Flux Dev expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
+                )
+        if flux_version == "schnell" and args.validation_num_inference_steps > 4:
             warning_log(
-                f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
-            )
-            args.tokenizer_max_length = model_max_seq_length
-        else:
-            warning_log(
-                f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
+                "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
 
     if args.use_ema and args.ema_cpu_only:
