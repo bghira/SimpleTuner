@@ -742,6 +742,7 @@ def main():
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
+                backend["text_embed_cache"].pipeline = None
         reclaim_memory()
         if torch.cuda.is_available():
             memory_after_unload = torch.cuda.memory_allocated() / 1024**3
