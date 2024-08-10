@@ -177,19 +177,30 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_c
 
 # LoRA sizing you can adjust.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
+
 # Limiting gradient norms might preserve the model for longer, and fp32 gradients allow the use of accumulation steps.
+# Note; fp32 gradients are incompatible with Prodigy, and possibly other optimisers that have strict dtype handling.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
-# These options are the defaults, but they're restated here for clarity.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=loftq --flux_lora_target=mmdit"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16"
+
+# When training 'mmdit', we find very stable training that makes the model take longer to learn.
+# When training 'all', we can easily shift the model distribution, but it is more prone to forgetting and benefits from high quality data.
+# When training 'all+ffs', all attention layers are trained in addition to the feed-forward and norms which can help with adapting the model objective for the LoRA.
+# The option to train only the 'context' blocks is offered as well, but its impact is unknown, and is offered as an experimental choice.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=mmdit"
+
+# If you want to use LoftQ initialisation, you can't use Quanto to quantise the base model.
+# This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes.
+# Other options are 'default', 'gaussian' (difficult), and untested options: 'olora' and 'pissa'.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
 
 
 # When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
-# If you'd like to use another optimizer, you can override this with --base_model_default_dtype=fp32.
-# option one - BF16 training:
+# option one - BF16 training ONLY supports adamw_bf16:
 export OPTIMIZER="adamw_bf16"
-# option two - FP32 training:
+# option two - FP32 training supports any optimiser BUT adamw_bf16:
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
-#export OPTIMIZER="adafactor" # or maybe prodigy
+#export OPTIMIZER="adafactor" # or maybe prodigy with --gradient_precision=unmodified
 ```
 
 

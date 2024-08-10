@@ -107,14 +107,22 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "context", "all"],
+        choices=["mmdit", "context", "all", "all+ffs"],
         default="mmdit",
         help=(
             "Flux has single and joint attention blocks."
             " Only the multimodal 'dual stream' attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
             " If 'context' is provided, the mmdit layers will not be trained."
+            " If 'all' is provided, all layers will be trained, minus feed-forward and norms."
+            " If 'all+ffs' is provided, all layers will be trained including feed-forward and norms."
         ),
+    )
+    parser.add_argument(
+        "--flux_sigmoid_scale",
+        type=float,
+        default=1.0,
+        help='Scale factor for sigmoid timestep sampling (only used when timestep_scheme is "flux").',
     )
     parser.add_argument(
         "--flux_fast_schedule",
@@ -179,6 +187,17 @@ def parse_args(input_args=None):
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
             " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_scheme",
+        type=str,
+        choices=["sd3", "flux"],
+        default=None,
+        help=(
+            "When training flow-matching models like SD3 or Flux, we can select timesteps based on an approximated continuous schedule"
+            " that takes the 1000 timesteps and derives pseudo-sigmas from them. This is the default behaviour."
+            " Flux training seems to benefit from a sigma schedule, and is recommended to use the 'flux' option."
         ),
     )
     parser.add_argument(
@@ -256,7 +275,7 @@ def parse_args(input_args=None):
         "--lora_init_type",
         type=str,
         choices=["default", "gaussian", "loftq", "olora", "pissa"],
-        default="loftq",
+        default="default",
         help=(
             "The initialization type for the LoRA model. 'default' will use Microsoft's initialization method,"
             " 'gaussian' will use a Gaussian scaled distribution, and 'loftq' will use LoftQ initialization."
@@ -1850,6 +1869,10 @@ def parse_args(input_args=None):
                 f"\n--adam_bfloat16 {'could alternatively be provided to resolve the situation' if not args.adam_bfloat16 else 'correctly provided... but there is another optimizer enabled'}. Check your value for OPTIMIZER."
                 f"\n--mixed_precision is {'bf16, as expected' if args.mixed_precision == 'bf16' else 'not bf16, but it should be'}. This value is referred to as MIXED_PRECISION in config.env."
             )
+    if args.use_prodigy_optimizer and args.gradient_precision == "fp32":
+        raise ValueError(
+            "You cannot use the Prodigy optimizer with fp32 gradients. Please set --gradient_precision=unmodified to continue."
+        )
 
     if torch.backends.mps.is_available():
         if (
@@ -1962,11 +1985,10 @@ def parse_args(input_args=None):
 
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
-        if not args.disable_compel:
-            warning_log(
-                "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
-            )
-            args.disable_compel = True
+        args.disable_compel = True
+        if args.timestep_scheme is None:
+            args.timestep_scheme = "sd3"
+        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
 
     t5_max_length = 77
     if args.sd3 and (
@@ -1992,6 +2014,9 @@ def parse_args(input_args=None):
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
     if args.flux:
+        if args.timestep_scheme is None:
+            args.timestep_scheme = "flux"
+        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
         if (
             args.tokenizer_max_length is None
             or int(args.tokenizer_max_length) > model_max_seq_length
