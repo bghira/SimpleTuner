@@ -1501,6 +1501,12 @@ def parse_args(input_args=None):
         help="CFG value for validation images. Default: 7.5",
     )
     parser.add_argument(
+        "--validation_guidance_real",
+        type=float,
+        default=1.0,
+        help="Use real CFG sampling for flux validation images. Default: 1.0",
+    )
+    parser.add_argument(
         "--validation_guidance_rescale",
         type=float,
         default=0.0,
