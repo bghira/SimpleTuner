@@ -820,7 +820,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                     return_dict=False,
                 )[0]
 
-                # TODO use batch prediction to speed this up.
+                # TODO optionally use batch prediction to speed this up.
                 if guidance_scale_real > 1.0:
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(
