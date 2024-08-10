@@ -969,6 +969,19 @@ def main():
                         "add_v_proj",
                         "to_add_out.0",
                     ]
+                elif args.flux_lora_target == "all+ffs":
+                    target_modules = [
+                        "to_k",
+                        "to_q",
+                        "to_v",
+                        "add_k_proj",
+                        "add_q_proj",
+                        "add_v_proj",
+                        "to_out.0",
+                        "to_add_out.0",
+                        "ff.0", "ff.2", "ff_context.0", "ff_context.2",
+                        "proj_mlp", "proj_out",
+                    ]
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=(
