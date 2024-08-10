@@ -103,9 +103,13 @@ There, you will need to modify the following variables:
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
 - `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.
 - `VALIDATION_GUIDANCE_REAL` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
+- `VALIDATION_NUM_INFERENCE_STEPS` - Use somewhere around 20 to save time while still seeing decent quality. Flux isn't very diverse, and more steps might just waste time.
 - `VALIDATION_NO_CFG_UNTIL_TIMESTEP` - When using `VALIDATION_GUIDANCE_REAL` with Flux, skip doing CFG until this timestep. Default 2.
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
   - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
+- `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, and 2 should be enough.. 4 is overkill.
+- `OPTIMIZER` - adamw_bf16 was found to perform very well, whereas Prodigy might stall out. If you're an expert though, feel free to experiment here. Beginners are recommended to stick with adamw_bf16.
+- `MIXED_PRECISION` - Beginners should keep this in `bf16` with `PURE_BF16=true` along with the adamw_bf16 optimiser.
 
 #### Validation prompts
 
@@ -320,10 +324,9 @@ The solution for this is already enabled in the main branch; it is necessary to 
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
   - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
   - Adafactor works, reducing VRAM to ~24G or further with sub-1024x1024 training
-- Quantising the model isn't a bad thing
+- Quantising the model doesn't harm training
   - It allows you to push higher batch sizes and possibly obtain a better result
-  - It unlocks the non-bf16 optimisers for use, such as Prodigy, Adafactor, Dadaptation, AdamW, and AdamW8Bit
-  - Full model tuning has been compared to quantised and it behaves nearly the same - any issues you will encounter with quanto will happen without.
+  - Behaves the same as full-precision training - fp32 won't make your model any better than bf16+int8.
 - As usual, **fp8 quantisation runs more slowly** than **int8** and might have a worse result due to the use of `e4m3fn` in Quanto
   - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
@@ -353,6 +356,10 @@ When you do these things (among others), some square grid artifacts **may** begi
 - Overtraining (in general), a low-capacity network with too many images
 - Undertraining (also), a high-capacity network with too few images
 - Using weird aspect ratios or training data sizes
+
+### Gradient accumulation steps
+
+They really slow training down and might not be worth it unless you have several datasets configured in your dataloader backend.
 
 ### Aspect bucketing
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
