@@ -301,6 +301,12 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 **Note:** It's unclear whether training on multi-aspect buckets works correctly for Flux at the moment. It's recommended to use `crop_style=random` and `crop_aspect=square`.
 
+## Inference tips
+
+In ComfyUI, you'll need to put Flux through another node called AdaptiveGuider. One of the members from our community has provided a modified node here:
+
+(**external links**) [IdiotSandwichTheThird/ComfyUI-Adaptive-Guidan...](https://github.com/IdiotSandwichTheThird/ComfyUI-Adaptive-Guidance-with-disabled-init-steps) and their example workflow [here](https://github.com/IdiotSandwichTheThird/ComfyUI-Adaptive-Guidance-with-disabled-init-steps/blob/master/ExampleWorkflow.json)
+
 ## Notes & troubleshooting tips
 
 ### Classifier-free guidance
@@ -406,3 +412,11 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=default --flux_lora_target=mmdit"
 
 ```
+
+## Credits
+
+The users of [Terminus Research](https://huggingface.co/terminusresearch) who worked on this probably more than their day jobs to figure it out
+
+Lambda Labs for generous compute allocations that were used for tests and verifications for large scale training runs
+
+Especially [@JimmyCarter](https://huggingface.co/jimmycarter) and [kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.
