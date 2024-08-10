@@ -98,6 +98,50 @@ There, you will need to modify the following variables:
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
   - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
 
+#### Validation prompts
+
+Inside `config.env` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
+
+The example config file `config/user_prompt_library.json.example` contains the following format:
+
+```json
+{
+  "nickname": "the prompt goes here",
+  "another_nickname": "another prompt goes here"
+}
+```
+
+The nicknames are the filename for the validation, so keep them short and compatible with your filesystem.
+
+To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.env`:
+```bash
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --user_prompt_library=config/user_prompt_library.json"
+```
+
+A set of diverse prompt will help determine whether the model is collapsing as it trains. In this example, the word `<token>` should be replaced with your subject name (instance_prompt).
+
+```json
+{
+    "anime_<token>": "a breathtaking anime-style portrait of <token>, capturing her essence with vibrant colors and expressive features",
+    "chef_<token>": "a high-quality, detailed photograph of <token> as a sous-chef, immersed in the art of culinary creation",
+    "just_<token>": "a lifelike and intimate portrait of <token>, showcasing her unique personality and charm",
+    "cinematic_<token>": "a cinematic, visually stunning photo of <token>, emphasizing her dramatic and captivating presence",
+    "elegant_<token>": "an elegant and timeless portrait of <token>, exuding grace and sophistication",
+    "adventurous_<token>": "a dynamic and adventurous photo of <token>, captured in an exciting, action-filled moment",
+    "mysterious_<token>": "a mysterious and enigmatic portrait of <token>, shrouded in shadows and intrigue",
+    "vintage_<token>": "a vintage-style portrait of <token>, evoking the charm and nostalgia of a bygone era",
+    "artistic_<token>": "an artistic and abstract representation of <token>, blending creativity with visual storytelling",
+    "futuristic_<token>": "a futuristic and cutting-edge portrayal of <token>, set against a backdrop of advanced technology",
+    "woman": "a beautifully crafted portrait of a woman, highlighting her natural beauty and unique features",
+    "man": "a powerful and striking portrait of a man, capturing his strength and character",
+    "boy": "a playful and spirited portrait of a boy, capturing youthful energy and innocence",
+    "girl": "a charming and vibrant portrait of a girl, emphasizing her bright personality and joy",
+    "family": "a heartwarming and cohesive family portrait, showcasing the bonds and connections between loved ones"
+}
+```
+
+> ℹ️ Flux is a flow-matching model and shorter prompts that have strong similarities will result in practically the same image being produced by the model. Be sure to use longer, more descriptive prompts.
+
 #### Quantised model training
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training Flux on just 20GB.
