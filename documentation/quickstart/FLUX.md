@@ -337,18 +337,25 @@ The solution for this is already enabled in the main branch; it is necessary to 
 
 ### Schnell
 - Direct Schnell training really needs a bit more time in the oven - currently, the results do not look good
-- Training a LoRA on Dev will then run just fine on Schnell
+  - If you absolutely must train Schnell, try the x-flux trainer from X-Labs
+- Training a LoRA on Dev will however, run just fine on Schnell
 - Dev+Schnell merge 50/50 just fine, and the LoRAs can possibly be trained from that, which will then run on Schnell **or** Dev
 
+> ℹ️ When merging Schnell with Dev in any way, the license of Dev takes over and it becomes non-commercial. This shouldn't really matter for most users, but it's worth noting.
+
 ### Learning rates
-- A model as large as 12B has empirically performed better with **lower learning rates.**
-  - LoRA at 1e-4 might totally roast the thing. LoRA at 1e-7 does nearly nothing.
+- It's been reported that Flux trains similarly to SD 1.5 LoRAs
+- However, a model as large as 12B has empirically performed better with **lower learning rates.**
+  - LoRA at 1e-3 might totally roast the thing. LoRA at 1e-5 does nearly nothing.
 - Ranks as large as 64 through 128 might be undesirable on a 12B model due to general difficulties that scale up with the size of the base model.
   - Try a smaller network first (rank-1, rank-4) and work your way up - they'll train faster, and might do everything you need.
-- We're overriding `--max_grad_norm` on all DiT models currently - providing the flag `--i_know_what_im_doing` will allow you to bypass this limit and experiment with higher gradient norm scales
-  - The low value keeps the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution
+  - If you're finding that it's excessively difficult to train your concept into the model, you might need a higher rank and more regularisation data.
+- Other diffusion transformer models like PixArt and SD3 majorly benefit from `--max_grad_norm` and SimpleTuner keeps a pretty high value for this by default on Flux.
+  - A lower value would keep the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution. The model might get stuck and never improve.
 
 ### Image artifacts
+Flux will immediately absorb bad image artifacts. It's just how it is - a final training run on just high quality data may be required to fix it at the end.
+
 When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
 - Overtrain with low quality data
 - Use too high of a learning rate
@@ -356,6 +363,7 @@ When you do these things (among others), some square grid artifacts **may** begi
 - Overtraining (in general), a low-capacity network with too many images
 - Undertraining (also), a high-capacity network with too few images
 - Using weird aspect ratios or training data sizes
+- Using gradient accumulation steps with pure bf16 training and `--gradient_precision=unmodified`
 
 ### Gradient accumulation steps
 
@@ -363,10 +371,13 @@ They really slow training down and might not be worth it unless you have several
 
 ### Aspect bucketing
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
+- On the other hand, using the natural aspect buckets of your dataset might overly bias these shapes during inference time.
+  - This could be a desirable quality, as it keeps aspect-dependent styles like cinematic stuff from bleeding into other resolutions too much.
+  - However, if you're looking to improve results equally across many aspect buckets, you might have to experiment with `crop_aspect=random` which comes with its own downsides.
 
-### X-Flux LoRA trainer settings
+### Reproducing the results of X-Flux trainer / realism LoRA
 
-To "match" the behaviour of the X-Flux trainer:
+To "match" the behaviour of the X-Flux trainer and reproduce their Realism LoRA:
 
 - Retrieve the two datasets of ~1M Midjourney/Nijijourney images that the X-flux Realism LoRA was trained on. **This will use more than 2tb of local disk space**, but this is how many images X-flux used.
   - https://huggingface.co/datasets/terminusresearch/midjourney-v6-520k-raw
