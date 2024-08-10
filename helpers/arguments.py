@@ -153,15 +153,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--flux_flow_shift",
-        type=float,
-        default=1.0,
-        help=(
-            "When training a Flux model, it may benefit from using a separate value from Stable Diffusion 3, which requires"
-            " a shift value of 3.0. Empirically, Kohya Tech has found that a value of 1.0 may work better for Flux."
-        ),
-    )
-    parser.add_argument(
         "--flux_guidance_min",
         type=float,
         default=0.0,
