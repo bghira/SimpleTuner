@@ -16,21 +16,12 @@ RUN apt-get install -y --no-install-recommends openssh-server \
                                                openssh-client \
                                                git \
                                                git-lfs \
-                                               wget \
                                                curl \
-                                               tmux \
-                                               tldr \
-                                               nvtop \
-                                               vim \
                                                rsync \
-                                               net-tools \
                                                less \
-                                               iputils-ping \
                                                7zip \
                                                zip \
-                                               unzip \
-                                               htop \
-                                               inotify-tools
+                                               unzip
 
 # Set up git to support LFS, and to store credentials; useful for Huggingface Hub
 RUN git config --global credential.helper store && \
