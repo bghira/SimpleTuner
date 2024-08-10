@@ -100,7 +100,6 @@ from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
     unpack_latents,
-    update_flux_schedule_to_fast,
 )
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -504,12 +503,6 @@ def main():
             subfolder="scheduler",
             shift=1 if args.flux else 3,
         )
-        noise_scheduler_copy = copy.deepcopy(
-            update_flux_schedule_to_fast(
-                args=args, noise_scheduler_to_copy=noise_scheduler
-            )
-        )
-
     else:
         if args.legacy:
             args.rescale_betas_zero_snr = True
@@ -2718,7 +2711,7 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-            if args.validation_noise_scheduler is not None:
+            if not flow_matching and args.validation_noise_scheduler is not None:
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
                     args.validation_noise_scheduler
                 ].from_pretrained(
