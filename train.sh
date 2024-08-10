@@ -108,7 +108,8 @@ if [ -z "${VALIDATION_GUIDANCE}" ]; then
     exit 1
 fi
 if [ -z "${VALIDATION_GUIDANCE_REAL}" ]; then
-    printf "VALIDATION_GUIDANCE_REAL not set, exiting.\n"
+    printf "VALIDATION_GUIDANCE_REAL not set, defaulting to 1.0.\n"
+    export VALIDATION_GUIDANCE_REAL=1.0
     exit 1
 fi
 if [ -z "${VALIDATION_GUIDANCE_RESCALE}" ]; then
