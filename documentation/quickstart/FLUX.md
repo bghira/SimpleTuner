@@ -299,6 +299,23 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
+### Classifier-free guidance
+
+#### Problem
+
+The Dev model arrives guidance-distilled out of the box, which means it does a very straight shot trajectory to the teacher model outputs - this isn't as extreme as what was done to the Schnell model, but it noticeably impacts training by re-introducing the classifier-free guidance objective into the model. Interestingly, this occurs whether caption dropout is set to 0.0 (disabled) or 0.1 (default).
+
+#### Solution
+The solution for this is already enabled in the main branch; it is necessary to enable true CFG sampling at inference time when using LoRAs on Dev.
+
+#### Caveats
+- This has the end impact of **either**:
+  - Increasing inference latency by 2x when we sequentially calculate the unconditional output, eg. with two separate forward pass
+  - Increasing the VRAM consumption equivalently to using `num_images_per_prompt=2` and receiving two images at inference time, accompanied by the same percent slowdown.
+    - This is often less extreme slowdown than sequential computation, but the VRAM use might be too much for most consumer training hardware.
+    - This method is not *currently* integrated into SimpleTuner, but work is ongoing.
+- Inference workflows for ComfyUI or other applications (eg. AUTOMATIC1111) will need to be modified to also enable "true" CFG, which might not be currently possible out of the box.
+
 ### Quantisation
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
   - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
