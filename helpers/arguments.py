@@ -193,7 +193,7 @@ def parse_args(input_args=None):
         "--timestep_scheme",
         type=str,
         choices=["sd3", "flux"],
-        default="sd3",
+        default=None,
         help=(
             "When training flow-matching models like SD3 or Flux, we can select timesteps based on an approximated continuous schedule"
             " that takes the 1000 timesteps and derives pseudo-sigmas from them. This is the default behaviour."
@@ -1985,11 +1985,10 @@ def parse_args(input_args=None):
 
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
-        if not args.disable_compel:
-            warning_log(
-                "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
-            )
-            args.disable_compel = True
+        args.disable_compel = True
+        if args.timestep_scheme is None:
+            args.timestep_scheme = "sd3"
+        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
 
     t5_max_length = 77
     if args.sd3 and (
@@ -2015,9 +2014,9 @@ def parse_args(input_args=None):
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
     if args.flux:
-        if args.timestep_scheme != "flux":
-            logger.info("Using Flux timestep scheme instead of SD3.")
+        if args.timestep_scheme is None:
             args.timestep_scheme = "flux"
+        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
         if (
             args.tokenizer_max_length is None
             or int(args.tokenizer_max_length) > model_max_seq_length
