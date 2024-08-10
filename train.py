@@ -2152,9 +2152,13 @@ def main():
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
                         model_pred = transformer(
-                            hidden_states=noisy_latents,
+                            hidden_states=noisy_latents.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
                             timestep=timesteps,
-                            encoder_hidden_states=encoder_hidden_states,
+                            encoder_hidden_states=encoder_hidden_states.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
                             pooled_projections=add_text_embeds.to(
                                 device=accelerator.device, dtype=weight_dtype
                             ),
