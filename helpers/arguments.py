@@ -119,10 +119,10 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--flux_sigmoid_scale",
+        "--flow_matching_sigmoid_scale",
         type=float,
         default=1.0,
-        help='Scale factor for sigmoid timestep sampling (only used when timestep_scheme is "flux").',
+        help="Scale factor for sigmoid timestep sampling for flow-matching models..",
     )
     parser.add_argument(
         "--flux_fast_schedule",
@@ -190,17 +190,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--timestep_scheme",
-        type=str,
-        choices=["sd3", "flux"],
-        default=None,
-        help=(
-            "When training flow-matching models like SD3 or Flux, we can select timesteps based on an approximated continuous schedule"
-            " that takes the 1000 timesteps and derives pseudo-sigmas from them. This is the default behaviour."
-            " Flux training seems to benefit from a sigma schedule, and is recommended to use the 'flux' option."
-        ),
-    )
-    parser.add_argument(
         "--pixart_sigma",
         action="store_true",
         default=False,
@@ -227,40 +216,6 @@ def parse_args(input_args=None):
             " prompt length, as it will unnecessarily attend to every token in the prompt embed,"
             " even masked positions."
         ),
-    )
-    parser.add_argument(
-        "--weighting_scheme",
-        type=str,
-        default="cosmap",
-        choices=["sigma_sqrt", "logit_normal", "mode", "cosmap", "none"],
-        help=(
-            "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
-            " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
-            " upstream Diffusers training examples use sigma_sqrt. The mode option is experimental,"
-            " as it is the most difficult to implement cleanly. In experiments, logit_normal produced the best results"
-            " for large-scale finetuning across many nodes. For small scale tuning, 'none' returns the best results."
-            " The default is 'none'."
-        ),
-    )
-    parser.add_argument(
-        "--logit_mean",
-        type=float,
-        default=0.0,
-        help=(
-            "As outlined in the Stable Diffusion 3 paper, using a logit_mean of -0.5 produced the highest quality FID results. The default here is 0.0."
-        ),
-    )
-    parser.add_argument(
-        "--logit_std",
-        type=float,
-        default=1.0,
-        help=("Stable Diffusion 3-specific training parameters."),
-    )
-    parser.add_argument(
-        "--mode_scale",
-        type=float,
-        default=1.29,
-        help=("Stable Diffusion 3-specific training parameters."),
     )
     parser.add_argument(
         "--lora_type",
@@ -1992,9 +1947,6 @@ def parse_args(input_args=None):
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
         args.disable_compel = True
-        if args.timestep_scheme is None:
-            args.timestep_scheme = "sd3"
-        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
 
     t5_max_length = 77
     if args.sd3 and (
@@ -2020,9 +1972,6 @@ def parse_args(input_args=None):
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
     if args.flux:
-        if args.timestep_scheme is None:
-            args.timestep_scheme = "flux"
-        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
         if (
             args.tokenizer_max_length is None
             or int(args.tokenizer_max_length) > model_max_seq_length

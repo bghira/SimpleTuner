@@ -419,4 +419,4 @@ The users of [Terminus Research](https://huggingface.co/terminusresearch) who wo
 
 Lambda Labs for generous compute allocations that were used for tests and verifications for large scale training runs
 
-Especially [@JimmyCarter](https://huggingface.co/jimmycarter) and [kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.
+Especially [@JimmyCarter](https://huggingface.co/jimmycarter) and [@kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.
