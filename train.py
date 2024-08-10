@@ -96,6 +96,13 @@ from diffusers.utils import (
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
+from helpers.models.flux import (
+    prepare_latent_image_ids,
+    pack_latents,
+    unpack_latents,
+    update_flux_schedule_to_fast,
+)
+
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
 
@@ -272,12 +279,6 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.flux:
         StateTracker.set_model_type("flux")
-        from helpers.models.flux import (
-            prepare_latent_image_ids,
-            pack_latents,
-            unpack_latents,
-            update_flux_schedule_to_fast,
-        )
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
     if args.legacy:
