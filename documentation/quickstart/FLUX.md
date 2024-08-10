@@ -121,18 +121,29 @@ export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
 
+# We'll enable some more Flux-specific options here to try and get better results.
+
+# LoRA sizing you can adjust.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
+# Limiting gradient norms might preserve the model for longer, and fp32 gradients allow the use of accumulation steps.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
+# These options are the defaults, but they're restated here for clarity.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=loftq --flux_lora_target=mmdit"
+
+
 # When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
 # If you'd like to use another optimizer, you can override this with --base_model_default_dtype=fp32.
-# option one:
-export OPTIMIZER="adamw_bf16" # or maybe prodigy
-# option two:
+# option one - BF16 training:
+export OPTIMIZER="adamw_bf16"
+# option two - FP32 training:
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
 #export OPTIMIZER="adafactor" # or maybe prodigy
-
 ```
 
 
 #### Dataset considerations
+
+> ⚠️ Image quality for training is more important for Flux than for most other models, as it will absorb the artifacts in your images *first*, and then learn the concept/subject.
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS` as well as more than `VAE_BATCH_SIZE`. The dataset will not be useable if it is too small.
 
