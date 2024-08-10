@@ -1523,7 +1523,13 @@ def parse_args(input_args=None):
         "--validation_guidance_real",
         type=float,
         default=1.0,
-        help="Use real CFG sampling for flux validation images. Default: 1.0",
+        help="Use real CFG sampling for Flux validation images. Default: 1.0",
+    )
+    parser.add_argument(
+        "--validation_no_cfg_until_timestep",
+        type=int,
+        default=2,
+        help="When using real CFG sampling for Flux validation images, skip doing CFG on these timesteps. Default: 2",
     )
     parser.add_argument(
         "--validation_guidance_rescale",

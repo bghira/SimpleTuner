@@ -111,6 +111,10 @@ if [ -z "${VALIDATION_GUIDANCE_REAL}" ]; then
     printf "VALIDATION_GUIDANCE_REAL not set, defaulting to 1.0.\n"
     export VALIDATION_GUIDANCE_REAL=1.0
 fi
+if [ -z "${VALIDATION_NO_CFG_UNTIL_TIMESTEP}" ]; then
+    printf "VALIDATION_NO_CFG_UNTIL_TIMESTEP not set, exiting.\n"
+    exit 1
+fi
 if [ -z "${VALIDATION_GUIDANCE_RESCALE}" ]; then
     printf "VALIDATION_GUIDANCE_RESCALE not set, exiting.\n"
     exit 1
