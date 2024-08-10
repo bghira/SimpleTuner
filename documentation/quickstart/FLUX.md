@@ -180,7 +180,11 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
 # Limiting gradient norms might preserve the model for longer, and fp32 gradients allow the use of accumulation steps.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
 # These options are the defaults, but they're restated here for clarity.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=loftq --flux_lora_target=mmdit"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --flux_lora_target=mmdit"
+# If you want to use LoftQ initialisation for the LoRA weights, you can't use Quanto to quantise the base model.
+# This will instead, use an approximation of the base model weights in quantised form to initiate the LoRA model.
+# This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
 
 
 # When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.

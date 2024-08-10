@@ -107,14 +107,22 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "context", "all"],
+        choices=["mmdit", "context", "all", "all+ffs"],
         default="mmdit",
         help=(
             "Flux has single and joint attention blocks."
             " Only the multimodal 'dual stream' attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
             " If 'context' is provided, the mmdit layers will not be trained."
+            " If 'all' is provided, all layers will be trained, minus feed-forward and norms."
+            " If 'all+ffs' is provided, all layers will be trained including feed-forward and norms."
         ),
+    )
+    parser.add_argument(
+        "--flux_sigmoid_scale",
+        type=float,
+        default=1.0,
+        help='Scale factor for sigmoid timestep sampling (only used when timestep_scheme is "flux").',
     )
     parser.add_argument(
         "--flux_fast_schedule",
@@ -142,6 +150,15 @@ def parse_args(input_args=None):
         default=4.0,
         help=(
             "When using --flux_guidance_mode=constant, this value will be used for every input sample."
+        ),
+    )
+    parser.add_argument(
+        "--flux_flow_shift",
+        type=float,
+        default=1.0,
+        help=(
+            "When training a Flux model, it may benefit from using a separate value from Stable Diffusion 3, which requires"
+            " a shift value of 3.0. Empirically, Kohya Tech has found that a value of 1.0 may work better for Flux."
         ),
     )
     parser.add_argument(
@@ -179,6 +196,17 @@ def parse_args(input_args=None):
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
             " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_scheme",
+        type=str,
+        choices=["sd3", "flux"],
+        default="sd3",
+        help=(
+            "When training flow-matching models like SD3 or Flux, we can select timesteps based on an approximated continuous schedule"
+            " that takes the 1000 timesteps and derives pseudo-sigmas from them. This is the default behaviour."
+            " Flux training seems to benefit from a sigma schedule, and is recommended to use the 'flux' option."
         ),
     )
     parser.add_argument(
@@ -256,7 +284,7 @@ def parse_args(input_args=None):
         "--lora_init_type",
         type=str,
         choices=["default", "gaussian", "loftq", "olora", "pissa"],
-        default="loftq",
+        default="default",
         help=(
             "The initialization type for the LoRA model. 'default' will use Microsoft's initialization method,"
             " 'gaussian' will use a Gaussian scaled distribution, and 'loftq' will use LoftQ initialization."
@@ -1992,6 +2020,9 @@ def parse_args(input_args=None):
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
     if args.flux:
+        if args.timestep_scheme != "flux":
+            logger.info("Using Flux timestep scheme instead of SD3.")
+            args.timestep_scheme = "flux"
         if (
             args.tokenizer_max_length is None
             or int(args.tokenizer_max_length) > model_max_seq_length
