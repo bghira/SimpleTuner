@@ -374,6 +374,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_guidance VALIDATION_GUIDANCE]
                 [--validation_guidance_real VALIDATION_GUIDANCE_REAL]
                 [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
+                [--validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP]
                 [--validation_randomize] [--validation_seed VALIDATION_SEED]
                 [--fully_unload_text_encoder]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
@@ -1198,6 +1199,10 @@ options:
                         classifier free guidance instead of the distilled
                         sampling.
                         Default: 1.0
+  --validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP
+                        When using real CFG with flux, do not use CFG until this
+                        sampling timestep.
+                        Default: 2
   --validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE
                         CFG rescale value for validation images. Default: 0.0,
                         max 1.0

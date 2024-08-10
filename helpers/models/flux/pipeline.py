@@ -600,6 +600,9 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         guidance_scale_real: float = 1.0,
         negative_prompt: Union[str, List[str]] = '',
         negative_prompt_2: Union[str, List[str]] = '',
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
+        no_cfg_until_timestep: int=2,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -724,10 +727,10 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         if negative_prompt_2 == "" and negative_prompt != "":
             negative_prompt_2 = negative_prompt
 
-        negative_prompt_embeds = None
-        negative_pooled_prompt_embeds = None
-        negative_text_ids = None
-        if guidance_scale_real > 1.0:
+        negative_text_ids = text_ids
+        if guidance_scale_real > 1.0 and (
+            negative_prompt_embeds is None or negative_pooled_prompt_embeds is None
+        ):
             (
                 negative_prompt_embeds,
                 negative_pooled_prompt_embeds,
@@ -821,7 +824,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 )[0]
 
                 # TODO optionally use batch prediction to speed this up.
-                if guidance_scale_real > 1.0:
+                if guidance_scale_real > 1.0 and t >= no_cfg_until_timestep:
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(
                             device=self.transformer.device, dtype=self.transformer.dtype

@@ -1159,6 +1159,9 @@ class Validation:
                 }
                 if self.args.validation_guidance_real > 1.0:
                     pipeline_kwargs['guidance_scale_real'] = float(self.args.validation_guidance_real)
+                if isinstance(self.args.validation_no_cfg_until_timestep, int) and self.args.flux:
+                    pipeline_kwargs['no_cfg_until_timestep'] = self.args.validation_no_cfg_until_timestep
+
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
