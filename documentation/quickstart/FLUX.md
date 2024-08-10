@@ -23,12 +23,18 @@ Luckily, these are readily available through providers such as TensorDock for ex
 
 ### Prerequisites
 
-Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11.
+Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
 
 You can check this by running:
 
 ```bash
 python --version
+```
+
+If you don't have python 3.11 installed on Ubuntu, you can try the following:
+
+```bash
+apt -y install python3.11
 ```
 
 ### Installation
@@ -40,7 +46,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
-python -m venv .venv
+# if python --version shows 3.11 you can just also use the 'python' command here.
+python3.11 -m venv .venv
 
 source .venv/bin/activate
 
@@ -319,3 +326,35 @@ When you do these things (among others), some square grid artifacts **may** begi
 
 ### Aspect bucketing
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
+
+### X-Flux LoRA trainer settings
+
+To "match" the behaviour of the X-Flux trainer:
+
+- Retrieve the two datasets of ~1M Midjourney/Nijijourney images that the X-flux Realism LoRA was trained on. **This will use more than 2tb of local disk space**, but this is how many images X-flux used.
+  - https://huggingface.co/datasets/terminusresearch/midjourney-v6-520k-raw
+    - SimpleTuner dataset preset [here](/documentation/data_presets/preset_midjourney.md)
+  - https://huggingface.co/datasets/terminusresearch/nijijourney-v6-520k-raw
+    - SimpleTuner dataset preset [here](/documentation/data_presets/preset_nijijourney.md)
+- Configure DeepSpeed ZeRO 2 using `accelerate config` - see [DEEPSPEED.md](/documentation/DEEPSPEED.md) for more information on this
+- Use the following settings inside `config.env`:
+
+```bash
+TRAIN_BATCH_SIZE=1
+GRADIENT_ACCUMULATION_STEPS=2
+LEARNING_RATE=1e-5
+LR_SCHEDULER="constant"
+LR_WARMUP_STEPS=10
+# this is kinda crazy, but at 512px it trains rather quickly anyway.
+CHECKPOINTING_STEPS=2500
+# because of DeepSpeed, you can use the below flags to enable mixed-precision bf16 training:
+OPTIMIZER="adamw" # unfortunately this is your only option with DeepSpeed, but x-flux does the same.
+MIXED_PRECISION="bf16"
+PURE_BF16=false
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --i_know_what_i_am_doing"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
+# x-flux only trains the mmdit blocks but you can change lora_target to all or context to experiment.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=default --flux_lora_target=mmdit"
+
+```
