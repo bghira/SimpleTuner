@@ -1596,24 +1596,6 @@ def main():
                 }
             },
         )
-    if "quanto" in args.base_model_precision:
-        try:
-            from optimum.quanto import QTensor
-        except ImportError as e:
-            raise ImportError(
-                f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-            )
-        from helpers.training.quantisation import quantoise
-
-        # we'll quantise pretty much everything but the adapter, if we execute this here.
-        quantoise(
-            unet=unet,
-            transformer=transformer,
-            text_encoder_1=text_encoder_1,
-            text_encoder_2=text_encoder_2,
-            text_encoder_3=text_encoder_3,
-            args=args,
-        )
 
     logger.info(
         f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
