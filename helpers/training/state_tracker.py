@@ -49,6 +49,9 @@ class StateTracker:
     # Aspect to resolution map, we'll store once generated for consistency.
     aspect_resolution_map = {}
 
+    # hugging face hub user details
+    hf_user = None
+
     webhook_handler = None
 
     @classmethod
@@ -111,6 +114,20 @@ class StateTracker:
     @classmethod
     def get_model_type(cls):
         return cls.model_type
+
+    @classmethod
+    def get_hf_user(cls):
+        return cls.hf_user
+
+    @classmethod
+    def set_hf_user(cls, hf_user):
+        cls.hf_user = hf_user
+
+    @classmethod
+    def get_hf_username(cls):
+        if cls.hf_user is not None and "name" in cls.hf_user:
+            return cls.hf_user["name"]
+        return None
 
     @classmethod
     def is_sdxl_refiner(cls, set_value=None):

@@ -66,7 +66,7 @@ Preliminary training support for Flux.1 is included:
 - Train either Schnell or Dev models
 - Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
 
-See [hardware requirements](#flux1-dev-schnell).
+See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/documentation/quickstart/FLUX.md).
 
 ### PixArt Sigma
 

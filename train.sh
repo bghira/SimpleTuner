@@ -107,6 +107,14 @@ if [ -z "${VALIDATION_GUIDANCE}" ]; then
     printf "VALIDATION_GUIDANCE not set, exiting.\n"
     exit 1
 fi
+if [ -z "${VALIDATION_GUIDANCE_REAL}" ]; then
+    printf "VALIDATION_GUIDANCE_REAL not set, defaulting to 1.0.\n"
+    export VALIDATION_GUIDANCE_REAL=1.0
+fi
+if [ -z "${VALIDATION_NO_CFG_UNTIL_TIMESTEP}" ]; then
+    printf "VALIDATION_NO_CFG_UNTIL_TIMESTEP not set, exiting.\n"
+    exit 1
+fi
 if [ -z "${VALIDATION_GUIDANCE_RESCALE}" ]; then
     printf "VALIDATION_GUIDANCE_RESCALE not set, exiting.\n"
     exit 1
@@ -376,6 +384,6 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --resolution_type="${RESOLUTION_TYPE}" \
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
-    --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
+    --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_real="${VALIDATION_GUIDANCE_REAL}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
 
 exit 0

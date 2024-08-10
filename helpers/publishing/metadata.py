@@ -14,12 +14,15 @@ def _model_imports(args):
 
 
 def _model_load(args, repo_id: str = None):
+    hf_user_name = StateTracker.get_hf_username()
+    if hf_user_name is None:
+        repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     if "lora" in args.model_type:
         output = (
             f"model_id = '{args.pretrained_model_name_or_path}'"
             f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
             f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
-            f"\pipeline.load_lora_weights(adapter_id)"
+            f"\npipeline.load_lora_weights(adapter_id)"
         )
     else:
         output = (
@@ -34,6 +37,36 @@ def _torch_device():
     return """'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'"""
 
 
+def _negative_prompt(args, in_call: bool = False):
+    if args.flux:
+        return ""
+    if not in_call:
+        return f"negative_prompt = '{args.validation_negative_prompt}'"
+    return "\n    negative_prompt=negative_prompt,"
+
+
+def _guidance_rescale(args):
+    if any([args.sd3, args.flux, args.pixart_sigma]):
+        return ""
+    return f"\n    guidance_rescale={args.validation_guidance_rescale},"
+
+
+def _validation_resolution(args):
+    if args.validation_resolution == "" or args.validation_resolution is None:
+        return f"width=1024,\n" f"    height=1024,"
+    resolutions = [args.validation_resolution]
+    if "," in args.validation_resolution:
+        # split the resolution into a list of resolutions
+        resolutions = args.validation_resolution.split(",")
+    for resolution in resolutions:
+        if "x" in resolution:
+            return (
+                f"width={resolution.split('x')[0]},\n"
+                f"    height={resolution.split('x')[1]},"
+            )
+        return f"width={resolution},\n" f"    height={resolution},"
+
+
 def code_example(args, repo_id: str = None):
     """Return a string with the code example."""
     code_example = f"""
@@ -43,18 +76,15 @@ def code_example(args, repo_id: str = None):
 {_model_load(args, repo_id)}
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
-negative_prompt = "{args.validation_negative_prompt}"
+{_negative_prompt(args)}
 
 pipeline.to({_torch_device()})
 image = pipeline(
-    prompt=prompt,
-    negative_prompt='{args.validation_negative_prompt}',
+    prompt=prompt,{_negative_prompt(args, in_call=True) if not args.flux else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
-    width=1152,
-    height=768,
-    guidance_scale={args.validation_guidance},
-    guidance_rescale={args.validation_guidance_rescale},
+    {_validation_resolution(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}
 ).images[0]
 image.save("output.png", format="PNG")
 ```
@@ -71,6 +101,12 @@ def lora_info(args):
 - LoRA Dropout: {args.lora_dropout}
 - LoRA initialisation style: {args.lora_init_type}
 """
+
+
+def model_card_note(args):
+    """Return a string with the model card note."""
+    note_contents = args.model_card_note if args.model_card_note else ""
+    return f"\n{note_contents}\n"
 
 
 def save_model_card(
@@ -155,7 +191,7 @@ This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full ran
 {'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if StateTracker.get_args().sd3 and StateTracker.get_args().flow_matching_loss == "diffusion" else ''}
 
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if StateTracker.get_args().validation_using_datasets else 'No validation prompt was used during training.'}
-
+{model_card_note(StateTracker.get_args())}
 {'```' if prompt else ''}
 {prompt}
 {'```' if prompt else ''}
@@ -187,7 +223,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if StateTracker.get_args().sd3 else StateTracker.get_args().prediction_type}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().sd3 or StateTracker.get_args().flux) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
 - Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}

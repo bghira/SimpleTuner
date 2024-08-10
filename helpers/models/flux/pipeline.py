@@ -585,7 +585,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         width: Optional[int] = None,
         num_inference_steps: int = 28,
         timesteps: List[int] = None,
-        guidance_scale: float = 7.0,
+        guidance_scale: float = 3.5,
         num_images_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
@@ -597,6 +597,12 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        guidance_scale_real: float = 1.0,
+        negative_prompt: Union[str, List[str]] = "",
+        negative_prompt_2: Union[str, List[str]] = "",
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
+        no_cfg_until_timestep: int = 2,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -684,6 +690,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         )
 
         self._guidance_scale = guidance_scale
+        self._guidance_scale_real = guidance_scale_real
         self._joint_attention_kwargs = joint_attention_kwargs
         self._interrupt = False
 
@@ -716,6 +723,28 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             max_sequence_length=max_sequence_length,
             lora_scale=lora_scale,
         )
+
+        if negative_prompt_2 == "" and negative_prompt != "":
+            negative_prompt_2 = negative_prompt
+
+        negative_text_ids = text_ids
+        if guidance_scale_real > 1.0 and (
+            negative_prompt_embeds is None or negative_pooled_prompt_embeds is None
+        ):
+            (
+                negative_prompt_embeds,
+                negative_pooled_prompt_embeds,
+                negative_text_ids,
+            ) = self.encode_prompt(
+                prompt=negative_prompt,
+                prompt_2=negative_prompt_2,
+                prompt_embeds=None,
+                pooled_prompt_embeds=None,
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
+                lora_scale=lora_scale,
+            )
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels // 4
@@ -769,7 +798,9 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
-                    guidance = torch.tensor([guidance_scale], device=self.transformer.device)
+                    guidance = torch.tensor(
+                        [guidance_scale], device=self.transformer.device
+                    )
                     guidance = guidance.expand(latents.shape[0])
                 else:
                     guidance = None
@@ -792,6 +823,31 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
                 )[0]
+
+                # TODO optionally use batch prediction to speed this up.
+                if guidance_scale_real > 1.0 and t >= no_cfg_until_timestep:
+                    noise_pred_uncond = self.transformer(
+                        hidden_states=latents.to(
+                            device=self.transformer.device, dtype=self.transformer.dtype
+                        ),
+                        # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        pooled_projections=negative_pooled_prompt_embeds.to(
+                            device=self.transformer.device, dtype=self.transformer.dtype
+                        ),
+                        encoder_hidden_states=negative_prompt_embeds.to(
+                            device=self.transformer.device, dtype=self.transformer.dtype
+                        ),
+                        txt_ids=negative_text_ids.to(device=self.transformer.device),
+                        img_ids=latent_image_ids.to(device=self.transformer.device),
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                        return_dict=False,
+                    )[0]
+
+                    noise_pred = noise_pred_uncond + guidance_scale_real * (
+                        noise_pred - noise_pred_uncond
+                    )
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype

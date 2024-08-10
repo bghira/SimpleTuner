@@ -364,10 +364,6 @@ class TextEmbeddingCache:
         prompt_embeds_list = []
 
         emitted_warning = False
-        # If prompt_handler (Compel) is available, use it for all prompts
-        if self.prompt_handler and is_validation:
-            positive_prompt = self.prompt_handler.process_long_prompt(prompt)
-            return positive_prompt
         try:
             for tokenizer, text_encoder in zip(tokenizers, text_encoders):
                 if tokenizer is None or text_encoder is None:

@@ -107,15 +107,22 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "all"],
-        default="all",
+        choices=["mmdit", "context", "all", "all+ffs"],
+        default="mmdit",
         help=(
             "Flux has single and joint attention blocks."
-            " The single attention blocks deal with text inputs and are not transformed by LoRA by default."
-            " All attention blocks are trained by default."
+            " Only the multimodal 'dual stream' attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
-            " This is roughly equivalent to not training the text encoder(s) in earlier models."
+            " If 'context' is provided, the mmdit layers will not be trained."
+            " If 'all' is provided, all layers will be trained, minus feed-forward and norms."
+            " If 'all+ffs' is provided, all layers will be trained including feed-forward and norms."
         ),
+    )
+    parser.add_argument(
+        "--flux_sigmoid_scale",
+        type=float,
+        default=1.0,
+        help='Scale factor for sigmoid timestep sampling (only used when timestep_scheme is "flux").',
     )
     parser.add_argument(
         "--flux_fast_schedule",
@@ -140,7 +147,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_guidance_value",
         type=float,
-        default=3.0,
+        default=4.0,
         help=(
             "When using --flux_guidance_mode=constant, this value will be used for every input sample."
         ),
@@ -175,11 +182,22 @@ def parse_args(input_args=None):
         "--flow_matching_loss",
         type=str,
         choices=["diffusers", "compatible", "diffusion"],
-        default="diffusers",
+        default="compatible",
         help=(
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
             " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
+        ),
+    )
+    parser.add_argument(
+        "--timestep_scheme",
+        type=str,
+        choices=["sd3", "flux"],
+        default=None,
+        help=(
+            "When training flow-matching models like SD3 or Flux, we can select timesteps based on an approximated continuous schedule"
+            " that takes the 1000 timesteps and derives pseudo-sigmas from them. This is the default behaviour."
+            " Flux training seems to benefit from a sigma schedule, and is recommended to use the 'flux' option."
         ),
     )
     parser.add_argument(
@@ -256,7 +274,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lora_init_type",
         type=str,
-        choices=["default", "gaussian", "loftq"],
+        choices=["default", "gaussian", "loftq", "olora", "pissa"],
         default="default",
         help=(
             "The initialization type for the LoRA model. 'default' will use Microsoft's initialization method,"
@@ -275,7 +293,8 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lora_alpha",
         type=float,
-        default=16,
+        required=False,
+        default=None,
         help=(
             "The alpha value for the LoRA model. This is the learning rate for the LoRA update matrices."
         ),
@@ -1187,6 +1206,14 @@ def parse_args(input_args=None):
         help="The name of the repository to keep in sync with the local `output_dir`.",
     )
     parser.add_argument(
+        "--model_card_note",
+        type=str,
+        default=None,
+        help=(
+            "Add a string to the top of your model card to provide users with some additional context."
+        ),
+    )
+    parser.add_argument(
         "--logging_dir",
         type=str,
         default="logs",
@@ -1376,9 +1403,7 @@ def parse_args(input_args=None):
         "--disable_compel",
         action="store_true",
         help=(
-            "If provided, validation pipeline prompts will be handled using the typical prompt encoding strategy."
-            " Otherwise, the default behaviour is to use Compel for prompt embed generation."
-            " Note that the training input text embeds are not generated using Compel, and will be truncated to 77 tokens."
+            "This option does nothing. It is deprecated and will be removed in a future release."
         ),
     )
     parser.add_argument(
@@ -1493,6 +1518,18 @@ def parse_args(input_args=None):
         type=float,
         default=7.5,
         help="CFG value for validation images. Default: 7.5",
+    )
+    parser.add_argument(
+        "--validation_guidance_real",
+        type=float,
+        default=1.0,
+        help="Use real CFG sampling for Flux validation images. Default: 1.0",
+    )
+    parser.add_argument(
+        "--validation_no_cfg_until_timestep",
+        type=int,
+        default=2,
+        help="When using real CFG sampling for Flux validation images, skip doing CFG on these timesteps. Default: 2",
     )
     parser.add_argument(
         "--validation_guidance_rescale",
@@ -1838,6 +1875,10 @@ def parse_args(input_args=None):
                 f"\n--adam_bfloat16 {'could alternatively be provided to resolve the situation' if not args.adam_bfloat16 else 'correctly provided... but there is another optimizer enabled'}. Check your value for OPTIMIZER."
                 f"\n--mixed_precision is {'bf16, as expected' if args.mixed_precision == 'bf16' else 'not bf16, but it should be'}. This value is referred to as MIXED_PRECISION in config.env."
             )
+    if args.use_prodigy_optimizer and args.gradient_precision == "fp32":
+        raise ValueError(
+            "You cannot use the Prodigy optimizer with fp32 gradients. Please set --gradient_precision=unmodified to continue."
+        )
 
     if torch.backends.mps.is_available():
         if (
@@ -1854,12 +1895,6 @@ def parse_args(input_args=None):
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
                 "\nPlease reduce the batch size to 12 or lower."
-            )
-            sys.exit(1)
-        if args.lora_init_type == "loftq":
-            error_log(
-                "Because MacOS is not yet supported by Bits and Bytes, we cannot use LoftQ for weight initialisation."
-                " Use 'gaussian' or 'default' instead."
             )
             sys.exit(1)
 
@@ -1956,11 +1991,10 @@ def parse_args(input_args=None):
 
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
-        if not args.disable_compel:
-            warning_log(
-                "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
-            )
-            args.disable_compel = True
+        args.disable_compel = True
+        if args.timestep_scheme is None:
+            args.timestep_scheme = "sd3"
+        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
 
     t5_max_length = 77
     if args.sd3 and (
@@ -1979,25 +2013,44 @@ def parse_args(input_args=None):
             warning_log(
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
             )
+    flux_version = "dev"
     if "schnell" in args.pretrained_model_name_or_path.lower():
+        flux_version = "schnell"
         model_max_seq_length = 256
     elif "dev" in args.pretrained_model_name_or_path.lower():
         model_max_seq_length = 512
-    if args.flux and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > model_max_seq_length
-    ):
-        if not args.i_know_what_i_am_doing:
+    if args.flux:
+        if args.timestep_scheme is None:
+            args.timestep_scheme = "flux"
+        logger.info(f"Using {args.timestep_scheme} timestep scheme.")
+        if (
+            args.tokenizer_max_length is None
+            or int(args.tokenizer_max_length) > model_max_seq_length
+        ):
+            if not args.i_know_what_i_am_doing:
+                warning_log(
+                    f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
+                )
+                args.tokenizer_max_length = model_max_seq_length
+            else:
+                warning_log(
+                    f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                )
+                warning_log(
+                    f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
+                )
+        if flux_version == "dev":
+            if args.validation_num_inference_steps > 28:
+                warning_log(
+                    "Flux Dev expects around 28 or fewer inference steps. Consider limiting --validation_num_inference_steps to 28."
+                )
+            if args.validation_num_inference_steps < 15:
+                warning_log(
+                    "Flux Dev expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
+                )
+        if flux_version == "schnell" and args.validation_num_inference_steps > 4:
             warning_log(
-                f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
-            )
-            args.tokenizer_max_length = model_max_seq_length
-        else:
-            warning_log(
-                f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
+                "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
 
     if args.use_ema and args.ema_cpu_only:

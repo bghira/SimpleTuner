@@ -96,6 +96,13 @@ from diffusers.utils import (
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
+from helpers.models.flux import (
+    prepare_latent_image_ids,
+    pack_latents,
+    unpack_latents,
+    update_flux_schedule_to_fast,
+)
+
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
 
@@ -272,12 +279,6 @@ def main():
         StateTracker.set_model_type("sd3")
     if args.flux:
         StateTracker.set_model_type("flux")
-        from helpers.models.flux import (
-            prepare_latent_image_ids,
-            pack_latents,
-            unpack_latents,
-            update_flux_schedule_to_fast,
-        )
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
     if args.legacy:
@@ -386,6 +387,15 @@ def main():
             from helpers.publishing.huggingface import HubManager
 
             hub_manager = HubManager(config=args)
+        try:
+            import huggingface_hub
+
+            StateTracker.set_hf_user(huggingface_hub.whoami())
+            logger.info(
+                f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log into Hugging Face Hub: {e}")
 
     vae_path = (
         args.pretrained_model_name_or_path
@@ -490,7 +500,9 @@ def main():
         from diffusers import FlowMatchEulerDiscreteScheduler
 
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="scheduler"
+            args.pretrained_model_name_or_path,
+            subfolder="scheduler",
+            shift=1 if args.flux else 3,
         )
         noise_scheduler_copy = copy.deepcopy(
             update_flux_schedule_to_fast(
@@ -652,16 +664,6 @@ def main():
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if not args.disable_compel and not any([args.sd3, args.pixart_sigma, args.kolors]):
-        # Only CLIP works with prompt weighting.
-        prompt_handler = PromptHandler(
-            args=args,
-            text_encoders=[text_encoder_1, text_encoder_2],
-            tokenizers=[tokenizer_1, tokenizer_2],
-            accelerator=accelerator,
-            model_type=StateTracker.get_model_type(),
-        )
-
     try:
         if webhook_handler is not None:
             webhook_handler.send(
@@ -742,6 +744,7 @@ def main():
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
+                backend["text_embed_cache"].pipeline = None
         reclaim_memory()
         if torch.cuda.is_available():
             memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -858,25 +861,24 @@ def main():
             transformer.to("cpu", dtype=base_weight_dtype)
         else:
             logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
-
-        if "quanto" in args.base_model_precision:
-            try:
-                from optimum.quanto import QTensor
-            except ImportError as e:
-                raise ImportError(
-                    f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-                )
-            from helpers.training.quantisation import quantoise
-
-            # we'll quantise pretty much everything but the adapter, if we execute this here.
-            quantoise(
-                unet=unet,
-                transformer=transformer,
-                text_encoder_1=text_encoder_1,
-                text_encoder_2=text_encoder_2,
-                text_encoder_3=text_encoder_3,
-                args=args,
+    if "quanto" in args.base_model_precision:
+        try:
+            from optimum.quanto import QTensor
+        except ImportError as e:
+            raise ImportError(
+                f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
             )
+        from helpers.training.quantisation import quantoise
+
+        # we'll quantise pretty much everything but the adapter, if we execute this here.
+        quantoise(
+            unet=unet,
+            transformer=transformer,
+            text_encoder_1=text_encoder_1,
+            text_encoder_2=text_encoder_2,
+            text_encoder_3=text_encoder_3,
+            args=args,
+        )
 
     if args.controlnet:
         if any(
@@ -914,24 +916,32 @@ def main():
         if unet is not None:
             unet.requires_grad_(False)
         lora_initialisation_style = True
-        if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
-            lora_initialisation_style = args.lora_init_method
-        lora_weight_init_type = (
-            "gaussian"
-            if torch.backends.mps.is_available()
-            else lora_initialisation_style
-        )
+        if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
+            if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
+                logger.error(
+                    "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
+                )
+            elif is_quantized and args.lora_init_type == "loftq":
+                logger.error(
+                    "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
+                )
+            else:
+                lora_initialisation_style = (
+                    args.lora_init_type if args.lora_init_type != "default" else True
+                )
         if args.use_dora:
             logger.warning(
                 "DoRA support is experimental and not very thoroughly tested."
             )
-            lora_weight_init_type = "gaussian"
+            lora_weight_init_type = "default"
         if unet is not None:
             unet_lora_config = LoraConfig(
                 r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
+                lora_alpha=(
+                    args.lora_alpha if args.lora_alpha is not None else args.lora_rank
+                ),
                 lora_dropout=args.lora_dropout,
-                init_lora_weights=lora_weight_init_type,
+                init_lora_weights=lora_initialisation_style,
                 target_modules=["to_k", "to_q", "to_v", "to_out.0"],
                 use_dora=args.use_dora,
             )
@@ -939,21 +949,51 @@ def main():
             unet.add_adapter(unet_lora_config)
         if transformer is not None:
             target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
-            if args.flux and args.flux_lora_target == "all":
-                target_modules = [
-                    "to_k",
-                    "to_q",
-                    "to_v",
-                    "add_k_proj",
-                    "add_q_proj",
-                    "add_v_proj",
-                    "to_out.0",
-                    "to_add_out.0",
-                ]
+
+            if args.flux:
+                # target_modules = mmdit layers here
+                if args.flux_lora_target == "all":
+                    target_modules = [
+                        "to_k",
+                        "to_q",
+                        "to_v",
+                        "add_k_proj",
+                        "add_q_proj",
+                        "add_v_proj",
+                        "to_out.0",
+                        "to_add_out.0",
+                    ]
+                elif args.flux_lora_target == "context":
+                    # i think these are the text input layers.
+                    target_modules = [
+                        "add_k_proj",
+                        "add_q_proj",
+                        "add_v_proj",
+                        "to_add_out.0",
+                    ]
+                elif args.flux_lora_target == "all+ffs":
+                    target_modules = [
+                        "to_k",
+                        "to_q",
+                        "to_v",
+                        "add_k_proj",
+                        "add_q_proj",
+                        "add_v_proj",
+                        "to_out.0",
+                        "to_add_out.0",
+                        "ff.0",
+                        "ff.2",
+                        "ff_context.0",
+                        "ff_context.2",
+                        "proj_mlp",
+                        "proj_out",
+                    ]
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
-                init_lora_weights=lora_weight_init_type,
+                lora_alpha=(
+                    args.lora_alpha if args.lora_alpha is not None else args.lora_rank
+                ),
+                init_lora_weights=lora_initialisation_style,
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
@@ -1842,7 +1882,7 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                if flow_matching:
+                if flow_matching and args.timestep_scheme == "sd3":
                     # for weighting schemes where we sample timesteps non-uniformly
                     # thanks to @Slickytail who implemented this correctly via #8528
                     if args.weighting_scheme == "logit_normal":
@@ -1882,6 +1922,16 @@ def main():
                     timesteps = noise_scheduler_copy.timesteps[indices].to(
                         device=latents.device
                     )
+                elif flow_matching and args.timestep_scheme == "flux":
+                    # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
+                    # also used by: https://github.com/XLabs-AI/x-flux/tree/main
+                    # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
+                    sigmas = torch.sigmoid(
+                        args.flux_sigmoid_scale
+                        * torch.randn((bsz,), device=accelerator.device)
+                    )
+                    timesteps = sigmas * 1000.0
+                    sigmas = sigmas.view(-1, 1, 1, 1)
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
                     # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
@@ -1908,20 +1958,22 @@ def main():
                     timesteps_buffer.append((global_step, timestep))
 
                 if flow_matching:
-                    # Add noise according to flow matching.
-                    sigmas = get_sd3_sigmas(
-                        accelerator,
-                        noise_scheduler_copy,
-                        timesteps,
-                        n_dim=latents.ndim,
-                        dtype=latents.dtype,
-                    )
-                    # print(f'shapes: {sigmas.shape}, {latents.shape}, {noise.shape}')
-                    noisy_latents = (
-                        1.0 - sigmas
-                    ) * latents.float() + sigmas * noise.float()
-                    # is equal to:
-                    # zt = (1 - texp) * x + texp * z1
+                    if args.timestep_scheme == "sd3":
+                        # Add noise according to flow matching.
+                        sigmas = get_sd3_sigmas(
+                            accelerator,
+                            noise_scheduler_copy,
+                            timesteps,
+                            n_dim=latents.ndim,
+                            dtype=latents.dtype,
+                        )
+                        noisy_latents = (
+                            1.0 - sigmas
+                        ) * latents.float() + sigmas * noise.float()
+                        # is equal to:
+                        # zt = (1 - texp) * x + texp * z1
+                    elif args.timestep_scheme == "flux":
+                        noisy_latents = (1 - sigmas) * latents + sigmas * noise
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
@@ -2095,7 +2147,6 @@ def main():
                             joint_attention_kwargs=None,
                             return_dict=False,
                         )[0]
-                        # print(f'actual prediction shape: {model_pred.shape}')
 
                     elif args.sd3:
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
@@ -2171,25 +2222,19 @@ def main():
                     if hasattr(model_pred, "dequantize") and isinstance(
                         model_pred, QTensor
                     ):
-                        # print(f"dequantizing the prediction: {model_pred.dtype}")
                         model_pred = model_pred.dequantize()
-                        # print(f"new dtype: {model_pred.dtype}")
 
                 if args.flux:
-                    # print(f'unpack: {model_pred.shape}')
                     model_pred = unpack_latents(
                         model_pred,
                         height=latents.shape[2] * 8,
                         width=latents.shape[3] * 8,
                         vae_scale_factor=16,
                     )
-                if flow_matching:
+                if flow_matching and args.timestep_scheme == "sd3":
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                     # Preconditioning of the model outputs.
-                    # print(f"preconditioning shape: {model_pred.shape}")
-                    original_shape = model_pred.shape
                     if args.flow_matching_loss == "diffusers":
-                        # print(f"post-preconditioning shape: {original_shape} * (-{sigmas}) + {noisy_latents.shape}")
                         model_pred = model_pred * (-sigmas) + noisy_latents
                     elif args.flow_matching_loss == "compatible":
                         # we shouldn't mess with the model prediction.
@@ -2207,11 +2252,15 @@ def main():
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     # these weighting schemes use a uniform timestep sampling
                     # and instead post-weight the loss
-                    if args.weighting_scheme == "sigma_sqrt":
-                        weighting = (sigmas**-2.0).float()
-                    elif args.weighting_scheme == "cosmap":
-                        bot = 1 - 2 * sigmas + 2 * sigmas**2
-                        weighting = 2 / (math.pi * bot)
+                    if (
+                        args.timestep_scheme == "sd3"
+                        and args.weighting_scheme != "none"
+                    ):
+                        if args.weighting_scheme == "sigma_sqrt":
+                            weighting = (sigmas**-2.0).float()
+                        elif args.weighting_scheme == "cosmap":
+                            bot = 1 - 2 * sigmas + 2 * sigmas**2
+                            weighting = 2 / (math.pi * bot)
                     else:
                         weighting = torch.ones_like(sigmas)
                     loss = torch.mean(

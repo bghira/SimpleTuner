@@ -613,30 +613,6 @@ class Validation:
                 raise ValueError(
                     f"Unexpected number of embeddings returned from cache: {_embed}"
                 )
-            if (
-                self.prompt_handler is not None
-                and not StateTracker.get_model_type() == "sd3"
-                and not StateTracker.get_model_type() == "flux"
-            ):
-                for text_encoder in self.prompt_handler.text_encoders:
-                    # Can't remember why we move this to the GPU right here..
-                    if text_encoder is not None:
-                        text_encoder = text_encoder.to(
-                            device=self.accelerator.device, dtype=self.weight_dtype
-                        )
-                [
-                    current_validation_prompt_embeds,
-                    self.validation_negative_prompt_embeds,
-                ] = self.prompt_handler.compel.pad_conditioning_tensors_to_same_length(
-                    [
-                        current_validation_prompt_embeds,
-                        self.validation_negative_prompt_embeds,
-                    ]
-                )
-                for text_encoder in self.prompt_handler.text_encoders:
-                    # Or why we move it back...maybe it's a Compel oddity :(
-                    if text_encoder is not None:
-                        text_encoder = text_encoder.to("cpu")
             current_validation_pooled_embeds = current_validation_pooled_embeds.to(
                 device=self.accelerator.device, dtype=self.weight_dtype
             )
@@ -687,39 +663,6 @@ class Validation:
             # logger.debug(
             #     f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
             # )
-            if (
-                self.prompt_handler is not None
-                and StateTracker.get_model_type() in ["sdxl", "legacy"]
-                and "deepfloyd" not in StateTracker.get_args().model_type
-            ):
-                # for SDXL and earlier SD models we optionally use Compel for prompt upweighting/long prompt parsing.
-                for text_encoder in self.prompt_handler.text_encoders:
-                    if text_encoder:
-                        text_encoder = text_encoder.to(
-                            self.accelerator.device, dtype=self.weight_dtype
-                        )
-                [
-                    current_validation_prompt_embeds,
-                    self.validation_negative_prompt_embeds,
-                ] = self.prompt_handler.compel.pad_conditioning_tensors_to_same_length(
-                    [
-                        current_validation_prompt_embeds,
-                        self.validation_negative_prompt_embeds,
-                    ]
-                )
-                for text_encoder in self.prompt_handler.text_encoders:
-                    if text_encoder:
-                        text_encoder = text_encoder.to(
-                            self.accelerator.device, dtype=self.weight_dtype
-                        )
-                current_validation_prompt_embeds = current_validation_prompt_embeds.to(
-                    device=self.accelerator.device, dtype=self.weight_dtype
-                )
-                self.validation_negative_prompt_embeds = (
-                    self.validation_negative_prompt_embeds.to(
-                        device=self.accelerator.device, dtype=self.weight_dtype
-                    )
-                )
         else:
             raise NotImplementedError(
                 f"Model type {StateTracker.get_model_type()} not implemented for validation."
@@ -1214,6 +1157,18 @@ class Validation:
                     ),
                     **extra_validation_kwargs,
                 }
+                if self.args.validation_guidance_real > 1.0:
+                    pipeline_kwargs["guidance_scale_real"] = float(
+                        self.args.validation_guidance_real
+                    )
+                if (
+                    isinstance(self.args.validation_no_cfg_until_timestep, int)
+                    and self.args.flux
+                ):
+                    pipeline_kwargs["no_cfg_until_timestep"] = (
+                        self.args.validation_no_cfg_until_timestep
+                    )
+
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
@@ -1227,10 +1182,6 @@ class Validation:
                 if StateTracker.get_model_type() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
-                    if "negative_prompt_embeds" in pipeline_kwargs:
-                        del pipeline_kwargs["negative_prompt_embeds"]
-                    if "negative_pooled_prompt_embeds" in pipeline_kwargs:
-                        del pipeline_kwargs["negative_pooled_prompt_embeds"]
                 if (
                     StateTracker.get_model_type() == "pixart_sigma"
                     or StateTracker.get_model_type() == "smoldit"
