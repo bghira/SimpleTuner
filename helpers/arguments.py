@@ -1188,6 +1188,14 @@ def parse_args(input_args=None):
         help="The name of the repository to keep in sync with the local `output_dir`.",
     )
     parser.add_argument(
+        "--model_card_note",
+        type=str,
+        default=None,
+        help=(
+            "Add a string to the top of your model card to provide users with some additional context."
+        ),
+    )
+    parser.add_argument(
         "--logging_dir",
         type=str,
         default="logs",

@@ -103,6 +103,12 @@ def lora_info(args):
 """
 
 
+def model_card_note(args):
+    """Return a string with the model card note."""
+    note_contents = args.model_card_note if args.model_card_note else ""
+    return f"\n{note_contents}\n"
+
+
 def save_model_card(
     repo_id: str,
     images=None,
@@ -185,7 +191,7 @@ This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full ran
 {'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if StateTracker.get_args().sd3 and StateTracker.get_args().flow_matching_loss == "diffusion" else ''}
 
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if StateTracker.get_args().validation_using_datasets else 'No validation prompt was used during training.'}
-
+{model_card_note(args)}
 {'```' if prompt else ''}
 {prompt}
 {'```' if prompt else ''}
