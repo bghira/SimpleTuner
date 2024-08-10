@@ -1878,6 +1878,10 @@ def parse_args(input_args=None):
                 f"\n--adam_bfloat16 {'could alternatively be provided to resolve the situation' if not args.adam_bfloat16 else 'correctly provided... but there is another optimizer enabled'}. Check your value for OPTIMIZER."
                 f"\n--mixed_precision is {'bf16, as expected' if args.mixed_precision == 'bf16' else 'not bf16, but it should be'}. This value is referred to as MIXED_PRECISION in config.env."
             )
+    if args.use_prodigy_optimizer and args.gradient_precision == "fp32":
+        raise ValueError(
+            "You cannot use the Prodigy optimizer with fp32 gradients. Please set --gradient_precision=unmodified to continue."
+        )
 
     if torch.backends.mps.is_available():
         if (
