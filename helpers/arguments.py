@@ -107,14 +107,14 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "all"],
+        choices=["mmdit", "context", "all"],
         default="all",
         help=(
             "Flux has single and joint attention blocks."
             " The single attention blocks deal with text inputs and are not transformed by LoRA by default."
             " All attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
-            " This is roughly equivalent to not training the text encoder(s) in earlier models."
+            " If 'context' is provided, the mmdit layers will not be trained."
         ),
     )
     parser.add_argument(
