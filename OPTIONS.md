@@ -372,6 +372,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                 [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
                 [--validation_guidance VALIDATION_GUIDANCE]
+                [--validation_guidance_real VALIDATION_GUIDANCE_REAL]
                 [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
                 [--validation_randomize] [--validation_seed VALIDATION_SEED]
                 [--fully_unload_text_encoder]
@@ -1192,6 +1193,11 @@ options:
                         to be applied 25 percent of the time.
   --validation_guidance VALIDATION_GUIDANCE
                         CFG value for validation images. Default: 7.5
+  --validation_guidance_real VALIDATION_GUIDANCE_REAL
+                        For flux, for any >1.0 value the validation will use
+                        classifier free guidance instead of the distilled
+                        sampling.
+                        Default: 1.0
   --validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE
                         CFG rescale value for validation images. Default: 0.0,
                         max 1.0

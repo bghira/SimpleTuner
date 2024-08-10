@@ -1157,6 +1157,8 @@ class Validation:
                     ),
                     **extra_validation_kwargs,
                 }
+                if self.args.validation_guidance_real > 1.0:
+                    pipeline_kwargs['guidance_scale_real'] = self.args.validation_guidance_real
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
                 )
