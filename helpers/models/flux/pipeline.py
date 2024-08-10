@@ -598,11 +598,11 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
         guidance_scale_real: float = 1.0,
-        negative_prompt: Union[str, List[str]] = '',
-        negative_prompt_2: Union[str, List[str]] = '',
+        negative_prompt: Union[str, List[str]] = "",
+        negative_prompt_2: Union[str, List[str]] = "",
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        no_cfg_until_timestep: int=2,
+        no_cfg_until_timestep: int = 2,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -746,7 +746,6 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 lora_scale=lora_scale,
             )
 
-
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels // 4
         latents, latent_image_ids = self.prepare_latents(
@@ -799,7 +798,9 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
-                    guidance = torch.tensor([guidance_scale], device=self.transformer.device)
+                    guidance = torch.tensor(
+                        [guidance_scale], device=self.transformer.device
+                    )
                     guidance = guidance.expand(latents.shape[0])
                 else:
                     guidance = None
@@ -838,13 +839,15 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                         encoder_hidden_states=negative_prompt_embeds.to(
                             device=self.transformer.device, dtype=self.transformer.dtype
                         ),
-                        txt_ids=negative_text_ids,
-                        img_ids=latent_image_ids,
+                        txt_ids=negative_text_ids.to(device=self.transformer.device),
+                        img_ids=latent_image_ids.to(device=self.transformer.device),
                         joint_attention_kwargs=self.joint_attention_kwargs,
                         return_dict=False,
                     )[0]
 
-                    noise_pred = noise_pred_uncond + guidance_scale_real * (noise_pred - noise_pred_uncond)
+                    noise_pred = noise_pred_uncond + guidance_scale_real * (
+                        noise_pred - noise_pred_uncond
+                    )
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
