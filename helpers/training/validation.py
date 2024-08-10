@@ -1158,9 +1158,16 @@ class Validation:
                     **extra_validation_kwargs,
                 }
                 if self.args.validation_guidance_real > 1.0:
-                    pipeline_kwargs['guidance_scale_real'] = float(self.args.validation_guidance_real)
-                if isinstance(self.args.validation_no_cfg_until_timestep, int) and self.args.flux:
-                    pipeline_kwargs['no_cfg_until_timestep'] = self.args.validation_no_cfg_until_timestep
+                    pipeline_kwargs["guidance_scale_real"] = float(
+                        self.args.validation_guidance_real
+                    )
+                if (
+                    isinstance(self.args.validation_no_cfg_until_timestep, int)
+                    and self.args.flux
+                ):
+                    pipeline_kwargs["no_cfg_until_timestep"] = (
+                        self.args.validation_no_cfg_until_timestep
+                    )
 
                 logger.debug(
                     f"Image being generated with parameters: {pipeline_kwargs}"
@@ -1175,10 +1182,6 @@ class Validation:
                 if StateTracker.get_model_type() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
-                    if "negative_prompt_embeds" in pipeline_kwargs:
-                        del pipeline_kwargs["negative_prompt_embeds"]
-                    if "negative_pooled_prompt_embeds" in pipeline_kwargs:
-                        del pipeline_kwargs["negative_pooled_prompt_embeds"]
                 if (
                     StateTracker.get_model_type() == "pixart_sigma"
                     or StateTracker.get_model_type() == "smoldit"
