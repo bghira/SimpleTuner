@@ -2239,10 +2239,7 @@ def main():
                 if flow_matching and args.timestep_scheme == "sd3":
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                     # Preconditioning of the model outputs.
-                    # print(f"preconditioning shape: {model_pred.shape}")
-                    original_shape = model_pred.shape
                     if args.flow_matching_loss == "diffusers":
-                        # print(f"post-preconditioning shape: {original_shape} * (-{sigmas}) + {noisy_latents.shape}")
                         model_pred = model_pred * (-sigmas) + noisy_latents
                     elif args.flow_matching_loss == "compatible":
                         # we shouldn't mess with the model prediction.
@@ -2270,6 +2267,7 @@ def main():
                             bot = 1 - 2 * sigmas + 2 * sigmas**2
                             weighting = 2 / (math.pi * bot)
                     else:
+                        print("using pass-through sigma weighting")
                         weighting = torch.ones_like(sigmas)
                     loss = torch.mean(
                         (
