@@ -148,11 +148,11 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "crop": true,
     "crop_aspect": "square",
     "crop_style": "center",
-    "resolution": 1.0,
-    "minimum_image_size": 0.5,
-    "maximum_image_size": 1.0,
-    "target_downsample_size": 1.0,
-    "resolution_type": "area",
+    "resolution": 512,
+    "minimum_image_size": 512,
+    "maximum_image_size": 512,
+    "target_downsample_size": 512,
+    "resolution_type": "pixel",
     "cache_dir_vae": "cache/vae/flux/pseudo-camera-10k",
     "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
@@ -171,6 +171,10 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
   }
 ]
 ```
+
+> ⚠️ 512-pixel training is recommended for Flux; it is more reliable than high-resolution training, which tends to diverge.
+
+> ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Flux.
 
 Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
 

@@ -108,11 +108,10 @@ def parse_args(input_args=None):
         "--flux_lora_target",
         type=str,
         choices=["mmdit", "context", "all"],
-        default="all",
+        default="mmdit",
         help=(
             "Flux has single and joint attention blocks."
-            " The single attention blocks deal with text inputs and are not transformed by LoRA by default."
-            " All attention blocks are trained by default."
+            " Only the multimodal 'dual stream' attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
             " If 'context' is provided, the mmdit layers will not be trained."
         ),
@@ -140,7 +139,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_guidance_value",
         type=float,
-        default=3.0,
+        default=4.0,
         help=(
             "When using --flux_guidance_mode=constant, this value will be used for every input sample."
         ),
