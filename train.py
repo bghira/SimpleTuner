@@ -919,6 +919,10 @@ def main():
                 logger.error(
                     "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
                 )
+            elif is_quantized and args.lora_init_type == "loftq":
+                logger.error(
+                    "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
+                )
             else:
                 lora_initialisation_style = (
                     args.lora_init_type if args.lora_init_type != "default" else True
