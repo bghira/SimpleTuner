@@ -247,8 +247,10 @@ def get_tokenizers(args):
                     args.validation_using_datasets = True
         except Exception as e:
             logger.warning(
-                f"Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue: {e}"
+                f"Could not load secondary tokenizer ({'OpenCLIP-G/14' if not args.flux else 'T5 XXL'}). Cannot continue: {e}"
             )
+            if args.flux or args.sd3:
+                raise e
         if not tokenizer_1 and not tokenizer_2:
             raise Exception("Failed to load tokenizer")
     else:
