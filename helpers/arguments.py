@@ -1480,7 +1480,7 @@ def parse_args(input_args=None):
         "--validation_guidance_real",
         type=float,
         default=1.0,
-        help="Use real CFG sampling for Flux validation images. Default: 1.0",
+        help="Use real CFG sampling for Flux validation images. Default: 1.0 (no CFG)",
     )
     parser.add_argument(
         "--validation_no_cfg_until_timestep",
