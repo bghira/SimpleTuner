@@ -1690,6 +1690,16 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--input_perturbation",
+        type=float,
+        default=0.0,
+        help=(
+            "Add additional noise only to the inputs fed to the model during training."
+            " This will make the training converge faster. A value of 0.1 is suggested if you want to enable this."
+            " Input perturbation seems to also work with flow-matching (e.g. SD3 and Flux)."
+        ),
+    )
+    parser.add_argument(
         "--lr_end",
         type=str,
         default="4e-7",
