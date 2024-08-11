@@ -58,7 +58,9 @@ class MultiaspectImage:
     ):
         if type(aspect_ratio) != float:
             raise ValueError(f"Aspect ratio must be a float, not {type(aspect_ratio)}")
-        if type(resolution) != int:
+        if type(resolution) != int and (
+            type(resolution) != float or int(resolution) != resolution
+        ):
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
 
         W_original, H_original = original_size
