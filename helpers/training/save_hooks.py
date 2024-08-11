@@ -151,7 +151,7 @@ class SaveHookManager:
                 self.pipeline_class = SmolDiTPipeline
             self.denoiser_subdir = "transformer"
 
-        if args.controlnet is not None:
+        if args.controlnet:
             self.denoiser_class = ControlNetModel
             self.denoiser_subdir = "controlnet"
         logger.info(f"Denoiser class set to: {self.denoiser_class.__name__}.")

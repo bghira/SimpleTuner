@@ -42,6 +42,7 @@ peft = "^0.9.0"
 tensorboard = "^2.15.1"
 triton = "^3.0.0"
 prodigyopt = "^1.0"
+sentencepiece = "^0.2.0"
 
 
 [build-system]
