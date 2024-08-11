@@ -47,21 +47,12 @@ RUN apt-get update -y && apt-get install -y python3 python3-pip
 RUN python3 -m pip install pip --upgrade
 
 # HF
-ARG HUGGING_FACE_HUB_TOKEN
-ENV HUGGING_FACE_HUB_TOKEN=$HUGGING_FACE_HUB_TOKEN
-ENV HF_HOME=/workspace/huggingface
+ENV HF_HOME=$PWD/huggingface
 
 RUN pip3 install "huggingface_hub[cli]"
 
-RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then huggingface-cli login --token "$HUGGING_FACE_HUB_TOKEN" --add-to-git-credential; else echo "HUGGING_FACE_HUB_TOKEN not set; skipping login"; fi
-
 # WanDB
-ARG WANDB_TOKEN
-ENV WANDB_TOKEN=$WANDB_TOKEN
-
 RUN pip3 install wandb
-
-RUN if [ -n "$WANDB_TOKEN" ]; then wandb login "$WANDB_TOKEN"; else echo "WANDB_TOKEN not set; skipping login"; fi
 
 # Clone SimpleTuner
 RUN git clone https://github.com/bghira/SimpleTuner --branch release
