@@ -1588,7 +1588,10 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                if args.input_perturbation != 0:
+                if args.input_perturbation != 0 and (not args.input_perturbation_steps or global_step < args.input_perturbation_steps):
+                    input_perturbation = args.input_perturbation
+                    if args.input_perturbation_steps:
+                        input_perturbation *= 1.0 - (global_step / args.input_perturbation_steps)
                     input_noise = noise + args.input_perturbation * torch.randn_like(latents)
                 else:
                     input_noise = noise

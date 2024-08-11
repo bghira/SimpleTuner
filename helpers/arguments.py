@@ -1700,6 +1700,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--input_perturbation_steps",
+        type=float,
+        default=0,
+        help=(
+            "Only apply input perturbation over the first N steps with linear decay."
+        ),
+    )
+    parser.add_argument(
         "--lr_end",
         type=str,
         default="4e-7",
