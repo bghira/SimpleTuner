@@ -147,9 +147,11 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_guidance_value",
         type=float,
-        default=4.0,
+        default=1.0,
         help=(
             "When using --flux_guidance_mode=constant, this value will be used for every input sample."
+            " Using a value of 1.0 seems to preserve the CFG distillation for the Dev model,"
+            " and using any other value will result in the resulting LoRA requiring CFG at inference time."
         ),
     )
     parser.add_argument(
