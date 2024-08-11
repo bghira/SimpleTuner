@@ -47,7 +47,7 @@ RUN apt-get update -y && apt-get install -y python3 python3-pip
 RUN python3 -m pip install pip --upgrade
 
 # HF
-ENV HF_HOME=$PWD/huggingface
+ENV HF_HOME=/workspace/huggingface
 
 RUN pip3 install "huggingface_hub[cli]"
 
