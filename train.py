@@ -100,7 +100,6 @@ from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
     unpack_latents,
-    update_flux_schedule_to_fast,
 )
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -504,12 +503,6 @@ def main():
             subfolder="scheduler",
             shift=1 if args.flux else 3,
         )
-        noise_scheduler_copy = copy.deepcopy(
-            update_flux_schedule_to_fast(
-                args=args, noise_scheduler_to_copy=noise_scheduler
-            )
-        )
-
     else:
         if args.legacy:
             args.rescale_betas_zero_snr = True
@@ -1882,56 +1875,25 @@ def main():
 
                 bsz = latents.shape[0]
                 training_logger.debug(f"Working on batch size: {bsz}")
-                if flow_matching and args.timestep_scheme == "sd3":
-                    # for weighting schemes where we sample timesteps non-uniformly
-                    # thanks to @Slickytail who implemented this correctly via #8528
-                    if args.weighting_scheme == "logit_normal":
-                        # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
-                        u = torch.normal(
-                            mean=args.logit_mean,
-                            std=args.logit_std,
-                            size=(bsz,),
-                            device="cpu",
+                if flow_matching:
+                    if not args.flux_fast_schedule:
+                        # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
+                        # also used by: https://github.com/XLabs-AI/x-flux/tree/main
+                        # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
+                        sigmas = torch.sigmoid(
+                            args.flow_matching_sigmoid_scale
+                            * torch.randn((bsz,), device=accelerator.device)
                         )
-                        u = torch.nn.functional.sigmoid(u)
-                    elif args.weighting_scheme == "mode":
-                        u = torch.rand(size=(bsz,), device="cpu")
-                        u = (
-                            1
-                            - u
-                            - args.mode_scale
-                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
-                        )
+                        timesteps = sigmas * 1000.0
+                        sigmas = sigmas.view(-1, 1, 1, 1)
                     else:
-                        u = torch.rand(size=(bsz,), device="cpu")
-                    if args.flux_fast_schedule:
-                        # We need to train only timesteps [1, 0.75, 0.5, 0.25] based on SD3-Turbo paper
-                        quarter_step = int(
-                            noise_scheduler_copy.config.num_train_timesteps / 4
+                        # fast schedule can only use these sigmas, and they can be sampled up to batch size times
+                        available_sigmas = [0.7, 0.1]
+                        sigmas = torch.tensor(
+                            random.choices(available_sigmas, k=bsz),
+                            device=accelerator.device,
                         )
-                        indices = ((u * 4).long() + 1) * quarter_step - 1
-                        # indices = (u * 4).long() * quarter_step - 1
-                    else:
-                        indices = (
-                            u * noise_scheduler_copy.config.num_train_timesteps
-                        ).long()
-
-                    indices = (
-                        u * noise_scheduler_copy.config.num_train_timesteps
-                    ).long()
-                    timesteps = noise_scheduler_copy.timesteps[indices].to(
-                        device=latents.device
-                    )
-                elif flow_matching and args.timestep_scheme == "flux":
-                    # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
-                    # also used by: https://github.com/XLabs-AI/x-flux/tree/main
-                    # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
-                    sigmas = torch.sigmoid(
-                        args.flux_sigmoid_scale
-                        * torch.randn((bsz,), device=accelerator.device)
-                    )
-                    timesteps = sigmas * 1000.0
-                    sigmas = sigmas.view(-1, 1, 1, 1)
+                        timesteps = sigmas * 1000.0
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
                     # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
@@ -1958,22 +1920,7 @@ def main():
                     timesteps_buffer.append((global_step, timestep))
 
                 if flow_matching:
-                    if args.timestep_scheme == "sd3":
-                        # Add noise according to flow matching.
-                        sigmas = get_sd3_sigmas(
-                            accelerator,
-                            noise_scheduler_copy,
-                            timesteps,
-                            n_dim=latents.ndim,
-                            dtype=latents.dtype,
-                        )
-                        noisy_latents = (
-                            1.0 - sigmas
-                        ) * latents.float() + sigmas * noise.float()
-                        # is equal to:
-                        # zt = (1 - texp) * x + texp * z1
-                    elif args.timestep_scheme == "flux":
-                        noisy_latents = (1 - sigmas) * latents + sigmas * noise
+                    noisy_latents = (1 - sigmas) * latents + sigmas * noise
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
@@ -2152,9 +2099,13 @@ def main():
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
                         model_pred = transformer(
-                            hidden_states=noisy_latents,
+                            hidden_states=noisy_latents.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
                             timestep=timesteps,
-                            encoder_hidden_states=encoder_hidden_states,
+                            encoder_hidden_states=encoder_hidden_states.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
                             pooled_projections=add_text_embeds.to(
                                 device=accelerator.device, dtype=weight_dtype
                             ),
@@ -2231,14 +2182,6 @@ def main():
                         width=latents.shape[3] * 8,
                         vae_scale_factor=16,
                     )
-                if flow_matching and args.timestep_scheme == "sd3":
-                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                    # Preconditioning of the model outputs.
-                    if args.flow_matching_loss == "diffusers":
-                        model_pred = model_pred * (-sigmas) + noisy_latents
-                    elif args.flow_matching_loss == "compatible":
-                        # we shouldn't mess with the model prediction.
-                        pass
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
@@ -2249,29 +2192,12 @@ def main():
                     model_pred = model_pred - noise
 
                 if flow_matching:
-                    # upstream TODO: weighting sceme needs to be experimented with :)
-                    # these weighting schemes use a uniform timestep sampling
-                    # and instead post-weight the loss
-                    if (
-                        args.timestep_scheme == "sd3"
-                        and args.weighting_scheme != "none"
-                    ):
-                        if args.weighting_scheme == "sigma_sqrt":
-                            weighting = (sigmas**-2.0).float()
-                        elif args.weighting_scheme == "cosmap":
-                            bot = 1 - 2 * sigmas + 2 * sigmas**2
-                            weighting = 2 / (math.pi * bot)
-                    else:
-                        weighting = torch.ones_like(sigmas)
                     loss = torch.mean(
-                        (
-                            weighting.float()
-                            * (model_pred.float() - target.float()) ** 2
-                        ).reshape(target.shape[0], -1),
+                        ((model_pred.float() - target.float()) ** 2).reshape(
+                            target.shape[0], -1
+                        ),
                         1,
-                    )
-                    loss = loss.mean()
-
+                    ).mean()
                 elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug("Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
@@ -2785,7 +2711,7 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-            if args.validation_noise_scheduler is not None:
+            if not flow_matching and args.validation_noise_scheduler is not None:
                 pipeline.scheduler = SCHEDULER_NAME_MAP[
                     args.validation_noise_scheduler
                 ].from_pretrained(
