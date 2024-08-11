@@ -60,7 +60,9 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 
 Preliminary training support for Flux.1 is included:
 
-- Low loss training using SD3 style loss calculations
+- Low loss training using optimised approach
+  - Preserve the dev model's distillation qualities
+  - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed.
 - LoRA or full tuning via DeepSpeed ZeRO
 - ControlNet training is not yet supported
 - Train either Schnell or Dev models
