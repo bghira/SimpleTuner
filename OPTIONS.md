@@ -242,7 +242,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--legacy] [--kolors] [--flux]
-                [--flux_lora_target {mmdit,all}] [--flux_fast_schedule]
+                [--flux_lora_target {mmdit,context,all,all+ffs}]
+                [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
+                [--flux_fast_schedule]
                 [--flux_guidance_mode {constant,random-range}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
@@ -251,10 +253,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
-                [--weighting_scheme {sigma_sqrt,logit_normal,mode,cosmap,none}]
-                [--logit_mean LOGIT_MEAN] [--logit_std LOGIT_STD]
-                [--mode_scale MODE_SCALE] [--lora_type {Standard}]
-                [--lora_init_type {default,gaussian,loftq}]
+                [--lora_type {Standard}]
+                [--lora_init_type {default,gaussian,loftq,olora,pissa}]
                 [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
                 [--lora_dropout LORA_DROPOUT] [--controlnet]
                 [--controlnet_model_name_or_path]
@@ -340,6 +340,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
                 [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
                 [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
+                [--model_card_note MODEL_CARD_NOTE]
                 [--logging_dir LOGGING_DIR]
                 [--validation_seed_source {gpu,cpu}]
                 [--validation_torch_compile VALIDATION_TORCH_COMPILE]
@@ -373,8 +374,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
                 [--validation_guidance VALIDATION_GUIDANCE]
                 [--validation_guidance_real VALIDATION_GUIDANCE_REAL]
-                [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
                 [--validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP]
+                [--validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE]
                 [--validation_randomize] [--validation_seed VALIDATION_SEED]
                 [--fully_unload_text_encoder]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
@@ -420,14 +421,19 @@ options:
                         model.
   --flux                This option must be provided when training a Flux
                         model.
-  --flux_lora_target {mmdit,all}
-                        Flux has single and joint attention blocks. The single
-                        attention blocks deal with text inputs and are not
-                        transformed by LoRA by default. All attention blocks
-                        are trained by default. If 'mmdit' is provided, the
-                        text input layers will not be trained. This is roughly
-                        equivalent to not training the text encoder(s) in
-                        earlier models.
+  --flux_lora_target {mmdit,context,all,all+ffs}
+                        Flux has single and joint attention blocks. Only the
+                        multimodal 'dual stream' attention blocks are trained
+                        by default. If 'mmdit' is provided, the text input
+                        layers will not be trained. If 'context' is provided,
+                        the mmdit layers will not be trained. If 'all' is
+                        provided, all layers will be trained, minus feed-
+                        forward and norms. If 'all+ffs' is provided, all
+                        layers will be trained including feed-forward and
+                        norms.
+  --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
+                        Scale factor for sigmoid timestep sampling for flow-
+                        matching models..
   --flux_fast_schedule  An experimental feature to train Flux.1S using a noise
                         schedule closer to what it was trained with, which has
                         improved results in short experiments. Thanks to
@@ -442,7 +448,10 @@ options:
                         and --flux_guidance_max.
   --flux_guidance_value FLUX_GUIDANCE_VALUE
                         When using --flux_guidance_mode=constant, this value
-                        will be used for every input sample.
+                        will be used for every input sample. Using a value of
+                        1.0 seems to preserve the CFG distillation for the Dev
+                        model, and using any other value will result in the
+                        resulting LoRA requiring CFG at inference time.
   --flux_guidance_min FLUX_GUIDANCE_MIN
   --flux_guidance_max FLUX_GUIDANCE_MAX
   --smoldit             Use the experimental SmolDiT model architecture.
@@ -474,32 +483,12 @@ options:
                         prevents expansion of SD3 Medium's prompt length, as
                         it will unnecessarily attend to every token in the
                         prompt embed, even masked positions.
-  --weighting_scheme {sigma_sqrt,logit_normal,mode,cosmap,none}
-                        Stable Diffusion 3 used either uniform sampling of
-                        timesteps with post-prediction loss weighting, or a
-                        weighted timestep selection by mode or log-normal
-                        distribution. The default for SD3 is logit_normal,
-                        though upstream Diffusers training examples use
-                        sigma_sqrt. The mode option is experimental, as it is
-                        the most difficult to implement cleanly. In
-                        experiments, logit_normal produced the best results
-                        for large-scale finetuning across many nodes. For
-                        small scale tuning, 'none' returns the best results.
-                        The default is 'none'.
-  --logit_mean LOGIT_MEAN
-                        As outlined in the Stable Diffusion 3 paper, using a
-                        logit_mean of -0.5 produced the highest quality FID
-                        results. The default here is 0.0.
-  --logit_std LOGIT_STD
-                        Stable Diffusion 3-specific training parameters.
-  --mode_scale MODE_SCALE
-                        Stable Diffusion 3-specific training parameters.
   --lora_type {Standard}
                         When training using --model_type=lora, you may specify
                         a different type of LoRA to train here. Currently,
                         only 'Standard' type is supported. This option exists
                         for compatibility with Kohya configuration files.
-  --lora_init_type {default,gaussian,loftq}
+  --lora_init_type {default,gaussian,loftq,olora,pissa}
                         The initialization type for the LoRA model. 'default'
                         will use Microsoft's initialization method, 'gaussian'
                         will use a Gaussian scaled distribution, and 'loftq'
@@ -1006,6 +995,9 @@ options:
   --hub_model_id HUB_MODEL_ID
                         The name of the repository to keep in sync with the
                         local `output_dir`.
+  --model_card_note MODEL_CARD_NOTE
+                        Add a string to the top of your model card to provide
+                        users with some additional context.
   --logging_dir LOGGING_DIR
                         [TensorBoard](https://www.tensorflow.org/tensorboard)
                         log directory. Will default to
@@ -1106,12 +1098,8 @@ options:
                         validations with a single prompt on slower systems, or
                         if you are not interested in unconditional space
                         generations.
-  --disable_compel      If provided, validation pipeline prompts will be
-                        handled using the typical prompt encoding strategy.
-                        Otherwise, the default behaviour is to use Compel for
-                        prompt embed generation. Note that the training input
-                        text embeds are not generated using Compel, and will
-                        be truncated to 77 tokens.
+  --disable_compel      This option does nothing. It is deprecated and will be
+                        removed in a future release.
   --enable_watermark    The SDXL 0.9 and 1.0 licenses both require a watermark
                         be used to identify any images created to be shared.
                         Since the images created during validation typically
@@ -1195,14 +1183,11 @@ options:
   --validation_guidance VALIDATION_GUIDANCE
                         CFG value for validation images. Default: 7.5
   --validation_guidance_real VALIDATION_GUIDANCE_REAL
-                        For flux, for any >1.0 value the validation will use
-                        classifier free guidance instead of the distilled
-                        sampling.
+                        Use real CFG sampling for Flux validation images.
                         Default: 1.0
   --validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP
-                        When using real CFG with flux, do not use CFG until this
-                        sampling timestep.
-                        Default: 2
+                        When using real CFG sampling for Flux validation
+                        images, skip doing CFG on these timesteps. Default: 2
   --validation_guidance_rescale VALIDATION_GUIDANCE_RESCALE
                         CFG rescale value for validation images. Default: 0.0,
                         max 1.0
