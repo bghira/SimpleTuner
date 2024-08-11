@@ -312,8 +312,17 @@ In ComfyUI, you'll need to put Flux through another node called AdaptiveGuider. 
 ### Classifier-free guidance
 
 #### Problem
+The Dev model arrives guidance-distilled out of the box, which means it does a very straight shot trajectory to the teacher model outputs. This is done through a guidance vector that is fed into the model at training and inference time - the value of this vector greatly impacts what type of resulting LoRA you end up with:
+- A value of 1.0 will preserve the initial distillation done to the Dev model
+  - This is the most compatible mode
+  - Inference is just as fast as the original model
+  - Flow-matching distillation reduces the creativity and output variability of the model, as with the original Flux Dev model (everything keeps the same composition/look)
+- A higher value (tested around 3.5-4.5) will reintroduce the CFG objective into the model
+  - This requires the inference pipeline to have support for CFG
+  - Inference is 50% slower and 0% VRAM increase **or** about 20% slower and 20% VRAM increase due to batched CFG inference
+  - However, this style of training improves creativity and model output variability, which might be required for certain training tasks
 
-The Dev model arrives guidance-distilled out of the box, which means it does a very straight shot trajectory to the teacher model outputs - this isn't as extreme as what was done to the Schnell model, but it noticeably impacts training by re-introducing the classifier-free guidance objective into the model. Interestingly, this occurs whether caption dropout is set to 0.0 (disabled) or 0.1 (default).
+It's not clear if we can reintroduce CFG to a de-distilled model by continuing tuning using a vector value of 1.0.
 
 #### Solution
 The solution for this is already enabled in the main branch; it is necessary to enable true CFG sampling at inference time when using LoRAs on Dev.
