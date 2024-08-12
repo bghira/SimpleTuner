@@ -267,6 +267,8 @@ class VAECache:
             revision=args.revision,
             force_upcast=False,
         ).to(self.accelerator.device)
+        if self.vae.device != self.accelerator.device:
+            self.vae = self.vae.to(self.accelerator.device)
         StateTracker.set_vae(self.vae)
 
     def rebuild_cache(self):

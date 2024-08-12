@@ -812,7 +812,7 @@ class MetadataBackend:
         resolution = StateTracker.get_data_backend_config(self.id)["resolution"]
         if resolution_type == "pixel":
             return MultiaspectImage.calculate_new_size_by_pixel_edge(
-                original_aspect_ratio, resolution
+                original_aspect_ratio, int(resolution)
             )
         elif resolution_type == "area":
             if original_aspect_ratio is None:

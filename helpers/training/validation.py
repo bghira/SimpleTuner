@@ -74,7 +74,7 @@ def resize_validation_images(validation_images, edge_length):
                 aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(
                     training_sample_image
                 ),
-                resolution=edge_length,
+                resolution=int(edge_length),
                 original_size=training_sample_image.size,
             )
         )

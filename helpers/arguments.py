@@ -114,8 +114,8 @@ def parse_args(input_args=None):
             " Only the multimodal 'dual stream' attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
             " If 'context' is provided, the mmdit layers will not be trained."
-            " If 'all' is provided, all layers will be trained, minus feed-forward and norms."
-            " If 'all+ffs' is provided, all layers will be trained including feed-forward and norms."
+            " If 'all' is provided, all layers will be trained, minus feed-forward."
+            " If 'all+ffs' is provided, all layers will be trained including feed-forward."
         ),
     )
     parser.add_argument(
@@ -1968,11 +1968,17 @@ def parse_args(input_args=None):
                 f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
             )
     flux_version = "dev"
-    if "schnell" in args.pretrained_model_name_or_path.lower():
+    model_max_seq_length = 512
+    if (
+        "schnell" in args.pretrained_model_name_or_path.lower()
+        or args.flux_fast_schedule
+    ):
+        if not args.flux_fast_schedule:
+            logger.error("Schnell requires --flux_fast_schedule.")
+            sys.exit(1)
         flux_version = "schnell"
         model_max_seq_length = 256
-    elif "dev" in args.pretrained_model_name_or_path.lower():
-        model_max_seq_length = 512
+
     if args.flux:
         if (
             args.tokenizer_max_length is None

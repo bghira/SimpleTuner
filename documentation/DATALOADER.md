@@ -76,6 +76,17 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 - **Local:** Path to the data on the filesystem.
 - **AWS:** S3 prefix for the data in the bucket.
 
+### `caption_strategy`
+
+- **textfile** requires your image.png be next to an image.txt that contains one or more captions, separated by newlines.
+- **instance_prompt** requires a value for `instance_prompt` also be provided, and will use **only** this value for the caption of every image in the set.
+- **filename** will use a converted and cleaned-up version of the filename as its caption, eg. after swapping underscores for spaces.
+- **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+
+Both `textfile` and `parquet` support multi-captions:
+- textfiles are split by newlines. Each new line will be its own separate caption.
+- parquet tables can have an iterable type in the field.
+
 ### Cropping Options
 
 - `crop`: Enables or disables image cropping.
