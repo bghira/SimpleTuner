@@ -4,10 +4,18 @@ In this example, we'll be training a PixArt Sigma model using the SimpleTuner to
 
 ### Prerequisites
 
-Make sure that you have python installed. You can check this by running:
+Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
+
+You can check this by running:
 
 ```bash
 python --version
+```
+
+If you don't have python 3.11 installed on Ubuntu, you can try the following:
+
+```bash
+apt -y install python3.11 python3.11-venv
 ```
 
 ### Installation
