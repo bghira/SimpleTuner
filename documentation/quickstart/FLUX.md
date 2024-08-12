@@ -34,7 +34,7 @@ python --version
 If you don't have python 3.11 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11
+apt -y install python3.11 python3.11-venv
 ```
 
 ### Installation
