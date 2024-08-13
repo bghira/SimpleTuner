@@ -1,3 +1,4 @@
+import math
 import os
 import time
 import logging
@@ -324,8 +325,7 @@ class MetadataBackend:
         )
 
         for bucket, images in self.aspect_ratio_bucket_indices.items():
-            # Trim the list to a length that's divisible by the effective batch size
-            num_batches = len(images) // effective_batch_size
+            num_batches = math.ceil(float(len(images)) / effective_batch_size)
             trimmed_images = images[: num_batches * effective_batch_size]
             logger.debug(f"Trimmed from {len(images)} to {len(trimmed_images)}")
             if len(trimmed_images) == 0 and should_log():
