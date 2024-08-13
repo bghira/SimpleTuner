@@ -1599,13 +1599,13 @@ xml = ["lxml (>=4.9.2)"]
 
 [[package]]
 name = "peft"
-version = "0.9.0"
+version = "0.12.0"
 description = "Parameter-Efficient Fine-Tuning (PEFT)"
 optional = false
 python-versions = ">=3.8.0"
 files = [
-    {file = "peft-0.9.0-py3-none-any.whl", hash = "sha256:d14223fee6050c53593733e8f763d94c13577e1220987f59ae473d988f2ccd91"},
-    {file = "peft-0.9.0.tar.gz", hash = "sha256:3b8d09dff94d1bfa72e064cb26af5952fd82428e2bcce432cfaf091f5035b04b"},
+    {file = "peft-0.12.0-py3-none-any.whl", hash = "sha256:a47915efb08af50e9fda267b7bf1b5b6eff33ccbb08791bdb544dccb8788f674"},
+    {file = "peft-0.12.0.tar.gz", hash = "sha256:253205bd478e985ccdc7f04804aab9c95f479130c517bf6e474b8d509db5f4a4"},
 ]
 
 [package.dependencies]
@@ -1621,10 +1621,10 @@ tqdm = "*"
 transformers = "*"
 
 [package.extras]
-dev = ["black", "hf-doc-builder", "ruff (>=0.2.1,<0.3.0)"]
+dev = ["black", "hf-doc-builder", "ruff (>=0.4.8,<0.5.0)"]
 docs-specific = ["black", "hf-doc-builder"]
-quality = ["black", "hf-doc-builder", "ruff (>=0.2.1,<0.3.0)"]
-test = ["black", "datasets", "diffusers (<0.21.0)", "hf-doc-builder", "parameterized", "pytest", "pytest-cov", "pytest-xdist", "ruff (>=0.2.1,<0.3.0)", "scipy"]
+quality = ["black", "hf-doc-builder", "ruff (>=0.4.8,<0.5.0)"]
+test = ["black", "datasets", "diffusers (<0.21.0)", "hf-doc-builder", "parameterized", "pytest", "pytest-cov", "pytest-xdist", "ruff (>=0.4.8,<0.5.0)", "scipy"]
 
 [[package]]
 name = "pillow"
@@ -3469,4 +3469,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.12"
-content-hash = "61ea079c3ea71fec7fd5f756f964b7fc557bb1b682653fc19cdaf8b332d1060a"
+content-hash = "bfa1f5cb6e37380327a4cb3551d9b5d5d6db083ff28caab7f9752ca061055b20"
