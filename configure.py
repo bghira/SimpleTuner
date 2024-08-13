@@ -1,4 +1,6 @@
-import os, huggingface_hub, json, torch
+import os
+import huggingface_hub
+import torch
 from helpers.training import quantised_precision_levels
 
 model_classes = {
@@ -125,7 +127,7 @@ def configure_env():
         if use_ema == "y":
             env_contents["USE_EMA"] = "true"
 
-    print(f"We'll try and login to Hugging Face Hub..")
+    print("We'll try and login to Hugging Face Hub..")
     whoami = None
     try:
         whoami = huggingface_hub.whoami()
@@ -223,7 +225,7 @@ def configure_env():
         env_contents["TRACKER_PROJECT_NAME"] = tracker_project_name
         tracker_run_name = prompt_user(
             "Enter the name of your Weights & Biases runs. This can use shell commands, which can be used to dynamically set the run name.",
-            f"$(date +%s)",
+            "$(date +%s)",
         )
         env_contents["TRACKER_RUN_NAME"] = tracker_run_name
         report_to_str = "--report_to="
@@ -251,7 +253,7 @@ def configure_env():
     while not can_load_model:
         if model_name is not None:
             print(
-                f"For some reason, we can not load that model. Can you check your Hugging Face login and try again?"
+                "For some reason, we can not load that model. Can you check your Hugging Face login and try again?"
             )
         model_name = prompt_user(
             "Enter the model name from Hugging Face Hub", default_models[model_class]
