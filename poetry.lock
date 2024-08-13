@@ -1515,6 +1515,27 @@ numpy = [
 ]
 
 [[package]]
+name = "optimum-quanto"
+version = "0.2.4"
+description = "A pytorch quantization backend for optimum."
+optional = false
+python-versions = ">=3.8.0"
+files = [
+    {file = "optimum_quanto-0.2.4-py3-none-any.whl", hash = "sha256:ca1d5187de57c7be629d747ac71ea62df01e47d51c6e9b8d3f99341e5a88c5ed"},
+    {file = "optimum_quanto-0.2.4.tar.gz", hash = "sha256:29ceefda5b411fb3a4a936faef076f00bcbb9065a27a864a8a140497eb323d16"},
+]
+
+[package.dependencies]
+ninja = "*"
+numpy = "*"
+safetensors = "*"
+torch = ">=2.4.0"
+
+[package.extras]
+dev = ["black", "pytest", "ruff"]
+examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "torchvision", "transformers"]
+
+[[package]]
 name = "packaging"
 version = "24.1"
 description = "Core utilities for Python packages"
@@ -3469,4 +3490,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.12"
-content-hash = "a87650964b22d4d2bc5f1e26cc9bf16016071cb91e797f88ea0a10691f96b897"
+content-hash = "ceb2a51721c45248a6520d28c556225ec8e4278a79a5044037e94efd6e6ac2d8"

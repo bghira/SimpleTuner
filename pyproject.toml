@@ -43,6 +43,7 @@ tensorboard = "^2.15.1"
 triton = "^3.0.0"
 prodigyopt = "^1.0"
 sentencepiece = "^0.2.0"
+optimum-quanto = "^0.2.4"
 
 
 [build-system]
