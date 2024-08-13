@@ -623,6 +623,7 @@ def main():
                     "DoRA support is experimental and not very thoroughly tested."
                 )
                 lora_initialisation_style = "default"
+        target_modules = determine_adapter_target_modules(args, unet, transformer)
         if unet is not None:
             unet_lora_config = LoraConfig(
                 r=args.lora_rank,
