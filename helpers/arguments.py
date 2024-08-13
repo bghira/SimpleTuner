@@ -1705,6 +1705,7 @@ def parse_args(input_args=None):
         default=0,
         help=(
             "Only apply input perturbation over the first N steps with linear decay."
+            " This should prevent artifacts from showing up in longer training runs."
         ),
     )
     parser.add_argument(

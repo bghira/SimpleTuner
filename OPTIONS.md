@@ -1312,7 +1312,8 @@ options:
                         work with flow-matching (e.g. SD3 and Flux).
   --input_perturbation_steps INPUT_PERTURBATION_STEPS
                         Only apply input perturbation over the first N steps
-                        with linear decay.
+                        with linear decay. This should prevent artifacts from
+                        showing up in longer training runs.
   --lr_end LR_END       A polynomial learning rate will end up at this value
                         after the specified number of warmup steps. A sine or
                         cosine wave will use this value as its lower bound for
