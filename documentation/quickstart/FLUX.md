@@ -37,6 +37,16 @@ If you don't have python 3.11 installed on Ubuntu, you can try the following:
 apt -y install python3.11 python3.11-venv
 ```
 
+#### Container image dependencies
+
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.4 image:
+
+```bash
+apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+```
+
+If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
+
 ### Installation
 
 Clone the SimpleTuner repository and set up the python venv:
@@ -69,9 +79,19 @@ poetry install --no-root
 poetry install --no-root -C install/rocm
 ```
 
+#### Removing DeepSpeed & Bits n Bytes
+
+These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
+
+To remove them after `poetry` has installed them, run the following command in the same terminal:
+
+```bash
+pip uninstall -y deepspeed bitsandbytes
+```
+
 #### Custom Diffusers build
 
-For LoRA support in Diffusers, the latest release does not yet have Flux LoRA support, so we must install directly from the main branch.
+We currently rely on Git upstream Diffusers builds for the most recent fixes in the Flux ecosystem.
 
 To obtain the correct build, run the following commands:
 
