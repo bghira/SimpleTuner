@@ -11,7 +11,7 @@ python = ">=3.9,<3.12"
 torch = "^2.4.0+cu124"
 torchvision = "^0.19.0+cu124"
 diffusers = {git = "https://github.com/huggingface/diffusers"}
-transformers = "^4.38.2"
+transformers = "^4.44.0"
 datasets = "^2.14.3"
 xformers = "^0.0.27.post2"
 bitsandbytes = "^0.43.3"
