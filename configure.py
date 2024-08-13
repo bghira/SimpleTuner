@@ -424,7 +424,7 @@ def configure_env():
     )
     lr_warmup_steps = prompt_user(
         "Set the number of warmup steps before the learning rate reaches its peak. This is set to 10 percent of the total runtime by default, or 100 steps, whichever is higher.",
-        min(100, env_contents["MAX_NUM_STEPS"] // 10),
+        min(100, int(env_contents["MAX_NUM_STEPS"]) // 10),
     )
     env_contents["LEARNING_RATE"] = learning_rate
     env_contents["LR_SCHEDULE"] = lr_scheduler
