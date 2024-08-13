@@ -86,6 +86,18 @@ To run SimpleTuner, you will need to set up a configuration file, the dataset an
 
 #### Configuration file
 
+An experimental script, `configure.py`, may allow you to entirely skip this section through an interactive step-by-step configuration. It contains some safety features that help avoid common pitfalls.
+
+**Note:** This doesn't configure your dataloader. You will still have to do that manually, later.
+
+To run it:
+
+```bash
+python configure.py
+```
+
+If you prefer to manually configure:
+
 Copy `config/config.env.example` to `config/config.env`:
 
 ```bash
