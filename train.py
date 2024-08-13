@@ -34,7 +34,12 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
 from helpers.training.adapter import determine_adapter_target_modules
 from helpers.training.diffusion_model import load_diffusion_model
-from helpers.training.text_encoding import load_tes, determine_te_path_subfolder, import_model_class_from_model_name_or_path, get_tokenizers
+from helpers.training.text_encoding import (
+    load_tes,
+    determine_te_path_subfolder,
+    import_model_class_from_model_name_or_path,
+    get_tokenizers,
+)
 from helpers.training.error_handling import validate_deepspeed_compat_from_args
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
@@ -279,7 +284,7 @@ def main():
     text_encoders = []
     tokenizers = []
     text_encoder_path, text_encoder_subfolder = determine_te_path_subfolder(args)
-    
+
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
             text_encoder_path, args.revision, args, subfolder=text_encoder_subfolder
@@ -301,7 +306,7 @@ def main():
 
     # Load scheduler and models
     args, flow_matching, noise_scheduler = load_scheduler_from_args(args)
-    
+
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -313,12 +318,18 @@ def main():
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
-        text_encoder_classes = [text_encoder_cls_1, text_encoder_cls_2, text_encoder_cls_3]
+        text_encoder_classes = [
+            text_encoder_cls_1,
+            text_encoder_cls_2,
+            text_encoder_cls_3,
+        ]
         text_encoder_variant, text_encoder_1, text_encoder_2, text_encoder_3 = load_tes(
-            args=args, text_encoder_classes=text_encoder_classes,
+            args=args,
+            text_encoder_classes=text_encoder_classes,
             weight_dtype=weight_dtype,
-            tokenizers=tokenizers, text_encoder_path=text_encoder_path, 
-            text_encoder_subfolder=text_encoder_subfolder, 
+            tokenizers=tokenizers,
+            text_encoder_path=text_encoder_path,
+            text_encoder_subfolder=text_encoder_subfolder,
         )
 
         logger.info(f"Load VAE: {vae_path}")
@@ -528,9 +539,10 @@ def main():
     if "quanto" in args.base_model_precision:
         try:
             from optimum.quanto import QTensor
-            from helpers.training.quantisation.peft_workarounds import (
-                custom_module_mapping as quanto_peft_module_mapping,
-            )
+
+            # from helpers.training.quantisation.peft_workarounds import (
+            #     custom_module_mapping as quanto_peft_module_mapping,
+            # )
 
             is_quanto = True
         except ImportError as e:
@@ -571,7 +583,7 @@ def main():
         else:
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
-    
+
     elif "lora" in args.model_type:
         if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
@@ -585,7 +597,7 @@ def main():
             transformer.requires_grad_(False)
         if unet is not None:
             unet.requires_grad_(False)
-        
+
         lora_initialisation_style = True
         if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
             if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
@@ -622,10 +634,10 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
-            if is_quanto:
-                unet_lora_config._register_custom_module(
-                    mapping=quanto_peft_module_mapping
-                )
+            # if is_quanto:
+            #     unet_lora_config._register_custom_module(
+            #         mapping=quanto_peft_module_mapping
+            #     )
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
         elif transformer is not None:
@@ -638,10 +650,10 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
-            if is_quanto:
-                transformer_lora_config._register_custom_module(
-                    mapping=quanto_peft_module_mapping
-                )
+            # if is_quanto:
+            #     transformer_lora_config._register_custom_module(
+            #         mapping=quanto_peft_module_mapping
+            #     )
             from peft import get_peft_model
 
             transformer = get_peft_model(transformer, transformer_lora_config)
