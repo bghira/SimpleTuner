@@ -114,8 +114,8 @@ def parse_args(input_args=None):
             " Only the multimodal 'dual stream' attention blocks are trained by default."
             " If 'mmdit' is provided, the text input layers will not be trained."
             " If 'context' is provided, the mmdit layers will not be trained."
-            " If 'all' is provided, all layers will be trained, minus feed-forward and norms."
-            " If 'all+ffs' is provided, all layers will be trained including feed-forward and norms."
+            " If 'all' is provided, all layers will be trained, minus feed-forward."
+            " If 'all+ffs' is provided, all layers will be trained including feed-forward."
         ),
     )
     parser.add_argument(

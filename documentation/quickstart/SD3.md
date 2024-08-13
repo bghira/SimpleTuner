@@ -4,10 +4,18 @@ In this example, we'll be training a Stable Diffusion 3 model using the SimpleTu
 
 ### Prerequisites
 
-Make sure that you have python installed. You can check this by running:
+Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
+
+You can check this by running:
 
 ```bash
 python --version
+```
+
+If you don't have python 3.11 installed on Ubuntu, you can try the following:
+
+```bash
+apt -y install python3.11 python3.11-venv
 ```
 
 ### Installation
@@ -44,6 +52,18 @@ poetry install --no-root -C install/rocm
 To run SimpleTuner, you will need to set up a configuration file, the dataset and model directories, and a dataloader configuration file.
 
 #### Configuration file
+
+An experimental script, `configure.py`, may allow you to entirely skip this section through an interactive step-by-step configuration. It contains some safety features that help avoid common pitfalls.
+
+**Note:** This doesn't configure your dataloader. You will still have to do that manually, later.
+
+To run it:
+
+```bash
+python configure.py
+```
+
+If you prefer to manually configure:
 
 Copy `config/config.env.example` to `config/config.env`:
 

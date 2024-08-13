@@ -34,7 +34,7 @@ python --version
 If you don't have python 3.11 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11
+apt -y install python3.11 python3.11-venv
 ```
 
 ### Installation
@@ -86,6 +86,18 @@ To run SimpleTuner, you will need to set up a configuration file, the dataset an
 
 #### Configuration file
 
+An experimental script, `configure.py`, may allow you to entirely skip this section through an interactive step-by-step configuration. It contains some safety features that help avoid common pitfalls.
+
+**Note:** This doesn't configure your dataloader. You will still have to do that manually, later.
+
+To run it:
+
+```bash
+python configure.py
+```
+
+If you prefer to manually configure:
+
 Copy `config/config.env.example` to `config/config.env`:
 
 ```bash
@@ -99,6 +111,7 @@ There, you will need to modify the following variables:
 - `MODEL_NAME` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will *probably* need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `TRAIN_BATCH_SIZE` - this should be kept at 1, especially if you have a very small dataset.
 - `VALIDATION_RESOLUTION` - As Flux is a 1024px model, you can set this to `1024x1024`.
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
 - `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.

@@ -505,6 +505,7 @@ def main():
 
     enable_adamw_bf16 = True if weight_dtype == torch.bfloat16 else False
     base_weight_dtype = weight_dtype
+    is_quanto = False
     if not disable_accelerator and is_quantized:
         if args.base_model_default_dtype == "fp32":
             base_weight_dtype = torch.float32
@@ -527,6 +528,11 @@ def main():
     if "quanto" in args.base_model_precision:
         try:
             from optimum.quanto import QTensor
+            from helpers.training.quantisation.peft_workarounds import (
+                custom_module_mapping as quanto_peft_module_mapping,
+            )
+
+            is_quanto = True
         except ImportError as e:
             raise ImportError(
                 f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
@@ -595,12 +601,16 @@ def main():
                     args.lora_init_type if args.lora_init_type != "default" else True
                 )
         if args.use_dora:
-            logger.warning(
-                "DoRA support is experimental and not very thoroughly tested."
-            )
-            lora_weight_init_type = "default"
-        
-        target_modules = determine_adapter_target_modules(args, unet=unet, transformer=transformer)
+            if is_quanto:
+                logger.error(
+                    "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
+                )
+                args.use_dora = False
+            else:
+                logger.warning(
+                    "DoRA support is experimental and not very thoroughly tested."
+                )
+                lora_initialisation_style = "default"
         if unet is not None:
             unet_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -612,6 +622,10 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
+            if is_quanto:
+                unet_lora_config._register_custom_module(
+                    mapping=quanto_peft_module_mapping
+                )
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
         elif transformer is not None:
@@ -624,8 +638,14 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
-            transformer.add_adapter(transformer_lora_config)
-    
+            if is_quanto:
+                transformer_lora_config._register_custom_module(
+                    mapping=quanto_peft_module_mapping
+                )
+            from peft import get_peft_model
+
+            transformer = get_peft_model(transformer, transformer_lora_config)
+
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
         if unet is not None:
@@ -1289,6 +1309,7 @@ def main():
         logger.warning(
             "xformers is not enabled, as it is incompatible with this model type."
         )
+        args.enable_xformers_memory_efficient_attention = False
 
     if args.controlnet:
         controlnet.train()

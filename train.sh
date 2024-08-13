@@ -201,6 +201,13 @@ if [ -n "$SMOLDIT" ] && [[ "$SMOLDIT" == "true" ]]; then
 fi
 if [ -n "$FLUX" ] && [[ "$FLUX" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux"
+    # if --flux_guidance_value is in TRAINER_EXTRA_ARGS, we will not add it again.
+    if [[ "${TRAINER_EXTRA_ARGS}" != *"--flux_guidance_value"* ]]; then
+        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_guidance_value=${FLUX_GUIDANCE_VALUE}"
+    fi
+    if [[ "${TRAINER_EXTRA_ARGS}" != *"--flux_lora_target"* ]]; then
+        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=${FLUX_LORA_TARGET}"
+    fi
 fi
 
 
