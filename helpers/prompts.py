@@ -3,6 +3,7 @@ import regex as re
 from pathlib import Path
 from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
+from helpers.training import image_file_extensions
 
 prompts = {
     "alien_landscape": "Alien planet, strange rock formations, glowing plants, bizarre creatures, surreal atmosphere",
@@ -403,7 +404,7 @@ class PromptHandler:
         all_image_files = StateTracker.get_image_files(
             data_backend_id=data_backend.id
         ) or data_backend.list_files(
-            instance_data_dir=instance_data_dir, str_pattern="*.[jJpP][pPnN][gG]"
+            instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
         )
         backend_config = StateTracker.get_data_backend_config(
             data_backend_id=data_backend.id

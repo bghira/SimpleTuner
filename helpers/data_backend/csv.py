@@ -154,33 +154,45 @@ class CSVDataBackend(BaseDataBackend):
         """Open the file in the specified mode."""
         return open(filepath, mode)
 
-    def list_files(self, str_pattern: str, instance_data_dir: str = None) -> tuple:
+    def list_files(
+        self, file_extensions: list = None, instance_data_dir: str = None
+    ) -> tuple:
         """
-        List all files matching the pattern.
+        List all files matching the file extensions.
         Creates Path objects of each file found.
         """
-        # print frame contents
         logger.debug(
-            f"CSVDataBackend.list_files: str_pattern={str_pattern}, instance_data_dir={instance_data_dir}"
+            f"CSVDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
         )
+
         if instance_data_dir is None:
             filtered_paths = set(self.df.index)
             filtered_ids = set(filtered_paths)
         else:
-            filtered_ids = set(
-                filter(lambda id: fnmatch.fnmatch(id, str_pattern), list(self.df.index))
-            )
+            # Convert file extensions to patterns
+            if file_extensions:
+                patterns = [f"*.{ext.lower()}" for ext in file_extensions]
+            else:
+                patterns = ["*"]
+
+            filtered_ids = set()
+            for pattern in patterns:
+                filtered_ids.update(
+                    filter(lambda id: fnmatch.fnmatch(id, pattern), list(self.df.index))
+                )
+
             filtered_paths = set(
                 filter(lambda id: "http" not in id and os.path.exists(id), filtered_ids)
             )
+
         # Group files by their parent directory
         path_dict = {}
         for path in filtered_paths:
             if hasattr(path, "parent"):
-                parent = str(path.parent)
+                parent = str(Path(path).parent)
                 if parent not in path_dict:
                     path_dict[parent] = []
-                path_dict[parent].append(str(path.absolute()))
+                path_dict[parent].append(str(Path(path).absolute()))
             else:
                 if "/" not in path_dict:
                     path_dict["/"] = []

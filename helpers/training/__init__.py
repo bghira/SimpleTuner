@@ -7,3 +7,7 @@ quantised_precision_levels = [
     "int4-quanto",
     "int2-quanto",
 ]
+
+image_file_extensions = set(
+    ["jpg", "jpeg", "png", "webp", "bmp", "JPG", "JPEG", "PNG", "WEBP", "tiff", "TIFF"]
+)
