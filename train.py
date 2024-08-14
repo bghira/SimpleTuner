@@ -1588,13 +1588,21 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
+                if args.input_perturbation != 0 and (not args.input_perturbation_steps or global_step < args.input_perturbation_steps):
+                    input_perturbation = args.input_perturbation
+                    if args.input_perturbation_steps:
+                        input_perturbation *= 1.0 - (global_step / args.input_perturbation_steps)
+                    input_noise = noise + args.input_perturbation * torch.randn_like(latents)
+                else:
+                    input_noise = noise
+
                 if flow_matching:
-                    noisy_latents = (1 - sigmas) * latents + sigmas * noise
+                    noisy_latents = (1 - sigmas) * latents + sigmas * input_noise
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
                     noisy_latents = noise_scheduler.add_noise(
-                        latents.float(), noise.float(), timesteps
+                        latents.float(), input_noise.float(), timesteps
                     ).to(device=accelerator.device, dtype=weight_dtype)
 
                 encoder_hidden_states = batch["prompt_embeds"].to(

@@ -396,7 +396,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--sdxl_refiner_uses_full_range]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--delete_unwanted_images] [--delete_problematic_images]
-                [--offset_noise] [--lr_end LR_END] [--i_know_what_i_am_doing]
+                [--offset_noise] [--input_perturbation INPUT_PERTURBATION]
+                [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
+                [--lr_end LR_END] [--i_know_what_i_am_doing]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
 
 The following SimpleTuner command-line options are available:
@@ -1305,6 +1307,16 @@ options:
   --offset_noise        Fine-tuning against a modified noise See:
                         https://www.crosslabs.org//blog/diffusion-with-offset-
                         noise for more information.
+  --input_perturbation INPUT_PERTURBATION
+                        Add additional noise only to the inputs fed to the
+                        model during training. This will make the training
+                        converge faster. A value of 0.1 is suggested if you
+                        want to enable this. Input perturbation seems to also
+                        work with flow-matching (e.g. SD3 and Flux).
+  --input_perturbation_steps INPUT_PERTURBATION_STEPS
+                        Only apply input perturbation over the first N steps
+                        with linear decay. This should prevent artifacts from
+                        showing up in longer training runs.
   --lr_end LR_END       A polynomial learning rate will end up at this value
                         after the specified number of warmup steps. A sine or
                         cosine wave will use this value as its lower bound for
