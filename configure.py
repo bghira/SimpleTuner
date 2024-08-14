@@ -316,16 +316,19 @@ def configure_env():
         prompt_user("Set the caption dropout rate, or use 0.0 to disable it.", "0.1")
     )
 
-    resolution_types = ["pixel", "area"]
+    resolution_types = ["pixel", "area", "pixel_area"]
     env_contents["RESOLUTION_TYPE"] = None
     while env_contents["RESOLUTION_TYPE"] not in resolution_types:
         if env_contents["RESOLUTION_TYPE"]:
             print(f"Invalid resolution type: {env_contents['RESOLUTION_TYPE']}")
         env_contents["RESOLUTION_TYPE"] = prompt_user(
-            "How do you want to measure dataset resolutions? 'pixel' will size images with the shorter edge, 'area' will measure in megapixels, and is great for aspect-bucketing.",
-            "area",
-        )
-    if env_contents["RESOLUTION_TYPE"] == "pixel":
+            "How do you want to measure dataset resolutions? 'pixel' will size images with the shorter edge, 'area' will measure in megapixels, and is great for aspect-bucketing. 'pixel_area' is a combination of these two ideas, which lets you set your area using pixels instead of megapixels.",
+            "pixel_area",
+        ).lower()
+    if (
+        env_contents["RESOLUTION_TYPE"] == "pixel"
+        or env_contents["RESOLUTION_TYPE"] == "pixel_area"
+    ):
         default_resolution = 1024
         resolution_unit = "pixel"
     else:

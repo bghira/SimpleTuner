@@ -155,7 +155,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "crop_aspect": "square",
     "crop_style": "center",
     "resolution": 1.0,
-    "minimum_image_size": 0.5,
+    "minimum_image_size": 0,
     "maximum_image_size": 1.0,
     "target_downsample_size": 1.0,
     "resolution_type": "area",

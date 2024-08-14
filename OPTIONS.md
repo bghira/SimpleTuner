@@ -94,19 +94,22 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 A lot of settings are instead set through the [dataloader config](/documentation/DATALOADER.md), but these will apply globally.
 
-### `--resolution`
-
-- **What**: Input image resolution. Can be expressed as pixels, or megapixels.
-- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. It is recommended use a value of 1.0 if also using `--resolution_type=area`. When using `--resolution_type=pixel` and `--resolution=1024px`, the images may become very large and use an excessive amount of VRAM. The recommended configuration is to combine `--resolution_type=area` with `--resolution=1` (or lower - .25 would be a 512px model with data bucketing).
-
 ### `--resolution_type`
 
-- **What**: This tells SimpleTuner whether to use `area` size calculations or `pixel` edge calculations.
-- **Why**: SimpleTuner's default `pixel` behaviour is to resize the image, keeping the aspect ratio. Setting the type to `area` instead uses the given megapixel value as the target size for the image, keeping the aspect ratio.
+- **What**: This tells SimpleTuner whether to use `area` size calculations or `pixel` edge calculations. A hybrid approach of `pixel_area` is also supported, which allows using pixel instead of megapixel for `area` measurements.
+- **Options**: 
+  - `resolution_type=pixel` - All images in the dataset will have their smaller edge resized to this resolution for training, which could result in a lot of VRAM use due to the size of the resulting images.
+  - `resolution_type=area` - It is recommended use a value of 1.0 if also using `--resolution_type=area`.
+  - `resolution_type=pixel_area` - A `resolution` value of 1024 will be internally mapped to an accurate area measurement for efficient aspect bucketing.
+
+### `--resolution`
+
+- **What**: Input image resolution. Can be expressed as pixels, or megapixels, depending on what your selected value for `resolution_type` is.
+- **Default**: Using `resolution_type=pixel_area` with `resolution=1024`. When `resolution_type=area` instead, you will have to supply a megapixel value, such as `1.05`.
 
 ### `--validation_resolution`
 
-- **What**: Output image resolution, measured in pixels.
+- **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
 ### `--caption_strategy`
