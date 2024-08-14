@@ -158,22 +158,15 @@ class TrainingSample:
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution / 1e3
         elif self.resolution_type == "area":
-            if self.resolution == 0.5:
-                # this should be 0.59 for 768px
-                self.resolution = 0.59
-            elif self.resolution == 0.25:
-                # update for 512x512
-                self.resolution = 0.262144
-            elif self.resolution == 1.0:
-                # update for 1024x1024
-                self.resolution = 1.05
-            elif self.resolution == 2.0:
-                # update for 1536x1536
-                self.resolution = 2.36
-            elif self.resolution == 4.0:
-                # update for 2048x2048
-                self.resolution = 4.19
-            self.target_area = self.resolution * 1e6  # Convert megapixels to pixels
+            # Convert pixel area to megapixels, remapping commonly used round values
+            # to their pixel_area equivalents for compatibility purposes.
+            self.target_area = {
+                0.25: 512**2,
+                0.5: 768**2,
+                1.0: 1024**2,
+                2.0: 1536**2,
+                4.0: 2048**2,
+            }.get(self.resolution, self.resolution * 1e6)
             # Store the pixel value, eg. 1024
             self.pixel_resolution = int(
                 MultiaspectImage._round_to_nearest_multiple(
