@@ -779,7 +779,7 @@ def parse_args(input_args=None):
         help=(
             "Resizing images maintains aspect ratio. This defines the resizing strategy."
             " If 'pixel', the images will be resized to the resolution by the shortest pixel edge, if the target size does not match the current size."
-            " If 'area', the images will be resized so the pixel area is this many megapixels."
+            " If 'area', the images will be resized so the pixel area is this many megapixels. Common rounded values such as `0.5` and `1.0` will be implicitly adjusted to their squared size equivalents."
             " If 'pixel_area', the pixel value (eg. 1024) will be converted to the proper value for 'area', and then calculate everything the same as 'area' would."
         ),
     )
