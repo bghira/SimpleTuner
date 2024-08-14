@@ -970,6 +970,13 @@ def main():
     lr_scheduler = get_lr_scheduler(
         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     )
+    if use_deepspeed_scheduler:
+        logger.info(f"Using DeepSpeed learning rate scheduler")
+        lr_scheduler = accelerate.utils.DummyScheduler(
+            optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.lr_warmup_steps,
+        )
     if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
         lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
     if hasattr(lr_scheduler, "last_step"):
