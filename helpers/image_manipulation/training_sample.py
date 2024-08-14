@@ -7,6 +7,7 @@ from helpers.training.multi_process import should_log
 import logging
 import os
 from tqdm import tqdm
+from math import sqrt
 import random
 import time
 
@@ -157,10 +158,27 @@ class TrainingSample:
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution / 1e3
         elif self.resolution_type == "area":
+            if self.resolution == 0.5:
+                # this should be 0.59 for 768px
+                self.resolution = 0.59
+            elif self.resolution == 0.25:
+                # update for 512x512
+                self.resolution = 0.262144
+            elif self.resolution == 1.0:
+                # update for 1024x1024
+                self.resolution = 1.05
+            elif self.resolution == 2.0:
+                # update for 1536x1536
+                self.resolution = 2.36
+            elif self.resolution == 4.0:
+                # update for 2048x2048
+                self.resolution = 4.19
             self.target_area = self.resolution * 1e6  # Convert megapixels to pixels
             # Store the pixel value, eg. 1024
             self.pixel_resolution = int(
-                MultiaspectImage._round_to_nearest_multiple(self.resolution * 1e3)
+                MultiaspectImage._round_to_nearest_multiple(
+                    sqrt(self.resolution * (1024**2))
+                )
             )
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution
