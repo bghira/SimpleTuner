@@ -1,4 +1,5 @@
 from helpers.training.state_tracker import StateTracker
+from helpers.training import image_file_extensions
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
@@ -197,7 +198,7 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
-                str_pattern="*.[jJpP][pPnN][gG]",
+                file_extensions=image_file_extensions,
             )
             all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id

@@ -1,5 +1,6 @@
 import boto3
 import os
+from os.path import splitext
 import time
 from botocore.exceptions import (
     NoCredentialsError,
@@ -193,9 +194,14 @@ class S3DataBackend(BaseDataBackend):
             for item in response.get("Contents", [])
         ]
 
-    def list_files(self, str_pattern: str, instance_data_dir: str = None):
+    def list_files(self, file_extensions: list, instance_data_dir: str = None):
         # Initialize the results list
         results = []
+
+        def splitext_(path):
+            o = splitext(path)[1].lower()
+            # remove leading .
+            return o[1:] if o else o
 
         # Grab a timestamp for our start time.
         start_time = time.time()
@@ -203,17 +209,11 @@ class S3DataBackend(BaseDataBackend):
         # Using paginator to handle potential large number of objects
         paginator = self.client.get_paginator("list_objects_v2")
 
-        # We'll use fnmatch to filter based on the provided pattern.
-        if instance_data_dir:
-            pattern = os.path.join(instance_data_dir or None, str_pattern)
-        else:
-            pattern = str_pattern
-
         # Using a dictionary to hold files based on their prefixes (subdirectories)
         prefix_dict = {}
         # Log the first few items, alphabetically sorted:
         logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_dir} with search pattern: {pattern}"
+            f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_dir} with extensions: {file_extensions}"
         )
 
         # Paginating over the entire bucket objects
@@ -221,18 +221,18 @@ class S3DataBackend(BaseDataBackend):
             # logger.debug(f"Page: {page}")
             for obj in page.get("Contents", []):
                 # Filter based on the provided pattern
-                if fnmatch.fnmatch(obj["Key"], pattern):
-                    # Split the S3 key to determine the directory and file structure
-                    parts = obj["Key"].split("/")
-                    subdir = "/".join(
-                        parts[:-1]
-                    )  # Get the directory excluding the file
-                    filename = parts[-1]  # Get the file name
+                ext = splitext_(obj["Key"])
+                if file_extensions and ext not in file_extensions:
+                    continue
+                # Split the S3 key to determine the directory and file structure
+                parts = obj["Key"].split("/")
+                subdir = "/".join(parts[:-1])  # Get the directory excluding the file
+                filename = parts[-1]  # Get the file name
 
-                    # Storing filenames under their respective subdirectories
-                    if subdir not in prefix_dict:
-                        prefix_dict[subdir] = []
-                    prefix_dict[subdir].append(obj["Key"])
+                # Storing filenames under their respective subdirectories
+                if subdir not in prefix_dict:
+                    prefix_dict[subdir] = []
+                prefix_dict[subdir].append(obj["Key"])
 
         # Transforming the prefix_dict into the desired results format
         for subdir, files in prefix_dict.items():

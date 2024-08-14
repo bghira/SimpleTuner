@@ -18,6 +18,7 @@ from helpers.training.multi_process import rank_info
 from queue import Queue
 from concurrent.futures import as_completed
 from hashlib import sha256
+from helpers.training import image_file_extensions
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -231,7 +232,7 @@ class VAECache:
         ) or StateTracker.set_image_files(
             self.image_data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
-                str_pattern="*.[tTwWjJpP][iIeEpPnN][fFbBgG][fFpP]?",
+                file_extensions=image_file_extensions,
             ),
             data_backend_id=self.id,
         )
@@ -241,7 +242,7 @@ class VAECache:
             or StateTracker.set_vae_cache_files(
                 self.cache_data_backend.list_files(
                     instance_data_dir=self.cache_dir,
-                    str_pattern="*.pt",
+                    file_extensions=["pt"],
                 ),
                 data_backend_id=self.id,
             )
@@ -281,7 +282,7 @@ class VAECache:
             StateTracker.set_vae_cache_files(
                 self.cache_data_backend.list_files(
                     instance_data_dir=self.cache_dir,
-                    str_pattern="*.pt",
+                    file_extensions=["pt"],
                 ),
                 data_backend_id=self.id,
             )
@@ -300,7 +301,7 @@ class VAECache:
                 StateTracker.set_vae_cache_files(
                     self.cache_data_backend.list_files(
                         instance_data_dir=self.cache_dir,
-                        str_pattern="*.pt",
+                        file_extensions=["pt"],
                     ),
                     data_backend_id=self.id,
                 )
