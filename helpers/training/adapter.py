@@ -1,5 +1,3 @@
-from peft import LoraConfig
-
 def determine_adapter_target_modules(args, unet, transformer):
     if unet is not None:
         return ["to_k", "to_q", "to_v", "to_out.0"]

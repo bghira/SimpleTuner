@@ -41,6 +41,10 @@ from helpers.training.text_encoding import (
     get_tokenizers,
 )
 from helpers.training.error_handling import validate_deepspeed_compat_from_args
+from helpers.training.optimizer_param import (
+    determine_optimizer_class_with_config,
+    determine_params_to_optimize,
+)
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
@@ -766,6 +770,7 @@ def main():
 
         use_deepspeed_optimizer = True
         if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            logger.info("Using DeepSpeed optimizer (AdamW).")
             accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
                 "type": "AdamW",
                 "params": {
@@ -778,6 +783,7 @@ def main():
 
         use_deepspeed_scheduler = True
         if "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            logger.info("Using DeepSpeed scheduler (WarmupLR).")
             accelerator.state.deepspeed_plugin.deepspeed_config["scheduler"] = {
                 "type": "WarmupLR",
                 "params": {
@@ -788,157 +794,23 @@ def main():
             }
 
     # Initialize the optimizer
-    if use_deepspeed_optimizer:
-        logger.info("Using DeepSpeed optimizer.")
-        optimizer_class = accelerate.utils.DummyOptim
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["eps"] = args.adam_epsilon
-        extra_optimizer_args["weight_decay"] = args.adam_weight_decay
-    elif args.use_prodigy_optimizer:
-        logger.info("Using Prodigy optimizer. Experimental.")
-        try:
-            import prodigyopt
-        except ImportError:
-            raise ImportError(
-                "To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`"
-            )
+    optimizer_args_from_config, optimizer_class = determine_optimizer_class_with_config(
+        args=args,
+        use_deepspeed_optimizer=use_deepspeed_optimizer,
+        is_quantized=is_quantized,
+        enable_adamw_bf16=enable_adamw_bf16,
+    )
+    extra_optimizer_args.update(optimizer_args_from_config)
 
-        optimizer_class = prodigyopt.Prodigy
-
-        if args.learning_rate <= 0.1:
-            logger.warn(
-                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
-            )
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["beta3"] = args.prodigy_beta3
-        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
-        extra_optimizer_args["eps"] = args.prodigy_epsilon
-        extra_optimizer_args["decouple"] = args.prodigy_decouple
-        extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
-        extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
-        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
-    elif args.adam_bfloat16:
-        if is_quantized and not enable_adamw_bf16:
-            logger.error(
-                f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Reverting to AdamW. You may use other optimizers, such as Adafactor."
-            )
-            optimizer_class = torch.optim.AdamW
-        else:
-            logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
-            from helpers.training import adam_bfloat16
-
-            optimizer_class = adam_bfloat16.AdamWBF16
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-    elif args.use_8bit_adam:
-        logger.info("Using 8bit AdamW optimizer.")
-        try:
-            import bitsandbytes as bnb  # type: ignore
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-
-        optimizer_class = bnb.optim.AdamW8bit
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-    elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
-        logger.info("Using D-Adaptation optimizer.")
-        try:
-            from dadaptation import DAdaptAdam
-        except ImportError:
-            raise ImportError(
-                "Please install the dadaptation library to make use of DaDapt optimizer."
-                "You can do so by running `pip install dadaptation`"
-            )
-
-        optimizer_class = DAdaptAdam
-        if (
-            hasattr(args, "dadaptation_learning_rate")
-            and args.dadaptation_learning_rate is not None
-        ):
-            logger.debug(
-                f"Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer."
-            )
-            args.learning_rate = args.dadaptation_learning_rate
-            extra_optimizer_args["decouple"] = True
-            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-            extra_optimizer_args["lr"] = float(args.learning_rate)
-
-    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        logger.info("Using Adafactor optimizer.")
-        try:
-            from transformers.optimization import Adafactor, AdafactorSchedule
-        except ImportError:
-            raise ImportError(
-                "Please install the latest transformers library to make use of Adafactor optimizer."
-                "You can do so by running `pip install transformers`, or, `poetry install` from the SimpleTuner directory."
-            )
-
-        optimizer_class = Adafactor
-        extra_optimizer_args = {}
-        if args.adafactor_relative_step:
-            extra_optimizer_args["lr"] = None
-            extra_optimizer_args["relative_step"] = True
-            extra_optimizer_args["scale_parameter"] = False
-            extra_optimizer_args["warmup_init"] = True
-        else:
-            extra_optimizer_args["lr"] = float(args.learning_rate)
-            extra_optimizer_args["relative_step"] = False
-            extra_optimizer_args["scale_parameter"] = False
-            extra_optimizer_args["warmup_init"] = False
-    else:
-        logger.info("Using AdamW optimizer.")
-        optimizer_class = torch.optim.AdamW
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-
-    if args.model_type == "full":
-        if args.controlnet:
-            params_to_optimize = controlnet.parameters()
-        elif unet is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, unet.parameters())
-            )
-        elif transformer is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, transformer.parameters())
-            )
-        if args.train_text_encoder:
-            raise ValueError(
-                "Full model tuning does not currently support text encoder training."
-            )
-    elif "lora" in args.model_type:
-        if args.controlnet:
-            raise ValueError(
-                "SimpleTuner does not currently support training a ControlNet LoRA."
-            )
-        if unet is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, unet.parameters())
-            )
-        if transformer is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, transformer.parameters())
-            )
-        if args.train_text_encoder:
-            if args.sd3 or args.pixart_sigma:
-                raise ValueError(
-                    f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
-                )
-            else:
-                # add the first text encoder's parameters
-                params_to_optimize = params_to_optimize + list(
-                    filter(lambda p: p.requires_grad, text_encoder_1.parameters())
-                )
-                # if text_encoder_2 is not None, add its parameters
-                if text_encoder_2 is None and not args.flux:
-                    # but not flux. it has t5 as enc 2.
-                    params_to_optimize = params_to_optimize + list(
-                        filter(lambda p: p.requires_grad, text_encoder_2.parameters())
-                    )
+    params_to_optimize = determine_params_to_optimize(
+        args=args,
+        controlnet=controlnet,
+        unet=unet,
+        transformer=transformer,
+        text_encoder_1=text_encoder_1,
+        text_encoder_2=text_encoder_2,
+        model_type_label=model_type_label,
+    )
 
     if use_deepspeed_optimizer:
         optimizer = optimizer_class(params_to_optimize)
@@ -987,37 +859,35 @@ def main():
     # Create EMA for the unet.
     ema_model = None
     if args.use_ema:
-        if args.sd3:
-            raise ValueError(
-                "Using EMA is not currently supported for Stable Diffusion 3 training."
-            )
-        if "lora" in args.model_type:
-            raise ValueError("Using EMA is not currently supported for LoRA training.")
+
         if accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
+
+            ema_model_cls = None
+            if unet is not None:
+                ema_model_cls = UNet2DConditionModel
+            elif args.pixart_sigma:
+                ema_model_cls = PixArtTransformer2DModel
+
+            ema_model_config = None
+            if unet is not None:
+                ema_model_config = unet.config
+            elif transformer is not None:
+                ema_model_config = transformer.config
 
             ema_model = EMAModel(
                 args,
                 accelerator,
-                unet.parameters() if unet is not None else transformer.parameters(),
-                model_cls=(
-                    UNet2DConditionModel
-                    if unet is not None
-                    else (
-                        SD3Transformer2DModel
-                        if args.sd3
-                        else (PixArtTransformer2DModel if args.pixart_sigma else None)
-                    )
+                parameters=(
+                    unet.parameters() if unet is not None else transformer.parameters()
                 ),
-                model_config=(
-                    unet.config
-                    if unet is not None
-                    else transformer.config if transformer is not None else None
-                ),
+                model_cls=ema_model_cls,
+                model_config=ema_model_config,
                 decay=args.ema_decay,
                 foreach=not args.ema_foreach_disable,
             )
             logger.info("EMA model creation complete.")
+
         accelerator.wait_for_everyone()
 
     from helpers.training.save_hooks import SaveHookManager

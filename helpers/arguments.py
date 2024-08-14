@@ -2053,4 +2053,12 @@ def parse_args(input_args=None):
             )
             args.gradient_precision = "fp32"
 
+    if args.use_ema:
+        if args.sd3:
+            raise ValueError(
+                "Using EMA is not currently supported for Stable Diffusion 3 training."
+            )
+        if "lora" in args.model_type:
+            raise ValueError("Using EMA is not currently supported for LoRA training.")
+
     return args
