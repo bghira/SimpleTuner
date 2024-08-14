@@ -100,7 +100,7 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "cache_dir_vae": "/training/vae_cache/subjectname",
         "repeats": 1,
         "crop": false,
-        "resolution": 0.5,
+        "resolution": 0.25,
         "resolution_type": "area",
         "minimum_image_size": 0.25
     },
@@ -113,9 +113,9 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "cache_dir_vae": "/training/vae_cache/regularisation",
         "repeats": 10,
         "ignore_epochs": true,
-        "resolution": 0.5,
+        "resolution": 0.25,
         "resolution_type": "area",
-        "minimum_image_size": 0.5
+        "minimum_image_size": 0.25
     },
     {
         "id": "textembeds",

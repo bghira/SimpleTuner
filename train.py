@@ -31,6 +31,16 @@ from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
+from helpers.training.schedulers import load_scheduler_from_args
+from helpers.training.adapter import determine_adapter_target_modules
+from helpers.training.diffusion_model import load_diffusion_model
+from helpers.training.text_encoding import (
+    load_tes,
+    determine_te_path_subfolder,
+    import_model_class_from_model_name_or_path,
+    get_tokenizers,
+)
+from helpers.training.error_handling import validate_deepspeed_compat_from_args
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
@@ -41,7 +51,6 @@ from helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -68,8 +77,6 @@ import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
 from tqdm.auto import tqdm
-from helpers.training.model_freeze import freeze_transformer_blocks
-from helpers.training.custom_schedule import get_sd3_sigmas
 from transformers import PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
@@ -112,164 +119,6 @@ SCHEDULER_NAME_MAP = {
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
 }
-
-
-def import_model_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str,
-    revision: str,
-    args,
-    subfolder: str = "text_encoder",
-):
-    if args.smoldit:
-        from transformers import AutoModelForSeq2SeqLM
-
-        return AutoModelForSeq2SeqLM
-    text_encoder_config = PretrainedConfig.from_pretrained(
-        pretrained_model_name_or_path, subfolder=subfolder, revision=revision
-    )
-    model_class = text_encoder_config.architectures[0]
-
-    if model_class == "CLIPTextModel":
-        from transformers import CLIPTextModel
-
-        return CLIPTextModel
-    elif model_class == "CLIPTextModelWithProjection":
-        from transformers import CLIPTextModelWithProjection
-
-        return CLIPTextModelWithProjection
-    elif model_class == "T5EncoderModel":
-        from transformers import T5EncoderModel
-
-        return T5EncoderModel
-    elif model_class == "UMT5EncoderModel":
-        from transformers import UMT5EncoderModel
-
-        return UMT5EncoderModel
-    elif model_class == "ChatGLMModel":
-        from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
-
-        return ChatGLMModel
-    else:
-        raise ValueError(f"{model_class} is not supported.")
-
-
-def get_tokenizers(args):
-    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
-    try:
-        if args.smoldit:
-            from transformers import AutoTokenizer
-
-            tokenizer_1 = AutoTokenizer.from_pretrained(
-                "EleutherAI/pile-t5-base", pad_token="[PAD]"
-            )
-            return tokenizer_1, tokenizer_2, tokenizer_3
-
-        tokenizer_kwargs = {
-            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
-            "subfolder": "tokenizer",
-            "revision": args.revision,
-        }
-        is_t5_model = False
-        if args.pixart_sigma:
-            from transformers import T5Tokenizer
-
-            tokenizer_cls = T5Tokenizer
-            is_t5_model = True
-        elif args.kolors:
-            from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
-
-            tokenizer_cls = ChatGLMTokenizer
-            tokenizer_1 = tokenizer_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer",
-                revision=args.revision,
-                use_fast=False,
-            )
-        else:
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
-
-        if is_t5_model:
-            text_encoder_path = (
-                args.pretrained_t5_model_name_or_path
-                if args.pretrained_t5_model_name_or_path is not None
-                else args.pretrained_model_name_or_path
-            )
-            logger.info(
-                f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
-            )
-            try:
-                tokenizer_1 = tokenizer_cls.from_pretrained(
-                    text_encoder_path,
-                    subfolder="tokenizer",
-                    revision=args.revision,
-                    use_fast=False,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load tokenizer 1: {e}, attempting no subfolder"
-                )
-                tokenizer_1 = T5Tokenizer.from_pretrained(
-                    text_encoder_path,
-                    subfolder=None,
-                    revision=args.revision,
-                    use_fast=False,
-                )
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
-            f"\nError: -> {e}"
-            f"\nTraceback: {traceback.format_exc()}"
-        )
-        if args.sd3:
-            raise e
-    from transformers import T5TokenizerFast
-
-    if not any([args.pixart_sigma, args.kolors]):
-        try:
-            tokenizer_2_cls = CLIPTokenizer
-            if args.flux:
-                tokenizer_2_cls = T5TokenizerFast
-            tokenizer_2 = tokenizer_2_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_2",
-                revision=args.revision,
-                use_fast=False,
-            )
-            if tokenizer_1 is None:
-                logger.info("Seems that we are training an SDXL refiner model.")
-                StateTracker.is_sdxl_refiner(True)
-                if args.validation_using_datasets is None:
-                    logger.warning(
-                        "Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
-                    )
-                    args.validation_using_datasets = True
-        except Exception as e:
-            logger.warning(
-                f"Could not load secondary tokenizer ({'OpenCLIP-G/14' if not args.flux else 'T5 XXL'}). Cannot continue: {e}"
-            )
-            if args.flux or args.sd3:
-                raise e
-        if not tokenizer_1 and not tokenizer_2:
-            raise Exception("Failed to load tokenizer")
-    else:
-        if not tokenizer_1:
-            raise Exception("Failed to load tokenizer")
-
-    if args.sd3:
-        try:
-            tokenizer_3 = T5TokenizerFast.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_3",
-                revision=args.revision,
-                use_fast=True,
-            )
-        except:
-            raise ValueError(
-                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
-            )
-    return tokenizer_1, tokenizer_2, tokenizer_3
 
 
 def main():
@@ -357,24 +206,7 @@ def main():
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):
-        if "lora" in args.model_type:
-            logger.error(
-                "LoRA can not be trained with DeepSpeed. Please disable DeepSpeed via 'accelerate config' before reattempting."
-            )
-            sys.exit(1)
-        if (
-            "gradient_accumulation_steps"
-            in accelerator.state.deepspeed_plugin.deepspeed_config
-        ):
-            args.gradient_accumulation_steps = (
-                accelerator.state.deepspeed_plugin.deepspeed_config[
-                    "gradient_accumulation_steps"
-                ]
-            )
-            logger.info(
-                f"Updated gradient_accumulation_steps to the value provided by DeepSpeed: {args.gradient_accumulation_steps}"
-            )
-
+        validate_deepspeed_compat_from_args(accelerator, args)
     # If passed along, set the training seed now.
     if args.seed is not None and args.seed != 0:
         set_seed(args.seed, args.seed_for_each_device)
@@ -448,32 +280,11 @@ def main():
     # If --disable_text_encoder is provided, we will skip loading entirely.
     tokenizer_1, tokenizer_2, tokenizer_3 = get_tokenizers(args)
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
+    text_encoder_cls_1, text_encoder_cls_2, text_encoder_cls_3 = None, None, None
     text_encoders = []
     tokenizers = []
-    if args.kolors:
-        logger.info("Loading Kolors ChatGLM language model..")
-        text_encoder_path = args.pretrained_model_name_or_path
-        text_encoder_subfolder = "text_encoder"
-    elif args.smoldit:
-        text_encoder_path = "EleutherAI/pile-t5-base"
-        text_encoder_subfolder = None
-    elif args.flux:
-        text_encoder_path = args.pretrained_model_name_or_path
-        text_encoder_subfolder = "text_encoder"
-    elif args.pixart_sigma:
-        text_encoder_path = (
-            args.pretrained_t5_model_name_or_path
-            if args.pretrained_t5_model_name_or_path is not None
-            else args.pretrained_model_name_or_path
-        )
-        # Google's version of the T5 XXL model doesn't have a subfolder :()
-        text_encoder_subfolder = "text_encoder"
-    else:
-        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
-        # sd2.x uses openclip vit-H/14
-        logger.info("Load CLIP text encoder..")
-        text_encoder_path = args.pretrained_model_name_or_path
-        text_encoder_subfolder = "text_encoder"
+    text_encoder_path, text_encoder_subfolder = determine_te_path_subfolder(args)
+
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
             text_encoder_path, args.revision, args, subfolder=text_encoder_subfolder
@@ -494,33 +305,8 @@ def main():
         )
 
     # Load scheduler and models
-    flow_matching = False
-    if (args.sd3 and args.flow_matching_loss != "diffusion") or args.flux:
-        # Stable Diffusion 3 uses rectified flow.
-        flow_matching = True
-        from diffusers import FlowMatchEulerDiscreteScheduler
+    args, flow_matching, noise_scheduler = load_scheduler_from_args(args)
 
-        noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            shift=1 if args.flux else 3,
-        )
-    else:
-        if args.legacy:
-            args.rescale_betas_zero_snr = True
-            args.training_scheduler_timestep_spacing = "trailing"
-
-        noise_scheduler = DDPMScheduler.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-            timestep_spacing=args.training_scheduler_timestep_spacing,
-        )
-        args.prediction_type = noise_scheduler.config.prediction_type
-        if flow_matching and args.flow_matching_loss == "diffusion":
-            logger.warning(
-                "Since --flow_matching_loss=diffusion, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
-            )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -531,62 +317,20 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        text_encoder_variant = args.variant
-        if tokenizer_1 is not None and not args.smoldit:
-            if args.pixart_sigma:
-                logger.info(
-                    f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
-            elif args.flux:
-                logger.info(
-                    f"Loading OpenAI CLIP-L text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
-            elif args.kolors:
-                logger.info(
-                    f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
-                text_encoder_variant = "fp16"
-            else:
-                logger.info(
-                    f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
-            text_encoder_1 = text_encoder_cls_1.from_pretrained(
-                text_encoder_path,
-                subfolder=text_encoder_subfolder,
-                revision=args.revision,
-                variant=text_encoder_variant,
-                torch_dtype=weight_dtype,
-            )
-        elif args.smoldit:
-            text_encoder_1 = text_encoder_cls_1.from_pretrained(
-                "EleutherAI/pile-t5-base",
-                torch_dtype=weight_dtype,
-            ).encoder
-            text_encoder_1.eval()
-
-        if tokenizer_2 is not None:
-            if args.flux:
-                logger.info(
-                    f"Loading T5 XXL v1.1 text encoder from {args.pretrained_model_name_or_path}/text_encoder_2.."
-                )
-            else:
-                logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
-            text_encoder_2 = text_encoder_cls_2.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="text_encoder_2",
-                revision=args.revision,
-                torch_dtype=weight_dtype,
-                variant=args.variant,
-            )
-        if tokenizer_3 is not None and args.sd3:
-            logger.info("Loading T5-XXL v1.1 text encoder..")
-            text_encoder_3 = text_encoder_cls_3.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="text_encoder_3",
-                torch_dtype=weight_dtype,
-                revision=args.revision,
-                variant=args.variant,
-            )
+        tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
+        text_encoder_classes = [
+            text_encoder_cls_1,
+            text_encoder_cls_2,
+            text_encoder_cls_3,
+        ]
+        text_encoder_variant, text_encoder_1, text_encoder_2, text_encoder_3 = load_tes(
+            args=args,
+            text_encoder_classes=text_encoder_classes,
+            weight_dtype=weight_dtype,
+            tokenizers=tokenizers,
+            text_encoder_path=text_encoder_path,
+            text_encoder_subfolder=text_encoder_subfolder,
+        )
 
         logger.info(f"Load VAE: {vae_path}")
         vae_kwargs = {
@@ -753,72 +497,7 @@ def main():
             " The real memories were the friends we trained a model on along the way."
         )
 
-    pretrained_load_args = {
-        "revision": args.revision,
-        "variant": args.variant,
-    }
-    unet = None
-    transformer = None
-    if args.sd3:
-        # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
-        try:
-            from diffusers import SD3Transformer2DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer = SD3Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.flux:
-        from diffusers.models import FluxTransformer2DModel
-
-        transformer = FluxTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            torch_dtype=weight_dtype,
-            **pretrained_load_args,
-        )
-    elif args.pixart_sigma:
-        from diffusers.models import PixArtTransformer2DModel
-
-        transformer = PixArtTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            torch_dtype=weight_dtype,
-            **pretrained_load_args,
-        )
-    elif args.smoldit:
-        logger.info("Loading SmolDiT model..")
-        if args.validation_noise_scheduler is None:
-            args.validation_noise_scheduler = "ddpm"
-        transformer_variant = None
-        from helpers.models.smoldit import SmolDiT2DModel, SmolDiTConfigurations
-
-        if args.smoldit_config not in SmolDiTConfigurations:
-            raise ValueError(
-                f"Invalid SmolDiT size configuration: {args.smoldit_config}"
-            )
-
-        transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
-        if "lora" in args.model_type:
-            raise ValueError("SmolDiT does not yet support LoRA training.")
-    else:
-        logger.info("Loading U-net..")
-        unet_variant = args.variant
-        if (
-            args.kolors
-            and args.pretrained_model_name_or_path.lower()
-            == "kwai-kolors/kolors-diffusers"
-        ):
-            unet_variant = "fp16"
-        pretrained_load_args["variant"] = unet_variant
-        unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
-        )
+    unet, transformer = load_diffusion_model(args, weight_dtype)
     disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
     model_type_label = "SDXL"
@@ -837,6 +516,7 @@ def main():
 
     enable_adamw_bf16 = True if weight_dtype == torch.bfloat16 else False
     base_weight_dtype = weight_dtype
+    is_quanto = False
     if not disable_accelerator and is_quantized:
         if args.base_model_default_dtype == "fp32":
             base_weight_dtype = torch.float32
@@ -859,6 +539,12 @@ def main():
     if "quanto" in args.base_model_precision:
         try:
             from optimum.quanto import QTensor
+
+            # from helpers.training.quantisation.peft_workarounds import (
+            #     custom_module_mapping as quanto_peft_module_mapping,
+            # )
+
+            is_quanto = True
         except ImportError as e:
             raise ImportError(
                 f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
@@ -897,6 +583,7 @@ def main():
         else:
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
+
     elif "lora" in args.model_type:
         if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
@@ -910,6 +597,7 @@ def main():
             transformer.requires_grad_(False)
         if unet is not None:
             unet.requires_grad_(False)
+
         lora_initialisation_style = True
         if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
             if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
@@ -925,10 +613,17 @@ def main():
                     args.lora_init_type if args.lora_init_type != "default" else True
                 )
         if args.use_dora:
-            logger.warning(
-                "DoRA support is experimental and not very thoroughly tested."
-            )
-            lora_weight_init_type = "default"
+            if is_quanto:
+                logger.error(
+                    "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
+                )
+                args.use_dora = False
+            else:
+                logger.warning(
+                    "DoRA support is experimental and not very thoroughly tested."
+                )
+                lora_initialisation_style = "default"
+        target_modules = determine_adapter_target_modules(args, unet, transformer)
         if unet is not None:
             unet_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -937,52 +632,16 @@ def main():
                 ),
                 lora_dropout=args.lora_dropout,
                 init_lora_weights=lora_initialisation_style,
-                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                target_modules=target_modules,
                 use_dora=args.use_dora,
             )
+            # if is_quanto:
+            #     unet_lora_config._register_custom_module(
+            #         mapping=quanto_peft_module_mapping
+            #     )
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
-        if transformer is not None:
-            target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
-
-            if args.flux:
-                # target_modules = mmdit layers here
-                if args.flux_lora_target == "all":
-                    target_modules = [
-                        "to_k",
-                        "to_q",
-                        "to_v",
-                        "add_k_proj",
-                        "add_q_proj",
-                        "add_v_proj",
-                        "to_out.0",
-                        "to_add_out.0",
-                    ]
-                elif args.flux_lora_target == "context":
-                    # i think these are the text input layers.
-                    target_modules = [
-                        "add_k_proj",
-                        "add_q_proj",
-                        "add_v_proj",
-                        "to_add_out.0",
-                    ]
-                elif args.flux_lora_target == "all+ffs":
-                    target_modules = [
-                        "to_k",
-                        "to_q",
-                        "to_v",
-                        "add_k_proj",
-                        "add_q_proj",
-                        "add_v_proj",
-                        "to_out.0",
-                        "to_add_out.0",
-                        "ff.0",
-                        "ff.2",
-                        "ff_context.0",
-                        "ff_context.2",
-                        "proj_mlp",
-                        "proj_out",
-                    ]
+        elif transformer is not None:
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
                 lora_alpha=(
@@ -992,7 +651,14 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
-            transformer.add_adapter(transformer_lora_config)
+            # if is_quanto:
+            #     transformer_lora_config._register_custom_module(
+            #         mapping=quanto_peft_module_mapping
+            #     )
+            from peft import get_peft_model
+
+            transformer = get_peft_model(transformer, transformer_lora_config)
+
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
         if unet is not None:
@@ -1304,6 +970,13 @@ def main():
     lr_scheduler = get_lr_scheduler(
         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
     )
+    if use_deepspeed_scheduler:
+        logger.info(f"Using DeepSpeed learning rate scheduler")
+        lr_scheduler = accelerate.utils.DummyScheduler(
+            optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.lr_warmup_steps,
+        )
     if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
         lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
     if hasattr(lr_scheduler, "last_step"):
@@ -1656,6 +1329,7 @@ def main():
         logger.warning(
             "xformers is not enabled, as it is incompatible with this model type."
         )
+        args.enable_xformers_memory_efficient_attention = False
 
     if args.controlnet:
         controlnet.train()
@@ -1921,13 +1595,21 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
+                if args.input_perturbation != 0 and (not args.input_perturbation_steps or global_step < args.input_perturbation_steps):
+                    input_perturbation = args.input_perturbation
+                    if args.input_perturbation_steps:
+                        input_perturbation *= 1.0 - (global_step / args.input_perturbation_steps)
+                    input_noise = noise + args.input_perturbation * torch.randn_like(latents)
+                else:
+                    input_noise = noise
+
                 if flow_matching:
-                    noisy_latents = (1 - sigmas) * latents + sigmas * noise
+                    noisy_latents = (1 - sigmas) * latents + sigmas * input_noise
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
                     noisy_latents = noise_scheduler.add_noise(
-                        latents.float(), noise.float(), timesteps
+                        latents.float(), input_noise.float(), timesteps
                     ).to(device=accelerator.device, dtype=weight_dtype)
 
                 encoder_hidden_states = batch["prompt_embeds"].to(

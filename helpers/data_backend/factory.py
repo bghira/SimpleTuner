@@ -23,6 +23,7 @@ import time
 import threading
 from tqdm import tqdm
 import queue
+from math import sqrt
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -535,6 +536,43 @@ def configure_multi_databackend(
             or backend["id"] in StateTracker.get_data_backends()
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
+        resolution_type = backend.get("resolution_type", args.resolution_type)
+        if resolution_type == "pixel_area":
+            pixel_edge_length = backend.get("resolution")
+            if pixel_edge_length is None or (
+                type(pixel_edge_length) is not int
+                or not str(pixel_edge_length).isdigit()
+            ):
+                raise ValueError(
+                    f"Resolution type 'pixel_area' requires a 'resolution' field to be set in the backend config using an integer in the format: 1024"
+                )
+            # we'll convert pixel_area to area
+            backend["resolution_type"] = "area"
+            backend["resolution"] = (pixel_edge_length * pixel_edge_length) / (1000**2)
+            # convert the other megapixel values.
+            if (
+                backend.get("maximum_image_size", None) is not None
+                and backend["maximum_image_size"] > 0
+            ):
+                backend["maximum_image_size"] = (
+                    backend["maximum_image_size"] * backend["maximum_image_size"]
+                ) / 1_000_000
+            if (
+                backend.get("target_downsample_size", None) is not None
+                and backend["target_downsample_size"] > 0
+            ):
+                backend["target_downsample_size"] = (
+                    backend["target_downsample_size"]
+                    * backend["target_downsample_size"]
+                ) / 1_000_000
+            if (
+                backend.get("minimum_image_size", None) is not None
+                and backend["minimum_image_size"] > 0
+            ):
+                backend["minimum_image_size"] = (
+                    backend["minimum_image_size"] * backend["minimum_image_size"]
+                ) / 1_000_000
+
         info_log(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
@@ -1152,8 +1190,6 @@ def select_dataloader_index(step, backends):
 
 
 def get_backend_weight(backend_id, backend, step):
-    # Implement your logic to determine the weight for each backend
-    # For example, a simple linear decay based on the step count
     backend_config = StateTracker.get_data_backend_config(backend_id)
     prob = backend_config.get("probability", 1)
     disable_step = backend_config.get("disable_after_epoch_step", float("inf"))

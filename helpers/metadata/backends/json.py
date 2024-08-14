@@ -10,6 +10,7 @@ import os
 import traceback
 from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
+from helpers.training import image_file_extensions
 
 logger = logging.getLogger("JsonMetadataBackend")
 if should_log():
@@ -88,7 +89,7 @@ class JsonMetadataBackend(MetadataBackend):
             logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
-                str_pattern="*.[jJpP][pPnN][gG]",
+                file_extensions=image_file_extensions,
             )
             all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id

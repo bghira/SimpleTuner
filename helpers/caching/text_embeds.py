@@ -194,7 +194,7 @@ class TextEmbeddingCache:
             or StateTracker.set_text_cache_files(
                 self.data_backend.list_files(
                     instance_data_dir=self.cache_dir,
-                    str_pattern="*.pt",
+                    file_extensions=["pt"],
                 ),
                 data_backend_id=self.id,
             )

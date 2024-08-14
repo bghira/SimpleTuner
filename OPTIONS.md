@@ -94,19 +94,22 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 A lot of settings are instead set through the [dataloader config](/documentation/DATALOADER.md), but these will apply globally.
 
-### `--resolution`
-
-- **What**: Input image resolution. Can be expressed as pixels, or megapixels.
-- **Why**: All images in the dataset will have their smaller edge resized to this resolution for training. It is recommended use a value of 1.0 if also using `--resolution_type=area`. When using `--resolution_type=pixel` and `--resolution=1024px`, the images may become very large and use an excessive amount of VRAM. The recommended configuration is to combine `--resolution_type=area` with `--resolution=1` (or lower - .25 would be a 512px model with data bucketing).
-
 ### `--resolution_type`
 
-- **What**: This tells SimpleTuner whether to use `area` size calculations or `pixel` edge calculations.
-- **Why**: SimpleTuner's default `pixel` behaviour is to resize the image, keeping the aspect ratio. Setting the type to `area` instead uses the given megapixel value as the target size for the image, keeping the aspect ratio.
+- **What**: This tells SimpleTuner whether to use `area` size calculations or `pixel` edge calculations. A hybrid approach of `pixel_area` is also supported, which allows using pixel instead of megapixel for `area` measurements.
+- **Options**: 
+  - `resolution_type=pixel` - All images in the dataset will have their smaller edge resized to this resolution for training, which could result in a lot of VRAM use due to the size of the resulting images.
+  - `resolution_type=area` - It is recommended use a value of 1.0 if also using `--resolution_type=area`.
+  - `resolution_type=pixel_area` - A `resolution` value of 1024 will be internally mapped to an accurate area measurement for efficient aspect bucketing.
+
+### `--resolution`
+
+- **What**: Input image resolution. Can be expressed as pixels, or megapixels, depending on what your selected value for `resolution_type` is.
+- **Default**: Using `resolution_type=pixel_area` with `resolution=1024`. When `resolution_type=area` instead, you will have to supply a megapixel value, such as `1.05`.
 
 ### `--validation_resolution`
 
-- **What**: Output image resolution, measured in pixels.
+- **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
 ### `--caption_strategy`
@@ -393,7 +396,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--sdxl_refiner_uses_full_range]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--delete_unwanted_images] [--delete_problematic_images]
-                [--offset_noise] [--lr_end LR_END] [--i_know_what_i_am_doing]
+                [--offset_noise] [--input_perturbation INPUT_PERTURBATION]
+                [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
+                [--lr_end LR_END] [--i_know_what_i_am_doing]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
 
 The following SimpleTuner command-line options are available:
@@ -1302,6 +1307,16 @@ options:
   --offset_noise        Fine-tuning against a modified noise See:
                         https://www.crosslabs.org//blog/diffusion-with-offset-
                         noise for more information.
+  --input_perturbation INPUT_PERTURBATION
+                        Add additional noise only to the inputs fed to the
+                        model during training. This will make the training
+                        converge faster. A value of 0.1 is suggested if you
+                        want to enable this. Input perturbation seems to also
+                        work with flow-matching (e.g. SD3 and Flux).
+  --input_perturbation_steps INPUT_PERTURBATION_STEPS
+                        Only apply input perturbation over the first N steps
+                        with linear decay. This should prevent artifacts from
+                        showing up in longer training runs.
   --lr_end LR_END       A polynomial learning rate will end up at this value
                         after the specified number of warmup steps. A sine or
                         cosine wave will use this value as its lower bound for

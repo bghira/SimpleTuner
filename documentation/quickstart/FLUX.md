@@ -17,7 +17,7 @@ To have reliable results, you'll need:
 - **at minimum** a single 3090 or V100 GPU
 - **ideally** multiple A6000s
 
-Luckily, these are readily available through providers such as TensorDock for extremely low rates (<$2/hr for A6000s, <$1/hr for 3090s>).
+Luckily, these are readily available through providers such as [LambdaLabs](https://lambdalabs.com) which provides the lowest available rates, and localised clusters for multi-node training.
 
 **Unlike other models, AMD and Apple GPUs do not work for training Flux.**
 
@@ -34,8 +34,18 @@ python --version
 If you don't have python 3.11 installed on Ubuntu, you can try the following:
 
 ```bash
-apt -y install python3.11
+apt -y install python3.11 python3.11-venv
 ```
+
+#### Container image dependencies
+
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.4 image:
+
+```bash
+apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+```
+
+If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
@@ -69,9 +79,19 @@ poetry install --no-root
 poetry install --no-root -C install/rocm
 ```
 
+#### Removing DeepSpeed & Bits n Bytes
+
+These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
+
+To remove them after `poetry` has installed them, run the following command in the same terminal:
+
+```bash
+pip uninstall -y deepspeed bitsandbytes
+```
+
 #### Custom Diffusers build
 
-For LoRA support in Diffusers, the latest release does not yet have Flux LoRA support, so we must install directly from the main branch.
+We currently rely on Git upstream Diffusers builds for the most recent fixes in the Flux ecosystem.
 
 To obtain the correct build, run the following commands:
 
@@ -86,6 +106,18 @@ To run SimpleTuner, you will need to set up a configuration file, the dataset an
 
 #### Configuration file
 
+An experimental script, `configure.py`, may allow you to entirely skip this section through an interactive step-by-step configuration. It contains some safety features that help avoid common pitfalls.
+
+**Note:** This doesn't configure your dataloader. You will still have to do that manually, later.
+
+To run it:
+
+```bash
+python configure.py
+```
+
+If you prefer to manually configure:
+
 Copy `config/config.env.example` to `config/config.env`:
 
 ```bash
@@ -99,6 +131,7 @@ There, you will need to modify the following variables:
 - `MODEL_NAME` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will *probably* need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `TRAIN_BATCH_SIZE` - this should be kept at 1, especially if you have a very small dataset.
 - `VALIDATION_RESOLUTION` - As Flux is a 1024px model, you can set this to `1024x1024`.
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
 - `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.
