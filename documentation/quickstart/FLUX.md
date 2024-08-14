@@ -17,7 +17,7 @@ To have reliable results, you'll need:
 - **at minimum** a single 3090 or V100 GPU
 - **ideally** multiple A6000s
 
-Luckily, these are readily available through providers such as TensorDock for extremely low rates (<$2/hr for A6000s, <$1/hr for 3090s>).
+Luckily, these are readily available through providers such as [LambdaLabs](https://lambdalabs.com) which provides the lowest available rates, and localised clusters for multi-node training.
 
 **Unlike other models, AMD and Apple GPUs do not work for training Flux.**
 
