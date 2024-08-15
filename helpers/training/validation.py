@@ -395,6 +395,7 @@ class Validation:
         controlnet=None,
         text_encoder_3=None,
         tokenizer_3=None,
+        is_deepspeed: bool = False,
     ):
         self.accelerator = accelerator
         self.prompt_handler = prompt_handler
@@ -443,12 +444,18 @@ class Validation:
         self.flow_matching = (
             self.args.sd3 and self.args.flow_matching_loss != "diffusion"
         ) or self.args.flux
+        self.deepspeed = is_deepspeed
+        self.inference_device = (
+            accelerator.device
+            if not is_deepspeed
+            else "cuda" if torch.cuda.is_available() else "cpu"
+        )
 
         self._update_state()
 
     def _validation_seed_source(self):
         if self.args.validation_seed_source == "gpu":
-            return self.accelerator.device
+            return self.inference_device
         elif self.args.validation_seed_source == "cpu":
             return "cpu"
         else:
@@ -489,7 +496,7 @@ class Validation:
             subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
             revision=args.revision,
             force_upcast=False,
-        ).to(self.accelerator.device)
+        ).to(self.inference_device)
         StateTracker.set_vae(self.vae)
 
         return self.vae
@@ -614,15 +621,15 @@ class Validation:
                     f"Unexpected number of embeddings returned from cache: {_embed}"
                 )
             current_validation_pooled_embeds = current_validation_pooled_embeds.to(
-                device=self.accelerator.device, dtype=self.weight_dtype
+                device=self.inference_device, dtype=self.weight_dtype
             )
             if current_validation_time_ids is not None:
                 current_validation_time_ids = current_validation_time_ids.to(
-                    device=self.accelerator.device, dtype=self.weight_dtype
+                    device=self.inference_device, dtype=self.weight_dtype
                 )
             self.validation_negative_pooled_embeds = (
                 self.validation_negative_pooled_embeds.to(
-                    device=self.accelerator.device, dtype=self.weight_dtype
+                    device=self.inference_device, dtype=self.weight_dtype
                 )
             )
             prompt_embeds["pooled_prompt_embeds"] = current_validation_pooled_embeds
@@ -669,11 +676,11 @@ class Validation:
             )
 
         current_validation_prompt_embeds = current_validation_prompt_embeds.to(
-            device=self.accelerator.device, dtype=self.weight_dtype
+            device=self.inference_device, dtype=self.weight_dtype
         )
         self.validation_negative_prompt_embeds = (
             self.validation_negative_prompt_embeds.to(
-                device=self.accelerator.device, dtype=self.weight_dtype
+                device=self.inference_device, dtype=self.weight_dtype
             )
         )
         # when sampling unconditional guidance, you should only zero one or the other prompt, and not both.
@@ -795,7 +802,7 @@ class Validation:
                 message_level="info",
             )
 
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process or self.deepspeed:
             logger.debug("Starting validation process...")
             self.setup_pipeline(validation_type)
             if self.pipeline is None:
@@ -820,9 +827,9 @@ class Validation:
             and self.global_step > self.global_resume_step
         )
         is_final_validation = validation_type == "final"
-        return (
-            is_final_validation or should_do_intermediary_validation
-        ) and self.accelerator.is_main_process
+        return (is_final_validation or should_do_intermediary_validation) and (
+            self.accelerator.is_main_process or self.deepseed
+        )
 
     def setup_scheduler(self):
         if self.args.validation_noise_scheduler is None:
@@ -872,7 +879,7 @@ class Validation:
                     self.ema_model.copy_to(self.transformer.parameters())
                 if self.args.ema_device != "accelerator":
                     logger.info("Moving EMA weights to GPU for inference.")
-                    self.ema_model.to(self.accelerator.device)
+                    self.ema_model.to(self.inference_device)
             else:
                 logger.debug(
                     "Skipping EMA model setup for validation, as enable_ema_model=False."
@@ -952,10 +959,10 @@ class Validation:
             if (
                 "vae" in extra_pipeline_kwargs
                 and extra_pipeline_kwargs.get("vae") is not None
-                and extra_pipeline_kwargs["vae"].device != self.accelerator.device
+                and extra_pipeline_kwargs["vae"].device != self.inference_device
             ):
                 extra_pipeline_kwargs["vae"] = extra_pipeline_kwargs["vae"].to(
-                    self.accelerator.device
+                    self.inference_device
                 )
 
             pipeline_kwargs = {
@@ -1011,7 +1018,7 @@ class Validation:
                         fullgraph=False,
                     )
 
-        self.pipeline = self.pipeline.to(self.accelerator.device)
+        self.pipeline = self.pipeline.to(self.inference_device)
         self.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):
@@ -1192,10 +1199,10 @@ class Validation:
                         del pipeline_kwargs["prompt"]
                     pipeline_kwargs["prompt_attention_mask"] = pipeline_kwargs.pop(
                         "prompt_mask"
-                    )[0].to(device=self.accelerator.device, dtype=self.weight_dtype)
+                    )[0].to(device=self.inference_device, dtype=self.weight_dtype)
                     pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
-                    ).to(device=self.accelerator.device, dtype=self.weight_dtype)
+                    ).to(device=self.inference_device, dtype=self.weight_dtype)
 
                 validation_image_results = self.pipeline(**pipeline_kwargs).images
                 if self.args.controlnet:
