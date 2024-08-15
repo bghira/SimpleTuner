@@ -656,13 +656,7 @@ def main():
                 target_modules=target_modules,
                 use_dora=args.use_dora,
             )
-            # if is_quanto:
-            #     transformer_lora_config._register_custom_module(
-            #         mapping=quanto_peft_module_mapping
-            #     )
-            from peft import get_peft_model
-
-            transformer = get_peft_model(transformer, transformer_lora_config)
+            transformer.add_adapter(transformer_lora_config)
 
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
