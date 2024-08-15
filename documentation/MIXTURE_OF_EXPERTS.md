@@ -40,7 +40,7 @@ export LEARNING_RATE=4e-7
 #   are set low enough that you'll get a checkpoint every couple hours.
 # - The original Segmind models used a batch size of 32 with 4 accumulations.
 export TRAIN_BATCH_SIZE=8
-export GRADIENT_ACCUMULATION_STEPS=4
+export GRADIENT_ACCUMULATION_STEPS=1
 
 # If you are running on a beefy machine that doesn't fully utilise its VRAM during training, set this to "false" and your training will go faster.
 export USE_GRADIENT_CHECKPOINTING=true

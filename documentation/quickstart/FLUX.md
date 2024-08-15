@@ -140,7 +140,7 @@ There, you will need to modify the following variables:
 - `VALIDATION_NO_CFG_UNTIL_TIMESTEP` - When using `VALIDATION_GUIDANCE_REAL` with Flux, skip doing CFG until this timestep. Default 2.
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
   - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
-- `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, and 2 should be enough.. 4 is overkill.
+- `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, which is recommended to maintain higher quality and reduce training runtime.
 - `OPTIMIZER` - adamw_bf16 was found to perform very well, whereas Prodigy might stall out. If you're an expert though, feel free to experiment here. Beginners are recommended to stick with adamw_bf16.
 - `MIXED_PRECISION` - Beginners should keep this in `bf16` with `PURE_BF16=true` along with the adamw_bf16 optimiser.
 
@@ -227,7 +227,7 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all"
 
 # If you want to use LoftQ initialisation, you can't use Quanto to quantise the base model.
-# This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes.
+# This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes and is incompatible with Quanto.
 # Other options are 'default', 'gaussian' (difficult), and untested options: 'olora' and 'pissa'.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
 
@@ -451,7 +451,6 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
 # x-flux only trains the mmdit blocks but you can change lora_target to all or context to experiment.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=default --flux_lora_target=mmdit"
-
 ```
 
 ## Credits
