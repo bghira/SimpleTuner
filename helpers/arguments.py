@@ -2045,8 +2045,9 @@ def parse_args(input_args=None):
         if args.gradient_precision == "unmodified" or args.gradient_precision is None:
             warning_log(
                 "Gradient accumulation steps are enabled, but gradient precision is set to 'unmodified'."
-                " This may lead to numeric instability. Consider setting --gradient_precision=fp32."
+                " This may lead to numeric instability. Consider disabling gradient accumulation steps. Continuing in 10 seconds.."
             )
+            time.sleep(10)
         elif args.gradient_precision == "fp32":
             info_log(
                 "Gradient accumulation steps are enabled, and gradient precision is set to 'fp32'."
