@@ -222,10 +222,10 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lora_type",
         type=str,
-        choices=["Standard"],
+        choices=["Standard", "lycoris"],
         help=(
             "When training using --model_type=lora, you may specify a different type of LoRA to train here."
-            " Currently, only 'Standard' type is supported. This option exists for compatibility with Kohya configuration files."
+            "Standard refers to training via PEFT, lycoris refers to training with lycoris."
         ),
     )
     parser.add_argument(
@@ -262,6 +262,14 @@ def parse_args(input_args=None):
         default=0.1,
         help=(
             "LoRA dropout randomly ignores neurons during training. This can help prevent overfitting."
+        ),
+    )
+    parser.add_argument(
+        "--lycoris_config",
+        type=str,
+        default="config/lycoris_config.json",
+        help=(
+            "The location for the JSON file of the Lycoris configuration."
         ),
     )
     parser.add_argument(

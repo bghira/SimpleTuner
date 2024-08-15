@@ -119,7 +119,7 @@ def determine_optimizer_class_with_config(args, use_deepspeed_optimizer, is_quan
     return extra_optimizer_args, optimizer_class
 
 
-def determine_params_to_optimize(args, controlnet, unet, transformer, text_encoder_1, text_encoder_2, model_type_label):
+def determine_params_to_optimize(args, controlnet, unet, transformer, text_encoder_1, text_encoder_2, model_type_label, lycoris_wrapped_network):
     if args.model_type == "full":
         if args.controlnet:
             params_to_optimize = controlnet.parameters()
@@ -164,5 +164,10 @@ def determine_params_to_optimize(args, controlnet, unet, transformer, text_encod
                     params_to_optimize = params_to_optimize + list(
                         filter(lambda p: p.requires_grad, text_encoder_2.parameters())
                     )
+
+        if args.lora_type == 'lycoris' and lycoris_wrapped_network is not None:
+            params_to_optimize = list(
+                filter(lambda p: p.requires_grad, lycoris_wrapped_network.parameters())
+            )
 
     return params_to_optimize
