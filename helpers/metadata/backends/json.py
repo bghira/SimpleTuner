@@ -272,7 +272,7 @@ class JsonMetadataBackend(MetadataBackend):
         """
 
         def repeat_len(bucket):
-            return (len(bucket) * (self.repeats + 1)) // self.batch_size
+            return len(bucket) * (self.repeats + 1)
 
         return sum(
             repeat_len(bucket) // self.batch_size
