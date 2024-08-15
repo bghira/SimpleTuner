@@ -434,8 +434,7 @@ options:
                         the mmdit layers will not be trained. If 'all' is
                         provided, all layers will be trained, minus feed-
                         forward and norms. If 'all+ffs' is provided, all
-                        layers will be trained including feed-forward and
-                        norms.
+                        layers will be trained including feed-forward.
   --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models..

@@ -40,6 +40,7 @@ class ParquetMetadataBackend(MetadataBackend):
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
+        repeats: int = 0,
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
@@ -60,6 +61,7 @@ class ParquetMetadataBackend(MetadataBackend):
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
             cache_file_suffix=cache_file_suffix,
+            repeats=repeats,
         )
         self.load_parquet_database()
         self.caption_cache = self._extract_captions_to_fast_list()
@@ -170,17 +172,6 @@ class ParquetMetadataBackend(MetadataBackend):
 
         logger.debug(f"Caption cache entry for idx {str(index)}: {result}")
         return result
-
-    def __len__(self):
-        """
-        Returns:
-            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
-        """
-        return sum(
-            len(bucket) // self.batch_size
-            for bucket in self.aspect_ratio_bucket_indices.values()
-            if len(bucket) >= self.batch_size
-        ) * (self.config.get("repeats", 0) + 1)
 
     def _discover_new_files(
         self, for_metadata: bool = False, ignore_existing_cache: bool = False
