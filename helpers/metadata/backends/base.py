@@ -457,7 +457,8 @@ class MetadataBackend:
         """
         if (
             bucket in self.aspect_ratio_bucket_indices
-            and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
+            and (len(self.aspect_ratio_bucket_indices[bucket]) * (self.repeats + 1))
+            < self.batch_size
         ):
             bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
             del self.aspect_ratio_bucket_indices[bucket]
