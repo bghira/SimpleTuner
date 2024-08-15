@@ -1,3 +1,4 @@
+from math import ceil
 import os
 import time
 import logging
@@ -42,6 +43,7 @@ class MetadataBackend:
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
+        repeats: int = 0,
     ):
         self.id = id
         if self.id != data_backend.id:
@@ -51,6 +53,7 @@ class MetadataBackend:
         self.accelerator = accelerator
         self.data_backend = data_backend
         self.batch_size = batch_size
+        self.repeats = repeats
         self.instance_data_dir = instance_data_dir
         if cache_file_suffix is not None:
             cache_file = f"{cache_file}_{cache_file_suffix}"
@@ -325,9 +328,9 @@ class MetadataBackend:
 
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             # Trim the list to a length that's divisible by the effective batch size
-            num_batches = len(images) // effective_batch_size
+            total_img_count_incl_repeats = len(images) * (self.repeats + 1)
+            num_batches = ceil((total_img_count_incl_repeats) // effective_batch_size)
             trimmed_images = images[: num_batches * effective_batch_size]
-            logger.debug(f"Trimmed from {len(images)} to {len(trimmed_images)}")
             if len(trimmed_images) == 0 and should_log():
                 logger.error(
                     f"Bucket {bucket} has no images after trimming because {len(images)} images are not enough to satisfy an effective batch size of {effective_batch_size}."
@@ -613,7 +616,9 @@ class MetadataBackend:
             return False
 
         bucket = list(self.aspect_ratio_bucket_indices.keys())[0]
-        if len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
+        if (
+            len(self.aspect_ratio_bucket_indices[bucket]) * (self.repeats + 1)
+        ) < self.batch_size:
             return True
 
         return False

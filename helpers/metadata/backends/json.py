@@ -37,6 +37,7 @@ class JsonMetadataBackend(MetadataBackend):
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
+        repeats: int = 1,
     ):
         super().__init__(
             id=id,
@@ -53,6 +54,7 @@ class JsonMetadataBackend(MetadataBackend):
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
             cache_file_suffix=cache_file_suffix,
+            repeats=repeats,
         )
 
     def __len__(self):
@@ -60,11 +62,15 @@ class JsonMetadataBackend(MetadataBackend):
         Returns:
             int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
         """
+
+        def repeat_len(bucket):
+            return (len(bucket) * (self.repeats + 1)) // self.batch_size
+
         return sum(
-            len(bucket) // self.batch_size
+            repeat_len(bucket) // self.batch_size
             for bucket in self.aspect_ratio_bucket_indices.values()
-            if len(bucket) >= self.batch_size
-        ) * (self.config.get("repeats", 0) + 1)
+            if repeat_len(bucket) >= self.batch_size
+        )
 
     def _discover_new_files(
         self, for_metadata: bool = False, ignore_existing_cache: bool = False
