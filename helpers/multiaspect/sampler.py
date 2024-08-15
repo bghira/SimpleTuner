@@ -171,6 +171,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         return results
 
+    def _yield_n_from_exhausted_bucket(self, n: int, bucket: str):
+        """
+        when a bucket is exhausted, and we have to populate the remainder of the batch,
+        we shall use this quick and dirty method to retrieve n samples from the exhausted bucket.
+        the thing is we can have a batch size of 4 and 1 image. so we'll have to just return the same image 4 times.
+        """
+        available_images = self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+        if len(available_images) == 0:
+            self.debug_log(f"Bucket {bucket} is empty.")
+            return []
+        samples = random.sample(available_images, k=n)
+        to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
+        return to_yield
+
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
         image_path = random.choice(
@@ -467,19 +481,30 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self.debug_log(
                     f"From {len(self.buckets)} buckets, selected {self.buckets[self.current_bucket]} ({self.buckets[self.current_bucket]}) -> {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
-                if len(available_images) >= self.batch_size:
+                if len(available_images) > 0:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     break
                 else:
                     # Current bucket doesn't have enough images, try the next bucket
                     self.move_to_exhausted()
                     self.change_bucket()
-            while len(available_images) >= self.batch_size:
-                all_buckets_exhausted = False  # Found a non-exhausted bucket
-                samples = random.sample(available_images, k=self.batch_size)
-                to_yield = self._validate_and_yield_images_from_samples(
-                    samples, self.buckets[self.current_bucket]
-                )
+            while len(available_images) > 0:
+                if len(available_images) < self.batch_size:
+                    need_image_count = self.batch_size - len(available_images)
+                    logger.debug(
+                        f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, but we need {need_image_count} more."
+                    )
+                    to_yield = self._yield_n_from_exhausted_bucket(
+                        need_image_count, self.buckets[self.current_bucket]
+                    )
+                else:
+                    all_buckets_exhausted = False  # Found a non-exhausted bucket
+                    samples = random.sample(
+                        available_images, k=min(len(available_images), self.batch_size)
+                    )
+                    to_yield = self._validate_and_yield_images_from_samples(
+                        samples, self.buckets[self.current_bucket]
+                    )
                 self.debug_log(
                     f"Building batch with {len(self.batch_accumulator)} samples."
                 )
