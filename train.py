@@ -565,6 +565,7 @@ def main():
             args=args,
         )
 
+    controlnet = None
     if args.controlnet:
         if any(
             [
@@ -1465,11 +1466,18 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
-                if args.input_perturbation != 0 and (not args.input_perturbation_steps or global_step < args.input_perturbation_steps):
+                if args.input_perturbation != 0 and (
+                    not args.input_perturbation_steps
+                    or global_step < args.input_perturbation_steps
+                ):
                     input_perturbation = args.input_perturbation
                     if args.input_perturbation_steps:
-                        input_perturbation *= 1.0 - (global_step / args.input_perturbation_steps)
-                    input_noise = noise + args.input_perturbation * torch.randn_like(latents)
+                        input_perturbation *= 1.0 - (
+                            global_step / args.input_perturbation_steps
+                        )
+                    input_noise = noise + args.input_perturbation * torch.randn_like(
+                        latents
+                    )
                 else:
                     input_noise = noise
 
@@ -1628,6 +1636,14 @@ def main():
                             batch["prompt_embeds"].shape[1],
                             3,
                         ).to(device=accelerator.device, dtype=base_weight_dtype)
+                        training_logger.debug(
+                            "DTypes:"
+                            f"\n-> Text IDs shape: {text_ids.shape if hasattr(text_ids, 'shape') else None}, dtype: {text_ids.dtype if hasattr(text_ids, 'dtype') else None}"
+                            f"\n-> Image IDs shape: {img_ids.shape if hasattr(img_ids, 'shape') else None}, dtype: {img_ids.dtype if hasattr(img_ids, 'dtype') else None}"
+                            f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else None}, dtype: {timesteps.dtype if hasattr(timesteps, 'dtype') else None}"
+                            f"\n-> Guidance: {guidance}"
+                            f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
+                        )
                         model_pred = transformer(
                             hidden_states=packed_noisy_latents.to(
                                 dtype=base_weight_dtype, device=accelerator.device
@@ -1718,24 +1734,24 @@ def main():
                         raise Exception(
                             "Unknown error occurred, no prediction could be made."
                         )
+                    # if we're quantising with quanto, we need to dequantise the result
+                    if "quanto" in args.base_model_precision:
+                        if hasattr(model_pred, "dequantize") and isinstance(
+                            model_pred, QTensor
+                        ):
+                            model_pred = model_pred.dequantize()
+
+                    if args.flux:
+                        model_pred = unpack_latents(
+                            model_pred,
+                            height=latents.shape[2] * 8,
+                            width=latents.shape[3] * 8,
+                            vae_scale_factor=16,
+                        )
+
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
-
-                # if we're quantising with quanto, we need to dequantise the result
-                if "quanto" in args.base_model_precision:
-                    if hasattr(model_pred, "dequantize") and isinstance(
-                        model_pred, QTensor
-                    ):
-                        model_pred = model_pred.dequantize()
-
-                if args.flux:
-                    model_pred = unpack_latents(
-                        model_pred,
-                        height=latents.shape[2] * 8,
-                        width=latents.shape[3] * 8,
-                        vae_scale_factor=16,
-                    )
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
@@ -1810,7 +1826,7 @@ def main():
                         )
                     accelerator.backward(loss)
 
-                    if args.gradient_precision == "fp32":
+                    if not args.adam_bfloat16 and args.gradient_precision == "fp32":
                         # After backward, convert gradients to fp32 for stable accumulation
                         for param in params_to_optimize:
                             if param.grad is not None:
