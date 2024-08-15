@@ -274,14 +274,14 @@ def configure_env():
     # Flux-specific options
     if "FLUX" in env_contents and env_contents["FLUX"] == "true":
         if env_contents["MODEL_TYPE"].lower() == "lora":
-            flux_targets = ["mmdit", "context", "all", "all+ffs"]
+            flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit"]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
                 if flux_target_layers:
                     print(f"Invalid Flux target layers: {flux_target_layers}")
                 flux_target_layers = prompt_user(
                     f"Set Flux target layers (Options: {'/'.join(flux_targets)})",
-                    "all+ffs",
+                    "all",
                 )
             env_contents["FLUX_LORA_TARGET"] = flux_target_layers
 

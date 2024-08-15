@@ -108,7 +108,7 @@ def parse_args(input_args=None):
         "--flux_lora_target",
         type=str,
         choices=["mmdit", "context", "all", "all+ffs"],
-        default="mmdit",
+        default="all",
         help=(
             "Flux has single and joint attention blocks."
             " Only the multimodal 'dual stream' attention blocks are trained by default."

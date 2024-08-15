@@ -211,21 +211,20 @@ export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
 
-# We'll enable some more Flux-specific options here to try and get better results.
-
 # LoRA sizing you can adjust.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
 
-# Limiting gradient norms might preserve the model for longer, and fp32 gradients allow the use of accumulation steps.
-# Note; fp32 gradients are incompatible with Prodigy, and possibly other optimisers that have strict dtype handling.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
+# Limiting gradient norms might preserve the model for longer
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0"
+# Keeping the base in bf16 still allows you to quantise the model, but it saves a lot of memory.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16"
 
 # When training 'mmdit', we find very stable training that makes the model take longer to learn.
 # When training 'all', we can easily shift the model distribution, but it is more prone to forgetting and benefits from high quality data.
-# When training 'all+ffs', all attention layers are trained in addition to the feed-forward and norms which can help with adapting the model objective for the LoRA.
+# When training 'all+ffs', all attention layers are trained in addition to the feed-forward which can help with adapting the model objective for the LoRA.
+# - This mode has been reported to lack portability, and platforms such as ComfyUI might not be able to load the LoRA.
 # The option to train only the 'context' blocks is offered as well, but its impact is unknown, and is offered as an experimental choice.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all+ffs"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all"
 
 # If you want to use LoftQ initialisation, you can't use Quanto to quantise the base model.
 # This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes.
