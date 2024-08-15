@@ -516,7 +516,6 @@ def configure_multi_databackend(
     ###                                       ###
     #    now we configure the image backends    #
     ###                                       ###
-    all_captions = []
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is not None and (
@@ -722,6 +721,7 @@ def configure_multi_databackend(
                 "delete_unwanted_images", args.delete_unwanted_images
             ),
             cache_file_suffix=backend.get("cache_file_suffix", None),
+            repeats=init_backend["config"].get("repeats", 1),
             **metadata_backend_args,
         )
 
@@ -1030,9 +1030,6 @@ def configure_multi_databackend(
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()
-
-    # After configuring all backends, register their captions.
-    StateTracker.set_caption_files(all_captions)
 
     # For each image backend, connect it to its conditioning backend.
     for backend in data_backend_config:
