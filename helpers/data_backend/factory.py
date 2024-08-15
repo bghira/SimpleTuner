@@ -721,7 +721,7 @@ def configure_multi_databackend(
                 "delete_unwanted_images", args.delete_unwanted_images
             ),
             cache_file_suffix=backend.get("cache_file_suffix", None),
-            repeats=init_backend["config"].get("repeats", 1),
+            repeats=init_backend["config"].get("repeats", 0),
             **metadata_backend_args,
         )
 
