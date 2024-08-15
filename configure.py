@@ -274,14 +274,14 @@ def configure_env():
     # Flux-specific options
     if "FLUX" in env_contents and env_contents["FLUX"] == "true":
         if env_contents["MODEL_TYPE"].lower() == "lora":
-            flux_targets = ["mmdit", "context", "all", "all+ffs"]
+            flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit"]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
                 if flux_target_layers:
                     print(f"Invalid Flux target layers: {flux_target_layers}")
                 flux_target_layers = prompt_user(
                     f"Set Flux target layers (Options: {'/'.join(flux_targets)})",
-                    "all+ffs",
+                    "all",
                 )
             env_contents["FLUX_LORA_TARGET"] = flux_target_layers
 
@@ -458,16 +458,6 @@ def configure_env():
             )
         extra_args.append(f"--base_model_precision={quantization_type}")
     print_config(env_contents, extra_args)
-    gradient_precision_levels = ["unmodified", "fp32"]
-    gradient_precision = None
-    while gradient_precision not in gradient_precision_levels:
-        if gradient_precision:
-            print(f"Invalid gradient precision: {gradient_precision}")
-        gradient_precision = prompt_user(
-            "Set gradient precision, which might be required if you have accumulation steps enabled (Options: fp32, unmodified)",
-            "unmodified",
-        )
-    extra_args.append(f"--gradient_precision={gradient_precision}")
     compress_disk_cache = (
         prompt_user("Would you like to compress the disk cache? (y/n)", "y").lower()
         == "y"

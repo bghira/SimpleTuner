@@ -140,7 +140,7 @@ There, you will need to modify the following variables:
 - `VALIDATION_NO_CFG_UNTIL_TIMESTEP` - When using `VALIDATION_GUIDANCE_REAL` with Flux, skip doing CFG until this timestep. Default 2.
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
   - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
-- `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, and 2 should be enough.. 4 is overkill.
+- `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, which is recommended to maintain higher quality and reduce training runtime.
 - `OPTIMIZER` - adamw_bf16 was found to perform very well, whereas Prodigy might stall out. If you're an expert though, feel free to experiment here. Beginners are recommended to stick with adamw_bf16.
 - `MIXED_PRECISION` - Beginners should keep this in `bf16` with `PURE_BF16=true` along with the adamw_bf16 optimiser.
 
@@ -211,24 +211,23 @@ export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
 
-# We'll enable some more Flux-specific options here to try and get better results.
-
 # LoRA sizing you can adjust.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
 
-# Limiting gradient norms might preserve the model for longer, and fp32 gradients allow the use of accumulation steps.
-# Note; fp32 gradients are incompatible with Prodigy, and possibly other optimisers that have strict dtype handling.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
+# Limiting gradient norms might preserve the model for longer
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0"
+# Keeping the base in bf16 still allows you to quantise the model, but it saves a lot of memory.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16"
 
 # When training 'mmdit', we find very stable training that makes the model take longer to learn.
 # When training 'all', we can easily shift the model distribution, but it is more prone to forgetting and benefits from high quality data.
-# When training 'all+ffs', all attention layers are trained in addition to the feed-forward and norms which can help with adapting the model objective for the LoRA.
+# When training 'all+ffs', all attention layers are trained in addition to the feed-forward which can help with adapting the model objective for the LoRA.
+# - This mode has been reported to lack portability, and platforms such as ComfyUI might not be able to load the LoRA.
 # The option to train only the 'context' blocks is offered as well, but its impact is unknown, and is offered as an experimental choice.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all+ffs"
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all"
 
 # If you want to use LoftQ initialisation, you can't use Quanto to quantise the base model.
-# This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes.
+# This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes and is incompatible with Quanto.
 # Other options are 'default', 'gaussian' (difficult), and untested options: 'olora' and 'pissa'.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
 
@@ -452,7 +451,6 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
 # x-flux only trains the mmdit blocks but you can change lora_target to all or context to experiment.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=default --flux_lora_target=mmdit"
-
 ```
 
 ## Credits

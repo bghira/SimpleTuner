@@ -41,6 +41,7 @@ class TestMetadataBackend(unittest.TestCase):
                     resolution=1,
                     resolution_type="area",
                     accelerator=self.accelerator,
+                    repeats=0,
                 )
 
     def test_len(self):
