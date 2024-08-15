@@ -1469,7 +1469,7 @@ def main():
                         input_perturbation *= 1.0 - (
                             global_step / args.input_perturbation_steps
                         )
-                    input_noise = noise + args.input_perturbation * torch.randn_like(
+                    input_noise = noise + input_perturbation * torch.randn_like(
                         latents
                     )
                 else:
