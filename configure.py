@@ -309,7 +309,7 @@ def configure_env():
             2,
         )
     )
-    if env_contents["GRADIENT_ACCUMULATION_STEPS"] < 1:
+    if int(env_contents["GRADIENT_ACCUMULATION_STEPS"]) < 1:
         env_contents["GRADIENT_ACCUMULATION_STEPS"] = 1
 
     env_contents["CAPTION_DROPOUT_PROBABILITY"] = float(
@@ -470,7 +470,7 @@ def configure_env():
     env_contents["TRAINING_NUM_PROCESSES"] = prompt_user(
         "How many GPUs will you be training on?", 1
     )
-    if env_contents["TRAINING_NUM_PROCESSES"] > 1:
+    if int(env_contents["TRAINING_NUM_PROCESSES"]) > 1:
         env_contents["ACCELERATE_EXTRA_ARGS"] = "--multi_gpu"
     env_contents["TRAINING_NUM_MACHINES"] = 1
 
