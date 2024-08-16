@@ -249,7 +249,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-create a `DATALOADER_CONFIG` (/config/multidatabackend.json) with this:
+create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
 
 ```json
 [
