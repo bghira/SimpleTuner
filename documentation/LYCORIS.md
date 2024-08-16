@@ -6,7 +6,16 @@
 
 ## Using LyCORIS
 
-To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/lycoris_config.json`, where `config/lycoris_config.json` is the location of your LyCORIS configuration file. The LyCORIS configuration file is in the shape:
+To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/lycoris_config.json`, where `config/lycoris_config.json` is the location of your LyCORIS configuration file:
+
+```bash
+MODEL_TYPE=lora
+...
+TRAINER_EXTRA_ARGS+=" --lycoris_config=config/lycoris_config.json"
+\```
+
+
+The LyCORIS configuration file is in the shape:
 
 ```json
 {
