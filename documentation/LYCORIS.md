@@ -16,6 +16,8 @@ To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/
   "linear_alpha": 1,
   "apply_preset": {}
 }
+```
+
 Optional fields:
 - apply_preset for LycorisNetwork.apply_preset
 - any keyword arguments specific to the selected algorithm, at the end.
