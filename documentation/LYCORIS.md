@@ -10,8 +10,8 @@ To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/
 
 ```bash
 MODEL_TYPE=lora
-
-TRAINER_EXTRA_ARGS+=" --lycoris_config=config/lycoris_config.json"
+# We use trainer_extra_args for now, as Lycoris support is so new.
+TRAINER_EXTRA_ARGS+=" --lora_type=lycoris --lycoris_config=config/lycoris_config.json"
 ```
 
 
