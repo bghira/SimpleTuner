@@ -79,15 +79,6 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
         [x + ".lora_A.weight" for x in lora_layers.keys()] + [x + ".lora_B.weight" for x in lora_layers.keys()] +
         ([x + ".lora_magnitude_vector.weight"] if use_dora else [])
     )
-
-    print("###############################")
-    print([x for (x,y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)])
-    print("~~~~~~~~~~~~~~~")
-    print(lora_layers.keys())
-    print("----------------")
-    print(state_dict.keys())
-    print("###############################")
-
     for (k,v) in state_dict.items():
         if "lora_A" in k:
             kk = k.replace(".lora_A.weight","")
