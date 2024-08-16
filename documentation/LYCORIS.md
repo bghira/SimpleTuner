@@ -11,13 +11,11 @@ To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/
 ```json
 {
   "algo": "lora",
-  "multiplier": 1.0,  // mandatory
-  "linear_dim": 12345,  // mandatory
-  "linear_alpha": 1,  // mandatory
-  "apply_preset": {},  // optional, these for to LycorisNetwork.apply_preset
-  // Optional keyword arguments specific to the algorithm after
+  "multiplier": 1.0,
+  "linear_dim": 12345,
+  "linear_alpha": 1,
+  "apply_preset": {}
 }
-```
 
 For more information on LyCORIS, please refer to the [documentation in the library](https://github.com/KohakuBlueleaf/LyCORIS/tree/main/docs).
 
