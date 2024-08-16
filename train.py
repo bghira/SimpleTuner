@@ -32,7 +32,7 @@ from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
-from helpers.training.adapter import determine_adapter_target_modules
+from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
 from helpers.training.text_encoding import (
     load_tes,
@@ -649,6 +649,12 @@ def main():
             #     )
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
+            if args.init_lora:
+                addkeys,misskeys = load_lora_weights({"unet": unet}, args.init_lora, use_dora=args.use_dora)
+                if addkeys:
+                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error")
+                if misskeys:
+                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys.")
         elif transformer is not None:
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -667,6 +673,13 @@ def main():
             from peft import get_peft_model
 
             transformer = get_peft_model(transformer, transformer_lora_config)
+            if args.init_lora:
+                addkeys,misskeys = load_lora_weights({"transformer": transformer}, args.init_lora, use_dora=args.use_dora)
+                if addkeys:
+                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error")
+                if misskeys:
+                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys.")
+
     elif "lora" in args.model_type and "lycoris" == args.lora_type:
         from lycoris import create_lycoris
 

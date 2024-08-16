@@ -1,3 +1,6 @@
+import peft
+import safetensors.torch
+
 def determine_adapter_target_modules(args, unet, transformer):
     if unet is not None:
         return ["to_k", "to_q", "to_v", "to_out.0"]
@@ -64,3 +67,41 @@ def determine_adapter_target_modules(args, unet, transformer):
             ]
 
         return target_modules
+
+@torch.no_grad()
+def load_lora_weights(state_dictionary, filename, loraKey="default", use_dora=False):
+    additional_keys=set()
+    state_dict = safetensors.torch.load(filename)
+    for (prefix, model) in state_dictionary:
+        lora_layers = {(prefix+"."+x):y for (x,y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)}
+    missing_keys = set(
+        [x + ".lora_A.weight" for x in lora_layers.keys()] + [x + ".lora_B.weight" for x in lora_layers.keys()] +
+        ([x + ".lora_magnitude_vector.weight"] if use_dora else [])
+    )
+    for (k,v) in state_dict.items():
+        if "lora_A" in k:
+            kk = k.replace(".lora_A.weight","")
+            if kk in lora_layers:
+                lora_layers[kk].lora_A[loraKey].weight.copy_(v)
+                missing_keys.remove(k)
+            else:
+                additional_keys.add(kk)
+        elif "lora_B" in k:
+            kk = k.replace(".lora_B.weight","")
+            if kk in lora_layers:
+                lora_layers[kk].lora_B[loraKey].weight.copy_(v)
+                missing_keys.remove(k)
+            else:
+                additional_keys.add(kk)
+        elif ".alpha" in k or ".lora_alpha" in k:
+            kk = k.replace(".lora_alpha","").replace(".alpha","")
+            if kk in lora_layers:
+                lora_layers[kk].lora_alpha[loraKey] = v
+        elif ".lora_magnitude_vector" in k:
+            kk = k.replace(".lora_magnitude_vector.weight", "")
+            if kk in lora_layers:
+                lora_layers[kk].lora_magnitude_vector[loraKey].weight.copy_(v)
+                missing_keys.remove(k)
+            else:
+                additional_keys.add(kk)
+    return (additional_keys, missing_keys)
