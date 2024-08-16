@@ -652,9 +652,9 @@ def main():
             if args.init_lora:
                 addkeys,misskeys = load_lora_weights({"unet": unet}, args.init_lora, use_dora=args.use_dora)
                 if addkeys:
-                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error")
+                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error" % (args.init_lora, str(addkeys)))
                 if misskeys:
-                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys.")
+                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys." % (args.init_lora, str(misskeys)))
         elif transformer is not None:
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -672,13 +672,13 @@ def main():
             #     )
             from peft import get_peft_model
 
-            transformer = get_peft_model(transformer, transformer_lora_config)
+            #transformer = get_peft_model(transformer, transformer_lora_config)
             if args.init_lora:
                 addkeys,misskeys = load_lora_weights({"transformer": transformer}, args.init_lora, use_dora=args.use_dora)
                 if addkeys:
-                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error")
+                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error" % (args.init_lora, str(addkeys)))
                 if misskeys:
-                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys.")
+                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys." % (args.init_lora, str(misskeys)))
 
     elif "lora" in args.model_type and "lycoris" == args.lora_type:
         from lycoris import create_lycoris
@@ -1148,7 +1148,7 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
-    # validation.run_validations(validation_type="base_model", step=0)
+    #validation.run_validations(validation_type="base_model", step=0)
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
