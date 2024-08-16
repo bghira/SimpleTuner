@@ -16,6 +16,14 @@ To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/
   "linear_alpha": 1,
   "apply_preset": {}
 }
+Optional fields:
+- apply_preset for LycorisNetwork.apply_preset
+- any keyword arguments specific to the selected algorithm, at the end.
+
+Mandatory fields:
+- multiplier
+- linear_dim
+- linear_alpha
 
 For more information on LyCORIS, please refer to the [documentation in the library](https://github.com/KohakuBlueleaf/LyCORIS/tree/main/docs).
 
