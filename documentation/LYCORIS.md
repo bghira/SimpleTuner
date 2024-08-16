@@ -2,7 +2,7 @@
 
 ## Background
 
-[LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS) is a wrapper for models that allows various methods of low-rank training, which allows you to finetune models while using less VRAM and produces smaller distributable weights.
+[LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS) is a wrapper for models that allows various methods of low-rank (LoRA) training, which allows you to finetune models while using less VRAM and produces smaller distributable weights.
 
 ## Using LyCORIS
 
@@ -10,12 +10,12 @@ To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/
 
 ```bash
 MODEL_TYPE=lora
-...
+
 TRAINER_EXTRA_ARGS+=" --lycoris_config=config/lycoris_config.json"
-\```
+```
 
 
-The LyCORIS configuration file is in the shape:
+The LyCORIS configuration file is in the format:
 
 ```json
 {
@@ -26,6 +26,8 @@ The LyCORIS configuration file is in the shape:
   "apply_preset": {}
 }
 ```
+
+### Fields
 
 Optional fields:
 - apply_preset for LycorisNetwork.apply_preset
