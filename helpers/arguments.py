@@ -107,7 +107,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "context", "all", "all+ffs"],
+        choices=["mmdit", "context", "all", "all+ffs", "ai-toolkit"],
         default="all",
         help=(
             "Flux has single and joint attention blocks."
