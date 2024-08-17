@@ -80,7 +80,11 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
-from lycoris import LycorisNetwork
+
+try:
+    from lycoris import LycorisNetwork
+except:
+    print("[ERROR] Lycoris not available. Please install ")
 from tqdm.auto import tqdm
 from transformers import PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
@@ -113,6 +117,14 @@ from helpers.models.flux import (
     pack_latents,
     unpack_latents,
 )
+
+is_optimi_available = False
+try:
+    from optimi import prepare_for_gradient_release
+
+    is_optimi_available = True
+except:
+    pass
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -650,11 +662,19 @@ def main():
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
             if args.init_lora:
-                addkeys,misskeys = load_lora_weights({"unet": unet}, args.init_lora, use_dora=args.use_dora)
+                addkeys, misskeys = load_lora_weights(
+                    {"unet": unet}, args.init_lora, use_dora=args.use_dora
+                )
                 if addkeys:
-                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error" % (args.init_lora, str(addkeys)))
+                    logger.warning(
+                        "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
+                        % (args.init_lora, str(addkeys))
+                    )
                 if misskeys:
-                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys." % (args.init_lora, str(misskeys)))
+                    logger.warning(
+                        "The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys."
+                        % (args.init_lora, str(misskeys))
+                    )
         elif transformer is not None:
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -668,11 +688,19 @@ def main():
             transformer.add_adapter(transformer_lora_config)
 
             if args.init_lora:
-                addkeys,misskeys = load_lora_weights({"transformer": transformer}, args.init_lora, use_dora=args.use_dora)
+                addkeys, misskeys = load_lora_weights(
+                    {"transformer": transformer}, args.init_lora, use_dora=args.use_dora
+                )
                 if addkeys:
-                    logger.warning("The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error" % (args.init_lora, str(addkeys)))
+                    logger.warning(
+                        "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
+                        % (args.init_lora, str(addkeys))
+                    )
                 if misskeys:
-                    logger.warning("The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys." % (args.init_lora, str(misskeys)))
+                    logger.warning(
+                        "The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys."
+                        % (args.init_lora, str(misskeys))
+                    )
 
     elif "lora" in args.model_type and "lycoris" == args.lora_type:
         from lycoris import create_lycoris
@@ -815,10 +843,7 @@ def main():
             #     text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
-    extra_optimizer_args = {
-        "weight_decay": args.adam_weight_decay,
-        "eps": args.adam_epsilon,
-    }
+    extra_optimizer_args = {"lr": args.learning_rate}
     use_deepspeed_optimizer = False
     use_deepspeed_scheduler = False
     if (
@@ -911,6 +936,17 @@ def main():
         optimizer = optimizer_class(
             params_to_optimize,
             **extra_optimizer_args,
+        )
+
+    if is_optimi_available and args.optimizer_release_gradients:
+        logger.info("Marking model for gradient release.")
+        prepare_for_gradient_release(
+            (
+                controlnet
+                if args.controlnet
+                else transformer if transformer is not None else unet
+            ),
+            optimizer,
         )
 
     from helpers.training.custom_schedule import get_lr_scheduler
@@ -1155,7 +1191,7 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
-    #validation.run_validations(validation_type="base_model", step=0)
+    # validation.run_validations(validation_type="base_model", step=0)
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
@@ -1915,18 +1951,22 @@ def main():
                     grad_norm = None
                     if (
                         accelerator.sync_gradients
-                        and not args.use_adafactor_optimizer
+                        and args.optimizer != "optimi-stableadamw"
                         and args.max_grad_norm > 0
                     ):
-                        # Adafactor shouldn't have gradient clipping applied.
+                        # StableAdamW does not need clipping, similar to Adafactor.
                         grad_norm = accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
                     training_logger.debug("Stepping components forward.")
                     if args.optimizer_release_gradients:
+                        step_offset = 0  # simpletuner indexes steps from 1.
                         should_not_release_gradients = (
-                            step + 1
+                            step + step_offset
                         ) % args.gradient_accumulation_steps != 0
+                        training_logger.debug(
+                            f"step: {step}, should_not_release_gradients: {should_not_release_gradients}, args.optimizer_release_gradients: {args.optimizer_release_gradients}"
+                        )
                         optimizer.optimizer_accumulation = should_not_release_gradients
                     else:
                         optimizer.step()
@@ -1936,10 +1976,7 @@ def main():
             if accelerator.sync_gradients:
                 try:
                     lr_scheduler.step(**scheduler_kwargs)
-                    if args.use_adafactor_optimizer:
-                        lr = lr_scheduler.get_lr()[0]
-                    else:
-                        lr = lr_scheduler.get_last_lr()[0]
+                    lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"

@@ -141,7 +141,7 @@ There, you will need to modify the following variables:
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
   - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
 - `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, which is recommended to maintain higher quality and reduce training runtime.
-- `OPTIMIZER` - adamw_bf16 was found to perform very well, whereas Prodigy might stall out. If you're an expert though, feel free to experiment here. Beginners are recommended to stick with adamw_bf16.
+- `OPTIMIZER` - Beginners are recommended to stick with adamw_bf16, though Lion and StableAdamW are also good choices.
 - `MIXED_PRECISION` - Beginners should keep this in `bf16` with `PURE_BF16=true` along with the adamw_bf16 optimiser.
 
 #### Validation prompts
@@ -233,11 +233,11 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
 
 # When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
 # Quantising the model has been found to result in negligible-to-quality loss for training.
-# option one (recommended) - BF16 training ONLY supports adamw_bf16, but this optimiser setup is fairly forgiving
+# option one (recommended) - adamw_bf16; this optimiser setup is fairly forgiving
 export OPTIMIZER="adamw_bf16"
 # option two - FP32 training supports any optimiser BUT adamw_bf16
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
-#export OPTIMIZER="adafactor" # or maybe prodigy with --gradient_precision=unmodified
+#export OPTIMIZER="optimi-ranger" # or maybe optimi-lion
 ```
 
 
@@ -370,13 +370,14 @@ The solution for this is already enabled in the main branch; it is necessary to 
 ### Quantisation
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
   - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
-  - Adafactor works, reducing VRAM to ~24G or further with sub-1024x1024 training
+  - Using the optimi-lion optimiser may reduce training just enough to make the V100 work.
 - Quantising the model doesn't harm training
   - It allows you to push higher batch sizes and possibly obtain a better result
   - Behaves the same as full-precision training - fp32 won't make your model any better than bf16+int8.
 - As usual, **fp8 quantisation runs more slowly** than **int8** and might have a worse result due to the use of `e4m3fn` in Quanto
   - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
+- When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
 
 ### Crashing
 - If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.
@@ -443,7 +444,7 @@ LR_WARMUP_STEPS=10
 # this is kinda crazy, but at 512px it trains rather quickly anyway.
 CHECKPOINTING_STEPS=2500
 # because of DeepSpeed, you can use the below flags to enable mixed-precision bf16 training:
-OPTIMIZER="adamw" # unfortunately this is your only option with DeepSpeed, but x-flux does the same.
+OPTIMIZER="optimi-adamw" # unfortunately this is your only option with DeepSpeed, but x-flux does the same.
 MIXED_PRECISION="bf16"
 PURE_BF16=false
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --i_know_what_i_am_doing"

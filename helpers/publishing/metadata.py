@@ -127,6 +127,7 @@ def save_model_card(
         )
     logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
+    optimizer_config = StateTracker.get_args().optimizer_config
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
     for dataset in StateTracker.get_data_backends().keys():
@@ -225,7 +226,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Prediction type: {'flow-matching' if (StateTracker.get_args().sd3 or StateTracker.get_args().flux) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
-- Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
+- Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}
 - Quantised: {f'Yes: {StateTracker.get_args().base_model_precision}' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
 - Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}

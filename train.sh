@@ -244,35 +244,7 @@ if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
     fi
     export EMA_ARGS="--use_ema --ema_decay=${EMA_DECAY}"
 fi
-# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
-export OPTIMIZER_ARG=""
-case $OPTIMIZER in
-    "adamw")
-        export OPTIMIZER_ARG=""
-        ;;
-    "adamw8bit")
-        export OPTIMIZER_ARG="--use_8bit_adam"
-        ;;
-    "adamw_bfloat16")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    "adamw_bf16")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    "adafactor")
-        export OPTIMIZER_ARG="--use_adafactor_optimizer"
-        ;;
-    "dadaptation")
-        export OPTIMIZER_ARG="--use_dadapt_optimizer"
-        ;;
-    "prodigy")
-        export OPTIMIZER_ARG="--use_prodigy_optimizer"
-        ;;
-    *)
-        echo "Unknown optimizer requested: $OPTIMIZER"
-        exit 1
-        ;;
-esac
+export OPTIMIZER_ARG="--optimizer=${OPTIMIZER}"
 
 export DELETE_ARGS=""
 if ! [ -z "$DELETE_SMALL_IMAGES" ] && [ $DELETE_SMALL_IMAGES -eq 1 ]; then

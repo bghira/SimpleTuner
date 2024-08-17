@@ -2106,6 +2106,27 @@ files = [
 ]
 
 [[package]]
+name = "quanto"
+version = "0.2.0"
+description = "A quantization toolkit for pytorch."
+optional = false
+python-versions = ">=3.8.0"
+files = [
+    {file = "quanto-0.2.0-py3-none-any.whl", hash = "sha256:85d23b28e732b628e5bf84a4fd6c78a51c9fc343f7197ed838a9491e557bbd8a"},
+    {file = "quanto-0.2.0.tar.gz", hash = "sha256:1d559db9d5d0f3a4548fa11a07d5aba875c3ddc97ec68591ad9aec5cc023e10c"},
+]
+
+[package.dependencies]
+ninja = "*"
+numpy = "*"
+safetensors = "*"
+torch = ">=2.2.0"
+
+[package.extras]
+dev = ["black", "pytest", "ruff"]
+examples = ["datasets", "torchvision", "transformers (==4.40.2)"]
+
+[[package]]
 name = "regex"
 version = "2024.7.24"
 description = "Alternative regular expression module, to replace re."
@@ -2901,6 +2922,26 @@ optree = ["optree (>=0.11.0)"]
 type = "legacy"
 url = "https://download.pytorch.org/whl/cu124"
 reference = "pytorch"
+
+[[package]]
+name = "torch-optimi"
+version = "0.2.1"
+description = "Fast, Modern, & Low Precision PyTorch Optimizers"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "torch_optimi-0.2.1-py3-none-any.whl", hash = "sha256:d466b76c849290bc06420b3e555dd6ea95c22189217fc800db080aef77d16e6b"},
+    {file = "torch_optimi-0.2.1.tar.gz", hash = "sha256:31bf5f11d4ddd8fd995f3b148411b3a761d1a6e77052e1996a1f97a0dda6dd2b"},
+]
+
+[package.dependencies]
+packaging = ">=21.3"
+torch = ">=1.13"
+
+[package.extras]
+dev = ["black (>=24.2.0)", "mkdocs-caption (>=1.0.0)", "mkdocs-material (>=9.4.7)", "mkdocstrings (>=0.24.1)", "mkdocstrings-python (>=1.8.0)", "pytest (>=8.1.1)", "ruff (>=0.3.2)"]
+docs = ["black (>=24.2.0)", "mkdocs-caption (>=1.0.0)", "mkdocs-material (>=9.4.7)", "mkdocstrings (>=0.24.1)", "mkdocstrings-python (>=1.8.0)"]
+test = ["numpy (>=1.23)", "pytest (>=8.1.1)", "pytest-md (>=0.2.0)", "ruff (>=0.3.2)"]
 
 [[package]]
 name = "torchaudio"
