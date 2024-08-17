@@ -666,13 +666,7 @@ def main():
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)
-            # if is_quanto:
-            #     transformer_lora_config._register_custom_module(
-            #         mapping=quanto_peft_module_mapping
-            #     )
-            from peft import get_peft_model
 
-            #transformer = get_peft_model(transformer, transformer_lora_config)
             if args.init_lora:
                 addkeys,misskeys = load_lora_weights({"transformer": transformer}, args.init_lora, use_dora=args.use_dora)
                 if addkeys:
@@ -684,30 +678,38 @@ def main():
         from lycoris import create_lycoris
 
         if args.lycoris_config is None:
-            raise ValueError('--lora_type=lycoris requires you to add a JSON ' +
-                'configuration file location with --lycoris_config')
+            raise ValueError(
+                "--lora_type=lycoris requires you to add a JSON "
+                + "configuration file location with --lycoris_config"
+            )
 
-        with open(args.lycoris_config, 'r') as f:
+        with open(args.lycoris_config, "r") as f:
             lycoris_config = json.load(f)
 
-        assert 'multiplier' in lycoris_config, 'lycoris_config JSON must contain multiplier key'
-        multiplier = int(lycoris_config['multiplier'])
-        assert 'linear_dim' in lycoris_config, 'lycoris_config JSON must contain linear_dim key'
-        linear_dim = int(lycoris_config['linear_dim'])
-        assert 'linear_alpha' in lycoris_config, 'lycoris_config JSON must contain linear_alpha key'
-        linear_alpha = int(lycoris_config['linear_alpha'])
+        assert (
+            "multiplier" in lycoris_config
+        ), "lycoris_config JSON must contain multiplier key"
+        multiplier = int(lycoris_config["multiplier"])
+        assert (
+            "linear_dim" in lycoris_config
+        ), "lycoris_config JSON must contain linear_dim key"
+        linear_dim = int(lycoris_config["linear_dim"])
+        assert (
+            "linear_alpha" in lycoris_config
+        ), "lycoris_config JSON must contain linear_alpha key"
+        linear_alpha = int(lycoris_config["linear_alpha"])
 
-        apply_preset = lycoris_config['apply_preset']
+        apply_preset = lycoris_config["apply_preset"]
         if apply_preset is not None and apply_preset != {}:
             LycorisNetwork.apply_preset(apply_preset)
 
         # This is a kwarg, but mandatory.
-        assert 'algo' in lycoris_config, 'lycoris_config JSON must contain algo key'
+        assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
 
         # Remove the positional arguments we extracted.
-        del lycoris_config['multiplier']
-        del lycoris_config['linear_dim']
-        del lycoris_config['linear_alpha']
+        del lycoris_config["multiplier"]
+        del lycoris_config["linear_dim"]
+        del lycoris_config["linear_alpha"]
 
         logger.info(f"Using lycoris training mode")
         if webhook_handler is not None:
@@ -730,9 +732,13 @@ def main():
             **lycoris_config,
         )
         lycoris_wrapped_network.apply_to()
-        setattr(accelerator, '_lycoris_wrapped_network', lycoris_wrapped_network)
-        lycoris_num_params = sum(p.numel() for p in lycoris_wrapped_network.parameters())
-        logger.info(f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters")
+        setattr(accelerator, "_lycoris_wrapped_network", lycoris_wrapped_network)
+        lycoris_num_params = sum(
+            p.numel() for p in lycoris_wrapped_network.parameters()
+        )
+        logger.info(
+            f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters"
+        )
 
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
@@ -906,6 +912,7 @@ def main():
             params_to_optimize,
             **extra_optimizer_args,
         )
+
     from helpers.training.custom_schedule import get_lr_scheduler
 
     logger.info(
@@ -1250,9 +1257,10 @@ def main():
             transformer.to(accelerator.device)
         else:
             transformer.to(accelerator.device, dtype=weight_dtype)
-    if getattr(accelerator, '_lycoris_wrapped_network', None) is not None:
+    if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
         accelerator._lycoris_wrapped_network = accelerator._lycoris_wrapped_network.to(
-            accelerator.device, dtype=weight_dtype)
+            accelerator.device, dtype=weight_dtype
+        )
     if args.enable_xformers_memory_efficient_attention and not any(
         [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
     ):
@@ -1549,9 +1557,7 @@ def main():
                         input_perturbation *= 1.0 - (
                             global_step / args.input_perturbation_steps
                         )
-                    input_noise = noise + input_perturbation * torch.randn_like(
-                        latents
-                    )
+                    input_noise = noise + input_perturbation * torch.randn_like(latents)
                 else:
                     input_noise = noise
 
@@ -1917,13 +1923,19 @@ def main():
                             params_to_optimize, args.max_grad_norm
                         )
                     training_logger.debug("Stepping components forward.")
-                    optimizer.step()
-                    lr_scheduler.step(**scheduler_kwargs)
+                    if args.optimizer_release_gradients:
+                        should_not_release_gradients = (
+                            step + 1
+                        ) % args.gradient_accumulation_steps != 0
+                        optimizer.optimizer_accumulation = should_not_release_gradients
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
+                    lr_scheduler.step(**scheduler_kwargs)
                     if args.use_adafactor_optimizer:
                         lr = lr_scheduler.get_lr()[0]
                     else:
@@ -2371,12 +2383,13 @@ def main():
             )
 
             # Save final LyCORIS checkpoint.
-            if getattr(accelerator, '_lycoris_wrapped_network', None) is not None:
+            if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
                 from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
                 accelerator._lycoris_wrapped_network.save_weights(
                     os.path.join(args.output_dir, LORA_SAFETENSORS_FILENAME),
                     list(accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-                    { 'lycoris_config': json.dumps(lycoris_config) },  # metadata
+                    {"lycoris_config": json.dumps(lycoris_config)},  # metadata
                 )
 
         if args.push_to_hub and accelerator.is_main_process:
