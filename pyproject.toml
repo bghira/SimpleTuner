@@ -45,6 +45,8 @@ prodigyopt = "^1.0"
 sentencepiece = "^0.2.0"
 optimum-quanto = "^0.2.4"
 lycoris-lora = "3.0.0.post1"
+torch-optimi = "^0.2.1"
+quanto = "^0.2.0"
 
 
 [build-system]

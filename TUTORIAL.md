@@ -14,19 +14,11 @@ This document aims to get you set up and running with a basic training environme
 
 These steps can be followed to the best of your abilities here. If you face any difficulties, please [start a discussion](https://github.com/bghira/SimpleTuner/discussions/new/choose) on the forum here on GitHub.
 
-1. Clone the SimpleTuner repository:
-
-```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner
-```
-
-2. Install the required packages as per [INSTALL.md](/INSTALL.md).
-3. Follow the below section, [Training data](#training-data) to produce a set of valid training data, or to obtain example data.
-4. Copy the `config/config.env.example` file in the `SimpleTuner/` project root directory to `config/config.env` and fill it with your configuration options.
-
-- Use the instructions in the below section [Example Environment File Explained](#example-environment-file-explained) to modify these values.
-
-5. Run the [train.py](/train.py) script.
+1. Install the required packages as per [INSTALL.md](/INSTALL.md).
+2. Follow the below section, [Training data](#training-data) to produce a set of valid training data, or to obtain example data.
+3. Copy the `config/config.env.example` file in the `SimpleTuner/` project root directory to `config/config.env` and fill it with your configuration options - use [DATALOADER](/documentation//DATALOADER.md) as a guide for this.
+  - Use `configure.py` instead if you would prefer an interactive configurator.
+4. Run the [train.sh](/train.sh) script.
 
 ## Advanced users: Kohya config conversion
 
@@ -38,13 +30,9 @@ The script prints out many warnings and errors to help you get a better understa
 
 ## Hardware Requirements
 
-Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRA.
+Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRAs on smaller models (eg. not Flux)
 
-**For full u-net tuning:** Although SimpleTuner has an option to `--fully_unload_text_encoder` and by default will unload the VAE during training, the base SDXL u-net consumes 12.5GB at idle. When the first forward pass runs, a 24G GPU will hit an Out of Memory condition, _even_ with 128x128 training data.
-
-This occurs with Adafactor, AdamW8Bit, Prodigy, and D-adaptation due to a bug in PyTorch. Ensure you are using the **latest** 2.1.x release of PyTorch, which allows **full u-net tuning in ~22G of VRAM without DeepSpeed**.
-
-24G GPUs can meaningfully train SDXL, though 40G is the sweet spot for full fine-tune - an 80G GPU is pure heaven.
+See the main [README](/README.md) for more up-to-date hardware requirement information.
 
 ## Dependencies
 
@@ -74,25 +62,27 @@ To summarise:
 
 - You want as high of a batch size as you can tolerate.
 - The larger you set `RESOLUTION`, the more VRAM is used, and the lower your batch size can be.
-- A larger batch size requires more training data in each bucket, since each one **must** contain a minimum of that many images - a batch size of 8 means each bucket must have at least 8 images.
-- If you can't get a single iteration done with batch size of 1 and resolution of 128x128 on Adafactor or AdamW8Bit, your hardware just won't work.
+- A larger batch size should have more training data in each bucket, since a batch size of 8 means a bucket of 1 image will be seen 8 times in one shot - no good!
+- If you can't get a single iteration done with batch size of 1 and resolution of 128x128 on the Lion optimiser, your hardware just won't work.
 
 Which brings up the next point: **you should use as much high quality training data as you can acquire.**
 
 ### Selecting images
 
-- JPEG artifacts and blurry images are a no-go. The model **will** pick these up.
-- High-res images introduce their own problems - they must be downsampled to fit their aspect bucket, and this inherently damages their quality.
-- For high quality photographs, some grainy CMOS sensors in the camera itself end up producing a lot of noise. Too much of this will result in nearly every image your model produces, containing the same sensor noise.
+- JPEG artifacts and blurry images are a no-go. The model **will** pick these up, especially newer ones like Flux or PixArt.
+- For high quality photographs, some grainy CMOS sensors in the camera itself end up producing a lot of noise.
+  - Too much of this will result in nearly every image your model produces, containing the same sensor noise.
 - Same goes for watermarks and "badges", artist signatures. That will all be picked up effortlessly.
 - If you're trying to extract frames from a movie to train from, you're going to have a bad time. Compression ruins most films - only the large 40+ GB releases are really going to be useful for improving image clarity.
   - Using 1080p Bluray extractions really helps - 4k isn't absolutely required, but you're going to need to reduce expectations as to what kind of content will actually WORK.
   - Anime content will generally work very well if it's minimally compressed, but live action stuff tends to look blurry.
+  - Try and locate frame stills from the production company instead, eg. on iMDB.
 - Image resolutions optimally should be divisible by 64.
-  - This isn't **required**, but is beneficial to follow.
+  - This isn't **required**, but is beneficial to follow, as it will allow the trainer to reuse your original images without resizing or cropping.
 - Square images are not required, though they will work.
   - If you train on ONLY square images or ONLY non-square images, you might not get a very good balance of capabilities in the resulting model.
-- Synthetic data works great. This means AI-generated images, from either GAN upscaling or a different model entirely. Using outputs from a different model is called **transfer learning** and can be highly effective.
+  - If you train on ONLY aspect bucketing, your resulting model will heavily bias these buckets for each type of content.
+- Synthetic data works great. This means AI-generated images or captions. Using outputs from a different model is called **transfer learning** and can be highly effective.
   - Using ONLY synthetic data can harm the model's ability to generate more realistic details. A decent balance of regularisation images (eg. concepts that aren't your target) will help to maintain broad capabilities.
 - Your dataset should be **as varied as possible** to get the highest quality. It should be balanced across different concepts, unless heavily biasing the model is desired.
 
@@ -102,12 +92,14 @@ SimpleTuner provides multiple [captioning](/toolkit/captioning/README.md) script
 
 Options:
 
-- BLIP3 is currently the best option, as it follows instruction prompts very well and produces prompts comparable to CogVLM with fewer hallucinations.
+- InternVL2 is the best option - it is very large however, and will be slow. This is best for smaller sets.
+- Florence2 is likely the fastest and lightest weight, but some people really take a disliking to its outputs.
+- BLIP3 is currently the best lightweight model that follows instruction prompts very well and produces prompts comparable to CogVLM with fewer hallucinations.
 - T5 Flan and BLIP2 produce mediocre captions; it can be very slow and resource hungry.
 - LLaVA produces acceptable captions but misses subtle details.
   - It is better than BLIP, can sometimes read text but invents details and speculates.
   - Follows instruction templates better than CogVLM and BLIP.
-- CogVLM produces sterile but accurate captions and requires the most time/resources.
+- CogVLM produces sterile but accurate captions and required the most time/resources until InternVL2 was integrated.
   - It still speculates, especially when given long instruct queries.
   - It does not follow instruct queries very well.
 
@@ -117,6 +109,8 @@ For a caption to be useful by SimpleTuner:
 
 - It could be the image's filename (the default behaviour)
 - It could be the contents of a .txt file with the same name as the image (if `--caption_strategy=textfile` is provided)
+- It could be directly in a jsonl table
+- You could have a CSV file of URLs with a caption column
 - (Advanced users) You may compile your dataset metadata into a parquet, json, or jsonl file and [provide it directly to SimpleTuner](/documentation/DATALOADER.md#advanced-techniques)
 
 Longer captions aren't necessarily better for training. Simpler, concise captions work well, but a hybrid dataset mixing short and long captions will cover all bases.
@@ -125,9 +119,11 @@ Longer captions aren't necessarily better for training. Simpler, concise caption
 
 Foundational models like Stable Diffusion are built using 10% caption drop-out, meaning the model is shown an "empty" caption instead of the real one, about 10% of the time. This ends up substantially improving the quality of generations when using no negative prompt, especially for prompts that involve subject matter that do not exist in your training data.
 
-Disabling caption dropout can damage the model's ability to generalise to unseen prompts. Conversely, using too much caption dropout will damage the model's ability to adhere to prompts.
+Disabling caption dropout can damage the model's general quality. Conversely, using too much caption dropout will damage the model's ability to adhere to prompts.
 
 A value of 25% seems to provide some additional benefits such as reducing the number of required steps during inference on v-prediction models, but the resulting model will be prone to forgetting.
+
+Flux has [its own series of considerations](/documentation//quickstart/FLUX.md) and should be investigated before beginning training.
 
 ### Advanced Configuration
 
@@ -325,6 +321,9 @@ pip install optimum-quanto
 ```
 
 ```bash
+# Basically, any optimiser should work here.
+export OPTIMIZER="optimi-stableadamw"
+
 # choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
 # int8-quanto was tested with a single subject dreambooth LoRA.
 # fp8-quanto does not work on Apple systems. you must use int levels.
@@ -336,9 +335,4 @@ export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 # We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change --text_encoder_3_precision=no_change"
-
-# When you're quantising the model, we're not in pure bf16 anymore.
-# Since adamw_bf16 will never work with this setup, select another optimiser.
-# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
-export OPTIMIZER="adafactor" # or maybe prodigy
 ```

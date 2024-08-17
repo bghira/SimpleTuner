@@ -122,12 +122,10 @@ Without EMA, more care must be taken not to drastically change the model leading
 
 ### Flux.1 [dev, schnell]
 
-- A100-40G (LoRA, rank-16 or lower)
-- A100-80G (LoRA, up to rank-256)
-- 3x A100-80G (Full tuning, DeepSpeed ZeRO 1)
-- 1x A100-80G (Full tuning, DeepSpeed ZeRO 3)
+- A100-40G (LoRA, rank-128 or lower)
+- A100-80G (LoRA, up to rank-256, Full tune with DeepSpeed)
 
-Flux prefers being trained with multiple GPUs.
+Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation.
 
 ### SDXL, 1024px
 

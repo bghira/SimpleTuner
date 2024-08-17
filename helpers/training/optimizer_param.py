@@ -8,7 +8,239 @@ logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", 
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
-def determine_optimizer_class_with_config(args, use_deepspeed_optimizer, is_quantized, enable_adamw_bf16) -> tuple:
+is_optimi_available = False
+from helpers.training.adam_bfloat16 import AdamWBF16
+
+try:
+    from optimum.quanto import QTensor
+except:
+    pass
+
+try:
+    import optimi
+
+    is_optimi_available = True
+except:
+    logger.error(
+        "Could not load optimi library. Please install `torch-optimi` for better memory efficiency."
+    )
+
+optimizer_choices = {
+    "adamw_bf16": {
+        "precision": "bf16",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-6,
+        },
+        "class": AdamWBF16,
+    },
+    "optimi-stableadamw": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.99),
+            "weight_decay": 1e-2,
+            "eps": 1e-6,
+            "decouple_lr": False,
+            "max_lr": None,
+            "kahan_sum": True,
+            "foreach": True,
+        },
+        "class": optimi.StableAdamW,
+    },
+    "optimi-adamw": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.99),
+            "eps": 1e-6,
+            "weight_decay": 0.0,
+            "decouple_lr": False,
+            "kahan_sum": True,
+            "max_lr": None,
+        },
+        "class": optimi.AdamW,
+    },
+    "optimi-lion": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.99),
+            "weight_decay": 0.0,
+            "decouple_lr": False,
+            "max_lr": None,
+            "kahan_sum": True,
+            "foreach": True,
+        },
+        "class": optimi.Lion,
+    },
+    "optimi-radam": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.99),
+            "weight_decay": 0.0,
+            "eps": 1e-6,
+            "decouple_wd": True,
+            "decouple_lr": False,
+            "kahan_sum": True,
+            "foreach": True,
+        },
+        "class": optimi.RAdam,
+    },
+    "optimi-ranger": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.99),
+            "weight_decay": 0.0,
+            "eps": 1e-6,
+            "k": 6,
+            "alpha": 0.5,
+            "decouple_wd": True,
+            "decouple_lr": False,
+            "max_lr": None,
+            "kahan_sum": True,
+            "foreach": True,
+        },
+        "class": optimi.Ranger,
+    },
+    "optimi-adan": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.98, 0.92, 0.99),
+            "weight_decay": 2e-2,
+            "eps": 1e-6,
+            "decouple_lr": False,
+            "max_lr": None,
+            "adam_wd": False,
+            "kahan_sum": True,
+            "foreach": True,
+        },
+        "class": optimi.Adan,
+    },
+    "optimi-adam": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.99),
+            "eps": 1e-6,
+            "weight_decay": 0.0,
+            "decouple_wd": False,
+            "decouple_lr": False,
+            "kahan_sum": True,
+            "max_lr": None,
+        },
+        "class": optimi.Adam,
+    },
+    "optimi-sgd": {
+        "precision": "any",
+        "default_settings": {
+            "momentum": 0,
+            "weight_decay": 0.0,
+            "dampening": False,
+            "decouple_wd": False,
+            "decouple_lr": False,
+            "max_lr": None,
+            "torch_init": False,
+            "kahan_sum": True,
+            "foreach": True,
+        },
+        "class": optimi.SGD,
+    },
+}
+
+args_to_optimizer_mapping = {
+    "use_adafactor_optimizer": "adafactor",
+    "use_prodigy_optimizer": "prodigy",
+    "use_dadaptation_optimizer": "dadaptation",
+    "adam_bfloat16": "adamw_bf16",
+    "use_8bit_adam": "adamw8bit",
+}
+
+deprecated_optimizers = {
+    "prodigy": "Prodigy optimiser has been removed due to issues with precision levels and convergence. Please use optimi-stableadamw or optimi-lion instead - for decoupled learning rate, use --optimizer_config=decoupled_lr=True.",
+    "dadaptation": "D-adaptation optimiser has been removed due to issues with precision levels and convergence. Please use optimi-stableadamw instead.",
+    "adafactor": "Adafactor optimiser has been removed in favour of optimi-stableadamw, which offers improved memory efficiency and convergence.",
+    "adamw8bit": "AdamW8Bit has been removed in favour of optimi-adamw optimiser, which offers better low-precision support. Please use this or adamw_bf16 instead.",
+}
+
+
+def convert_arg_to_parameters(args):
+    """--optimizer_config can have a format like --optimizer_config=eps=1e-6,weight_decay=0.0"""
+    if args.optimizer_config is not None and args.optimizer_config:
+        optimizer_params = [
+            param.split("=") for param in args.optimizer_config.split(",")
+        ]
+        out = {}
+        for param in optimizer_params:
+            if "." in param[1]:
+                out[param[0]] = float(param[1])
+            elif str(param[1]).isdigit():
+                out[param[0]] = int(param[1])
+            elif param[1].lower() == "true":
+                out[param[0]] = True
+            elif param[1].lower() == "false":
+                out[param[0]] = False
+            elif param[1].lower() == "none":
+                out[param[0]] = None
+            elif "e-" in param[1]:
+                out[param[0]] = float(param[1])
+            else:
+                out[param[0]] = param[1]
+        return out
+
+    return {}
+
+
+def optimizer_parameters(optimizer, args):
+    """Return the parameters for the optimizer"""
+    if optimizer in optimizer_choices:
+        optimizer_details = optimizer_choices.get(optimizer)
+        optimizer_class = optimizer_choices.get(optimizer).get("class")
+        optimizer_params = optimizer_choices.get(optimizer).get("default_settings")
+        optimizer_params.update(convert_arg_to_parameters(args))
+        if args.optimizer_release_gradients and "optimi-" in optimizer:
+            optimizer_params["gradient_release"] = True
+        optimizer_details["default_settings"] = optimizer_params
+        return optimizer_class, optimizer_details
+    else:
+        raise ValueError(f"Optimizer {optimizer} not found.")
+
+
+def show_optimizer_defaults(optimizer: str = None):
+    """we'll print the defaults on a single line, eg. foo=bar, buz=baz"""
+    if optimizer is None:
+        for key in optimizer_choices:
+            print(f"{key}={optimizer_choices[key].get('default_settings')}")
+    else:
+        print(f"{optimizer}={optimizer_choices.get(optimizer).get('default_settings')}")
+
+
+def is_optimizer_deprecated(optimizer: str) -> bool:
+    if optimizer in deprecated_optimizers:
+        raise ValueError(deprecated_optimizers.get(optimizer))
+
+
+def map_args_to_optimizer(args) -> str:
+    for key in args_to_optimizer_mapping:
+        if hasattr(args, key) and getattr(args, key):
+            print(
+                "[ERROR] The use of --use_adafactor_optimizer, --use_prodigy_optimizer, --use_dadaptation_optimizer, --adam_bfloat16, and --use_8bit_adam is deprecated. Please use --optimizer instead."
+            )
+            return args_to_optimizer_mapping.get(key)
+    return getattr(args, "optimizer")
+
+
+def map_deprecated_optimizer_parameter(optimizer: str) -> str:
+    return args_to_optimizer_mapping.get(optimizer, None)
+
+
+def is_optimizer_bf16(optimizer: str) -> bool:
+    optimizer_precision = optimizer_choices.get(optimizer, {}).get("precision", "fp32")
+    if optimizer_precision in ["any", "bf16"]:
+        return True
+    return False
+
+
+def determine_optimizer_class_with_config(
+    args, use_deepspeed_optimizer, is_quantized, enable_adamw_bf16
+) -> tuple:
     extra_optimizer_args = {}
     if use_deepspeed_optimizer:
         optimizer_class = accelerate.utils.DummyOptim
@@ -16,110 +248,27 @@ def determine_optimizer_class_with_config(args, use_deepspeed_optimizer, is_quan
         extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
         extra_optimizer_args["eps"] = args.adam_epsilon
         extra_optimizer_args["weight_decay"] = args.adam_weight_decay
-    elif args.use_prodigy_optimizer:
-        logger.info("Using Prodigy optimizer. Experimental.")
-        try:
-            import prodigyopt
-        except ImportError:
-            raise ImportError(
-                "To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`"
-            )
-
-        optimizer_class = prodigyopt.Prodigy
-
-        if args.learning_rate <= 0.1:
-            logger.warn(
-                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
-            )
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["beta3"] = args.prodigy_beta3
-        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
-        extra_optimizer_args["eps"] = args.prodigy_epsilon
-        extra_optimizer_args["decouple"] = args.prodigy_decouple
-        extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
-        extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
-        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
-    elif args.adam_bfloat16:
-        if is_quantized and not enable_adamw_bf16:
-            logger.error(
-                f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Reverting to AdamW. You may use other optimizers, such as Adafactor."
-            )
-            optimizer_class = torch.optim.AdamW
-        else:
-            logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
-            from helpers.training import adam_bfloat16
-
-            optimizer_class = adam_bfloat16.AdamWBF16
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-    elif args.use_8bit_adam:
-        logger.info("Using 8bit AdamW optimizer.")
-        try:
-            import bitsandbytes as bnb  # type: ignore
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-
-        optimizer_class = bnb.optim.AdamW8bit
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-    elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
-        logger.info("Using D-Adaptation optimizer.")
-        try:
-            from dadaptation import DAdaptAdam
-        except ImportError:
-            raise ImportError(
-                "Please install the dadaptation library to make use of DaDapt optimizer."
-                "You can do so by running `pip install dadaptation`"
-            )
-
-        optimizer_class = DAdaptAdam
-        if (
-            hasattr(args, "dadaptation_learning_rate")
-            and args.dadaptation_learning_rate is not None
-        ):
-            logger.debug(
-                f"Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer."
-            )
-            args.learning_rate = args.dadaptation_learning_rate
-            extra_optimizer_args["decouple"] = True
-            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-            extra_optimizer_args["lr"] = float(args.learning_rate)
-
-    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        logger.info("Using Adafactor optimizer.")
-        try:
-            from transformers.optimization import Adafactor
-        except ImportError:
-            raise ImportError(
-                "Please install the latest transformers library to make use of Adafactor optimizer."
-                "You can do so by running `pip install transformers`, or, `poetry install` from the SimpleTuner directory."
-            )
-
-        optimizer_class = Adafactor
-        extra_optimizer_args = {}
-        if args.adafactor_relative_step:
-            extra_optimizer_args["lr"] = None
-            extra_optimizer_args["relative_step"] = True
-            extra_optimizer_args["scale_parameter"] = False
-            extra_optimizer_args["warmup_init"] = True
-        else:
-            extra_optimizer_args["lr"] = float(args.learning_rate)
-            extra_optimizer_args["relative_step"] = False
-            extra_optimizer_args["scale_parameter"] = False
-            extra_optimizer_args["warmup_init"] = False
+    elif is_quantized and not enable_adamw_bf16:
+        logger.error(
+            f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Switching to AdamW."
+        )
     else:
-        logger.info("Using AdamW optimizer.")
-        optimizer_class = torch.optim.AdamW
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = float(args.learning_rate)
-
-    return extra_optimizer_args, optimizer_class
+        optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
+        default_settings = optimizer_details.get("default_settings")
+        logger.info(f"cls: {optimizer_class}, settings: {default_settings}")
+    return default_settings, optimizer_class
 
 
-def determine_params_to_optimize(args, controlnet, unet, transformer, text_encoder_1, text_encoder_2, model_type_label, lycoris_wrapped_network):
+def determine_params_to_optimize(
+    args,
+    controlnet,
+    unet,
+    transformer,
+    text_encoder_1,
+    text_encoder_2,
+    model_type_label,
+    lycoris_wrapped_network,
+):
     if args.model_type == "full":
         if args.controlnet:
             params_to_optimize = controlnet.parameters()
@@ -165,7 +314,7 @@ def determine_params_to_optimize(args, controlnet, unet, transformer, text_encod
                         filter(lambda p: p.requires_grad, text_encoder_2.parameters())
                     )
 
-        if args.lora_type == 'lycoris' and lycoris_wrapped_network is not None:
+        if args.lora_type == "lycoris" and lycoris_wrapped_network is not None:
             params_to_optimize = list(
                 filter(lambda p: p.requires_grad, lycoris_wrapped_network.parameters())
             )
