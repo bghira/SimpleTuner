@@ -24,6 +24,16 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "add_v_proj",
                 "to_add_out",
             ]
+        elif args.flux_lora_target == "context+ffs":
+            # i think these are the text input layers.
+            target_modules = [
+                "add_k_proj",
+                "add_q_proj",
+                "add_v_proj",
+                "to_add_out",
+                "ff_context.net.0.proj",
+                "ff_context.net.2"
+            ]
         elif args.flux_lora_target == "all+ffs":
             target_modules = [
                 "to_k",
