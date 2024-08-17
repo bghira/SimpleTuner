@@ -114,13 +114,14 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "context", "all", "all+ffs", "ai-toolkit"],
+        choices=["mmdit", "context", "context+ffs", "all", "all+ffs", "ai-toolkit"],
         default="all",
         help=(
             "Flux has single and joint attention blocks."
-            " Only the multimodal 'dual stream' attention blocks are trained by default."
+            " By default, all attention layers are trained, but not the feed-forward layers"
             " If 'mmdit' is provided, the text input layers will not be trained."
-            " If 'context' is provided, the mmdit layers will not be trained."
+            " If 'context' is provided, then ONLY the text attention layers are trained"
+            " If 'context+ffs' is provided, then text attention and text feed-forward layers are trained. This is somewhat similar to text-encoder-only training in earlier SD versions."
             " If 'all' is provided, all layers will be trained, minus feed-forward."
             " If 'all+ffs' is provided, all layers will be trained including feed-forward."
         ),
