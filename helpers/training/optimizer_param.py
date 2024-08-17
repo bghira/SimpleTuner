@@ -163,11 +163,11 @@ deprecated_optimizers = {
 
 def convert_arg_to_parameters(args):
     """--optimizer_config can have a format like --optimizer_config=eps=1e-6,weight_decay=0.0"""
+    out = {}
     if args.optimizer_config is not None and args.optimizer_config:
         optimizer_params = [
             param.split("=") for param in args.optimizer_config.split(",")
         ]
-        out = {}
         for param in optimizer_params:
             if "." in param[1]:
                 out[param[0]] = float(param[1])
@@ -186,9 +186,9 @@ def convert_arg_to_parameters(args):
         return out
     if args.optimizer_beta1 is not None and args.optimizer_beta2 is not None:
         # the user has supplied a beta1 and beta2 value
-        out["betas"] = tuple(args.optimizer_beta1, args.optimizer_beta2)
+        out["betas"] = tuple([args.optimizer_beta1, args.optimizer_beta2])
 
-    return {}
+    return out
 
 
 def optimizer_parameters(optimizer, args):
