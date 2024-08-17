@@ -938,7 +938,11 @@ def main():
             **extra_optimizer_args,
         )
 
-    if is_optimi_available and args.optimizer_release_gradients:
+    if (
+        is_optimi_available
+        and args.optimizer_release_gradients
+        and "optimi" in args.optimizer
+    ):
         logger.info("Marking model for gradient release.")
         prepare_for_gradient_release(
             (
