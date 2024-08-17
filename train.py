@@ -900,17 +900,6 @@ def main():
             **extra_optimizer_args,
         )
 
-    if is_optimi_available and args.optimizer_release_gradients:
-        logger.info("Marking model for gradient release.")
-        prepare_for_gradient_release(
-            (
-                controlnet
-                if args.controlnet
-                else transformer if transformer is not None else unet
-            ),
-            optimizer,
-        )
-
     from helpers.training.custom_schedule import get_lr_scheduler
 
     logger.info(
