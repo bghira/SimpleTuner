@@ -242,6 +242,8 @@ def parse_args(input_args=None):
             " potentially longer to converge than the other methods."
         ),
     )
+    parser.add_argument("--init_lora", type=str, default=None, help="Specify an existing LoRA safetensors file to initialize the LoRA and continue training or finetune an existing LoRA."
+        )
     parser.add_argument(
         "--lora_rank",
         type=int,
