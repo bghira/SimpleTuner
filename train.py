@@ -555,7 +555,7 @@ def main():
             logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
     if "quanto" in args.base_model_precision:
         try:
-            from optimum.quanto import QTensor
+            # from optimum.quanto import QTensor
 
             # from helpers.training.quantisation.peft_workarounds import (
             #     custom_module_mapping as quanto_peft_module_mapping,
@@ -1851,11 +1851,11 @@ def main():
                             "Unknown error occurred, no prediction could be made."
                         )
                     # if we're quantising with quanto, we need to dequantise the result
-                    if "quanto" in args.base_model_precision:
-                        if hasattr(model_pred, "dequantize") and isinstance(
-                            model_pred, QTensor
-                        ):
-                            model_pred = model_pred.dequantize()
+                    # if "quanto" in args.base_model_precision:
+                    #     if hasattr(model_pred, "dequantize") and isinstance(
+                    #         model_pred, QTensor
+                    #     ):
+                    #         model_pred = model_pred.dequantize()
 
                     if args.flux:
                         model_pred = unpack_latents(
