@@ -1064,6 +1064,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--optimizer_beta1",
+        type=float,
+        default=None,
+        help="The value to use for the first beta value in the optimiser, which is used for the first moment estimate. A range of 0.8-0.9 is common.",
+    )
+    parser.add_argument(
+        "--optimizer_beta2",
+        type=float,
+        default=None,
+        help="The value to use for the second beta value in the optimiser, which is used for the second moment estimate. A range of 0.999-0.9999 is common.",
+    )
+    parser.add_argument(
         "--optimizer_release_gradients",
         action="store_true",
         help=(
@@ -1986,6 +1998,12 @@ def parse_args(input_args=None):
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
+
+    if (args.optimizer_beta1 is not None and args.optimizer_beta2 is None) or (
+        args.optimizer_beta1 is None and args.optimizer_beta2 is not None
+    ):
+        error_log("Both --optimizer_beta1 and --optimizer_beta2 should be provided.")
+        sys.exit(1)
 
     if not args.i_know_what_i_am_doing:
         if args.pixart_sigma or args.sd3:

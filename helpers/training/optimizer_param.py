@@ -184,6 +184,9 @@ def convert_arg_to_parameters(args):
             else:
                 out[param[0]] = param[1]
         return out
+    if args.optimizer_beta1 is not None and args.optimizer_beta2 is not None:
+        # the user has supplied a beta1 and beta2 value
+        out["betas"] = tuple(args.optimizer_beta1, args.optimizer_beta2)
 
     return {}
 
