@@ -56,6 +56,8 @@ VALIDATION_STEPS=100
 VALIDATION_PROMPT="a photograph of subjectname"
 
 DATALOADER_CONFIG="config/multidatabackend-dreambooth.json"
+
+TRAINER_EXTRA_ARGS+=" --data_backend_sampling=uniform"    # dreambooth is best with uniform sampling.
 ```
 
 ### Quantised model training
@@ -138,6 +140,7 @@ Some key values have been tweaked to make training a single subject easier:
 For a regularisation dataset:
 
 - Set `ignore_epochs=true`, which will ensure this dataset does not count toward a "finished epoch"
+  - Also ensure you include `--data_backend_sampling=uniform` in your `TRAINER_EXTRA_ARGS`
 - Set `repeats` high enough that this dataset will never stop being sampled
 - `minimum_image_size` has been increased to ensure we don't introduce too many low-quality artifacts
 - Similarly, using more descriptive captions may help avoid forgetting. Switching from `instanceprompt` to `textfile` or other strategies will require creating `.txt` files for each image.

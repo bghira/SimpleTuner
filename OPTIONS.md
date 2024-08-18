@@ -66,6 +66,15 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: When provided, will allow SimpleTuner to ignore differences between the cached config inside the dataset and the current values.
 - **Why**: When SimplerTuner is run for the first time on a dataset, it will create a cache document containing information about everything in that dataset. This includes the dataset config, including its "crop" and "resolution" related configuration values. Changing these arbitrarily or by accident could result in your training jobs crashing randomly, so it's highly recommended to not use this parameter, and instead resolve the differences you'd like to apply in your dataset some other way.
 
+### `--data_backend_sampling`
+
+- **What**: When using multiple data backends, sampling can be done using different strategies.
+- **Options**:
+  - `uniform` - the previous behaviour from v0.9.8.1 and earlier where dataset length was not considered, only manual probability weightings.
+    - This is useful for DreamBooth training where you have a set of regularisation images and a set of subject images. You must set `ignore_epochs=True` on your regularisation dataset, and use this mode.
+  - `auto-weighting` - the default behaviour where dataset length is used to equally sample all datasets, maintaining a uniform sampling of the entire data distribution.
+    - This is required if you have differently-sized datasets that you want the model to learn equally.
+
 ### `--vae_cache_scan_behaviour`
 
 - **What**: Configure the behaviour of the integrity scan check.
@@ -245,7 +254,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--legacy] [--kolors] [--flux]
-                [--flux_lora_target {mmdit,context,all,all+ffs,ai-toolkit}]
+                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flux_fast_schedule]
                 [--flux_guidance_mode {constant,random-range}]
@@ -258,8 +267,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
                 [--lora_type {Standard,lycoris}]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
-                [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
-                [--lora_dropout LORA_DROPOUT]
+                [--init_lora INIT_LORA] [--lora_rank LORA_RANK]
+                [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
                 [--lycoris_config LYCORIS_CONFIG] [--controlnet]
                 [--controlnet_model_name_or_path]
                 --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
@@ -289,7 +298,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--preserve_data_backend_cache] [--use_dora]
                 [--override_dataset_config] [--cache_dir_text CACHE_DIR_TEXT]
                 [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
-                DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
+                DATA_BACKEND_CONFIG
+                [--data_backend_sampling {uniform,auto-weighting}]
+                [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
                 [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
                 [--enable_multiprocessing] [--max_workers MAX_WORKERS]
@@ -332,6 +343,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--offload_param_path OFFLOAD_PARAM_PATH]
                 [--optimizer {adamw_bf16,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}]
                 [--optimizer_config OPTIMIZER_CONFIG]
+                [--optimizer_beta1 OPTIMIZER_BETA1]
+                [--optimizer_beta2 OPTIMIZER_BETA2]
                 [--optimizer_release_gradients] [--use_8bit_adam]
                 [--use_adafactor_optimizer] [--use_prodigy_optimizer]
                 [--use_dadapt_optimizer] [--adam_beta1 ADAM_BETA1]
@@ -423,15 +436,19 @@ options:
                         model.
   --flux                This option must be provided when training a Flux
                         model.
-  --flux_lora_target {mmdit,context,all,all+ffs,ai-toolkit}
-                        Flux has single and joint attention blocks. Only the
-                        multimodal 'dual stream' attention blocks are trained
-                        by default. If 'mmdit' is provided, the text input
-                        layers will not be trained. If 'context' is provided,
-                        the mmdit layers will not be trained. If 'all' is
-                        provided, all layers will be trained, minus feed-
-                        forward. If 'all+ffs' is provided, all layers will be
-                        trained including feed-forward.
+  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}
+                        Flux has single and joint attention blocks. By
+                        default, all attention layers are trained, but not the
+                        feed-forward layers If 'mmdit' is provided, the text
+                        input layers will not be trained. If 'context' is
+                        provided, then ONLY the text attention layers are
+                        trained If 'context+ffs' is provided, then text
+                        attention and text feed-forward layers are trained.
+                        This is somewhat similar to text-encoder-only training
+                        in earlier SD versions. If 'all' is provided, all
+                        layers will be trained, minus feed-forward. If
+                        'all+ffs' is provided, all layers will be trained
+                        including feed-forward.
   --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models..
@@ -486,9 +503,10 @@ options:
                         prompt embed, even masked positions.
   --lora_type {Standard,lycoris}
                         When training using --model_type=lora, you may specify
-                        a different type of LoRA to train here.Standard refers
-                        to training via PEFT, lycoris refers to training with
-                        lycoris.
+                        a different type of LoRA to train here. Standard
+                        refers to training a vanilla LoRA via PEFT, lycoris
+                        refers to training with KohakuBlueleaf's library of
+                        the same name.
   --lora_init_type {default,gaussian,loftq,olora,pissa}
                         The initialization type for the LoRA model. 'default'
                         will use Microsoft's initialization method, 'gaussian'
@@ -499,6 +517,10 @@ options:
                         outputs, and LoftQ produces an entirely different
                         result with worse quality at first, taking potentially
                         longer to converge than the other methods.
+  --init_lora INIT_LORA
+                        Specify an existing LoRA safetensors file to
+                        initialize the LoRA and continue training or finetune
+                        an existing LoRA.
   --lora_rank LORA_RANK
                         The dimension of the LoRA update matrices.
   --lora_alpha LORA_ALPHA
@@ -708,6 +730,15 @@ options:
                         The relative or fully-qualified path for your data
                         backend config. See multidatabackend.json.example for
                         an example.
+  --data_backend_sampling {uniform,auto-weighting}
+                        When using multiple data backends, the sampling
+                        weighting can be set to 'uniform' or 'auto-weighting'.
+                        The default value is 'auto-weighting', which will
+                        automatically adjust the sampling weights based on the
+                        number of images in each backend. 'uniform' will
+                        sample from each backend equally, which may be more
+                        desirable for DreamBooth training with eg.
+                        ignore_epochs=True on your regularisation dataset.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -947,11 +978,19 @@ options:
                         separated list of key-value pairs to be provided that
                         will override the optimizer defaults. For example, `--
                         optimizer_config=decouple_lr=True,weight_decay=0.01`.
+  --optimizer_beta1 OPTIMIZER_BETA1
+                        The value to use for the first beta value in the
+                        optimiser, which is used for the first moment
+                        estimate. A range of 0.8-0.9 is common.
+  --optimizer_beta2 OPTIMIZER_BETA2
+                        The value to use for the second beta value in the
+                        optimiser, which is used for the second moment
+                        estimate. A range of 0.999-0.9999 is common.
   --optimizer_release_gradients
                         When using Optimi optimizers, this option will release
                         the gradients after the optimizer step. This can save
-                        memory, but may slow down training. This option is
-                        incompatible with Quanto.
+                        memory, but may slow down training. With Quanto, there
+                        may be no benefit.
   --use_8bit_adam       Deprecated in favour of --optimizer=optimi-adamw.
   --use_adafactor_optimizer
                         Deprecated in favour of --optimizer=stableadamw.

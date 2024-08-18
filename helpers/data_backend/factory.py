@@ -1175,25 +1175,48 @@ def select_dataloader_index(step, backends):
         backend_ids.append(backend_id)
 
     # Convert to a torch tensor for easy sampling
-    weights = torch.tensor(weights)
+    weights = torch.tensor(weights, dtype=torch.float32)
     weights /= weights.sum()  # Normalize the weights
-
     if weights.sum() == 0:
         return None
 
     # Sample a backend index based on the weights
     chosen_index = torch.multinomial(weights, 1).item()
-    return backend_ids[chosen_index]
+    chosen_backend_id = backend_ids[chosen_index]
+
+    return chosen_backend_id
 
 
 def get_backend_weight(backend_id, backend, step):
     backend_config = StateTracker.get_data_backend_config(backend_id)
     prob = backend_config.get("probability", 1)
-    disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
-    adjusted_prob = (
-        0 if step > disable_step else max(0, prob * (1 - step / disable_step))
-    )
-    return adjusted_prob
+
+    if StateTracker.get_args().data_backend_sampling == "uniform":
+        return prob
+    elif StateTracker.get_args().data_backend_sampling == "auto-weighting":
+        # Get the dataset length (assuming you have a method or property to retrieve it)
+        dataset_length = StateTracker.get_dataset_size(backend_id)
+
+        # Calculate the weight based on dataset length
+        length_factor = dataset_length / sum(
+            StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends()
+        )
+
+        # Adjust the probability by length factor
+        adjusted_prob = prob * length_factor
+
+        disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
+        adjusted_prob = (
+            0
+            if step > disable_step
+            else max(0, adjusted_prob * (1 - step / disable_step))
+        )
+
+        return adjusted_prob
+    else:
+        raise ValueError(
+            f"Unknown sampling weighting method: {StateTracker.get_args().data_backend_sampling}"
+        )
 
 
 def random_dataloader_iterator(step, backends: dict):
