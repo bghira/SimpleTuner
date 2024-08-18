@@ -516,6 +516,7 @@ def configure_multi_databackend(
     ###                                       ###
     #    now we configure the image backends    #
     ###                                       ###
+    vae_cache_dir_paths = []  # tracking for duplicates
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is not None and (
@@ -932,6 +933,12 @@ def configure_multi_databackend(
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = init_backend.get("cache_dir_vae", None)
+            if vae_cache_dir in vae_cache_dir_paths:
+                raise ValueError(
+                    f"VAE image embed cache directory {init_backend['cache_dir_vae']} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
+                )
+            vae_cache_dir_paths.append(vae_cache_dir)
+
             if (
                 vae_cache_dir is not None
                 and vae_cache_dir in text_embed_cache_dir_paths
