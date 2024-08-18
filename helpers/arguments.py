@@ -627,6 +627,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--data_backend_sampling",
+        type=str,
+        choices=["uniform", "auto-weighting"],
+        default="auto-weighting",
+        help=(
+            "When using multiple data backends, the sampling weighting can be set to 'uniform' or 'auto-weighting'."
+            " The default value is 'auto-weighting', which will automatically adjust the sampling weights based on the"
+            " number of images in each backend. 'uniform' will sample from each backend equally, which may be"
+            " more desirable for DreamBooth training with eg. ignore_epochs=True on your regularisation dataset."
+        ),
+    )
+    parser.add_argument(
         "--write_batch_size",
         type=int,
         default=64,
