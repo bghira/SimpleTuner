@@ -151,9 +151,11 @@ if [ -z "${TRAINER_EXTRA_ARGS}" ]; then
     printf "TRAINER_EXTRA_ARGS not set, defaulting to empty.\n"
     TRAINER_EXTRA_ARGS=""
 fi
+export MINIMUM_RESOLUTION_ARG=""
 if [ -z "$MINIMUM_RESOLUTION" ]; then
-    printf "MINIMUM_RESOLUTION not set, defaulting to RESOLUTION.\n"
-    export MINIMUM_RESOLUTION=$RESOLUTION
+    printf "MINIMUM_RESOLUTION not set, you might have problems with upscaled images.\n"
+else
+    export MINIMUM_RESOLUTION_ARG="--minimum_image_size=${MINIMUM_RESOLUTION}"
 fi
 if [ -z "$RESOLUTION_TYPE" ]; then
     printf "RESOLUTION_TYPE not set, defaulting to pixel.\n"
@@ -362,7 +364,7 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --train_batch="${TRAIN_BATCH_SIZE}" --max_workers=$MAX_WORKERS --read_batch_size=$READ_BATCH_SIZE --write_batch_size=$WRITE_BATCH_SIZE --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
     --torch_num_threads=${TORCH_NUM_THREADS} --image_processing_batch_size=${IMAGE_PROCESSING_BATCH_SIZE} --vae_batch_size=$VAE_BATCH_SIZE \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
-    --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
+    ${MINIMUM_RESOLUTION_ARG} --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
     --resolution_type="${RESOLUTION_TYPE}" \
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
