@@ -565,6 +565,7 @@ def main():
                 text_encoder_1=text_encoder_1,
                 text_encoder_2=text_encoder_2,
                 text_encoder_3=text_encoder_3,
+                controlnet=None,
                 args=args,
             )
 
