@@ -932,10 +932,10 @@ def configure_multi_databackend(
 
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
-            vae_cache_dir = init_backend.get("cache_dir_vae", None)
+            vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
                 raise ValueError(
-                    f"VAE image embed cache directory {init_backend['cache_dir_vae']} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
+                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
                 )
             vae_cache_dir_paths.append(vae_cache_dir)
 
@@ -944,7 +944,7 @@ def configure_multi_databackend(
                 and vae_cache_dir in text_embed_cache_dir_paths
             ):
                 raise ValueError(
-                    f"VAE image embed cache directory {init_backend['cache_dir_vae']} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
+                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
                 )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
