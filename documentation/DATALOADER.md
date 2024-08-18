@@ -91,8 +91,8 @@ Both `textfile` and `parquet` support multi-captions:
 
 - `crop`: Enables or disables image cropping.
 - `crop_style`: Selects the cropping style (`random`, `center`, `corner`, `face`).
-- `crop_aspect`: Chooses the cropping aspect (`random`, `square` or `preserve`).
-- `crop_aspect_buckets`: When `crop_aspect` is set to `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
+- `crop_aspect`: Chooses the cropping aspect (`closest`, `random`, `square` or `preserve`).
+- `crop_aspect_buckets`: When `crop_aspect` is set to `closest` or `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
 
 ### `resolution`
 
@@ -184,7 +184,7 @@ In order, the lines behave as follows:
     "instance_data_dir": "/path/to/data/tree",
     "crop": false,
     "crop_style": "random|center|corner|face",
-    "crop_aspect": "square|preserve|random",
+    "crop_aspect": "square|preserve|closest|random",
     "crop_aspect_buckets": [0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75],
     "resolution": 1.0,
     "resolution_type": "area|pixel",
@@ -358,7 +358,7 @@ Here is an example dataloader configuration that makes use of the captions and d
   "vae_cache_clear_each_epoch": true,
   "repeats": 1,
   "crop": true,
-  "crop_aspect": "random",
+  "crop_aspect": "closest",
   "crop_style": "random",
   "crop_aspect_buckets": [1.0, 0.75, 1.23],
   "resolution_type": "area"

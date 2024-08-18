@@ -143,7 +143,11 @@ A lot of settings are instead set through the [dataloader config](/documentation
 ### `--crop_aspect`
 
 - **What**: When using `--crop=true`, the `--crop_aspect` option may be supplied with a value of `square` or `preserve`.
-- **Why**: The default crop behaviour is to crop all images to a square aspect ratio, but when `--crop_aspect=preserve` is supplied, the trainer will crop images to a size matching their original aspect ratio. This may help to keep multi-resolution support, but it may also harm training quality. Your mileage may vary.
+- **Options**: If cropping is enabled, default behaviour is to crop all images to a square aspect ratio.
+  - `crop_aspect=preserve` will crop images to a size matching their original aspect ratio.
+  - `crop_aspect=closest` will use the closest value from `crop_aspect_buckets`
+  - `crop_aspect=random` will use a random aspect value from `crop_aspect_buckets` without going too far - it will use square crops if your aspects are incompatible
+  - `crop_aspect=square` will use the standard square crop style
 
 ---
 
