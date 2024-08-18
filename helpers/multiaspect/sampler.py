@@ -182,8 +182,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(f"Bucket {bucket} is empty.")
             return []
         samples = []
-        to_grab = min(n, len(available_images))
         while len(samples) < n:
+            to_grab = min(n, len(available_images), (n - len(samples)))
+            if to_grab == 0:
+                break
             samples.extend(random.sample(available_images, k=to_grab))
 
         to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
