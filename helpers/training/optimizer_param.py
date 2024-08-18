@@ -256,6 +256,7 @@ def determine_optimizer_class_with_config(
         logger.error(
             f"When --base_model_default_dtype=fp32, AdamWBF16 may not be used. Switching to AdamW."
         )
+        optimizer_class, optimizer_details = optimizer_parameters("optimi-adamw", args)
     else:
         optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
         default_settings = optimizer_details.get("default_settings")
