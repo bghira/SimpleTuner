@@ -1837,6 +1837,12 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
+    if "int4" in args.base_model_precision and torch.cuda.is_available():
+        print(
+            "WARNING: int4 precision is ONLY supported on A100 and H100 or newer devices. Waiting 10 seconds to continue.."
+        )
+        time.sleep(10)
+
     model_is_bf16 = (
         args.base_model_precision == "no_change"
         and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
