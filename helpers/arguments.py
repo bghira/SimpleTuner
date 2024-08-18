@@ -1088,7 +1088,7 @@ def parse_args(input_args=None):
         "--optimizer",
         type=str,
         choices=optimizer_choices.keys(),
-        required=False,
+        required=True,
         default=None,
     )
     parser.add_argument(
