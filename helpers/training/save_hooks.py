@@ -18,6 +18,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from tqdm import tqdm
 
+
 logger = logging.getLogger("SaveHookManager")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
@@ -140,10 +141,10 @@ class SaveHookManager:
             elif args.flux:
                 self.denoiser_class = FluxTransformer2DModel
                 self.pipeline_class = FluxPipeline
-            elif args.hunyuan_dit:
+            elif hasattr(args, "hunyuan_dit") and args.hunyuan_dit:
                 self.denoiser_class = HunyuanDiT2DModel
                 self.pipeline_class = HunyuanDiTPipeline
-            elif args.pixart:
+            elif args.pixart_sigma:
                 self.denoiser_class = PixArtTransformer2DModel
                 self.pipeline_class = PixArtSigmaPipeline
             elif args.smoldit:
@@ -240,6 +241,29 @@ class SaveHookManager:
                 text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
             )
 
+    def _save_lycoris(self, models, weights, output_dir):
+        """
+        save wrappers for lycoris. For now, text encoders are not trainable
+        via lycoris.
+        """
+        from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+        for _ in models:
+            if weights:
+                weights.pop()
+
+        lycoris_config = None
+        with open(self.args.lycoris_config, "r") as f:
+            lycoris_config = json.load(f)
+
+        self.accelerator._lycoris_wrapped_network.save_weights(
+            os.path.join(output_dir, LORA_SAFETENSORS_FILENAME),
+            list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
+            {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+        )
+
+        logger.info("LyCORIS weights have been saved to disk")
+
     def _save_full_model(self, models, weights, output_dir):
         # Create a temporary directory for atomic saves
         temporary_dir = output_dir.replace("checkpoint", "temporary")
@@ -283,8 +307,11 @@ class SaveHookManager:
         StateTracker.save_training_state(
             os.path.join(output_dir, "training_state.json")
         )
-        if "lora" in self.args.model_type:
+        if "lora" in self.args.model_type and self.args.lora_type == "Standard":
             self._save_lora(models=models, weights=weights, output_dir=output_dir)
+            return
+        elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
+            self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
             return
         else:
             self._save_full_model(models=models, weights=weights, output_dir=output_dir)
@@ -361,6 +388,22 @@ class SaveHookManager:
 
         logger.info("Completed loading LoRA weights.")
 
+    def _load_lycoris(self, models, input_dir):
+        from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+        while len(models) > 0:
+            model = models.pop()
+
+        state = self.accelerator._lycoris_wrapped_network.load_weights(
+            os.path.join(input_dir, LORA_SAFETENSORS_FILENAME)
+        )
+        if len(state.keys()) > 0:
+            logging.error(f"LyCORIS failed to load: {state}")
+            raise RuntimeError("Loading of LyCORIS model failed")
+        self.accelerator._lycoris_wrapped_network.to(self.accelerator.device)
+
+        logger.info("LyCORIS weights have been loaded from disk")
+
     def _load_full_model(self, models, input_dir):
         if self.args.use_ema:
             load_model = EMAModel.from_pretrained(
@@ -412,7 +455,9 @@ class SaveHookManager:
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
 
-        if "lora" in self.args.model_type:
+        if "lora" in self.args.model_type and self.args.lora_type == "Standard":
             self._load_lora(models=models, input_dir=input_dir)
+        elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
+            self._load_lycoris(models=models, input_dir=input_dir)
         else:
             self._load_full_model(models=models, input_dir=input_dir)

@@ -2,7 +2,14 @@ import os
 import huggingface_hub
 import torch
 from helpers.training import quantised_precision_levels
+from helpers.training.optimizer_param import optimizer_choices
 
+bf16_only_optims = [
+    key for key, value in optimizer_choices.items() if value["precision"] == "bf16"
+]
+any_precision_optims = [
+    key for key, value in optimizer_choices.items() if value["precision"] == "any"
+]
 model_classes = {
     "full": [
         "flux",
@@ -25,6 +32,14 @@ default_models = {
     "sd3": "stabilityai/stable-diffusion-3-medium-diffusers",
 }
 
+default_cfg = {
+    "flux": 3.0,
+    "sdxl": 4.2,
+    "pixart_sigma": 3.4,
+    "kolors": 5.0,
+    "terminus": 8.0,
+    "sd3": 5.0,
+}
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
     1: "3e-4",
@@ -32,11 +47,6 @@ learning_rates_by_rank = {
     64: "8e-5",
     128: "6e-5",
     256: "5.09e-5",
-}
-
-optim_compatibility = {
-    "bf16": ["adamw_bf16"],
-    "no": ["adamw", "adafactor", "prodigy", "dadaptation"],
 }
 
 
@@ -309,7 +319,7 @@ def configure_env():
             2,
         )
     )
-    if env_contents["GRADIENT_ACCUMULATION_STEPS"] < 1:
+    if int(env_contents["GRADIENT_ACCUMULATION_STEPS"]) < 1:
         env_contents["GRADIENT_ACCUMULATION_STEPS"] = 1
 
     env_contents["CAPTION_DROPOUT_PROBABILITY"] = float(
@@ -362,7 +372,7 @@ def configure_env():
             [x.strip() for x in env_contents["VALIDATION_RESOLUTION"].split(",")]
         )
     env_contents["VALIDATION_GUIDANCE"] = prompt_user(
-        "Set the guidance scale for validation", "7.5"
+        "Set the guidance scale for validation", default_cfg.get(model_class, 3.0)
     )
     env_contents["VALIDATION_GUIDANCE_RESCALE"] = prompt_user(
         "Set the guidance re-scale for validation - this is called dynamic thresholding and is used mostly for zero-terminal SNR models.",
@@ -380,7 +390,8 @@ def configure_env():
     env_contents["ALLOW_TF32"] = "false"
     if torch.cuda.is_available():
         use_tf32 = (
-            prompt_user("Would you like to enable TF32 mode? (y/n)", "n").lower() == "y"
+            prompt_user("Would you like to enable TF32 mode? ([y]/n)", "y").lower()
+            == "y"
         )
         if use_tf32:
             env_contents["ALLOW_TF32"] = "true"
@@ -395,7 +406,10 @@ def configure_env():
         env_contents["MIXED_PRECISION"] = prompt_user(
             "Set mixed precision mode (Options: bf16, no (fp32))", "bf16"
         )
-    compatible_optims = optim_compatibility[env_contents["MIXED_PRECISION"]]
+    if env_contents["MIXED_PRECISION"] == "bf16":
+        compatible_optims = bf16_only_optims + any_precision_optims
+    else:
+        compatible_optims = any_precision_optims
     env_contents["OPTIMIZER"] = None
     while (
         not env_contents["OPTIMIZER"]
@@ -470,7 +484,7 @@ def configure_env():
     env_contents["TRAINING_NUM_PROCESSES"] = prompt_user(
         "How many GPUs will you be training on?", 1
     )
-    if env_contents["TRAINING_NUM_PROCESSES"] > 1:
+    if int(env_contents["TRAINING_NUM_PROCESSES"]) > 1:
         env_contents["ACCELERATE_EXTRA_ARGS"] = "--multi_gpu"
     env_contents["TRAINING_NUM_MACHINES"] = 1
 

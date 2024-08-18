@@ -50,12 +50,17 @@ def _quanto_model(model, model_precision, base_model_precision=None):
     freeze(model)
 
 
-def quantoise(unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, args):
+def quantoise(
+    unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet, args
+):
     logger.info("Loading Quanto for LoRA training. This may take a few minutes.")
     if transformer is not None:
         _quanto_model(transformer, args.base_model_precision)
     if unet is not None:
         _quanto_model(unet, args.base_model_precision)
+    if controlnet is not None:
+        _quanto_model(controlnet, args.base_model_precision)
+
     if text_encoder_1 is not None:
         _quanto_model(
             text_encoder_1, args.text_encoder_1_precision, args.base_model_precision

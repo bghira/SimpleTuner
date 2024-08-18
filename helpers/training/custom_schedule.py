@@ -6,7 +6,6 @@ import os
 import logging
 from torch.optim.lr_scheduler import LRScheduler
 from helpers.training.state_tracker import StateTracker
-from transformers.optimization import AdafactorSchedule
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -517,14 +516,6 @@ def get_lr_scheduler(
             optimizer,
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
-        )
-    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
-        # Use the AdafactorScheduler.
-        logger.info(
-            "Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
-        )
-        lr_scheduler = AdafactorSchedule(
-            optimizer=optimizer, initial_lr=args.learning_rate
         )
     elif args.lr_scheduler == "cosine_with_restarts":
         logger.info("Using Cosine with Restarts learning rate scheduler.")

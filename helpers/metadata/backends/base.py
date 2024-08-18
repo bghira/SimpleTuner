@@ -329,7 +329,7 @@ class MetadataBackend:
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             # Trim the list to a length that's divisible by the effective batch size
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
-            num_batches = ceil((total_img_count_incl_repeats) // effective_batch_size)
+            num_batches = ceil(total_img_count_incl_repeats / effective_batch_size)
             trimmed_images = images[: num_batches * effective_batch_size]
             if len(trimmed_images) == 0 and should_log():
                 logger.error(

@@ -101,7 +101,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         if "csv_caption_column" in backend:
             output["config"]["csv_caption_column"] = backend["csv_caption_column"]
     if "crop_aspect" in backend:
-        choices = ["square", "preserve", "random"]
+        choices = ["square", "preserve", "random", "closest"]
         if backend.get("crop_aspect", None) not in choices:
             raise ValueError(
                 f"(id={backend['id']}) crop_aspect must be one of {choices}."
@@ -109,8 +109,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop_aspect"] = backend["crop_aspect"]
         if (
             output["config"]["crop_aspect"] == "random"
-            and "crop_aspect_buckets" not in backend
-        ):
+            or output["config"]["crop_aspect"] == "closest"
+        ) and "crop_aspect_buckets" not in backend:
             raise ValueError(
                 f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
                 " This should be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
@@ -516,6 +516,7 @@ def configure_multi_databackend(
     ###                                       ###
     #    now we configure the image backends    #
     ###                                       ###
+    vae_cache_dir_paths = []  # tracking for duplicates
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is not None and (
@@ -931,13 +932,19 @@ def configure_multi_databackend(
 
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
-            vae_cache_dir = init_backend.get("cache_dir_vae", None)
+            vae_cache_dir = backend.get("cache_dir_vae", None)
+            if vae_cache_dir in vae_cache_dir_paths:
+                raise ValueError(
+                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
+                )
+            vae_cache_dir_paths.append(vae_cache_dir)
+
             if (
                 vae_cache_dir is not None
                 and vae_cache_dir in text_embed_cache_dir_paths
             ):
                 raise ValueError(
-                    f"VAE image embed cache directory {init_backend['cache_dir_vae']} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
+                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
                 )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
@@ -1175,25 +1182,48 @@ def select_dataloader_index(step, backends):
         backend_ids.append(backend_id)
 
     # Convert to a torch tensor for easy sampling
-    weights = torch.tensor(weights)
+    weights = torch.tensor(weights, dtype=torch.float32)
     weights /= weights.sum()  # Normalize the weights
-
     if weights.sum() == 0:
         return None
 
     # Sample a backend index based on the weights
     chosen_index = torch.multinomial(weights, 1).item()
-    return backend_ids[chosen_index]
+    chosen_backend_id = backend_ids[chosen_index]
+
+    return chosen_backend_id
 
 
 def get_backend_weight(backend_id, backend, step):
     backend_config = StateTracker.get_data_backend_config(backend_id)
     prob = backend_config.get("probability", 1)
-    disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
-    adjusted_prob = (
-        0 if step > disable_step else max(0, prob * (1 - step / disable_step))
-    )
-    return adjusted_prob
+
+    if StateTracker.get_args().data_backend_sampling == "uniform":
+        return prob
+    elif StateTracker.get_args().data_backend_sampling == "auto-weighting":
+        # Get the dataset length (assuming you have a method or property to retrieve it)
+        dataset_length = StateTracker.get_dataset_size(backend_id)
+
+        # Calculate the weight based on dataset length
+        length_factor = dataset_length / sum(
+            StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends()
+        )
+
+        # Adjust the probability by length factor
+        adjusted_prob = prob * length_factor
+
+        disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
+        adjusted_prob = (
+            0
+            if step > disable_step
+            else max(0, adjusted_prob * (1 - step / disable_step))
+        )
+
+        return adjusted_prob
+    else:
+        raise ValueError(
+            f"Unknown sampling weighting method: {StateTracker.get_args().data_backend_sampling}"
+        )
 
 
 def random_dataloader_iterator(step, backends: dict):

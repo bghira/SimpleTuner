@@ -141,7 +141,7 @@ There, you will need to modify the following variables:
 - `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
   - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
 - `GRADIENT_ACCUMULATION_STEPS` - Keep this low. 1 will disable it, which is recommended to maintain higher quality and reduce training runtime.
-- `OPTIMIZER` - adamw_bf16 was found to perform very well, whereas Prodigy might stall out. If you're an expert though, feel free to experiment here. Beginners are recommended to stick with adamw_bf16.
+- `OPTIMIZER` - Beginners are recommended to stick with adamw_bf16, though Lion and StableAdamW are also good choices.
 - `MIXED_PRECISION` - Beginners should keep this in `bf16` with `PURE_BF16=true` along with the adamw_bf16 optimiser.
 
 #### Validation prompts
@@ -203,6 +203,7 @@ pip install optimum-quanto
 # int8-quanto was tested with a single subject dreambooth LoRA.
 # fp8-quanto does not work on Apple systems. you must use int levels.
 # int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
+#  - validations on int2 look pretty awful but the LoRA generally works on int8 / fp8 models at inference time.
 # may the gods have mercy on your soul, should you push things Too Far.
 export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
 
@@ -224,6 +225,7 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16
 # When training 'all+ffs', all attention layers are trained in addition to the feed-forward which can help with adapting the model objective for the LoRA.
 # - This mode has been reported to lack portability, and platforms such as ComfyUI might not be able to load the LoRA.
 # The option to train only the 'context' blocks is offered as well, but its impact is unknown, and is offered as an experimental choice.
+# - An extension to this mode, 'context+ffs' is also available, which is useful for pretraining new tokens into a LoRA before continuing finetuning it via `--init_lora`.
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all"
 
 # If you want to use LoftQ initialisation, you can't use Quanto to quantise the base model.
@@ -233,11 +235,11 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
 
 # When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
 # Quantising the model has been found to result in negligible-to-quality loss for training.
-# option one (recommended) - BF16 training ONLY supports adamw_bf16, but this optimiser setup is fairly forgiving
+# option one (recommended) - adamw_bf16; this optimiser setup is fairly forgiving
 export OPTIMIZER="adamw_bf16"
 # option two - FP32 training supports any optimiser BUT adamw_bf16
 #export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
-#export OPTIMIZER="adafactor" # or maybe prodigy with --gradient_precision=unmodified
+#export OPTIMIZER="optimi-ranger" # or maybe optimi-lion
 ```
 
 
@@ -249,7 +251,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-In your `OUTPUT_DIR` directory, create a multidatabackend.json:
+create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
 
 ```json
 [
@@ -263,12 +265,28 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "minimum_image_size": 512,
     "maximum_image_size": 512,
     "target_downsample_size": 512,
-    "resolution_type": "pixel",
+    "resolution_type": "pixel_area",
     "cache_dir_vae": "cache/vae/flux/pseudo-camera-10k",
     "instance_data_dir": "datasets/pseudo-camera-10k",
+    "ignore_epochs": true,
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
+    "metadata_backend": "json"
+  },
+  {
+    "id": "dreambooth-subject",
+    "type": "local",
+    "crop": false,
+    "resolution": 1024,
+    "minimum_image_size": 1024,
+    "maximum_image_size": 1024,
+    "target_downsample_size": 1024,
+    "resolution_type": "pixel_area",
+    "cache_dir_vae": "cache/vae/flux/dreambooth-subject",
+    "instance_data_dir": "datasets/dreambooth-subject",
+    "caption_strategy": "instanceprompt",
+    "instance_prompt": "the name of your subject goes here",
     "metadata_backend": "json"
   },
   {
@@ -287,17 +305,21 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 
 > ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Flux.
 
-Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
+Then, create a `datasets` directory:
 
 ```bash
 apt -y install git-lfs
 mkdir -p datasets
 pushd datasets
     git clone https://huggingface.co/datasets/ptx0/pseudo-camera-10k
+    mkdir dreambooth-subject
+    # place your images into dreambooth-subject/ now
 popd
 ```
 
 This will download about 10k photograph samples to your `datasets/pseudo-camera-10k` directory, which will be automatically created for you.
+
+Your Dreambooth images should go into the `datasets/dreambooth-subject` directory.
 
 #### Login to WandB and Huggingface Hub
 
@@ -335,9 +357,16 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Inference tips
 
+### CFG-trained LoRAs (flux_guidance_value > 1)
+
 In ComfyUI, you'll need to put Flux through another node called AdaptiveGuider. One of the members from our community has provided a modified node here:
 
 (**external links**) [IdiotSandwichTheThird/ComfyUI-Adaptive-Guidan...](https://github.com/IdiotSandwichTheThird/ComfyUI-Adaptive-Guidance-with-disabled-init-steps) and their example workflow [here](https://github.com/IdiotSandwichTheThird/ComfyUI-Adaptive-Guidance-with-disabled-init-steps/blob/master/ExampleWorkflow.json)
+
+### CFG-distilled LoRA (flux_guidance_scale == 1)
+
+Inferencing the CFG-distilled LoRA is as easy as using a lower guidance_scale around the value trained with.
+
 
 ## Notes & troubleshooting tips
 
@@ -370,13 +399,14 @@ The solution for this is already enabled in the main branch; it is necessary to 
 ### Quantisation
 - Minimum 8bit quantisation is required for a 24G card to train this model - but 32G (V100) cards suffer a more tragic fate.
   - Without quantising the model, a rank-1 LoRA sits at just over 32GB of mem use, in a way that prevents a 32G V100 from actually working
-  - Adafactor works, reducing VRAM to ~24G or further with sub-1024x1024 training
+  - Using the optimi-lion optimiser may reduce training just enough to make the V100 work.
 - Quantising the model doesn't harm training
   - It allows you to push higher batch sizes and possibly obtain a better result
   - Behaves the same as full-precision training - fp32 won't make your model any better than bf16+int8.
 - As usual, **fp8 quantisation runs more slowly** than **int8** and might have a worse result due to the use of `e4m3fn` in Quanto
   - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
+- When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
 
 ### Crashing
 - If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.
@@ -385,6 +415,7 @@ The solution for this is already enabled in the main branch; it is necessary to 
 ### Schnell
 - Direct Schnell training really needs a bit more time in the oven - currently, the results do not look good
   - If you absolutely must train Schnell, try the x-flux trainer from X-Labs
+  - Ostris' ai-toolkit uses a low-rank adapter probably pulled from OpenFLUX.1 as a source of CFG that can be inverted from the final result - this will probably be implemented here eventually after results are more widely available and tests have completed
 - Training a LoRA on Dev will however, run just fine on Schnell
 - Dev+Schnell merge 50/50 just fine, and the LoRAs can possibly be trained from that, which will then run on Schnell **or** Dev
 
@@ -416,6 +447,10 @@ When you do these things (among others), some square grid artifacts **may** begi
 
 They really slow training down and might not be worth it unless you have several datasets configured in your dataloader backend.
 
+The AdamWBF16 optimiser requires fp32 gradients for precise accumulation, but the Optimi selections such as Lion and StableAdamW claim to handle this more reliably. YMMV.
+
+It's usually recommended to just avoid these.
+
 ### Aspect bucketing
 - Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
 - On the other hand, using the natural aspect buckets of your dataset might overly bias these shapes during inference time.
@@ -443,7 +478,7 @@ LR_WARMUP_STEPS=10
 # this is kinda crazy, but at 512px it trains rather quickly anyway.
 CHECKPOINTING_STEPS=2500
 # because of DeepSpeed, you can use the below flags to enable mixed-precision bf16 training:
-OPTIMIZER="adamw" # unfortunately this is your only option with DeepSpeed, but x-flux does the same.
+OPTIMIZER="optimi-adamw" # unfortunately this is your only option with DeepSpeed, but x-flux does the same.
 MIXED_PRECISION="bf16"
 PURE_BF16=false
 export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --i_know_what_i_am_doing"

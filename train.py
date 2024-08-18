@@ -32,7 +32,7 @@ from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
-from helpers.training.adapter import determine_adapter_target_modules
+from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
 from helpers.training.text_encoding import (
     load_tes,
@@ -80,6 +80,11 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
+
+try:
+    from lycoris import LycorisNetwork
+except:
+    print("[ERROR] Lycoris not available. Please install ")
 from tqdm.auto import tqdm
 from transformers import PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
@@ -112,6 +117,14 @@ from helpers.models.flux import (
     pack_latents,
     unpack_latents,
 )
+
+is_optimi_available = False
+try:
+    from optimi import prepare_for_gradient_release
+
+    is_optimi_available = True
+except:
+    pass
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -541,31 +554,25 @@ def main():
         else:
             logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
     if "quanto" in args.base_model_precision:
-        try:
-            from optimum.quanto import QTensor
-
-            # from helpers.training.quantisation.peft_workarounds import (
-            #     custom_module_mapping as quanto_peft_module_mapping,
-            # )
-
-            is_quanto = True
-        except ImportError as e:
-            raise ImportError(
-                f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-            )
+        is_quanto = True
         from helpers.training.quantisation import quantoise
 
         # we'll quantise pretty much everything but the adapter, if we execute this here.
-        quantoise(
-            unet=unet,
-            transformer=transformer,
-            text_encoder_1=text_encoder_1,
-            text_encoder_2=text_encoder_2,
-            text_encoder_3=text_encoder_3,
-            args=args,
-        )
+        if not args.controlnet:
+            with accelerator.local_main_process_first():
+                quantoise(
+                    unet=unet,
+                    transformer=transformer,
+                    text_encoder_1=text_encoder_1,
+                    text_encoder_2=text_encoder_2,
+                    text_encoder_3=text_encoder_3,
+                    controlnet=None,
+                    args=args,
+                )
 
     controlnet = None
+    lycoris_wrapped_network = None
+    lycoris_config = None
     if args.controlnet:
         if any(
             [
@@ -588,8 +595,20 @@ def main():
         else:
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
+        if "quanto" in args.base_model_precision:
+            # we'll quantise pretty much everything but the adapter, if we execute this here.
+            with accelerator.local_main_process_first():
+                quantoise(
+                    unet=unet,
+                    transformer=transformer,
+                    text_encoder_1=text_encoder_1,
+                    text_encoder_2=text_encoder_2,
+                    text_encoder_3=text_encoder_3,
+                    controlnet=controlnet,
+                    args=args,
+                )
 
-    elif "lora" in args.model_type:
+    elif "lora" in args.model_type and "Standard" == args.lora_type:
         if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
 
@@ -646,6 +665,20 @@ def main():
             #     )
             logger.info("Adding LoRA adapter to the unet model..")
             unet.add_adapter(unet_lora_config)
+            if args.init_lora:
+                addkeys, misskeys = load_lora_weights(
+                    {"unet": unet}, args.init_lora, use_dora=args.use_dora
+                )
+                if addkeys:
+                    logger.warning(
+                        "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
+                        % (args.init_lora, str(addkeys))
+                    )
+                if misskeys:
+                    logger.warning(
+                        "The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys."
+                        % (args.init_lora, str(misskeys))
+                    )
         elif transformer is not None:
             transformer_lora_config = LoraConfig(
                 r=args.lora_rank,
@@ -657,6 +690,87 @@ def main():
                 use_dora=args.use_dora,
             )
             transformer.add_adapter(transformer_lora_config)
+
+            if args.init_lora:
+                addkeys, misskeys = load_lora_weights(
+                    {"transformer": transformer}, args.init_lora, use_dora=args.use_dora
+                )
+                if addkeys:
+                    logger.warning(
+                        "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
+                        % (args.init_lora, str(addkeys))
+                    )
+                if misskeys:
+                    logger.warning(
+                        "The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys."
+                        % (args.init_lora, str(misskeys))
+                    )
+
+    elif "lora" in args.model_type and "lycoris" == args.lora_type:
+        from lycoris import create_lycoris
+
+        if args.lycoris_config is None:
+            raise ValueError(
+                "--lora_type=lycoris requires you to add a JSON "
+                + "configuration file location with --lycoris_config"
+            )
+
+        with open(args.lycoris_config, "r") as f:
+            lycoris_config = json.load(f)
+
+        assert (
+            "multiplier" in lycoris_config
+        ), "lycoris_config JSON must contain multiplier key"
+        multiplier = int(lycoris_config["multiplier"])
+        assert (
+            "linear_dim" in lycoris_config
+        ), "lycoris_config JSON must contain linear_dim key"
+        linear_dim = int(lycoris_config["linear_dim"])
+        assert (
+            "linear_alpha" in lycoris_config
+        ), "lycoris_config JSON must contain linear_alpha key"
+        linear_alpha = int(lycoris_config["linear_alpha"])
+
+        apply_preset = lycoris_config["apply_preset"]
+        if apply_preset is not None and apply_preset != {}:
+            LycorisNetwork.apply_preset(apply_preset)
+
+        # This is a kwarg, but mandatory.
+        assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
+
+        # Remove the positional arguments we extracted.
+        del lycoris_config["multiplier"]
+        del lycoris_config["linear_dim"]
+        del lycoris_config["linear_alpha"]
+
+        logger.info(f"Using lycoris training mode")
+        if webhook_handler is not None:
+            webhook_handler.send(message="Using lycoris training mode.")
+
+        # Freeze the models.
+        model_for_lycoris_wrap = None
+        if transformer is not None:
+            transformer.requires_grad_(False)
+            model_for_lycoris_wrap = transformer
+        if unet is not None:
+            unet.requires_grad_(False)
+            model_for_lycoris_wrap = unet
+
+        lycoris_wrapped_network = create_lycoris(
+            model_for_lycoris_wrap,
+            multiplier,
+            linear_dim,
+            linear_alpha,
+            **lycoris_config,
+        )
+        lycoris_wrapped_network.apply_to()
+        setattr(accelerator, "_lycoris_wrapped_network", lycoris_wrapped_network)
+        lycoris_num_params = sum(
+            p.numel() for p in lycoris_wrapped_network.parameters()
+        )
+        logger.info(
+            f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters"
+        )
 
     if args.controlnet:
         # We freeze the base u-net for controlnet training.
@@ -733,10 +847,7 @@ def main():
             #     text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
-    extra_optimizer_args = {
-        "weight_decay": args.adam_weight_decay,
-        "eps": args.adam_epsilon,
-    }
+    extra_optimizer_args = {"lr": args.learning_rate}
     use_deepspeed_optimizer = False
     use_deepspeed_scheduler = False
     if (
@@ -805,6 +916,7 @@ def main():
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
         model_type_label=model_type_label,
+        lycoris_wrapped_network=lycoris_wrapped_network,
     )
 
     if use_deepspeed_optimizer:
@@ -829,15 +941,32 @@ def main():
             params_to_optimize,
             **extra_optimizer_args,
         )
+
+    if (
+        is_optimi_available
+        and args.optimizer_release_gradients
+        and "optimi" in args.optimizer
+    ):
+        logger.info("Marking model for gradient release.")
+        prepare_for_gradient_release(
+            (
+                controlnet
+                if args.controlnet
+                else transformer if transformer is not None else unet
+            ),
+            optimizer,
+        )
+
     from helpers.training.custom_schedule import get_lr_scheduler
 
-    logger.info(
-        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
-    )
-    lr_scheduler = get_lr_scheduler(
-        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    )
-    if use_deepspeed_scheduler:
+    if not use_deepspeed_scheduler:
+        logger.info(
+            f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+        )
+        lr_scheduler = get_lr_scheduler(
+            args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+        )
+    else:
         logger.info(f"Using DeepSpeed learning rate scheduler")
         lr_scheduler = accelerate.utils.DummyScheduler(
             optimizer,
@@ -1094,6 +1223,19 @@ def main():
         else:
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            try:
+                if "constant" in args.lr_scheduler:
+                    for g in optimizer.param_groups:
+                        if "lr" in g:
+                            g["lr"] = torch.tensor(args.learning_rate)
+                    for k, v in lr_scheduler.state_dict().items():
+                        if k in ("base_lrs", "_last_lr"):
+                            v[0] = args.learning_rate
+            except Exception as e:
+                logger.error(
+                    f"Could not update lr_scheduler {args.lr_scheduler} learning rate to {args.learning_rate} upon resume: {e}"
+                )
+
             for _, backend in StateTracker.get_data_backends().items():
                 if "sampler" in backend:
                     backend["sampler"].load_states(
@@ -1130,11 +1272,6 @@ def main():
         logger.info(
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
-
-    # if not use_deepspeed_scheduler:
-    #     lr_scheduler = get_lr_scheduler(
-    #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    #     )
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
@@ -1173,6 +1310,10 @@ def main():
             transformer.to(accelerator.device)
         else:
             transformer.to(accelerator.device, dtype=weight_dtype)
+    if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
+        accelerator._lycoris_wrapped_network = accelerator._lycoris_wrapped_network.to(
+            accelerator.device, dtype=weight_dtype
+        )
     if args.enable_xformers_memory_efficient_attention and not any(
         [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
     ):
@@ -1415,6 +1556,10 @@ def main():
                             )
 
                 bsz = latents.shape[0]
+                if int(bsz) != int(args.train_batch_size):
+                    logger.error(
+                        f"Received {bsz} latents, but expected {args.train_batch_size}. Processing short batch."
+                    )
                 training_logger.debug(f"Working on batch size: {bsz}")
                 if flow_matching:
                     if not args.flux_fast_schedule:
@@ -1425,16 +1570,26 @@ def main():
                             args.flow_matching_sigmoid_scale
                             * torch.randn((bsz,), device=accelerator.device)
                         )
-                        timesteps = sigmas * 1000.0
-                        sigmas = sigmas.view(-1, 1, 1, 1)
                     else:
                         # fast schedule can only use these sigmas, and they can be sampled up to batch size times
-                        available_sigmas = [0.7, 0.1]
+                        available_sigmas = [
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            0.75,
+                            0.5,
+                            0.25,
+                        ]
                         sigmas = torch.tensor(
                             random.choices(available_sigmas, k=bsz),
                             device=accelerator.device,
                         )
-                        timesteps = sigmas * 1000.0
+                    timesteps = sigmas * 1000.0
+                    sigmas = sigmas.view(-1, 1, 1, 1)
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
                     # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
@@ -1469,9 +1624,7 @@ def main():
                         input_perturbation *= 1.0 - (
                             global_step / args.input_perturbation_steps
                         )
-                    input_noise = noise + input_perturbation * torch.randn_like(
-                        latents
-                    )
+                    input_noise = noise + input_perturbation * torch.randn_like(latents)
                 else:
                     input_noise = noise
 
@@ -1729,11 +1882,11 @@ def main():
                             "Unknown error occurred, no prediction could be made."
                         )
                     # if we're quantising with quanto, we need to dequantise the result
-                    if "quanto" in args.base_model_precision:
-                        if hasattr(model_pred, "dequantize") and isinstance(
-                            model_pred, QTensor
-                        ):
-                            model_pred = model_pred.dequantize()
+                    # if "quanto" in args.base_model_precision:
+                    #     if hasattr(model_pred, "dequantize") and isinstance(
+                    #         model_pred, QTensor
+                    #     ):
+                    #         model_pred = model_pred.dequantize()
 
                     if args.flux:
                         model_pred = unpack_latents(
@@ -1829,25 +1982,32 @@ def main():
                     grad_norm = None
                     if (
                         accelerator.sync_gradients
-                        and not args.use_adafactor_optimizer
+                        and args.optimizer != "optimi-stableadamw"
                         and args.max_grad_norm > 0
                     ):
-                        # Adafactor shouldn't have gradient clipping applied.
+                        # StableAdamW does not need clipping, similar to Adafactor.
                         grad_norm = accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
                     training_logger.debug("Stepping components forward.")
-                    optimizer.step()
-                    lr_scheduler.step(**scheduler_kwargs)
+                    if args.optimizer_release_gradients:
+                        step_offset = 0  # simpletuner indexes steps from 1.
+                        should_not_release_gradients = (
+                            step + step_offset
+                        ) % args.gradient_accumulation_steps != 0
+                        training_logger.debug(
+                            f"step: {step}, should_not_release_gradients: {should_not_release_gradients}, args.optimizer_release_gradients: {args.optimizer_release_gradients}"
+                        )
+                        optimizer.optimizer_accumulation = should_not_release_gradients
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    if args.use_adafactor_optimizer:
-                        lr = lr_scheduler.get_lr()[0]
-                    else:
-                        lr = lr_scheduler.get_last_lr()[0]
+                    lr_scheduler.step(**scheduler_kwargs)
+                    lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
@@ -2289,6 +2449,16 @@ def main():
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
+
+            # Save final LyCORIS checkpoint.
+            if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
+                from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+                accelerator._lycoris_wrapped_network.save_weights(
+                    os.path.join(args.output_dir, LORA_SAFETENSORS_FILENAME),
+                    list(accelerator._lycoris_wrapped_network.parameters())[0].dtype,
+                    {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+                )
 
         if args.push_to_hub and accelerator.is_main_process:
             hub_manager.upload_model(validation_images, webhook_handler)
