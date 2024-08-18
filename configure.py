@@ -390,7 +390,8 @@ def configure_env():
     env_contents["ALLOW_TF32"] = "false"
     if torch.cuda.is_available():
         use_tf32 = (
-            prompt_user("Would you like to enable TF32 mode? (y/n)", "n").lower() == "y"
+            prompt_user("Would you like to enable TF32 mode? ([y]/n)", "y").lower()
+            == "y"
         )
         if use_tf32:
             env_contents["ALLOW_TF32"] = "true"
