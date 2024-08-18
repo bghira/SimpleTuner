@@ -559,15 +559,16 @@ def main():
 
         # we'll quantise pretty much everything but the adapter, if we execute this here.
         if not args.controlnet:
-            quantoise(
-                unet=unet,
-                transformer=transformer,
-                text_encoder_1=text_encoder_1,
-                text_encoder_2=text_encoder_2,
-                text_encoder_3=text_encoder_3,
-                controlnet=None,
-                args=args,
-            )
+            with accelerator.local_main_process_first():
+                quantoise(
+                    unet=unet,
+                    transformer=transformer,
+                    text_encoder_1=text_encoder_1,
+                    text_encoder_2=text_encoder_2,
+                    text_encoder_3=text_encoder_3,
+                    controlnet=None,
+                    args=args,
+                )
 
     controlnet = None
     lycoris_wrapped_network = None
@@ -596,15 +597,16 @@ def main():
             controlnet = ControlNetModel.from_unet(unet)
         if "quanto" in args.base_model_precision:
             # we'll quantise pretty much everything but the adapter, if we execute this here.
-            quantoise(
-                unet=unet,
-                transformer=transformer,
-                text_encoder_1=text_encoder_1,
-                text_encoder_2=text_encoder_2,
-                text_encoder_3=text_encoder_3,
-                controlnet=controlnet,
-                args=args,
-            )
+            with accelerator.local_main_process_first():
+                quantoise(
+                    unet=unet,
+                    transformer=transformer,
+                    text_encoder_1=text_encoder_1,
+                    text_encoder_2=text_encoder_2,
+                    text_encoder_3=text_encoder_3,
+                    controlnet=controlnet,
+                    args=args,
+                )
 
     elif "lora" in args.model_type and "Standard" == args.lora_type:
         if args.pixart_sigma:
@@ -1557,7 +1559,18 @@ def main():
                         )
                     else:
                         # fast schedule can only use these sigmas, and they can be sampled up to batch size times
-                        available_sigmas = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.75, 0.5, 0.25]
+                        available_sigmas = [
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            0.75,
+                            0.5,
+                            0.25,
+                        ]
                         sigmas = torch.tensor(
                             random.choices(available_sigmas, k=bsz),
                             device=accelerator.device,
