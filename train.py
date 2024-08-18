@@ -554,29 +554,19 @@ def main():
         else:
             logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
     if "quanto" in args.base_model_precision:
-        try:
-            # from optimum.quanto import QTensor
-
-            # from helpers.training.quantisation.peft_workarounds import (
-            #     custom_module_mapping as quanto_peft_module_mapping,
-            # )
-
-            is_quanto = True
-        except ImportError as e:
-            raise ImportError(
-                f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-            )
+        is_quanto = True
         from helpers.training.quantisation import quantoise
 
         # we'll quantise pretty much everything but the adapter, if we execute this here.
-        quantoise(
-            unet=unet,
-            transformer=transformer,
-            text_encoder_1=text_encoder_1,
-            text_encoder_2=text_encoder_2,
-            text_encoder_3=text_encoder_3,
-            args=args,
-        )
+        if not args.controlnet:
+            quantoise(
+                unet=unet,
+                transformer=transformer,
+                text_encoder_1=text_encoder_1,
+                text_encoder_2=text_encoder_2,
+                text_encoder_3=text_encoder_3,
+                args=args,
+            )
 
     controlnet = None
     lycoris_wrapped_network = None
@@ -603,6 +593,17 @@ def main():
         else:
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
+        if "quanto" in args.base_model_precision:
+            # we'll quantise pretty much everything but the adapter, if we execute this here.
+            quantoise(
+                unet=unet,
+                transformer=transformer,
+                text_encoder_1=text_encoder_1,
+                text_encoder_2=text_encoder_2,
+                text_encoder_3=text_encoder_3,
+                controlnet=controlnet,
+                args=args,
+            )
 
     elif "lora" in args.model_type and "Standard" == args.lora_type:
         if args.pixart_sigma:
