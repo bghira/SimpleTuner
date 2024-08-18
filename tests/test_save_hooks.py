@@ -26,7 +26,13 @@ class TestSaveHookManager(unittest.TestCase):
         )
         self.text_encoder_two = text_encoder_2
 
-        args = Namespace(controlnet=None, sd3=False, flux=False, pixart_sigma=False)
+        args = Namespace(
+            controlnet=None,
+            sd3=False,
+            flux=False,
+            pixart_sigma=False,
+            flux_attention_masked_training=False,
+        )
         if model_type == "sd3":
             args.sd3 = True
         elif model_type == "flux":
