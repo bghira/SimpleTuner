@@ -138,8 +138,14 @@ class SaveHookManager:
             if args.sd3:
                 self.denoiser_class = SD3Transformer2DModel
                 self.pipeline_class = StableDiffusion3Pipeline
-            elif args.flux:
+            elif args.flux and not args.flux_attention_masked_training:
                 self.denoiser_class = FluxTransformer2DModel
+                self.pipeline_class = FluxPipeline
+            elif args.flux and args.flux_attention_masked_training:
+                from helpers.models.flux.transformer import (
+                    FluxTransformer2DModelWithMasking
+                )
+                self.denoiser_class = FluxTransformer2DModelWithMasking
                 self.pipeline_class = FluxPipeline
             elif hasattr(args, "hunyuan_dit") and args.hunyuan_dit:
                 self.denoiser_class = HunyuanDiT2DModel
