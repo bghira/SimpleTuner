@@ -101,7 +101,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         if "csv_caption_column" in backend:
             output["config"]["csv_caption_column"] = backend["csv_caption_column"]
     if "crop_aspect" in backend:
-        choices = ["square", "preserve", "random"]
+        choices = ["square", "preserve", "random", "closest"]
         if backend.get("crop_aspect", None) not in choices:
             raise ValueError(
                 f"(id={backend['id']}) crop_aspect must be one of {choices}."
@@ -109,8 +109,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop_aspect"] = backend["crop_aspect"]
         if (
             output["config"]["crop_aspect"] == "random"
-            and "crop_aspect_buckets" not in backend
-        ):
+            or output["config"]["crop_aspect"] == "closest"
+        ) and "crop_aspect_buckets" not in backend:
             raise ValueError(
                 f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
                 " This should be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
