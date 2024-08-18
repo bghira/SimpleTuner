@@ -309,6 +309,30 @@ def parse_args(input_args=None):
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
+        "--pretrained_transformer_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained transformer model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_transformer_subfolder",
+        type=str,
+        default="transformer",
+        help="The subfolder to load the transformer model from. Use 'none' for a flat directory.",
+    )
+    parser.add_argument(
+        "--pretrained_unet_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained unet model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_unet_subfolder",
+        type=str,
+        default="unet",
+        help="The subfolder to load the unet model from. Use 'none' for a flat directory.",
+    )
+    parser.add_argument(
         "--pretrained_vae_model_name_or_path",
         type=str,
         default="madebyollin/sdxl-vae-fp16-fix",

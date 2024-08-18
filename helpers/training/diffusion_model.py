@@ -6,6 +6,13 @@ logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", 
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
+
+def determine_subfolder(folder_value: str = None):
+    if folder_value is None or str(folder_value).lower() == "none":
+        return None
+    return str(folder_value)
+
+
 def load_diffusion_model(args, weight_dtype):
     pretrained_load_args = {
         "revision": args.revision,
@@ -13,7 +20,7 @@ def load_diffusion_model(args, weight_dtype):
     }
     unet = None
     transformer = None
-    
+
     if args.sd3:
         # Stable Diffusion 3 uses a Diffusion transformer.
         logger.info("Loading Stable Diffusion 3 diffusion transformer..")
@@ -24,16 +31,18 @@ def load_diffusion_model(args, weight_dtype):
                 f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
             )
         transformer = SD3Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
+            args.pretrained_transformer_model_name_or_path
+            or args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
     elif args.flux:
         from diffusers.models import FluxTransformer2DModel
 
         transformer = FluxTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
+            args.pretrained_transformer_model_name_or_path
+            or args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
@@ -41,8 +50,9 @@ def load_diffusion_model(args, weight_dtype):
         from diffusers.models import PixArtTransformer2DModel
 
         transformer = PixArtTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
+            args.pretrained_transformer_model_name_or_path
+            or args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
@@ -74,7 +84,10 @@ def load_diffusion_model(args, weight_dtype):
             unet_variant = "fp16"
         pretrained_load_args["variant"] = unet_variant
         unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
+            args.pretrained_unet_model_name_or_path
+            or args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_unet_subfolder),
+            **pretrained_load_args,
         )
 
     return unet, transformer
