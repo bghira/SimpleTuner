@@ -731,7 +731,7 @@ def main():
         ), "lycoris_config JSON must contain linear_alpha key"
         linear_alpha = int(lycoris_config["linear_alpha"])
 
-        apply_preset = lycoris_config["apply_preset"]
+        apply_preset = lycoris_config.get("apply_preset", None)
         if apply_preset is not None and apply_preset != {}:
             LycorisNetwork.apply_preset(apply_preset)
 
