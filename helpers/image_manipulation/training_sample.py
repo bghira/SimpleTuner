@@ -236,13 +236,10 @@ class TrainingSample:
             )
             # our aspect ratio is w / h
             # so portrait is < 1.0 and landscape is > 1.0
-            if not has_portrait_buckets or not has_landscape_buckets:
+            if not has_portrait_buckets and not has_landscape_buckets:
                 return 1.0
-            if (
-                not has_portrait_buckets
-                and self.aspect_ratio < 1.0
-                or not has_landscape_buckets
-                and self.aspect_ratio > 1.0
+            if (not has_portrait_buckets and self.aspect_ratio < 1.0) or (
+                not has_landscape_buckets and self.aspect_ratio > 1.0
             ):
                 logger.warning(
                     f"No {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect buckets found, defaulting to 1.0 square crop. Define a {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect bucket to avoid this warning"
@@ -266,13 +263,10 @@ class TrainingSample:
             has_portrait_buckets = any(
                 bucket < 1.0 for bucket in self.crop_aspect_buckets
             )
-            if not has_portrait_buckets or not has_landscape_buckets:
+            if not has_portrait_buckets and not has_landscape_buckets:
                 return 1.0
-            if (
-                not has_portrait_buckets
-                and self.aspect_ratio < 1.0
-                or not has_landscape_buckets
-                and self.aspect_ratio > 1.0
+            if (not has_portrait_buckets and self.aspect_ratio < 1.0) or (
+                not has_landscape_buckets and self.aspect_ratio > 1.0
             ):
                 logger.warning(
                     f"No {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect buckets found, defaulting to 1.0 square crop. Define a {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect bucket to avoid this warning"
