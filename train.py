@@ -1541,6 +1541,10 @@ def main():
                             )
 
                 bsz = latents.shape[0]
+                if int(bsz) != int(args.train_batch_size):
+                    logger.error(
+                        f"Received {bsz} latents, but expected {args.train_batch_size}. Processing short batch."
+                    )
                 training_logger.debug(f"Working on batch size: {bsz}")
                 if flow_matching:
                     if not args.flux_fast_schedule:
