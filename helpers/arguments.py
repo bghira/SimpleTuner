@@ -173,6 +173,12 @@ def parse_args(input_args=None):
         default=4.0,
     )
     parser.add_argument(
+        '--flux_attention_masked_training',
+        action="store_true",
+        default=False,
+        help="Use attention masking while training flux.",
+    )
+    parser.add_argument(
         "--smoldit",
         action="store_true",
         default=False,

@@ -36,13 +36,24 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
-    elif args.flux:
+    elif args.flux and not args.flux_attention_masked_training:
         from diffusers.models import FluxTransformer2DModel
 
         transformer = FluxTransformer2DModel.from_pretrained(
             args.pretrained_transformer_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
+            torch_dtype=weight_dtype,
+            **pretrained_load_args,
+        )
+    elif args.flux and args.flux_attention_masked_training:
+        from helpers.models.flux.transformer import (
+            FluxTransformer2DModelWithMasking,
+        )
+
+        transformer = FluxTransformer2DModelWithMasking.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="transformer",
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )

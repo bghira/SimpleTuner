@@ -1791,26 +1791,31 @@ def main():
                             f"\n-> Guidance: {guidance}"
                             f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
                         )
-                        model_pred = transformer(
-                            hidden_states=packed_noisy_latents.to(
+
+                        flux_transformer_kwargs = {
+                            'hidden_states': packed_noisy_latents.to(
                                 dtype=base_weight_dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
-                            timestep=timesteps,
-                            guidance=guidance,
-                            pooled_projections=batch["add_text_embeds"].to(
+                            'timestep': timesteps,
+                            'guidance': guidance,
+                            'pooled_projections': batch["add_text_embeds"].to(
                                 device=accelerator.device, dtype=base_weight_dtype
                             ),
-                            encoder_hidden_states=batch["prompt_embeds"].to(
+                            'encoder_hidden_states': batch["prompt_embeds"].to(
                                 device=accelerator.device, dtype=base_weight_dtype
                             ),
-                            txt_ids=text_ids.to(
+                            'txt_ids': text_ids.to(
                                 device=accelerator.device, dtype=base_weight_dtype
                             ),
-                            img_ids=img_ids,
-                            joint_attention_kwargs=None,
-                            return_dict=False,
-                        )[0]
+                            'img_ids': img_ids,
+                            'joint_attention_kwargs': None,
+                            'return_dict': False,
+                        }
+                        if args.flux_attention_masked_training:
+                            flux_transformer_kwargs["attention_mask"] = batch["encoder_attention_mask"]
+
+                        model_pred = transformer(**flux_transformer_kwargs)[0]
 
                     elif args.sd3:
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced

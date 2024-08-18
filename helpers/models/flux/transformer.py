@@ -24,8 +24,7 @@ from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import (
     Attention,
-    FluxAttnProcessor2_0,
-    FluxSingleAttnProcessor2_0,
+    apply_rope,
 )
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import (
@@ -41,77 +40,198 @@ from diffusers.utils import (
     unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import maybe_allow_in_graph
-from diffusers.pipelines.embeddings import (
+from diffusers.models.embeddings import (
     CombinedTimestepGuidanceTextProjEmbeddings,
     CombinedTimestepTextProjEmbeddings,
 )
-from diffusers.models import Transformer2DModelOutput
+from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-class CombinedTimestepTextProjEmbeddings(nn.Module):
-    def __init__(self, embedding_dim, pooled_projection_dim):
-        super().__init__()
+class FluxSingleAttnProcessor2_0:
+    r"""
+    Processor for implementing scaled dot-product attention (enabled by default if you're using PyTorch 2.0).
+    """
 
-        self.time_proj = Timesteps(
-            num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        input_ndim = hidden_states.ndim
+
+        if input_ndim == 4:
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+
+        batch_size, _, _ = hidden_states.shape
+        query = attn.to_q(hidden_states)
+        key = attn.to_k(hidden_states)
+        value = attn.to_v(hidden_states)
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query = attn.norm_q(query)
+        if attn.norm_k is not None:
+            key = attn.norm_k(key)
+
+        # Apply RoPE if needed
+        if image_rotary_emb is not None:
+            # YiYi to-do: update uising apply_rotary_emb
+            # from ..embeddings import apply_rotary_emb
+            # query = apply_rotary_emb(query, image_rotary_emb)
+            # key = apply_rotary_emb(key, image_rotary_emb)
+            query, key = apply_rope(query, key, image_rotary_emb)
+
+        if attention_mask is not None:
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            attention_mask = (attention_mask > 0).bool()
+            attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
+
+        # the output of sdp = (batch, num_heads, seq_len, head_dim)
+        # TODO: add support for attn.scale when we move to Torch 2.1
+        hidden_states = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            dropout_p=0.0,
+            is_causal=False,
+            attn_mask=attention_mask,
         )
-        self.timestep_embedder = TimestepEmbedding(
-            in_channels=256, time_embed_dim=embedding_dim
+
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        hidden_states = hidden_states.to(query.dtype)
+
+        if input_ndim == 4:
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+
+        return hidden_states
+
+
+class FluxAttnProcessor2_0:
+    """Attention processor used typically in processing the SD3-like self-attention projections."""
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError("FluxAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+
+    def __call__(
+        self,
+        attn: Attention,
+        hidden_states: torch.FloatTensor,
+        encoder_hidden_states: torch.FloatTensor = None,
+        attention_mask: Optional[torch.FloatTensor] = None,
+        image_rotary_emb: Optional[torch.Tensor] = None,
+    ) -> torch.FloatTensor:
+        input_ndim = hidden_states.ndim
+        if input_ndim == 4:
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+        context_input_ndim = encoder_hidden_states.ndim
+        if context_input_ndim == 4:
+            batch_size, channel, height, width = encoder_hidden_states.shape
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+
+        batch_size = encoder_hidden_states.shape[0]
+
+        # `sample` projections.
+        query = attn.to_q(hidden_states)
+        key = attn.to_k(hidden_states)
+        value = attn.to_v(hidden_states)
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query = attn.norm_q(query)
+        if attn.norm_k is not None:
+            key = attn.norm_k(key)
+
+        # `context` projections.
+        encoder_hidden_states_query_proj = attn.add_q_proj(encoder_hidden_states)
+        encoder_hidden_states_key_proj = attn.add_k_proj(encoder_hidden_states)
+        encoder_hidden_states_value_proj = attn.add_v_proj(encoder_hidden_states)
+
+        encoder_hidden_states_query_proj = encoder_hidden_states_query_proj.view(
+            batch_size, -1, attn.heads, head_dim
+        ).transpose(1, 2)
+        encoder_hidden_states_key_proj = encoder_hidden_states_key_proj.view(
+            batch_size, -1, attn.heads, head_dim
+        ).transpose(1, 2)
+        encoder_hidden_states_value_proj = encoder_hidden_states_value_proj.view(
+            batch_size, -1, attn.heads, head_dim
+        ).transpose(1, 2)
+
+        if attn.norm_added_q is not None:
+            encoder_hidden_states_query_proj = attn.norm_added_q(encoder_hidden_states_query_proj)
+        if attn.norm_added_k is not None:
+            encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj)
+
+        # attention
+        query = torch.cat([encoder_hidden_states_query_proj, query], dim=2)
+        key = torch.cat([encoder_hidden_states_key_proj, key], dim=2)
+        value = torch.cat([encoder_hidden_states_value_proj, value], dim=2)
+
+        if image_rotary_emb is not None:
+            # YiYi to-do: update uising apply_rotary_emb
+            # from ..embeddings import apply_rotary_emb
+            # query = apply_rotary_emb(query, image_rotary_emb)
+            # key = apply_rotary_emb(key, image_rotary_emb)
+            query, key = apply_rope(query, key, image_rotary_emb)
+
+        if attention_mask is not None:
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            attention_mask = (attention_mask > 0).bool()
+            attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
+
+        hidden_states = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            dropout_p=0.0,
+            is_causal=False,
+            attn_mask=attention_mask,
         )
-        self.text_embedder = PixArtAlphaTextProjection(
-            pooled_projection_dim, embedding_dim, act_fn="silu"
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        hidden_states = hidden_states.to(query.dtype)
+
+        encoder_hidden_states, hidden_states = (
+            hidden_states[:, : encoder_hidden_states.shape[1]],
+            hidden_states[:, encoder_hidden_states.shape[1] :],
         )
 
-    def forward(self, timestep, pooled_projection):
-        timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(
-            timesteps_proj.to(dtype=pooled_projection.dtype)
-        )  # (N, D)
+        # linear proj
+        hidden_states = attn.to_out[0](hidden_states)
+        # dropout
+        hidden_states = attn.to_out[1](hidden_states)
+        encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
 
-        pooled_projections = self.text_embedder(pooled_projection)
+        if input_ndim == 4:
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+        if context_input_ndim == 4:
+            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
-        conditioning = timesteps_emb + pooled_projections
-
-        return conditioning
-
-
-class CombinedTimestepGuidanceTextProjEmbeddings(nn.Module):
-    def __init__(self, embedding_dim, pooled_projection_dim):
-        super().__init__()
-
-        self.time_proj = Timesteps(
-            num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0
-        )
-        self.timestep_embedder = TimestepEmbedding(
-            in_channels=256, time_embed_dim=embedding_dim
-        )
-        self.guidance_embedder = TimestepEmbedding(
-            in_channels=256, time_embed_dim=embedding_dim
-        )
-        self.text_embedder = PixArtAlphaTextProjection(
-            pooled_projection_dim, embedding_dim, act_fn="silu"
-        )
-
-    def forward(self, timestep, guidance, pooled_projection):
-        timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(
-            timesteps_proj.to(dtype=pooled_projection.dtype)
-        )  # (N, D)
-
-        guidance_proj = self.time_proj(guidance)
-        guidance_emb = self.guidance_embedder(
-            guidance_proj.to(dtype=pooled_projection.dtype)
-        )  # (N, D)
-
-        time_guidance_emb = timesteps_emb + guidance_emb
-
-        pooled_projections = self.text_embedder(pooled_projection)
-        conditioning = time_guidance_emb + pooled_projections
-
-        return conditioning
+        return hidden_states, encoder_hidden_states
 
 
 # YiYi to-do: refactor rope related functions/classes
@@ -147,6 +267,26 @@ class EmbedND(nn.Module):
         )
 
         return emb.unsqueeze(1)
+
+
+def expand_flux_attention_mask(
+    hidden_states: torch.Tensor,
+    attn_mask: torch.Tensor,
+) -> torch.Tensor:
+    '''
+    Expand a mask so that the image is included.
+    '''
+    bsz = attn_mask.shape[0]
+    assert bsz == hidden_states.shape[0]
+    residual_seq_len = hidden_states.shape[1]
+    mask_seq_len = attn_mask.shape[1]
+
+    expanded_mask = torch.ones(bsz, residual_seq_len)
+
+    start_index = residual_seq_len - mask_seq_len
+    expanded_mask[:, start_index:] = attn_mask
+
+    return expanded_mask
 
 
 @maybe_allow_in_graph
@@ -192,17 +332,26 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
+        attention_mask: Optional[torch.Tensor]=None,
     ):
         residual = hidden_states
         norm_hidden_states, gate = self.norm(hidden_states, emb=temb)
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
 
+        if attention_mask is not None:
+            attention_mask = expand_flux_attention_mask(
+                hidden_states,
+                attention_mask,
+            )
+
         attn_output = self.attn(
             hidden_states=norm_hidden_states,
             image_rotary_emb=image_rotary_emb,
+            attention_mask=attention_mask,
         )
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
+        gate = gate.unsqueeze(1)
         hidden_states = gate * self.proj_out(hidden_states)
         hidden_states = residual + hidden_states
 
@@ -271,6 +420,7 @@ class FluxTransformerBlock(nn.Module):
         encoder_hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
+        attention_mask: Optional[torch.Tensor]=None,
     ):
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
             hidden_states, emb=temb
@@ -280,11 +430,18 @@ class FluxTransformerBlock(nn.Module):
             self.norm1_context(encoder_hidden_states, emb=temb)
         )
 
+        if attention_mask is not None:
+            attention_mask = expand_flux_attention_mask(
+                torch.cat([hidden_states, encoder_hidden_states], dim=1),
+                attention_mask,
+            )
+
         # Attention.
         attn_output, context_attn_output = self.attn(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=norm_encoder_hidden_states,
             image_rotary_emb=image_rotary_emb,
+            attention_mask=attention_mask,
         )
 
         # Process attention outputs for the `hidden_states`.
@@ -320,7 +477,7 @@ class FluxTransformerBlock(nn.Module):
         return encoder_hidden_states, hidden_states
 
 
-class FluxTransformer2DModel(
+class FluxTransformer2DModelWithMasking(
     ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
 ):
     """
@@ -354,6 +511,7 @@ class FluxTransformer2DModel(
         joint_attention_dim: int = 4096,
         pooled_projection_dim: int = 768,
         guidance_embeds: bool = False,
+        axes_dims_rope: List[int] = [16, 56, 56],
     ):
         super().__init__()
         self.out_channels = in_channels
@@ -361,7 +519,7 @@ class FluxTransformer2DModel(
             self.config.num_attention_heads * self.config.attention_head_dim
         )
 
-        self.pos_embed = EmbedND(dim=self.inner_dim, theta=10000, axes_dim=[16, 56, 56])
+        self.pos_embed = EmbedND(dim=self.inner_dim, theta=10000, axes_dim=axes_dims_rope)
         text_time_guidance_cls = (
             CombinedTimestepGuidanceTextProjEmbeddings
             if guidance_embeds
@@ -408,6 +566,10 @@ class FluxTransformer2DModel(
 
         self.gradient_checkpointing = False
 
+    def _set_gradient_checkpointing(self, module, value=False):
+        if hasattr(module, "gradient_checkpointing"):
+            module.gradient_checkpointing = value
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -419,9 +581,10 @@ class FluxTransformer2DModel(
         guidance: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
-        The [`FluxTransformer2DModel`] forward method.
+        The [`FluxTransformer2DModelWithMasking`] forward method.
 
         Args:
             hidden_states (`torch.FloatTensor` of shape `(batch size, channel, height, width)`):
@@ -502,6 +665,7 @@ class FluxTransformer2DModel(
                         encoder_hidden_states,
                         temb,
                         image_rotary_emb,
+                        attention_mask,
                         **ckpt_kwargs,
                     )
                 )
@@ -512,6 +676,7 @@ class FluxTransformer2DModel(
                     encoder_hidden_states=encoder_hidden_states,
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
+                    attention_mask=attention_mask,
                 )
 
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -536,6 +701,7 @@ class FluxTransformer2DModel(
                     hidden_states,
                     temb,
                     image_rotary_emb,
+                    attention_mask,
                     **ckpt_kwargs,
                 )
 
@@ -544,6 +710,7 @@ class FluxTransformer2DModel(
                     hidden_states=hidden_states,
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
+                    attention_mask=attention_mask,
                 )
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
@@ -559,3 +726,98 @@ class FluxTransformer2DModel(
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+
+
+if __name__ == '__main__':
+    dtype = torch.bfloat16
+    bsz = 2
+    img = torch.rand((bsz, 16, 64, 64)).to('cuda', dtype=dtype)
+    timestep = torch.tensor([0.5, 0.5]).to('cuda', dtype=torch.float32)
+    pooled = torch.rand(bsz, 768).to('cuda', dtype=dtype)
+    text = torch.rand((bsz, 512, 4096)).to('cuda', dtype=dtype)
+    attn_mask = torch.tensor([[1.0]*384 + [0.0]*128]*bsz).to('cuda', dtype=dtype)  # Last 128 positions are masked
+
+    def _pack_latents(latents, batch_size, num_channels_latents, height, width):
+        latents = latents.view(
+            batch_size, num_channels_latents, height // 2, 2, width // 2, 2
+        )
+        latents = latents.permute(0, 2, 4, 1, 3, 5)
+        latents = latents.reshape(
+            batch_size, (height // 2) * (width // 2), num_channels_latents * 4
+        )
+
+        return latents
+
+    def _prepare_latent_image_ids(batch_size, height, width, device='cuda', dtype=dtype):
+        latent_image_ids = torch.zeros(height // 2, width // 2, 3)
+        latent_image_ids[..., 1] = (
+            latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
+        )
+        latent_image_ids[..., 2] = (
+            latent_image_ids[..., 2] + torch.arange(width // 2)[None, :]
+        )
+
+        latent_image_id_height, latent_image_id_width, latent_image_id_channels = (
+            latent_image_ids.shape
+        )
+
+        latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
+        latent_image_ids = latent_image_ids.reshape(
+            batch_size,
+            latent_image_id_height * latent_image_id_width,
+            latent_image_id_channels,
+        )
+
+        return latent_image_ids.to(device=device, dtype=dtype)
+
+    txt_ids = torch.zeros(bsz, text.shape[1], 3).to(
+        device='cuda', dtype=dtype
+    )
+
+    vae_scale_factor = 16
+    height = 2 * (int(512) // vae_scale_factor)
+    width = 2 * (int(512) // vae_scale_factor)
+    img_ids = _prepare_latent_image_ids(bsz, height, width)
+    img = _pack_latents(img, img.shape[0], 16, height, width)
+
+    # Gotta go fast
+    transformer = FluxTransformer2DModelWithMasking.from_config({
+        "attention_head_dim": 128,
+        "guidance_embeds": True,
+        "in_channels": 64,
+        "joint_attention_dim": 4096,
+        "num_attention_heads": 24,
+        "num_layers": 4,
+        "num_single_layers": 8,
+        "patch_size": 1,
+        "pooled_projection_dim": 768
+    }).to('cuda', dtype=dtype)
+
+    guidance = torch.tensor(
+        [2.0], device='cuda'
+    )
+    guidance = guidance.expand(bsz)
+
+    with torch.no_grad():
+        no_mask = transformer(
+            img,
+            encoder_hidden_states=text,
+            pooled_projections=pooled,
+            timestep=timestep,
+            img_ids=img_ids,
+            txt_ids=txt_ids,
+            guidance=guidance,
+        )
+        mask = transformer(
+            img,
+            encoder_hidden_states=text,
+            pooled_projections=pooled,
+            timestep=timestep,
+            img_ids=img_ids,
+            txt_ids=txt_ids,
+            guidance=guidance,
+            attention_mask=attn_mask,
+        )
+
+    assert torch.allclose(no_mask.sample, mask.sample) is False
+    print('Attention masking test ran OK. Differences in output were detected.')
