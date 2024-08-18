@@ -1223,6 +1223,19 @@ def main():
         else:
             logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            try:
+                if "constant" in args.lr_scheduler:
+                    for g in optimizer.param_groups:
+                        if "lr" in g:
+                            g["lr"] = torch.tensor(args.learning_rate)
+                    for k, v in lr_scheduler.state_dict().items():
+                        if k in ("base_lrs", "_last_lr"):
+                            v[0] = args.learning_rate
+            except Exception as e:
+                logger.error(
+                    f"Could not update lr_scheduler {args.lr_scheduler} learning rate to {args.learning_rate} upon resume: {e}"
+                )
+
             for _, backend in StateTracker.get_data_backends().items():
                 if "sampler" in backend:
                     backend["sampler"].load_states(
