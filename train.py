@@ -1551,16 +1551,15 @@ def main():
                             args.flow_matching_sigmoid_scale
                             * torch.randn((bsz,), device=accelerator.device)
                         )
-                        timesteps = sigmas * 1000.0
-                        sigmas = sigmas.view(-1, 1, 1, 1)
                     else:
                         # fast schedule can only use these sigmas, and they can be sampled up to batch size times
-                        available_sigmas = [0.7, 0.1]
+                        available_sigmas = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.75, 0.5, 0.25]
                         sigmas = torch.tensor(
                             random.choices(available_sigmas, k=bsz),
                             device=accelerator.device,
                         )
-                        timesteps = sigmas * 1000.0
+                    timesteps = sigmas * 1000.0
+                    sigmas = sigmas.view(-1, 1, 1, 1)
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
                     # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
