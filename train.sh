@@ -67,6 +67,19 @@ if [ -z "${MODEL_NAME}" ]; then
     printf "MODEL_NAME not set, exiting.\n"
     exit 1
 fi
+export LYCORIS_CONFIG_ARG=""
+if [ -n "$LYCORIS_CONFIG" ]; then
+    export LYCORIS_CONFIG_ARG="--lycoris_config=${LYCORIS_CONFIG}"
+fi
+if [ -n "$LORA_TYPE" ]; then
+    export LORA_TYPE_ARG="--lora_type=${LORA_TYPE}"
+fi
+if [ -n "$LORA_RANK" ]; then
+    export LORA_RANK_ARG="--lora_rank=${LORA_RANK}"
+fi
+if [ -n "$BASE_MODEL_PRECISION" ]; then
+    export BASE_MODEL_PRECISION_ARG="--base_model_precision=${BASE_MODEL_PRECISION}"
+fi
 if [ -z "${RESOLUTION}" ]; then
     printf "RESOLUTION not set, exiting.\n"
     exit 1
@@ -131,6 +144,10 @@ if [ -z "${LR_SCHEDULE}" ]; then
     printf "LR_SCHEDULE not set, exiting.\n"
     exit 1
 fi
+export LR_END_ARG=""
+if [ -n "${LR_END}" ]; then
+    export LR_END_ARG="--lr_end=${LR_END}"
+fi
 if [ -z "${TRAIN_BATCH_SIZE}" ]; then
     printf "TRAIN_BATCH_SIZE not set, exiting.\n"
     exit 1
@@ -157,6 +174,7 @@ if [ -z "$MINIMUM_RESOLUTION" ]; then
 else
     export MINIMUM_RESOLUTION_ARG="--minimum_image_size=${MINIMUM_RESOLUTION}"
 fi
+
 if [ -z "$RESOLUTION_TYPE" ]; then
     printf "RESOLUTION_TYPE not set, defaulting to pixel.\n"
     export RESOLUTION_TYPE="pixel"
@@ -365,7 +383,7 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --torch_num_threads=${TORCH_NUM_THREADS} --image_processing_batch_size=${IMAGE_PROCESSING_BATCH_SIZE} --vae_batch_size=$VAE_BATCH_SIZE \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
     ${MINIMUM_RESOLUTION_ARG} --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
-    --resolution_type="${RESOLUTION_TYPE}" \
+    --resolution_type="${RESOLUTION_TYPE}" ${LYCORIS_CONFIG_ARG} ${LORA_TYPE_ARG} ${LORA_RANK_ARG} ${BASE_MODEL_PRECISION_ARG} ${LR_END_ARG} \
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
     --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_real="${VALIDATION_GUIDANCE_REAL}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
