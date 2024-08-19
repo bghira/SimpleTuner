@@ -173,7 +173,7 @@ def parse_args(input_args=None):
         default=4.0,
     )
     parser.add_argument(
-        '--flux_attention_masked_training',
+        "--flux_attention_masked_training",
         action="store_true",
         default=False,
         help="Use attention masking while training flux.",
@@ -235,9 +235,9 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--lora_type",
-        type=str,
-        choices=["Standard", "lycoris"],
-        default="Standard",
+        type=str.lower,
+        choices=["standard", "lycoris"],
+        default="standard",
         help=(
             "When training using --model_type=lora, you may specify a different type of LoRA to train here."
             " Standard refers to training a vanilla LoRA via PEFT, lycoris refers to training with KohakuBlueleaf's library of the same name."
