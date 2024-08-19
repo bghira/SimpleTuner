@@ -41,7 +41,7 @@ huggingface-hub = "^0.23.3"
 optimum = "^1.21.2"
 optimum-quanto = "^0.2.4"
 torch-optimi = "^0.2.1"
-lycoris-lora = "^3.0.0.post1"
+lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 
 
 [build-system]
