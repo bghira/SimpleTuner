@@ -455,7 +455,10 @@ def collate_fn(batch):
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
         attn_mask = add_text_embeds_all
-    elif StateTracker.get_model_type() == "smoldit":
+    elif (
+        StateTracker.get_model_type() == "smoldit"
+        or StateTracker.get_model_type() == "flux"
+    ):
         attn_mask = add_text_embeds_all
 
     return {
