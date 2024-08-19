@@ -1,5 +1,6 @@
 import os
 import logging
+import json
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -107,11 +108,18 @@ def lora_info(args):
     """Return a string with the LORA information."""
     if "lora" not in args.model_type:
         return ""
-    return f"""- LoRA Rank: {args.lora_rank}
+    if args.lora_type.lower() == "standard":
+        return f"""- LoRA Rank: {args.lora_rank}
 - LoRA Alpha: {args.lora_alpha}
 - LoRA Dropout: {args.lora_dropout}
 - LoRA initialisation style: {args.lora_init_type}
-"""
+    """
+    if args.lora_type.lower() == "lycoris":
+        lycoris_config_file = args.lycoris_config
+        # read the json file
+        with open(lycoris_config_file, "r") as file:
+            lycoris_config = json.load(file)
+        return f"""- LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
 
 
 def model_card_note(args):

@@ -2273,6 +2273,10 @@ def main():
                         ].dtype,
                         {"lycoris_config": json.dumps(lycoris_config)},  # metadata
                     )
+                    shutil.copy2(
+                        args.lycoris_config,
+                        os.path.join(args.output_dir, "lycoris_config.json"),
+                    )
 
         elif args.use_ema:
             if unet is not None:
