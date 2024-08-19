@@ -1,7 +1,7 @@
 import os
 import huggingface_hub
 import torch
-from helpers.training import quantised_precision_levels
+from helpers.training import quantised_precision_levels, lycoris_defaults
 from helpers.training.optimizer_param import optimizer_choices
 
 bf16_only_optims = [
@@ -40,6 +40,7 @@ default_cfg = {
     "terminus": 8.0,
     "sd3": 5.0,
 }
+lycoris_algos = ["lokr"]
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
     1: "3e-4",
@@ -62,6 +63,170 @@ def prompt_user(prompt, default=None):
         prompt = f"{prompt} (default: {default})"
     user_input = input(f"{prompt}: ")
     return user_input.strip() or default
+
+
+def configure_lycoris():
+    print("Let's configure your LyCORIS model!\n")
+
+    print("Select a LyCORIS algorithm:\n")
+
+    print(
+        "1. LoRA - Efficient, balanced fine-tuning. Good for general tasks. (algo=lora)"
+    )
+    print(
+        "2. LoHa - Advanced, strong dampening. Ideal for multi-concept fine-tuning. (algo=loha)"
+    )
+    print(
+        "3. LoKr - Kronecker product-based. Use for complex transformations. (algo=lokr)"
+    )
+    print("4. Full Fine-Tuning - Traditional full model tuning. (algo=full)")
+    print("5. IA^3 - Efficient, tiny files, best for styles. (algo=ia3)")
+    print("6. DyLoRA - Dynamic updates, efficient with large dims. (algo=dylora)")
+    print("7. Diag-OFT - Fast convergence with orthogonal fine-tuning. (algo=diag-oft)")
+    print("8. BOFT - Advanced version of Diag-OFT with more flexibility. (algo=boft)")
+    print("9. GLoRA/GLoKr - Generalized, still in development. (algo=glora/glokr)\n")
+
+    # Prompt user to select an algorithm
+    algo = prompt_user(
+        f"Which LyCORIS algorithm would you like to use? (Enter the number corresponding to the algorithm)",
+        "3",  # Default to LoKr
+    )
+
+    # Map the selected number to the actual algorithm name
+    algo_map = {
+        "1": "lora",
+        "2": "loha",
+        "3": "lokr",
+        "4": "full",
+        "5": "ia3",
+        "6": "dylora",
+        "7": "diag-oft",
+        "8": "boft",
+        "9": "glora",
+    }
+
+    algo = algo_map.get(algo, "lokr").lower()
+
+    # Get the default configuration for the selected algorithm
+    default_config = lycoris_defaults.get(algo, {}).copy()
+
+    # Continue with further configuration
+    print(f"\nConfiguring {algo.upper()} algorithm...\n")
+
+    multiplier = float(
+        prompt_user(
+            f"Set the effect multiplier. Adjust for stronger or subtler effects. "
+            f"(default: {default_config.get('multiplier', 1.0)})",
+            default_config.get("multiplier", 1.0),
+        )
+    )
+
+    linear_dim = int(
+        prompt_user(
+            f"Set the linear dimension. Higher values mean more capacity but use more resources. "
+            f"(default: {default_config.get('linear_dim', 1000000)})",
+            default_config.get("linear_dim", 1000000),
+        )
+    )
+
+    linear_alpha = int(
+        prompt_user(
+            f"Set the alpha scaling factor. Controls the impact on the model. "
+            f"(default: {default_config.get('linear_alpha', 1)})",
+            default_config.get("linear_alpha", 1),
+        )
+    )
+
+    # Update basic parameters in config
+    default_config.update(
+        {
+            "multiplier": multiplier,
+            "linear_dim": linear_dim,
+            "linear_alpha": linear_alpha,
+        }
+    )
+
+    # Conditional prompts based on the selected algorithm
+    if algo == "lokr":
+        factor = int(
+            prompt_user(
+                f"Set the factor for compression/expansion. "
+                f"(default: {default_config.get('factor', 16)})",
+                default_config.get("factor", 16),
+            )
+        )
+        default_config.update({"factor": factor})
+
+        if linear_dim >= 10000:  # Handle full-dimension case
+            print("Full-dimension mode activated. Alpha will be set to 1.")
+            default_config["linear_alpha"] = 1
+
+    elif algo == "loha":
+        if linear_dim > 32:
+            print("Warning: High dim values with LoHa may cause instability.")
+        # Additional LoHa-specific configurations can be added here if needed
+
+    elif algo == "dylora":
+        block_size = int(
+            prompt_user(
+                f"Set block size for DyLoRA (rows/columns updated per step). "
+                f"(default: {default_config.get('block_size', 0)})",
+                default_config.get("block_size", 0),
+            )
+        )
+        default_config.update({"block_size": block_size})
+
+    elif algo in ["diag-oft", "boft"]:
+        constraint = (
+            prompt_user(
+                f"Enforce constraints (e.g., orthogonality)? "
+                f"(True/False, default: {default_config.get('constraint', False)})",
+                str(default_config.get("constraint", False)),
+            ).lower()
+            == "true"
+        )
+
+        rescaled = (
+            prompt_user(
+                f"Rescale transformations? Adjusts model impact. "
+                f"(True/False, default: {default_config.get('rescaled', False)})",
+                str(default_config.get("rescaled", False)),
+            ).lower()
+            == "true"
+        )
+
+        default_config.update(
+            {
+                "constraint": constraint,
+                "rescaled": rescaled,
+            }
+        )
+
+    # Handle presets for specific modules
+    if "apply_preset" in default_config:
+        print("\nNext, configure the modules to target with this algorithm.")
+        target_module = prompt_user(
+            f"Which modules should the {algo.upper()} algorithm be applied to? "
+            f"(default: {', '.join(default_config['apply_preset']['target_module'])})",
+            ", ".join(default_config["apply_preset"]["target_module"]),
+        ).split(",")
+        default_config["apply_preset"]["target_module"] = [
+            m.strip() for m in target_module
+        ]
+
+        for module_name, module_config in default_config["apply_preset"][
+            "module_algo_map"
+        ].items():
+            for param, value in module_config.items():
+                user_value = prompt_user(
+                    f"Set {param} for {module_name}. " f"(default: {value})", value
+                )
+                module_config[param] = (
+                    int(user_value) if isinstance(value, int) else float(user_value)
+                )
+
+    print("\nLyCORIS configuration complete: ", default_config)
+    return default_config
 
 
 def configure_env():
@@ -108,22 +273,39 @@ def configure_env():
     env_contents["USE_DORA"] = "false"
     env_contents["USE_BITFIT"] = "false"
     if model_type == "lora":
-        use_dora = prompt_user(
-            "Would you like to train a DoRA model? (y/[n])", "n"
-        ).lower()
-        if use_dora == "y":
-            env_contents["USE_DORA"] = "true"
-        lora_rank = None
-        while lora_rank not in lora_ranks:
-            if lora_rank is not None:
-                print(f"Invalid LoRA rank: {lora_rank}")
-            lora_rank = int(
-                prompt_user(
-                    f"Set the LoRA rank (Options: {', '.join([str(x) for x in lora_ranks])})",
-                    "64",
+        use_lycoris = (
+            prompt_user("Would you like to train a LyCORIS model? ([y]/n)", "y").lower()
+            == "y"
+        )
+        if use_lycoris:
+            env_contents["LORA_TYPE"] = "lycoris"
+            lycoris_config = configure_lycoris()
+            env_contents["LYCORIS_CONFIG"] = "config/lycoris_config.json"
+            # write json to file
+            import json
+
+            # approximate the rank of the lycoris
+            lora_rank = 16
+            with open("config/lycoris_config.json", "w") as f:
+                f.write(json.dumps(lycoris_config, indent=4))
+        else:
+            env_contents["LORA_TYPE"] = "standard"
+            use_dora = prompt_user(
+                "Would you like to train a DoRA model? (y/[n])", "n"
+            ).lower()
+            if use_dora == "y":
+                env_contents["USE_DORA"] = "true"
+            lora_rank = None
+            while lora_rank not in lora_ranks:
+                if lora_rank is not None:
+                    print(f"Invalid LoRA rank: {lora_rank}")
+                lora_rank = int(
+                    prompt_user(
+                        f"Set the LoRA rank (Options: {', '.join([str(x) for x in lora_ranks])})",
+                        "64",
+                    )
                 )
-            )
-            extra_args.append(f"--lora_rank={lora_rank}")
+            env_contents["LORA_RANK"] = lora_rank
     elif model_type == "full":
         use_bitfit = prompt_user(
             "Would you like to train a BitFit model? (y/[n])", "n"
@@ -283,7 +465,7 @@ def configure_env():
     env_contents[model_class.upper()] = "true"
     # Flux-specific options
     if "FLUX" in env_contents and env_contents["FLUX"] == "true":
-        if env_contents["MODEL_TYPE"].lower() == "lora":
+        if env_contents["MODEL_TYPE"].lower() == "lora" and not use_lycoris:
             flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit"]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
@@ -470,7 +652,7 @@ def configure_env():
                 f"Choose quantization type (Options: {'/'.join(quantised_precision_levels)})",
                 "int8-quanto",
             )
-        extra_args.append(f"--base_model_precision={quantization_type}")
+        env_contents["BASE_MODEL_PRECISION"] = quantization_type
     print_config(env_contents, extra_args)
     compress_disk_cache = (
         prompt_user("Would you like to compress the disk cache? (y/n)", "y").lower()
