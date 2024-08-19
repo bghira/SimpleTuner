@@ -1,10 +1,99 @@
 import os
 import logging
 import json
+import torch
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+
+licenses = {
+    "flux": "flux-1-dev-non-commercial-license",
+    "sdxl": "creativeml-openrail-m",
+    "legacy": "openrail++",
+    "pixart_sigma": "openrail++",
+    "kolors": "apache-2.0",
+    "smoldit": "apache-2.0",
+    "sd3": "stabilityai-ai-community",
+}
+allowed_licenses = [
+    "apache-2.0",
+    "mit",
+    "openrail",
+    "bigscience-openrail-m",
+    "creativeml-openrail-m",
+    "bigscience-bloom-rail-1.0",
+    "bigcode-openrail-m",
+    "afl-3.0",
+    "artistic-2.0",
+    "bsl-1.0",
+    "bsd",
+    "bsd-2-clause",
+    "bsd-3-clause",
+    "bsd-3-clause-clear",
+    "c-uda",
+    "cc",
+    "cc0-1.0",
+    "cc-by-2.0",
+    "cc-by-2.5",
+    "cc-by-3.0",
+    "cc-by-4.0",
+    "cc-by-sa-3.0",
+    "cc-by-sa-4.0",
+    "cc-by-nc-2.0",
+    "cc-by-nc-3.0",
+    "cc-by-nc-4.0",
+    "cc-by-nd-4.0",
+    "cc-by-nc-nd-3.0",
+    "cc-by-nc-nd-4.0",
+    "cc-by-nc-sa-2.0",
+    "cc-by-nc-sa-3.0",
+    "cc-by-nc-sa-4.0",
+    "cdla-sharing-1.0",
+    "cdla-permissive-1.0",
+    "cdla-permissive-2.0",
+    "wtfpl",
+    "ecl-2.0",
+    "epl-1.0",
+    "epl-2.0",
+    "etalab-2.0",
+    "eupl-1.1",
+    "agpl-3.0",
+    "gfdl",
+    "gpl",
+    "gpl-2.0",
+    "gpl-3.0",
+    "lgpl",
+    "lgpl-2.1",
+    "lgpl-3.0",
+    "isc",
+    "lppl-1.3c",
+    "ms-pl",
+    "apple-ascl",
+    "mpl-2.0",
+    "odc-by",
+    "odbl",
+    "openrail++",
+    "osl-3.0",
+    "postgresql",
+    "ofl-1.1",
+    "ncsa",
+    "unlicense",
+    "zlib",
+    "pddl",
+    "lgpl-lr",
+    "deepfloyd-if-license",
+    "llama2",
+    "llama3",
+    "llama3.1",
+    "gemma",
+    "unknown",
+    "other",
+    "array",
+]
+for _model, _license in licenses.items():
+    if _license not in allowed_licenses:
+        licenses[_model] = "other"
 
 
 def _model_imports(args):
@@ -104,6 +193,16 @@ image.save("output.png", format="PNG")
     return code_example
 
 
+def model_type(args):
+    if "lora" in args.model_type:
+        if "standard" == args.lora_type.lower():
+            return "standard PEFT LoRA"
+        if "lycoris" == args.lora_type.lower():
+            return "LyCORIS adapter"
+    else:
+        return "full rank finetune"
+
+
 def lora_info(args):
     """Return a string with the LORA information."""
     if "lora" not in args.model_type:
@@ -188,17 +287,18 @@ def save_model_card(
                 sub_idx += 1
 
             shortname_idx += 1
+    args = StateTracker.get_args()
     yaml_content = f"""---
-license: creativeml-openrail-m
+license: {licenses[StateTracker.get_model_type()]}
 base_model: "{base_model}"
 tags:
-  - {'stable-diffusion' if 'deepfloyd' not in StateTracker.get_args().model_type else 'deepfloyd-if'}
-  - {'stable-diffusion-diffusers' if 'deepfloyd' not in StateTracker.get_args().model_type else 'deepfloyd-if-diffusers'}
+  - {StateTracker.get_model_type()}
+  - {f'{StateTracker.get_model_type()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
   - simpletuner
-  - {StateTracker.get_args().model_type}
-{'  - template:sd-lora' if 'lora' in StateTracker.get_args().model_type else ''}
+  - {args.model_type}
+{'  - template:sd-lora' if 'lora' in args.model_type else ''}
 inference: true
 {widget_str}
 ---
@@ -206,12 +306,11 @@ inference: true
 """
     model_card_content = f"""# {repo_id}
 
-This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full rank finetune'} derived from [{base_model}](https://huggingface.co/{base_model}).
+This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if StateTracker.get_args().sd3 and StateTracker.get_args().flow_matching_loss == "diffusion" else ''}
-
-{'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if StateTracker.get_args().validation_using_datasets else 'No validation prompt was used during training.'}
-{model_card_note(StateTracker.get_args())}
+{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.sd3 and args.flow_matching_loss == "diffusion" else ''}
+{'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
+{model_card_note(args)}
 {'```' if prompt else ''}
 {prompt}
 {'```' if prompt else ''}
@@ -246,7 +345,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Prediction type: {'flow-matching' if (StateTracker.get_args().sd3 or StateTracker.get_args().flux) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
-- Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}
+- Precision: {'Pure BF16' if (StateTracker.get_args().adam_bfloat16 or torch.backends.mps.is_available()) else StateTracker.get_args().mixed_precision}
 - Quantised: {f'Yes: {StateTracker.get_args().base_model_precision}' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
 - Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
 {lora_info(args=StateTracker.get_args())}
