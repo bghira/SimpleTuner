@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import sys
+import glob
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
@@ -2201,7 +2202,7 @@ def main():
             unet = unwrap_model(accelerator, unet)
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
-        if "lora" in args.model_type:
+        if "lora" in args.model_type and "standard" == args.lora_type.lower():
             if transformer is not None:
                 transformer_lora_layers = get_peft_model_state_dict(transformer)
             elif unet is not None:
@@ -2258,6 +2259,21 @@ def main():
             del text_encoder_lora_layers
             del text_encoder_2_lora_layers
             reclaim_memory()
+        elif "lora" in args.model_type and "lycoris" == args.lora_type.lower():
+            if accelerator.is_main_process or use_deepspeed_optimizer:
+                logger.info(f"Saving final LyCORIS checkpoint to {args.output_dir}")
+                # Save final LyCORIS checkpoint.
+                if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
+                    from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+                    accelerator._lycoris_wrapped_network.save_weights(
+                        os.path.join(args.output_dir, LORA_SAFETENSORS_FILENAME),
+                        list(accelerator._lycoris_wrapped_network.parameters())[
+                            0
+                        ].dtype,
+                        {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+                    )
+
         elif args.use_ema:
             if unet is not None:
                 ema_model.copy_to(unet.parameters())
@@ -2463,16 +2479,6 @@ def main():
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )
-
-            # Save final LyCORIS checkpoint.
-            if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
-                from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
-
-                accelerator._lycoris_wrapped_network.save_weights(
-                    os.path.join(args.output_dir, LORA_SAFETENSORS_FILENAME),
-                    list(accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-                    {"lycoris_config": json.dumps(lycoris_config)},  # metadata
-                )
 
         if args.push_to_hub and accelerator.is_main_process:
             hub_manager.upload_model(validation_images, webhook_handler)
