@@ -143,8 +143,9 @@ class SaveHookManager:
                 self.pipeline_class = FluxPipeline
             elif args.flux and args.flux_attention_masked_training:
                 from helpers.models.flux.transformer import (
-                    FluxTransformer2DModelWithMasking
+                    FluxTransformer2DModelWithMasking,
                 )
+
                 self.denoiser_class = FluxTransformer2DModelWithMasking
                 self.pipeline_class = FluxPipeline
             elif hasattr(args, "hunyuan_dit") and args.hunyuan_dit:
@@ -313,7 +314,7 @@ class SaveHookManager:
         StateTracker.save_training_state(
             os.path.join(output_dir, "training_state.json")
         )
-        if "lora" in self.args.model_type and self.args.lora_type == "Standard":
+        if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._save_lora(models=models, weights=weights, output_dir=output_dir)
             return
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
@@ -461,7 +462,7 @@ class SaveHookManager:
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
 
-        if "lora" in self.args.model_type and self.args.lora_type == "Standard":
+        if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
             self._load_lycoris(models=models, input_dir=input_dir)

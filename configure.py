@@ -40,7 +40,7 @@ default_cfg = {
     "terminus": 8.0,
     "sd3": 5.0,
 }
-lycoris_algos = ["lokr"]
+
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
     1: "3e-4",
@@ -84,7 +84,7 @@ def configure_lycoris():
     print("6. DyLoRA - Dynamic updates, efficient with large dims. (algo=dylora)")
     print("7. Diag-OFT - Fast convergence with orthogonal fine-tuning. (algo=diag-oft)")
     print("8. BOFT - Advanced version of Diag-OFT with more flexibility. (algo=boft)")
-    print("9. GLoRA/GLoKr - Generalized, still in development. (algo=glora/glokr)\n")
+    print("9. GLoRA - Generalized LoRA. (algo=glora)\n")
 
     # Prompt user to select an algorithm
     algo = prompt_user(
