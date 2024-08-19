@@ -99,7 +99,7 @@ class CSVDataBackend(BaseDataBackend):
                 with open(hashed_location, "rb") as file:
                     data = file.read()
             except FileNotFoundError as e:
-                print(f'ask was for file {location} bound to {hashed_location}')
+                tqdm.write(f'ask was for file {location} bound to {hashed_location}')
                 raise e
         if not as_byteIO:
             return data
