@@ -2,7 +2,7 @@
 
 ## Background
 
-[LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS) is a wrapper for models that allows various methods of low-rank (LoRA) training, which allows you to finetune models while using less VRAM and produces smaller distributable weights.
+[LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS) is an extensive suite of parameter-efficient fine-tuning (PEFT) methods that allow you to finetune models while using less VRAM and produces smaller distributable weights.
 
 ## Using LyCORIS
 
@@ -68,9 +68,8 @@ transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transf
 
 lycoris_safetensors_path = 'pytorch_lora_weights.safetensors'
 wrapper, _ = create_lycoris_from_weights(1.0, lycoris_safetensors_path, transformer)
-wrapper.apply_to()
+wrapper.merge_to() # using apply_to() will be slower.
 
-wrapper.to(device, dtype=dtype)
 transformer.to(device, dtype=dtype)
 
 pipe = FluxPipeline(
@@ -95,4 +94,7 @@ with torch.inference_mode():
         guidance_scale=3.5,
     ).images[0]
 image.save('image.png')
+
+# optionally, save a merged pipeline containing the LyCORIS baked-in:
+pipe.save_pretrained('/path/to/output/pipeline')
 ```
