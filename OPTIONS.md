@@ -269,7 +269,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
-                [--lora_type {Standard,lycoris}]
+                [--lora_type {standard,lycoris}]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
                 [--init_lora INIT_LORA] [--lora_rank LORA_RANK]
                 [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
@@ -505,9 +505,9 @@ options:
                         prevents expansion of SD3 Medium's prompt length, as
                         it will unnecessarily attend to every token in the
                         prompt embed, even masked positions.
-  --lora_type {Standard,lycoris}
+  --lora_type {standard,lycoris}
                         When training using --model_type=lora, you may specify
-                        a different type of LoRA to train here. Standard
+                        a different type of LoRA to train here. standard
                         refers to training a vanilla LoRA via PEFT, lycoris
                         refers to training with KohakuBlueleaf's library of
                         the same name.

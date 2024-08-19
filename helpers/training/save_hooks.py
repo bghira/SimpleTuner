@@ -269,6 +269,11 @@ class SaveHookManager:
             {"lycoris_config": json.dumps(lycoris_config)},  # metadata
         )
 
+        # copy the config into the repo
+        shutil.copy2(
+            self.args.lycoris_config, os.path.join(output_dir, "lycoris_config.json")
+        )
+
         logger.info("LyCORIS weights have been saved to disk")
 
     def _save_full_model(self, models, weights, output_dir):
