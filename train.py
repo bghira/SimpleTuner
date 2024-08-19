@@ -2204,7 +2204,6 @@ def main():
         if "lora" in args.model_type:
             if transformer is not None:
                 transformer_lora_layers = get_peft_model_state_dict(transformer)
-                print(f"keys: {transformer_lora_layers.keys()}")
             elif unet is not None:
                 unet_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(unet)
