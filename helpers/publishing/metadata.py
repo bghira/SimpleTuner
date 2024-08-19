@@ -9,6 +9,8 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 def _model_imports(args):
     output = "import torch\n"
     output += "from diffusers import DiffusionPipeline"
+    if "lycoris" == args.lora_type.lower() and "lora" in args.model_type:
+        output += "\nfrom lycoris import create_lycoris_from_weights"
 
     return f"{output}"
 
@@ -18,17 +20,27 @@ def _model_load(args, repo_id: str = None):
     if hf_user_name is not None:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     if "lora" in args.model_type:
-        output = (
-            f"model_id = '{args.pretrained_model_name_or_path}'"
-            f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
-            f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
-            f"\npipeline.load_lora_weights(adapter_id)"
-        )
+        if args.lora_type.lower() == "standard":
+            output = (
+                f"model_id = '{args.pretrained_model_name_or_path}'"
+                f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
+                f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
+                f"\npipeline.load_lora_weights(adapter_id)"
+            )
+        elif args.lora_type.lower() == "lycoris":
+            output = (
+                f"model_id = '{args.pretrained_model_name_or_path}'"
+                f"\nadapter_id = 'pytorch_lora_weights.safetensors' # you will have to download this manually"
+                "\nlora_scale = 1.0"
+            )
     else:
         output = (
             f"model_id = '{repo_id if repo_id else os.path.join(args.output_dir, 'pipeline')}'"
             f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
         )
+    if args.model_type == "lora" and args.lora_type.lower() == "lycoris":
+        output += f"\nwrapper, _ = create_lycoris_from_weights(lora_scale, adapter_id, pipeline.transformer)"
+        output += "\nwrapper.merge_to()"
 
     return output
 
@@ -77,7 +89,6 @@ def code_example(args, repo_id: str = None):
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
 {_negative_prompt(args)}
-
 pipeline.to({_torch_device()})
 image = pipeline(
     prompt=prompt,{_negative_prompt(args, in_call=True) if not args.flux else ''}
