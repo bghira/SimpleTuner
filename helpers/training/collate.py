@@ -180,10 +180,10 @@ def compute_single_embedding(
         )
         return prompt_embeds[0], pooled_prompt_embeds[0]
     elif is_flux:
-        prompt_embeds, pooled_prompt_embeds, time_ids = (
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
             text_embed_cache.compute_embeddings_for_flux_prompts(prompts=[caption])
         )
-        return prompt_embeds[0], pooled_prompt_embeds[0], time_ids[0]
+        return prompt_embeds[0], pooled_prompt_embeds[0], time_ids[0], masks[0]
     else:
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
@@ -262,10 +262,12 @@ def compute_prompt_embeddings(captions, text_embed_cache):
         prompt_embeds = [t[0] for t in embeddings]
         add_text_embeds = [t[1] for t in embeddings]
         time_ids = [t[2] for t in embeddings]
+        masks = [t[3] for t in embeddings]
         return (
             torch.stack(prompt_embeds),
             torch.stack(add_text_embeds),
             torch.stack(time_ids),
+            torch.stack(masks),
         )
     else:
         # Separate the tuples
@@ -429,17 +431,19 @@ def collate_fn(batch):
     text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
         "text_embed_cache"
     ]
+
+    attn_mask = None
     batch_time_ids = None
     if StateTracker.get_args().flux:
         debug_log("Compute and stack Flux time ids")
-        prompt_embeds_all, add_text_embeds_all, batch_time_ids = (
+        prompt_embeds_all, add_text_embeds_all, batch_time_ids, attn_mask = (
             compute_prompt_embeddings(captions, text_embed_cache)
         )
     else:
         prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
             captions, text_embed_cache
         )
-    attn_mask = None
+
     if (
         StateTracker.get_model_type() == "sdxl"
         or StateTracker.get_model_type() == "kolors"
@@ -457,7 +461,6 @@ def collate_fn(batch):
         attn_mask = add_text_embeds_all
     elif (
         StateTracker.get_model_type() == "smoldit"
-        or StateTracker.get_model_type() == "flux"
     ):
         attn_mask = add_text_embeds_all
 
