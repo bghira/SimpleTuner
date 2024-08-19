@@ -608,7 +608,7 @@ def main():
                     args=args,
                 )
 
-    elif "lora" in args.model_type and "Standard" == args.lora_type:
+    elif "lora" in args.model_type and "standard" == args.lora_type.lower():
         if args.pixart_sigma:
             raise Exception(f"{model_type_label} does not support LoRA model training.")
 
@@ -706,7 +706,7 @@ def main():
                         % (args.init_lora, str(misskeys))
                     )
 
-    elif "lora" in args.model_type and "lycoris" == args.lora_type:
+    elif "lora" in args.model_type and "lycoris" == args.lora_type.lower():
         from lycoris import create_lycoris
 
         if args.lycoris_config is None:
@@ -1095,6 +1095,11 @@ def main():
     idx_count = 0
 
     if "lora" in args.model_type and args.train_text_encoder:
+        if args.lora_type.lower() == "lycoris":
+            logger.error(
+                "LyCORIS training is not meant to be combined with --train_text_encoder. It is powerful enough on its own!"
+            )
+            sys.exit(1)
         logger.info("Preparing text encoders for training.")
         if args.sd3:
             logger.info("NOTE: The third text encoder is not trained for SD3.")
@@ -1467,7 +1472,11 @@ def main():
             if transformer is not None:
                 transformer.train()
                 training_models = [transformer]
-        if "lora" in args.model_type and args.train_text_encoder:
+        if (
+            "lora" in args.model_type
+            and args.train_text_encoder
+            and "standard" in args.lora_type.lower()
+        ):
             text_encoder_1.train()
             text_encoder_2.train()
             training_models.append(text_encoder_1)
@@ -1793,27 +1802,29 @@ def main():
                         )
 
                         flux_transformer_kwargs = {
-                            'hidden_states': packed_noisy_latents.to(
+                            "hidden_states": packed_noisy_latents.to(
                                 dtype=base_weight_dtype, device=accelerator.device
                             ),
                             # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
-                            'timestep': timesteps,
-                            'guidance': guidance,
-                            'pooled_projections': batch["add_text_embeds"].to(
+                            "timestep": timesteps,
+                            "guidance": guidance,
+                            "pooled_projections": batch["add_text_embeds"].to(
                                 device=accelerator.device, dtype=base_weight_dtype
                             ),
-                            'encoder_hidden_states': batch["prompt_embeds"].to(
+                            "encoder_hidden_states": batch["prompt_embeds"].to(
                                 device=accelerator.device, dtype=base_weight_dtype
                             ),
-                            'txt_ids': text_ids.to(
+                            "txt_ids": text_ids.to(
                                 device=accelerator.device, dtype=base_weight_dtype
                             ),
-                            'img_ids': img_ids,
-                            'joint_attention_kwargs': None,
-                            'return_dict': False,
+                            "img_ids": img_ids,
+                            "joint_attention_kwargs": None,
+                            "return_dict": False,
                         }
                         if args.flux_attention_masked_training:
-                            flux_transformer_kwargs["attention_mask"] = batch["encoder_attention_mask"]
+                            flux_transformer_kwargs["attention_mask"] = batch[
+                                "encoder_attention_mask"
+                            ]
 
                         model_pred = transformer(**flux_transformer_kwargs)[0]
 
@@ -2192,9 +2203,8 @@ def main():
             transformer = unwrap_model(accelerator, transformer)
         if "lora" in args.model_type:
             if transformer is not None:
-                transformer_lora_layers = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(transformer)
-                )
+                transformer_lora_layers = get_peft_model_state_dict(transformer)
+                print(f"keys: {transformer_lora_layers.keys()}")
             elif unet is not None:
                 unet_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(unet)
