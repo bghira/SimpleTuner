@@ -383,12 +383,6 @@ class PromptHandler:
                 f"Unsupported caption strategy: {caption_strategy}. Supported: 'filename', 'textfile', 'parquet', 'instanceprompt'"
             )
 
-        if type(instance_prompt) is list:
-            instance_prompt = instance_prompt[0]
-            logger.debug(
-                f"Multiple captions found for image {image_path}. Using just the first caption: {instance_prompt}"
-            )
-
         return instance_prompt
 
     @staticmethod

@@ -270,14 +270,26 @@ class TextEmbeddingCache:
         Returns:
             Tuple of (prompt_embeds, pooled_prompt_embeds).
         """
-        prompt_embeds, pooled_prompt_embeds, time_ids = self.pipeline.encode_prompt(
+        from helpers.models.flux import FluxPipeline
+
+        pipe = FluxPipeline(
+            self.pipeline.scheduler,
+            self.pipeline.vae,
+            self.pipeline.text_encoder,
+            self.pipeline.tokenizer,
+            self.pipeline.text_encoder_2,
+            self.pipeline.tokenizer_2,
+            self.pipeline.transformer,
+        )
+
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = pipe.encode_prompt(
             prompt=prompt,
             prompt_2=prompt,
             device=self.accelerator.device,
             max_sequence_length=StateTracker.get_args().tokenizer_max_length,
         )
 
-        return prompt_embeds, pooled_prompt_embeds, time_ids
+        return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
     # Adapted from pipelines.StableDiffusion3Pipeline.encode_prompt
     def encode_sd3_prompt(
@@ -928,6 +940,7 @@ class TextEmbeddingCache:
         prompt_embeds_all = []
         add_text_embeds_all = []
         time_ids_all = []
+        masks_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
         if should_encode:
@@ -972,11 +985,19 @@ class TextEmbeddingCache:
                 if return_concat and load_from_cache:
                     try:
                         # We attempt to load.
-                        prompt_embeds, add_text_embeds, time_ids = self.load_from_cache(
-                            filename
-                        )
+                        _flux_embed = self.load_from_cache(filename)
+                        if len(_flux_embed) == 3:
+                            # legacy flux embed w/o attn mask
+                            prompt_embeds, add_text_embeds, time_ids = _flux_embed
+                            masks = None
+                        elif len(_flux_embed) == 4:
+                            # flux embed with attn mask
+                            prompt_embeds, add_text_embeds, time_ids, masks = (
+                                _flux_embed
+                            )
+                        del _flux_embed
                         logger.debug(
-                            f"Cached Flux text embeds: {prompt_embeds.shape}, {add_text_embeds.shape}, {time_ids.shape}"
+                            f"Cached Flux text embeds: {prompt_embeds.shape}, {add_text_embeds.shape}, {time_ids.shape}, {masks.shape if masks is not None else None}"
                         )
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
@@ -994,7 +1015,7 @@ class TextEmbeddingCache:
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
                     self.debug_log(f"Encoding prompt: {prompt}")
-                    prompt_embeds, pooled_prompt_embeds, time_ids = (
+                    prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
                         self.encode_flux_prompt(
                             self.text_encoders,
                             self.tokenizers,
@@ -1003,7 +1024,7 @@ class TextEmbeddingCache:
                         )
                     )
                     logger.debug(
-                        f"Flux prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}, {time_ids.shape}"
+                        f"Flux prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}, {time_ids.shape}, {masks.shape}"
                     )
                     add_text_embeds = pooled_prompt_embeds
                     current_size = self.write_queue.qsize()
@@ -1018,22 +1039,25 @@ class TextEmbeddingCache:
 
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(
-                        filename, (prompt_embeds, add_text_embeds, time_ids)
+                        filename, (prompt_embeds, add_text_embeds, time_ids, masks)
                     )
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
                         add_text_embeds = add_text_embeds.to(self.accelerator.device)
                         time_ids = time_ids.to(self.accelerator.device)
+                        masks = masks.to(self.accelerator.device)
                     else:
                         del prompt_embeds
                         del add_text_embeds
                         del pooled_prompt_embeds
+                        del masks
                         continue
 
                 if return_concat:
                     prompt_embeds_all.append(prompt_embeds)
                     add_text_embeds_all.append(add_text_embeds)
                     time_ids_all.append(time_ids)
+                    masks_all.append(masks)
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
@@ -1046,14 +1070,17 @@ class TextEmbeddingCache:
                 del prompt_embeds_all
                 del add_text_embeds_all
                 del time_ids_all
+                del masks_all
                 return
 
             logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
             time_ids_all = torch.cat(time_ids_all, dim=0)
+            # if any masks_all are None, we can't cat
+            masks_all = torch.cat(masks_all, dim=0) if None not in masks_all else None
 
-        return prompt_embeds_all, add_text_embeds_all, time_ids_all
+        return prompt_embeds_all, add_text_embeds_all, time_ids_all, masks_all
 
     def compute_embeddings_for_sd3_prompts(
         self,

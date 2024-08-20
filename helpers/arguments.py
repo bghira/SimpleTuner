@@ -7,6 +7,13 @@ import sys
 import torch
 from helpers.models.smoldit import SmolDiTConfigurationNames
 from helpers.training import quantised_precision_levels
+from helpers.training.optimizer_param import (
+    map_args_to_optimizer,
+    is_optimizer_deprecated,
+    is_optimizer_bf16,
+    map_deprecated_optimizer_parameter,
+    optimizer_choices,
+)
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -107,13 +114,14 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "context", "all", "all+ffs", "ai-toolkit"],
+        choices=["mmdit", "context", "context+ffs", "all", "all+ffs", "ai-toolkit"],
         default="all",
         help=(
             "Flux has single and joint attention blocks."
-            " Only the multimodal 'dual stream' attention blocks are trained by default."
+            " By default, all attention layers are trained, but not the feed-forward layers"
             " If 'mmdit' is provided, the text input layers will not be trained."
-            " If 'context' is provided, the mmdit layers will not be trained."
+            " If 'context' is provided, then ONLY the text attention layers are trained"
+            " If 'context+ffs' is provided, then text attention and text feed-forward layers are trained. This is somewhat similar to text-encoder-only training in earlier SD versions."
             " If 'all' is provided, all layers will be trained, minus feed-forward."
             " If 'all+ffs' is provided, all layers will be trained including feed-forward."
         ),
@@ -163,6 +171,12 @@ def parse_args(input_args=None):
         "--flux_guidance_max",
         type=float,
         default=4.0,
+    )
+    parser.add_argument(
+        "--flux_attention_masked_training",
+        action="store_true",
+        default=False,
+        help="Use attention masking while training flux.",
     )
     parser.add_argument(
         "--smoldit",
@@ -221,11 +235,12 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--lora_type",
-        type=str,
-        choices=["Standard"],
+        type=str.lower,
+        choices=["standard", "lycoris"],
+        default="standard",
         help=(
             "When training using --model_type=lora, you may specify a different type of LoRA to train here."
-            " Currently, only 'Standard' type is supported. This option exists for compatibility with Kohya configuration files."
+            " standard refers to training a vanilla LoRA via PEFT, lycoris refers to training with KohakuBlueleaf's library of the same name."
         ),
     )
     parser.add_argument(
@@ -240,6 +255,12 @@ def parse_args(input_args=None):
             " creative outputs, and LoftQ produces an entirely different result with worse quality at first, taking"
             " potentially longer to converge than the other methods."
         ),
+    )
+    parser.add_argument(
+        "--init_lora",
+        type=str,
+        default=None,
+        help="Specify an existing LoRA safetensors file to initialize the LoRA and continue training or finetune an existing LoRA.",
     )
     parser.add_argument(
         "--lora_rank",
@@ -265,6 +286,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--lycoris_config",
+        type=str,
+        default="config/lycoris_config.json",
+        help=("The location for the JSON file of the Lycoris configuration."),
+    )
+    parser.add_argument(
         "--controlnet",
         action="store_true",
         default=False,
@@ -286,6 +313,30 @@ def parse_args(input_args=None):
         default=None,
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_transformer_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained transformer model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_transformer_subfolder",
+        type=str,
+        default="transformer",
+        help="The subfolder to load the transformer model from. Use 'none' for a flat directory.",
+    )
+    parser.add_argument(
+        "--pretrained_unet_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained unet model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_unet_subfolder",
+        type=str,
+        default="unet",
+        help="The subfolder to load the unet model from. Use 'none' for a flat directory.",
     )
     parser.add_argument(
         "--pretrained_vae_model_name_or_path",
@@ -603,6 +654,18 @@ def parse_args(input_args=None):
         help=(
             "The relative or fully-qualified path for your data backend config."
             " See multidatabackend.json.example for an example."
+        ),
+    )
+    parser.add_argument(
+        "--data_backend_sampling",
+        type=str,
+        choices=["uniform", "auto-weighting"],
+        default="auto-weighting",
+        help=(
+            "When using multiple data backends, the sampling weighting can be set to 'uniform' or 'auto-weighting'."
+            " The default value is 'auto-weighting', which will automatically adjust the sampling weights based on the"
+            " number of images in each backend. 'uniform' will sample from each backend equally, which may be"
+            " more desirable for DreamBooth training with eg. ignore_epochs=True on your regularisation dataset."
         ),
     )
     parser.add_argument(
@@ -1028,88 +1091,62 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--optimizer",
+        type=str,
+        choices=optimizer_choices.keys(),
+        required=True,
+        default=None,
+    )
+    parser.add_argument(
+        "--optimizer_config",
+        type=str,
+        default=None,
+        help=(
+            "When setting a given optimizer, this allows a comma-separated list of key-value pairs to be provided that will override the optimizer defaults."
+            " For example, `--optimizer_config=decouple_lr=True,weight_decay=0.01`."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_beta1",
+        type=float,
+        default=None,
+        help="The value to use for the first beta value in the optimiser, which is used for the first moment estimate. A range of 0.8-0.9 is common.",
+    )
+    parser.add_argument(
+        "--optimizer_beta2",
+        type=float,
+        default=None,
+        help="The value to use for the second beta value in the optimiser, which is used for the second moment estimate. A range of 0.999-0.9999 is common.",
+    )
+    parser.add_argument(
+        "--optimizer_release_gradients",
+        action="store_true",
+        help=(
+            "When using Optimi optimizers, this option will release the gradients after the optimizer step."
+            " This can save memory, but may slow down training. With Quanto, there may be no benefit."
+        ),
+    )
+    parser.add_argument(
         "--use_8bit_adam",
         action="store_true",
-        help="Whether or not to use 8-bit Adam from bitsandbytes.",
+        help="Deprecated in favour of --optimizer=optimi-adamw.",
     )
     parser.add_argument(
         "--use_adafactor_optimizer",
         action="store_true",
-        help="Whether or not to use the Adafactor optimizer.",
-    )
-    parser.add_argument(
-        "--adafactor_relative_step",
-        type=bool,
-        default=False,
-        help=(
-            "When set, will use the experimental Adafactor mode for relative step computations instead of the value set by --learning_rate."
-            " This is an experimental feature, and you are on your own for support."
-        ),
+        help="Deprecated in favour of --optimizer=stableadamw.",
     )
     parser.add_argument(
         "--use_prodigy_optimizer",
         action="store_true",
-        help="Whether or not to use the Prodigy optimizer.",
-    )
-    parser.add_argument(
-        "--prodigy_beta3",
-        type=float,
-        default=None,
-        help="coefficients for computing the Prodidy stepsize using running averages. If set to None, "
-        "uses the value of square root of beta2. Ignored if optimizer is adamW",
-    )
-    parser.add_argument(
-        "--prodigy_decouple",
-        type=bool,
-        default=True,
-        help="Use AdamW style decoupled weight decay",
-    )
-    parser.add_argument(
-        "--prodigy_use_bias_correction",
-        type=bool,
-        default=True,
-        help="Turn on Adam's bias correction. True by default. Ignored if optimizer is adamW",
-    )
-    parser.add_argument(
-        "--prodigy_safeguard_warmup",
-        type=bool,
-        default=True,
-        help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage. True by default. "
-        "Ignored if optimizer is adamW",
-    )
-    parser.add_argument(
-        "--prodigy_learning_rate",
-        type=float,
-        default=1.0,
-        help=(
-            "Though this is called the prodigy learning rate, it corresponds to the d_coef parameter in the Prodigy optimizer."
-            " This acts as a coefficient in the expression for the estimate of d. Default for this trainer is 0.5, but the Prodigy"
-            " default is 1.0, which ends up over-cooking models."
-        ),
-    )
-    parser.add_argument(
-        "--prodigy_weight_decay",
-        type=float,
-        default=1e-2,
-        help="Weight decay to use. Prodigy default is 0, but SimpleTuner uses 1e-2.",
-    )
-    parser.add_argument(
-        "--prodigy_epsilon",
-        type=float,
-        default=1e-08,
-        help="Epsilon value for the Adam optimizer",
+        help="Deprecated and removed.",
     )
     parser.add_argument(
         "--use_dadapt_optimizer",
         action="store_true",
-        help="Whether or not to use the discriminator adaptation optimizer.",
+        help="Deprecated and removed.",
     )
-    parser.add_argument(
-        "--dadaptation_learning_rate",
-        type=float,
-        default=1.0,
-        help="Learning rate for the discriminator adaptation. Default: 1.0",
-    )
+
     parser.add_argument(
         "--adam_beta1",
         type=float,
@@ -1134,7 +1171,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--adam_bfloat16",
         action="store_true",
-        help="Whether or not to use stochastic bf16 in Adam. Currently the only supported optimizer.",
+        help="Deprecated in favour of --optimizer=adamw_bf16.",
     )
     parser.add_argument(
         "--max_grad_norm",
@@ -1722,8 +1759,9 @@ def parse_args(input_args=None):
         "--i_know_what_i_am_doing",
         action="store_true",
         help=(
-            "If you are using an optimizer other than AdamW, you must set this flag to continue."
-            " This is a safety feature to prevent accidental use of an unsupported optimizer, as weights are stored in bfloat16."
+            "This flag allows you to override some safety checks."
+            " It's not recommended to use this unless you are developing the platform."
+            " Generally speaking, issue reports submitted with this flag enabled will go to the bottom of the queue."
         ),
     )
     parser.add_argument(
@@ -1805,6 +1843,12 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
+    if "int4" in args.base_model_precision and torch.cuda.is_available():
+        print(
+            "WARNING: int4 precision is ONLY supported on A100 and H100 or newer devices. Waiting 10 seconds to continue.."
+        )
+        time.sleep(10)
+
     model_is_bf16 = (
         args.base_model_precision == "no_change"
         and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
@@ -1813,49 +1857,20 @@ def parse_args(input_args=None):
         and args.base_model_default_dtype == "bf16"
     )
     model_is_quantized = args.base_model_precision != "no_change"
-    non_bf16_optimizers_enabled = any(
-        [
-            args.use_prodigy_optimizer,
-            args.use_dadapt_optimizer,
-            args.use_adafactor_optimizer,
-            args.use_8bit_adam,
-        ]
-    )
-    using_bf16_optimizer = args.adam_bfloat16
-    incompatible_configuration = (
-        (model_is_bf16 and not using_bf16_optimizer)
-        or (not model_is_bf16 and using_bf16_optimizer)
-        or (using_bf16_optimizer and non_bf16_optimizers_enabled)
-    )
-    # print(f"Model is bf16: {model_is_bf16}, Model is quantized: {model_is_quantized}, Using bf16 optimizer: {using_bf16_optimizer}, Incompatible configuration: {incompatible_configuration}")
-    if incompatible_configuration and not args.i_know_what_i_am_doing:
-        enabled_optimizers = (
-            f"\n -> Enabled optimizer(s): "
-            f"{'Prodigy, ' if args.use_prodigy_optimizer else ''}"
-            f"{'Dadapt, ' if args.use_dadapt_optimizer else ''}"
-            f"{'Adafactor, ' if args.use_adafactor_optimizer else ''}"
-            f"{'8-bit Adam, ' if args.use_8bit_adam else ''}"
-            f"{'AdamW BF16, ' if args.adam_bfloat16 else ''}"
-        )
+    # check optimiser validity
+    chosen_optimizer = map_args_to_optimizer(args)
+    is_optimizer_deprecated(chosen_optimizer)
+    from helpers.training.optimizer_param import optimizer_parameters
 
-        if not model_is_quantized:
-            raise ValueError(
-                "Your configuration is requesting an incompatible dtype and optimizer combination."
-                f"\n--adam_bfloat16 is {'provided, but you could switch your OPTIMIZER value to something else to resolve this' if (using_bf16_optimizer and not non_bf16_optimizers_enabled) else 'provided in addition to a request for another optimizer. Check your value for OPTIMIZER' if non_bf16_optimizers_enabled else 'not provided, but it should be'}."
-                f"{enabled_optimizers if non_bf16_optimizers_enabled else ''}"
-                f"\n--mixed_precision {'is bf16, but you could change it to fp32 to use a different optimizer' if args.mixed_precision == 'bf16' else 'could be set to bf16 to save memory, requiring AdamWBF16'}. This value is referred to as MIXED_PRECISION in config.env."
-            )
-        else:
-            raise ValueError(
-                "Your configuration is requesting an incompatible dtype and optimizer combination."
-                f"\n--base_model_default_dtype is set to bf16. You could resolve this by switching it to fp32, at the cost of more VRAM. This would be placed in TRAINER_EXTRA_ARGS."
-                f"\n--adam_bfloat16 {'could alternatively be provided to resolve the situation' if not args.adam_bfloat16 else 'correctly provided... but there is another optimizer enabled'}. Check your value for OPTIMIZER."
-                f"\n--mixed_precision is {'bf16, as expected' if args.mixed_precision == 'bf16' else 'not bf16, but it should be'}. This value is referred to as MIXED_PRECISION in config.env."
-            )
-    if args.use_prodigy_optimizer and args.gradient_precision == "fp32":
+    optimizer_cls, optimizer_details = optimizer_parameters(chosen_optimizer, args)
+    using_bf16_optimizer = optimizer_details.get("default_settings", {}).get(
+        "precision"
+    ) in ["any", "bf16"]
+    if using_bf16_optimizer and not model_is_bf16:
         raise ValueError(
-            "You cannot use the Prodigy optimizer with fp32 gradients. Please set --gradient_precision=unmodified to continue."
+            f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
+    print(f"optimizer: {optimizer_details}")
 
     if torch.backends.mps.is_available():
         if (
@@ -2032,6 +2047,12 @@ def parse_args(input_args=None):
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
+
+    if (args.optimizer_beta1 is not None and args.optimizer_beta2 is None) or (
+        args.optimizer_beta1 is None and args.optimizer_beta2 is not None
+    ):
+        error_log("Both --optimizer_beta1 and --optimizer_beta2 should be provided.")
+        sys.exit(1)
 
     if not args.i_know_what_i_am_doing:
         if args.pixart_sigma or args.sd3:

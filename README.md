@@ -46,7 +46,7 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Aspect bucketing: support for a variety of image sizes and aspect ratios, enabling widescreen and portrait training.
 - Refiner LoRA or full u-net training for SDXL
 - Most models are trainable on a 24G GPU, or even down to 16G at lower base resolutions.
-  - LoRA training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
+  - LoRA/LyCORIS training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
 - DeepSpeed integration allowing for [training SDXL's full u-net on 12G of VRAM](/documentation/DEEPSPEED.md), albeit very slowly.
 - Quantised LoRA training, using low-precision base model or text encoder weights to reduce VRAM consumption while still allowing DreamBooth.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
@@ -122,12 +122,10 @@ Without EMA, more care must be taken not to drastically change the model leading
 
 ### Flux.1 [dev, schnell]
 
-- A100-40G (LoRA, rank-16 or lower)
-- A100-80G (LoRA, up to rank-256)
-- 3x A100-80G (Full tuning, DeepSpeed ZeRO 1)
-- 1x A100-80G (Full tuning, DeepSpeed ZeRO 3)
+- A100-40G (LoRA, rank-128 or lower)
+- A100-80G (LoRA, up to rank-256, Full tune with DeepSpeed)
 
-Flux prefers being trained with multiple GPUs.
+Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation.
 
 ### SDXL, 1024px
 

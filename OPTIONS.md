@@ -66,6 +66,15 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: When provided, will allow SimpleTuner to ignore differences between the cached config inside the dataset and the current values.
 - **Why**: When SimplerTuner is run for the first time on a dataset, it will create a cache document containing information about everything in that dataset. This includes the dataset config, including its "crop" and "resolution" related configuration values. Changing these arbitrarily or by accident could result in your training jobs crashing randomly, so it's highly recommended to not use this parameter, and instead resolve the differences you'd like to apply in your dataset some other way.
 
+### `--data_backend_sampling`
+
+- **What**: When using multiple data backends, sampling can be done using different strategies.
+- **Options**:
+  - `uniform` - the previous behaviour from v0.9.8.1 and earlier where dataset length was not considered, only manual probability weightings.
+    - This is useful for DreamBooth training where you have a set of regularisation images and a set of subject images. You must set `ignore_epochs=True` on your regularisation dataset, and use this mode.
+  - `auto-weighting` - the default behaviour where dataset length is used to equally sample all datasets, maintaining a uniform sampling of the entire data distribution.
+    - This is required if you have differently-sized datasets that you want the model to learn equally.
+
 ### `--vae_cache_scan_behaviour`
 
 - **What**: Configure the behaviour of the integrity scan check.
@@ -134,7 +143,11 @@ A lot of settings are instead set through the [dataloader config](/documentation
 ### `--crop_aspect`
 
 - **What**: When using `--crop=true`, the `--crop_aspect` option may be supplied with a value of `square` or `preserve`.
-- **Why**: The default crop behaviour is to crop all images to a square aspect ratio, but when `--crop_aspect=preserve` is supplied, the trainer will crop images to a size matching their original aspect ratio. This may help to keep multi-resolution support, but it may also harm training quality. Your mileage may vary.
+- **Options**: If cropping is enabled, default behaviour is to crop all images to a square aspect ratio.
+  - `crop_aspect=preserve` will crop images to a size matching their original aspect ratio.
+  - `crop_aspect=closest` will use the closest value from `crop_aspect_buckets`
+  - `crop_aspect=random` will use a random aspect value from `crop_aspect_buckets` without going too far - it will use square crops if your aspects are incompatible
+  - `crop_aspect=square` will use the standard square crop style
 
 ---
 
@@ -245,7 +258,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--legacy] [--kolors] [--flux]
-                [--flux_lora_target {mmdit,context,all,all+ffs}]
+                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flux_fast_schedule]
                 [--flux_guidance_mode {constant,random-range}]
@@ -256,10 +269,11 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
-                [--lora_type {Standard}]
+                [--lora_type {standard,lycoris}]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
-                [--lora_rank LORA_RANK] [--lora_alpha LORA_ALPHA]
-                [--lora_dropout LORA_DROPOUT] [--controlnet]
+                [--init_lora INIT_LORA] [--lora_rank LORA_RANK]
+                [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
+                [--lycoris_config LYCORIS_CONFIG] [--controlnet]
                 [--controlnet_model_name_or_path]
                 --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                 [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
@@ -288,7 +302,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--preserve_data_backend_cache] [--use_dora]
                 [--override_dataset_config] [--cache_dir_text CACHE_DIR_TEXT]
                 [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
-                DATA_BACKEND_CONFIG [--write_batch_size WRITE_BATCH_SIZE]
+                DATA_BACKEND_CONFIG
+                [--data_backend_sampling {uniform,auto-weighting}]
+                [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
                 [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
                 [--enable_multiprocessing] [--max_workers MAX_WORKERS]
@@ -303,7 +319,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--parquet_filename_column PARQUET_FILENAME_COLUMN]
                 [--instance_prompt INSTANCE_PROMPT] [--output_dir OUTPUT_DIR]
                 [--seed SEED] [--seed_for_each_device SEED_FOR_EACH_DEVICE]
-                [--resolution RESOLUTION] [--resolution_type {pixel,area}]
+                [--resolution RESOLUTION]
+                [--resolution_type {pixel,area,pixel_area}]
                 [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
                 [--aspect_bucket_alignment {8,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -327,18 +344,15 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--ema_foreach_disable]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
-                [--offload_param_path OFFLOAD_PARAM_PATH] [--use_8bit_adam]
-                [--use_adafactor_optimizer]
-                [--adafactor_relative_step ADAFACTOR_RELATIVE_STEP]
-                [--use_prodigy_optimizer] [--prodigy_beta3 PRODIGY_BETA3]
-                [--prodigy_decouple PRODIGY_DECOUPLE]
-                [--prodigy_use_bias_correction PRODIGY_USE_BIAS_CORRECTION]
-                [--prodigy_safeguard_warmup PRODIGY_SAFEGUARD_WARMUP]
-                [--prodigy_learning_rate PRODIGY_LEARNING_RATE]
-                [--prodigy_weight_decay PRODIGY_WEIGHT_DECAY]
-                [--prodigy_epsilon PRODIGY_EPSILON] [--use_dadapt_optimizer]
-                [--dadaptation_learning_rate DADAPTATION_LEARNING_RATE]
-                [--adam_beta1 ADAM_BETA1] [--adam_beta2 ADAM_BETA2]
+                [--offload_param_path OFFLOAD_PARAM_PATH]
+                [--optimizer {adamw_bf16,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}]
+                [--optimizer_config OPTIMIZER_CONFIG]
+                [--optimizer_beta1 OPTIMIZER_BETA1]
+                [--optimizer_beta2 OPTIMIZER_BETA2]
+                [--optimizer_release_gradients] [--use_8bit_adam]
+                [--use_adafactor_optimizer] [--use_prodigy_optimizer]
+                [--use_dadapt_optimizer] [--adam_beta1 ADAM_BETA1]
+                [--adam_beta2 ADAM_BETA2]
                 [--adam_weight_decay ADAM_WEIGHT_DECAY]
                 [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
                 [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
@@ -426,15 +440,19 @@ options:
                         model.
   --flux                This option must be provided when training a Flux
                         model.
-  --flux_lora_target {mmdit,context,all,all+ffs}
-                        Flux has single and joint attention blocks. Only the
-                        multimodal 'dual stream' attention blocks are trained
-                        by default. If 'mmdit' is provided, the text input
-                        layers will not be trained. If 'context' is provided,
-                        the mmdit layers will not be trained. If 'all' is
-                        provided, all layers will be trained, minus feed-
-                        forward and norms. If 'all+ffs' is provided, all
-                        layers will be trained including feed-forward.
+  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}
+                        Flux has single and joint attention blocks. By
+                        default, all attention layers are trained, but not the
+                        feed-forward layers If 'mmdit' is provided, the text
+                        input layers will not be trained. If 'context' is
+                        provided, then ONLY the text attention layers are
+                        trained If 'context+ffs' is provided, then text
+                        attention and text feed-forward layers are trained.
+                        This is somewhat similar to text-encoder-only training
+                        in earlier SD versions. If 'all' is provided, all
+                        layers will be trained, minus feed-forward. If
+                        'all+ffs' is provided, all layers will be trained
+                        including feed-forward.
   --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models..
@@ -487,11 +505,12 @@ options:
                         prevents expansion of SD3 Medium's prompt length, as
                         it will unnecessarily attend to every token in the
                         prompt embed, even masked positions.
-  --lora_type {Standard}
+  --lora_type {standard,lycoris}
                         When training using --model_type=lora, you may specify
-                        a different type of LoRA to train here. Currently,
-                        only 'Standard' type is supported. This option exists
-                        for compatibility with Kohya configuration files.
+                        a different type of LoRA to train here. standard
+                        refers to training a vanilla LoRA via PEFT, lycoris
+                        refers to training with KohakuBlueleaf's library of
+                        the same name.
   --lora_init_type {default,gaussian,loftq,olora,pissa}
                         The initialization type for the LoRA model. 'default'
                         will use Microsoft's initialization method, 'gaussian'
@@ -502,6 +521,10 @@ options:
                         outputs, and LoftQ produces an entirely different
                         result with worse quality at first, taking potentially
                         longer to converge than the other methods.
+  --init_lora INIT_LORA
+                        Specify an existing LoRA safetensors file to
+                        initialize the LoRA and continue training or finetune
+                        an existing LoRA.
   --lora_rank LORA_RANK
                         The dimension of the LoRA update matrices.
   --lora_alpha LORA_ALPHA
@@ -510,6 +533,9 @@ options:
   --lora_dropout LORA_DROPOUT
                         LoRA dropout randomly ignores neurons during training.
                         This can help prevent overfitting.
+  --lycoris_config LYCORIS_CONFIG
+                        The location for the JSON file of the Lycoris
+                        configuration.
   --controlnet          If set, ControlNet style training will be used, where
                         a conditioning input image is required alongside the
                         training data.
@@ -708,6 +734,15 @@ options:
                         The relative or fully-qualified path for your data
                         backend config. See multidatabackend.json.example for
                         an example.
+  --data_backend_sampling {uniform,auto-weighting}
+                        When using multiple data backends, the sampling
+                        weighting can be set to 'uniform' or 'auto-weighting'.
+                        The default value is 'auto-weighting', which will
+                        automatically adjust the sampling weights based on the
+                        number of images in each backend. 'uniform' will
+                        sample from each backend equally, which may be more
+                        desirable for DreamBooth training with eg.
+                        ignore_epochs=True on your regularisation dataset.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -799,12 +834,18 @@ options:
                         train/validation dataset will be resized to this
                         resolution. If using --resolution_type=area, this
                         float value represents megapixels.
-  --resolution_type {pixel,area}
+  --resolution_type {pixel,area,pixel_area}
                         Resizing images maintains aspect ratio. This defines
                         the resizing strategy. If 'pixel', the images will be
-                        resized to the resolution by pixel edge. If 'area',
-                        the images will be resized so the pixel area is this
-                        many megapixels.
+                        resized to the resolution by the shortest pixel edge,
+                        if the target size does not match the current size. If
+                        'area', the images will be resized so the pixel area
+                        is this many megapixels. Common rounded values such as
+                        `0.5` and `1.0` will be implicitly adjusted to their
+                        squared size equivalents. If 'pixel_area', the pixel
+                        value (eg. 1024) will be converted to the proper value
+                        for 'area', and then calculate everything the same as
+                        'area' would.
   --aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}
                         The number of decimal places to round the aspect ratio
                         to. This is used to create buckets for aspect ratios.
@@ -935,47 +976,32 @@ options:
                         When using DeepSpeed ZeRo stage 2 or 3 with NVMe
                         offload, this may be specified to provide a path for
                         the offload.
-  --use_8bit_adam       Whether or not to use 8-bit Adam from bitsandbytes.
+  --optimizer {adamw_bf16,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
+  --optimizer_config OPTIMIZER_CONFIG
+                        When setting a given optimizer, this allows a comma-
+                        separated list of key-value pairs to be provided that
+                        will override the optimizer defaults. For example, `--
+                        optimizer_config=decouple_lr=True,weight_decay=0.01`.
+  --optimizer_beta1 OPTIMIZER_BETA1
+                        The value to use for the first beta value in the
+                        optimiser, which is used for the first moment
+                        estimate. A range of 0.8-0.9 is common.
+  --optimizer_beta2 OPTIMIZER_BETA2
+                        The value to use for the second beta value in the
+                        optimiser, which is used for the second moment
+                        estimate. A range of 0.999-0.9999 is common.
+  --optimizer_release_gradients
+                        When using Optimi optimizers, this option will release
+                        the gradients after the optimizer step. This can save
+                        memory, but may slow down training. With Quanto, there
+                        may be no benefit.
+  --use_8bit_adam       Deprecated in favour of --optimizer=optimi-adamw.
   --use_adafactor_optimizer
-                        Whether or not to use the Adafactor optimizer.
-  --adafactor_relative_step ADAFACTOR_RELATIVE_STEP
-                        When set, will use the experimental Adafactor mode for
-                        relative step computations instead of the value set by
-                        --learning_rate. This is an experimental feature, and
-                        you are on your own for support.
+                        Deprecated in favour of --optimizer=stableadamw.
   --use_prodigy_optimizer
-                        Whether or not to use the Prodigy optimizer.
-  --prodigy_beta3 PRODIGY_BETA3
-                        coefficients for computing the Prodidy stepsize using
-                        running averages. If set to None, uses the value of
-                        square root of beta2. Ignored if optimizer is adamW
-  --prodigy_decouple PRODIGY_DECOUPLE
-                        Use AdamW style decoupled weight decay
-  --prodigy_use_bias_correction PRODIGY_USE_BIAS_CORRECTION
-                        Turn on Adam's bias correction. True by default.
-                        Ignored if optimizer is adamW
-  --prodigy_safeguard_warmup PRODIGY_SAFEGUARD_WARMUP
-                        Remove lr from the denominator of D estimate to avoid
-                        issues during warm-up stage. True by default. Ignored
-                        if optimizer is adamW
-  --prodigy_learning_rate PRODIGY_LEARNING_RATE
-                        Though this is called the prodigy learning rate, it
-                        corresponds to the d_coef parameter in the Prodigy
-                        optimizer. This acts as a coefficient in the
-                        expression for the estimate of d. Default for this
-                        trainer is 0.5, but the Prodigy default is 1.0, which
-                        ends up over-cooking models.
-  --prodigy_weight_decay PRODIGY_WEIGHT_DECAY
-                        Weight decay to use. Prodigy default is 0, but
-                        SimpleTuner uses 1e-2.
-  --prodigy_epsilon PRODIGY_EPSILON
-                        Epsilon value for the Adam optimizer
+                        Deprecated and removed.
   --use_dadapt_optimizer
-                        Whether or not to use the discriminator adaptation
-                        optimizer.
-  --dadaptation_learning_rate DADAPTATION_LEARNING_RATE
-                        Learning rate for the discriminator adaptation.
-                        Default: 1.0
+                        Deprecated and removed.
   --adam_beta1 ADAM_BETA1
                         The beta1 parameter for the Adam and other optimizers.
   --adam_beta2 ADAM_BETA2
@@ -984,8 +1010,7 @@ options:
                         Weight decay to use.
   --adam_epsilon ADAM_EPSILON
                         Epsilon value for the Adam optimizer
-  --adam_bfloat16       Whether or not to use stochastic bf16 in Adam.
-                        Currently the only supported optimizer.
+  --adam_bfloat16       Deprecated in favour of --optimizer=adamw_bf16.
   --max_grad_norm MAX_GRAD_NORM
                         Clipping the max gradient norm can help prevent
                         exploding gradients, but may also harm training by
@@ -1188,7 +1213,7 @@ options:
                         CFG value for validation images. Default: 7.5
   --validation_guidance_real VALIDATION_GUIDANCE_REAL
                         Use real CFG sampling for Flux validation images.
-                        Default: 1.0
+                        Default: 1.0 (no CFG)
   --validation_no_cfg_until_timestep VALIDATION_NO_CFG_UNTIL_TIMESTEP
                         When using real CFG sampling for Flux validation
                         images, skip doing CFG on these timesteps. Default: 2
@@ -1321,10 +1346,11 @@ options:
                         cosine wave will use this value as its lower bound for
                         the learning rate.
   --i_know_what_i_am_doing
-                        If you are using an optimizer other than AdamW, you
-                        must set this flag to continue. This is a safety
-                        feature to prevent accidental use of an unsupported
-                        optimizer, as weights are stored in bfloat16.
+                        This flag allows you to override some safety checks.
+                        It's not recommended to use this unless you are
+                        developing the platform. Generally speaking, issue
+                        reports submitted with this flag enabled will go to
+                        the bottom of the queue.
   --accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL
                         Clear the cache from VRAM every X steps. This can help
                         prevent memory leaks, but may slow down training.

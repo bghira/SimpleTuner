@@ -239,6 +239,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             return_overflowing_tokens=False,
             return_tensors="pt",
         )
+        prompt_attention_mask = text_inputs.attention_mask
         text_input_ids = text_inputs.input_ids
         untruncated_ids = self.tokenizer_2(
             prompt, padding="longest", return_tensors="pt"
@@ -270,7 +271,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             batch_size * num_images_per_prompt, seq_len, -1
         )
 
-        return prompt_embeds
+        return prompt_embeds, prompt_attention_mask
 
     def _get_clip_prompt_embeds(
         self,
@@ -375,6 +376,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         else:
             batch_size = prompt_embeds.shape[0]
 
+        prompt_attention_mask = None
         if prompt_embeds is None:
             prompt_2 = prompt_2 or prompt
             prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
@@ -385,7 +387,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 device=device,
                 num_images_per_prompt=num_images_per_prompt,
             )
-            prompt_embeds = self._get_t5_prompt_embeds(
+            prompt_embeds, prompt_attention_mask = self._get_t5_prompt_embeds(
                 prompt=prompt_2,
                 num_images_per_prompt=num_images_per_prompt,
                 max_sequence_length=max_sequence_length,
@@ -406,7 +408,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             device=device, dtype=prompt_embeds.dtype
         )
 
-        return prompt_embeds, pooled_prompt_embeds, text_ids
+        return prompt_embeds, pooled_prompt_embeds, text_ids, prompt_attention_mask
 
     def check_inputs(
         self,
@@ -713,6 +715,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             prompt_embeds,
             pooled_prompt_embeds,
             text_ids,
+            _,
         ) = self.encode_prompt(
             prompt=prompt,
             prompt_2=prompt_2,
@@ -735,6 +738,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 negative_prompt_embeds,
                 negative_pooled_prompt_embeds,
                 negative_text_ids,
+                _,
             ) = self.encode_prompt(
                 prompt=negative_prompt,
                 prompt_2=negative_prompt_2,

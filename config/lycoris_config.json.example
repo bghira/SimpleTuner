@@ -1,0 +1,7 @@
+{
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "linear_dim": 1000000,
+    "linear_alpha": 1,
+    "factor": 16
+}

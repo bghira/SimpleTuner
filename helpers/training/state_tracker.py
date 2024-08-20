@@ -378,6 +378,12 @@ class StateTracker:
         return cls.data_backends[id]
 
     @classmethod
+    def get_dataset_size(cls, data_backend_id: str):
+        if "sampler" in cls.data_backends[data_backend_id]:
+            return len(cls.data_backends[data_backend_id]["sampler"])
+        return 0
+
+    @classmethod
     def set_conditioning_dataset(
         cls, data_backend_id: str, conditioning_backend_id: str
     ):

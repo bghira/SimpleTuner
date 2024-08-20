@@ -55,7 +55,9 @@ NUM_EPOCHS=0
 VALIDATION_STEPS=100
 VALIDATION_PROMPT="a photograph of subjectname"
 
-DATALOADER_CONFIG="multidatabackend-dreambooth.json"
+DATALOADER_CONFIG="config/multidatabackend-dreambooth.json"
+
+TRAINER_EXTRA_ARGS+=" --data_backend_sampling=uniform"    # dreambooth is best with uniform sampling.
 ```
 
 ### Quantised model training
@@ -84,7 +86,7 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_c
 # When you're quantising the model, we're not in pure bf16 anymore.
 # Since adamw_bf16 will never work with this setup, select another optimiser.
 # I know the spelling is different than everywhere else, but we're in too deep to fix it now.
-export OPTIMIZER="adafactor" # or maybe prodigy
+export OPTIMIZER="optimi-lion" # or maybe optimi-stableadamw
 ```
 
 Inside our dataloader config `multidatabackend-dreambooth.json`, it will look something like this:
@@ -130,7 +132,7 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
 Some key values have been tweaked to make training a single subject easier:
 
 - We now have two datasets configured. Regularisation data is optional, and training may work better without it. You can remove that dataset from the list if desired.
-- Resolution is set to `0.5` which will be approximately 512x512 training, which goes faster for SDXL models, and is the native resolution for 1.5 models.
+- Resolution is set to `0.25` which will be approximately 512x512 training, which goes faster for SDXL models, and is the native resolution for 1.5 models.
 - Minimum image size is set to `0.25` which will allow us to upsample some smaller images, which might be needed for datasets with a few important but low resolution images.
 - `caption_strategy` is now `instanceprompt`, which means we will use `instance_prompt` value for every image in the dataset as its caption.
   - **Note:** Using the instance prompt is the traditional method of Dreambooth training, but short captions may work better. If you find the model fails to generalise, it may be worth attempting to use captions.
@@ -138,6 +140,7 @@ Some key values have been tweaked to make training a single subject easier:
 For a regularisation dataset:
 
 - Set `ignore_epochs=true`, which will ensure this dataset does not count toward a "finished epoch"
+  - Also ensure you include `--data_backend_sampling=uniform` in your `TRAINER_EXTRA_ARGS`
 - Set `repeats` high enough that this dataset will never stop being sampled
 - `minimum_image_size` has been increased to ensure we don't introduce too many low-quality artifacts
 - Similarly, using more descriptive captions may help avoid forgetting. Switching from `instanceprompt` to `textfile` or other strategies will require creating `.txt` files for each image.

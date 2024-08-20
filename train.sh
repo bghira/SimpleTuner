@@ -67,6 +67,19 @@ if [ -z "${MODEL_NAME}" ]; then
     printf "MODEL_NAME not set, exiting.\n"
     exit 1
 fi
+export LYCORIS_CONFIG_ARG=""
+if [ -n "$LYCORIS_CONFIG" ]; then
+    export LYCORIS_CONFIG_ARG="--lycoris_config=${LYCORIS_CONFIG}"
+fi
+if [ -n "$LORA_TYPE" ]; then
+    export LORA_TYPE_ARG="--lora_type=${LORA_TYPE}"
+fi
+if [ -n "$LORA_RANK" ]; then
+    export LORA_RANK_ARG="--lora_rank=${LORA_RANK}"
+fi
+if [ -n "$BASE_MODEL_PRECISION" ]; then
+    export BASE_MODEL_PRECISION_ARG="--base_model_precision=${BASE_MODEL_PRECISION}"
+fi
 if [ -z "${RESOLUTION}" ]; then
     printf "RESOLUTION not set, exiting.\n"
     exit 1
@@ -131,6 +144,10 @@ if [ -z "${LR_SCHEDULE}" ]; then
     printf "LR_SCHEDULE not set, exiting.\n"
     exit 1
 fi
+export LR_END_ARG=""
+if [ -n "${LR_END}" ]; then
+    export LR_END_ARG="--lr_end=${LR_END}"
+fi
 if [ -z "${TRAIN_BATCH_SIZE}" ]; then
     printf "TRAIN_BATCH_SIZE not set, exiting.\n"
     exit 1
@@ -151,10 +168,13 @@ if [ -z "${TRAINER_EXTRA_ARGS}" ]; then
     printf "TRAINER_EXTRA_ARGS not set, defaulting to empty.\n"
     TRAINER_EXTRA_ARGS=""
 fi
+export MINIMUM_RESOLUTION_ARG=""
 if [ -z "$MINIMUM_RESOLUTION" ]; then
-    printf "MINIMUM_RESOLUTION not set, defaulting to RESOLUTION.\n"
-    export MINIMUM_RESOLUTION=$RESOLUTION
+    printf "MINIMUM_RESOLUTION not set, you might have problems with upscaled images.\n"
+else
+    export MINIMUM_RESOLUTION_ARG="--minimum_image_size=${MINIMUM_RESOLUTION}"
 fi
+
 if [ -z "$RESOLUTION_TYPE" ]; then
     printf "RESOLUTION_TYPE not set, defaulting to pixel.\n"
     export RESOLUTION_TYPE="pixel"
@@ -244,35 +264,7 @@ if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
     fi
     export EMA_ARGS="--use_ema --ema_decay=${EMA_DECAY}"
 fi
-# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
-export OPTIMIZER_ARG=""
-case $OPTIMIZER in
-    "adamw")
-        export OPTIMIZER_ARG=""
-        ;;
-    "adamw8bit")
-        export OPTIMIZER_ARG="--use_8bit_adam"
-        ;;
-    "adamw_bfloat16")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    "adamw_bf16")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    "adafactor")
-        export OPTIMIZER_ARG="--use_adafactor_optimizer"
-        ;;
-    "dadaptation")
-        export OPTIMIZER_ARG="--use_dadapt_optimizer"
-        ;;
-    "prodigy")
-        export OPTIMIZER_ARG="--use_prodigy_optimizer"
-        ;;
-    *)
-        echo "Unknown optimizer requested: $OPTIMIZER"
-        exit 1
-        ;;
-esac
+export OPTIMIZER_ARG="--optimizer=${OPTIMIZER}"
 
 export DELETE_ARGS=""
 if ! [ -z "$DELETE_SMALL_IMAGES" ] && [ $DELETE_SMALL_IMAGES -eq 1 ]; then
@@ -390,8 +382,8 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --train_batch="${TRAIN_BATCH_SIZE}" --max_workers=$MAX_WORKERS --read_batch_size=$READ_BATCH_SIZE --write_batch_size=$WRITE_BATCH_SIZE --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
     --torch_num_threads=${TORCH_NUM_THREADS} --image_processing_batch_size=${IMAGE_PROCESSING_BATCH_SIZE} --vae_batch_size=$VAE_BATCH_SIZE \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
-    --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
-    --resolution_type="${RESOLUTION_TYPE}" \
+    ${MINIMUM_RESOLUTION_ARG} --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
+    --resolution_type="${RESOLUTION_TYPE}" ${LYCORIS_CONFIG_ARG} ${LORA_TYPE_ARG} ${LORA_RANK_ARG} ${BASE_MODEL_PRECISION_ARG} ${LR_END_ARG} \
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
     --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_real="${VALIDATION_GUIDANCE_REAL}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
