@@ -985,11 +985,19 @@ class TextEmbeddingCache:
                 if return_concat and load_from_cache:
                     try:
                         # We attempt to load.
-                        prompt_embeds, add_text_embeds, time_ids, masks = self.load_from_cache(
-                            filename
-                        )
+                        _flux_embed = self.load_from_cache(filename)
+                        if len(_flux_embed) == 3:
+                            # legacy flux embed w/o attn mask
+                            prompt_embeds, add_text_embeds, time_ids = _flux_embed
+                            masks = None
+                        elif len(_flux_embed) == 4:
+                            # flux embed with attn mask
+                            prompt_embeds, add_text_embeds, time_ids, masks = (
+                                _flux_embed
+                            )
+                        del _flux_embed
                         logger.debug(
-                            f"Cached Flux text embeds: {prompt_embeds.shape}, {add_text_embeds.shape}, {time_ids.shape}, {masks.shape}"
+                            f"Cached Flux text embeds: {prompt_embeds.shape}, {add_text_embeds.shape}, {time_ids.shape}, {masks.shape if masks is not None else None}"
                         )
                     except Exception as e:
                         # We failed to load. Now encode the prompt.
@@ -1051,7 +1059,6 @@ class TextEmbeddingCache:
                     time_ids_all.append(time_ids)
                     masks_all.append(masks)
 
-
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
 
@@ -1070,7 +1077,8 @@ class TextEmbeddingCache:
             prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
             time_ids_all = torch.cat(time_ids_all, dim=0)
-            masks_all = torch.cat(masks_all, dim=0)
+            # if any masks_all are None, we can't cat
+            masks_all = torch.cat(masks_all, dim=0) if None not in masks_all else None
 
         return prompt_embeds_all, add_text_embeds_all, time_ids_all, masks_all
 

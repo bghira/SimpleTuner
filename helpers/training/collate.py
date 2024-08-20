@@ -183,7 +183,12 @@ def compute_single_embedding(
         prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
             text_embed_cache.compute_embeddings_for_flux_prompts(prompts=[caption])
         )
-        return prompt_embeds[0], pooled_prompt_embeds[0], time_ids[0], masks[0]
+        return (
+            prompt_embeds[0],
+            pooled_prompt_embeds[0],
+            time_ids[0],
+            masks[0] if masks is not None else None,
+        )
     else:
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
@@ -267,7 +272,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             torch.stack(prompt_embeds),
             torch.stack(add_text_embeds),
             torch.stack(time_ids),
-            torch.stack(masks),
+            torch.stack(masks) if None not in masks else None,
         )
     else:
         # Separate the tuples
@@ -459,9 +464,7 @@ def collate_fn(batch):
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
         attn_mask = add_text_embeds_all
-    elif (
-        StateTracker.get_model_type() == "smoldit"
-    ):
+    elif StateTracker.get_model_type() == "smoldit":
         attn_mask = add_text_embeds_all
 
     return {
