@@ -617,6 +617,13 @@ class Validation:
                     current_validation_pooled_embeds,
                     current_validation_time_ids,
                 ) = _embed
+            elif len(_embed) == 4:
+                (
+                    current_validation_prompt_embeds,
+                    current_validation_pooled_embeds,
+                    current_validation_time_ids,
+                    _,
+                ) = _embed
             else:
                 raise ValueError(
                     f"Unexpected number of embeddings returned from cache: {_embed}"
