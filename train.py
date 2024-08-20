@@ -1826,7 +1826,10 @@ def main():
                             flux_transformer_kwargs["attention_mask"] = batch[
                                 "encoder_attention_mask"
                             ]
-                            assert flux_transformer_kwargs["attention_mask"] is not None
+                            if flux_transformer_kwargs["attention_mask"] is None:
+                                raise ValueError(
+                                    "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
+                                )
 
                         model_pred = transformer(**flux_transformer_kwargs)[0]
 
