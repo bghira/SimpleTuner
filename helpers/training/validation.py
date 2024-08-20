@@ -266,6 +266,7 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 validation_negative_pooled_embeds,
                 validation_negative_time_ids,
+                _,
             ) = embed_cache.compute_embeddings_for_prompts(
                 [StateTracker.get_args().validation_negative_prompt],
                 load_from_cache=False,
