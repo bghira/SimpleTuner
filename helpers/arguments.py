@@ -240,7 +240,7 @@ def parse_args(input_args=None):
         default="standard",
         help=(
             "When training using --model_type=lora, you may specify a different type of LoRA to train here."
-            " Standard refers to training a vanilla LoRA via PEFT, lycoris refers to training with KohakuBlueleaf's library of the same name."
+            " standard refers to training a vanilla LoRA via PEFT, lycoris refers to training with KohakuBlueleaf's library of the same name."
         ),
     )
     parser.add_argument(

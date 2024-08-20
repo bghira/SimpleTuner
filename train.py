@@ -1826,6 +1826,7 @@ def main():
                             flux_transformer_kwargs["attention_mask"] = batch[
                                 "encoder_attention_mask"
                             ]
+                            assert flux_transformer_kwargs["attention_mask"] is not None
 
                         model_pred = transformer(**flux_transformer_kwargs)[0]
 
@@ -2272,6 +2273,10 @@ def main():
                             0
                         ].dtype,
                         {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+                    )
+                    shutil.copy2(
+                        args.lycoris_config,
+                        os.path.join(args.output_dir, "lycoris_config.json"),
                     )
 
         elif args.use_ema:
