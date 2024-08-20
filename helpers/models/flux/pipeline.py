@@ -818,7 +818,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
 
                 extra_transformer_args = {}
                 if prompt_mask is not None:
-                    extra_transformer_args["prompt_mask"] = prompt_mask.to(
+                    extra_transformer_args["attention_mask"] = prompt_mask.to(
                         device=self.transformer.device
                     )
 

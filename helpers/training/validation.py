@@ -622,7 +622,7 @@ class Validation:
                     current_validation_prompt_embeds,
                     current_validation_pooled_embeds,
                     current_validation_time_ids,
-                    _,
+                    current_validation_prompt_mask,
                 ) = _embed
             else:
                 raise ValueError(
@@ -700,7 +700,15 @@ class Validation:
         if (
             StateTracker.get_model_type() == "pixart_sigma"
             or StateTracker.get_model_type() == "smoldit"
+            or (
+                StateTracker.get_model_type() == "flux"
+                and StateTracker.get_args().flux_attention_masked_training
+            )
         ):
+            logger.debug(
+                f"mask: {current_validation_prompt_mask.shape if current_validation_prompt_mask is not None else None}"
+            )
+            assert current_validation_prompt_mask is not None
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
             prompt_embeds["negative_mask"] = self.validation_negative_prompt_mask
 
