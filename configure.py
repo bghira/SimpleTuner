@@ -417,7 +417,7 @@ def configure_env():
         env_contents["TRACKER_PROJECT_NAME"] = tracker_project_name
         tracker_run_name = prompt_user(
             "Enter the name of your Weights & Biases runs. This can use shell commands, which can be used to dynamically set the run name.",
-            "$(date +%s)",
+            f"simpletuner-{model_type}",
         )
         env_contents["TRACKER_RUN_NAME"] = tracker_run_name
         report_to_str = "--report_to="
