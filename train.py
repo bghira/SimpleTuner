@@ -1826,6 +1826,7 @@ def main():
                             flux_transformer_kwargs["attention_mask"] = batch[
                                 "encoder_attention_mask"
                             ]
+                            assert flux_transformer_kwargs["attention_mask"] is not None
 
                         model_pred = transformer(**flux_transformer_kwargs)[0]
 
