@@ -57,7 +57,9 @@ class FluxSingleAttnProcessor2_0:
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+            raise ImportError(
+                "AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
+            )
 
     def __call__(
         self,
@@ -71,7 +73,9 @@ class FluxSingleAttnProcessor2_0:
 
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+            hidden_states = hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
 
         batch_size, _, _ = hidden_states.shape
         query = attn.to_q(hidden_states)
@@ -102,7 +106,9 @@ class FluxSingleAttnProcessor2_0:
         if attention_mask is not None:
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             attention_mask = (attention_mask > 0).bool()
-            attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
+            attention_mask = attention_mask.to(
+                device=hidden_states.device, dtype=hidden_states.dtype
+            )
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
         # TODO: add support for attn.scale when we move to Torch 2.1
@@ -115,11 +121,15 @@ class FluxSingleAttnProcessor2_0:
             attn_mask=attention_mask,
         )
 
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        hidden_states = hidden_states.transpose(1, 2).reshape(
+            batch_size, -1, attn.heads * head_dim
+        )
         hidden_states = hidden_states.to(query.dtype)
 
         if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+            hidden_states = hidden_states.transpose(-1, -2).reshape(
+                batch_size, channel, height, width
+            )
 
         return hidden_states
 
@@ -129,7 +139,9 @@ class FluxAttnProcessor2_0:
 
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError("FluxAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+            raise ImportError(
+                "FluxAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
+            )
 
     def __call__(
         self,
@@ -142,11 +154,15 @@ class FluxAttnProcessor2_0:
         input_ndim = hidden_states.ndim
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+            hidden_states = hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
         context_input_ndim = encoder_hidden_states.ndim
         if context_input_ndim == 4:
             batch_size, channel, height, width = encoder_hidden_states.shape
-            encoder_hidden_states = encoder_hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+            encoder_hidden_states = encoder_hidden_states.view(
+                batch_size, channel, height * width
+            ).transpose(1, 2)
 
         batch_size = encoder_hidden_states.shape[0]
 
@@ -183,9 +199,13 @@ class FluxAttnProcessor2_0:
         ).transpose(1, 2)
 
         if attn.norm_added_q is not None:
-            encoder_hidden_states_query_proj = attn.norm_added_q(encoder_hidden_states_query_proj)
+            encoder_hidden_states_query_proj = attn.norm_added_q(
+                encoder_hidden_states_query_proj
+            )
         if attn.norm_added_k is not None:
-            encoder_hidden_states_key_proj = attn.norm_added_k(encoder_hidden_states_key_proj)
+            encoder_hidden_states_key_proj = attn.norm_added_k(
+                encoder_hidden_states_key_proj
+            )
 
         # attention
         query = torch.cat([encoder_hidden_states_query_proj, query], dim=2)
@@ -202,7 +222,9 @@ class FluxAttnProcessor2_0:
         if attention_mask is not None:
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             attention_mask = (attention_mask > 0).bool()
-            attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
+            attention_mask = attention_mask.to(
+                device=hidden_states.device, dtype=hidden_states.dtype
+            )
 
         hidden_states = F.scaled_dot_product_attention(
             query,
@@ -212,7 +234,9 @@ class FluxAttnProcessor2_0:
             is_causal=False,
             attn_mask=attention_mask,
         )
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        hidden_states = hidden_states.transpose(1, 2).reshape(
+            batch_size, -1, attn.heads * head_dim
+        )
         hidden_states = hidden_states.to(query.dtype)
 
         encoder_hidden_states, hidden_states = (
@@ -227,9 +251,13 @@ class FluxAttnProcessor2_0:
         encoder_hidden_states = attn.to_add_out(encoder_hidden_states)
 
         if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+            hidden_states = hidden_states.transpose(-1, -2).reshape(
+                batch_size, channel, height, width
+            )
         if context_input_ndim == 4:
-            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+            encoder_hidden_states = encoder_hidden_states.transpose(-1, -2).reshape(
+                batch_size, channel, height, width
+            )
 
         return hidden_states, encoder_hidden_states
 
@@ -238,7 +266,16 @@ class FluxAttnProcessor2_0:
 def rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
     assert dim % 2 == 0, "The dimension must be even."
 
-    scale = torch.arange(0, dim, 2, dtype=torch.float64, device=pos.device) / dim
+    scale = (
+        torch.arange(
+            0,
+            dim,
+            2,
+            dtype=torch.float32 if torch.backends.mps.is_available() else torch.float64,
+            device=pos.device,
+        )
+        / dim
+    )
     omega = 1.0 / (theta**scale)
 
     batch_size, seq_length = pos.shape
@@ -273,9 +310,9 @@ def expand_flux_attention_mask(
     hidden_states: torch.Tensor,
     attn_mask: torch.Tensor,
 ) -> torch.Tensor:
-    '''
+    """
     Expand a mask so that the image is included.
-    '''
+    """
     bsz = attn_mask.shape[0]
     assert bsz == hidden_states.shape[0]
     residual_seq_len = hidden_states.shape[1]
@@ -332,7 +369,7 @@ class FluxSingleTransformerBlock(nn.Module):
         hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
-        attention_mask: Optional[torch.Tensor]=None,
+        attention_mask: Optional[torch.Tensor] = None,
     ):
         residual = hidden_states
         norm_hidden_states, gate = self.norm(hidden_states, emb=temb)
@@ -420,7 +457,7 @@ class FluxTransformerBlock(nn.Module):
         encoder_hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
-        attention_mask: Optional[torch.Tensor]=None,
+        attention_mask: Optional[torch.Tensor] = None,
     ):
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
             hidden_states, emb=temb
@@ -519,7 +556,9 @@ class FluxTransformer2DModelWithMasking(
             self.config.num_attention_heads * self.config.attention_head_dim
         )
 
-        self.pos_embed = EmbedND(dim=self.inner_dim, theta=10000, axes_dim=axes_dims_rope)
+        self.pos_embed = EmbedND(
+            dim=self.inner_dim, theta=10000, axes_dim=axes_dims_rope
+        )
         text_time_guidance_cls = (
             CombinedTimestepGuidanceTextProjEmbeddings
             if guidance_embeds
@@ -728,14 +767,16 @@ class FluxTransformer2DModelWithMasking(
         return Transformer2DModelOutput(sample=output)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     dtype = torch.bfloat16
     bsz = 2
-    img = torch.rand((bsz, 16, 64, 64)).to('cuda', dtype=dtype)
-    timestep = torch.tensor([0.5, 0.5]).to('cuda', dtype=torch.float32)
-    pooled = torch.rand(bsz, 768).to('cuda', dtype=dtype)
-    text = torch.rand((bsz, 512, 4096)).to('cuda', dtype=dtype)
-    attn_mask = torch.tensor([[1.0]*384 + [0.0]*128]*bsz).to('cuda', dtype=dtype)  # Last 128 positions are masked
+    img = torch.rand((bsz, 16, 64, 64)).to("cuda", dtype=dtype)
+    timestep = torch.tensor([0.5, 0.5]).to("cuda", dtype=torch.float32)
+    pooled = torch.rand(bsz, 768).to("cuda", dtype=dtype)
+    text = torch.rand((bsz, 512, 4096)).to("cuda", dtype=dtype)
+    attn_mask = torch.tensor([[1.0] * 384 + [0.0] * 128] * bsz).to(
+        "cuda", dtype=dtype
+    )  # Last 128 positions are masked
 
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
         latents = latents.view(
@@ -748,7 +789,9 @@ if __name__ == '__main__':
 
         return latents
 
-    def _prepare_latent_image_ids(batch_size, height, width, device='cuda', dtype=dtype):
+    def _prepare_latent_image_ids(
+        batch_size, height, width, device="cuda", dtype=dtype
+    ):
         latent_image_ids = torch.zeros(height // 2, width // 2, 3)
         latent_image_ids[..., 1] = (
             latent_image_ids[..., 1] + torch.arange(height // 2)[:, None]
@@ -770,9 +813,7 @@ if __name__ == '__main__':
 
         return latent_image_ids.to(device=device, dtype=dtype)
 
-    txt_ids = torch.zeros(bsz, text.shape[1], 3).to(
-        device='cuda', dtype=dtype
-    )
+    txt_ids = torch.zeros(bsz, text.shape[1], 3).to(device="cuda", dtype=dtype)
 
     vae_scale_factor = 16
     height = 2 * (int(512) // vae_scale_factor)
@@ -781,21 +822,21 @@ if __name__ == '__main__':
     img = _pack_latents(img, img.shape[0], 16, height, width)
 
     # Gotta go fast
-    transformer = FluxTransformer2DModelWithMasking.from_config({
-        "attention_head_dim": 128,
-        "guidance_embeds": True,
-        "in_channels": 64,
-        "joint_attention_dim": 4096,
-        "num_attention_heads": 24,
-        "num_layers": 4,
-        "num_single_layers": 8,
-        "patch_size": 1,
-        "pooled_projection_dim": 768
-    }).to('cuda', dtype=dtype)
+    transformer = FluxTransformer2DModelWithMasking.from_config(
+        {
+            "attention_head_dim": 128,
+            "guidance_embeds": True,
+            "in_channels": 64,
+            "joint_attention_dim": 4096,
+            "num_attention_heads": 24,
+            "num_layers": 4,
+            "num_single_layers": 8,
+            "patch_size": 1,
+            "pooled_projection_dim": 768,
+        }
+    ).to("cuda", dtype=dtype)
 
-    guidance = torch.tensor(
-        [2.0], device='cuda'
-    )
+    guidance = torch.tensor([2.0], device="cuda")
     guidance = guidance.expand(bsz)
 
     with torch.no_grad():
@@ -820,4 +861,4 @@ if __name__ == '__main__':
         )
 
     assert torch.allclose(no_mask.sample, mask.sample) is False
-    print('Attention masking test ran OK. Differences in output were detected.')
+    print("Attention masking test ran OK. Differences in output were detected.")

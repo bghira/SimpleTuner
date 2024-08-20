@@ -582,6 +582,10 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
+        prompt_mask: Optional[Union[torch.FloatTensor, List[torch.FloatTensor]]] = None,
+        negative_mask: Optional[
+            Union[torch.FloatTensor, List[torch.FloatTensor]]
+        ] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
@@ -612,6 +616,9 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         Args:
             prompt (`str` or `List[str]`, *optional*):
                 The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
+                instead.
+            prompt_mask (`str` or `List[str]`, *optional*):
+                The prompt or prompts to be used as a mask for the image generation. If not defined, `prompt` is used
                 instead.
             prompt_2 (`str` or `List[str]`, *optional*):
                 The prompt or prompts to be sent to `tokenizer_2` and `text_encoder_2`. If not defined, `prompt` is
@@ -809,6 +816,12 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 else:
                     guidance = None
 
+                extra_transformer_args = {}
+                if prompt_mask is not None:
+                    extra_transformer_args["prompt_mask"] = prompt_mask.to(
+                        device=self.transformer.device
+                    )
+
                 noise_pred = self.transformer(
                     hidden_states=latents.to(
                         device=self.transformer.device, dtype=self.transformer.dtype
@@ -826,6 +839,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                     img_ids=latent_image_ids,
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
+                    **extra_transformer_args,
                 )[0]
 
                 # TODO optionally use batch prediction to speed this up.
