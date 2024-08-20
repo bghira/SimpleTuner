@@ -251,10 +251,10 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             removed_text = self.tokenizer_2.batch_decode(
                 untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
             )
-            logger.warning(
-                "The following part of your input was truncated because `max_sequence_length` is set to "
-                f" {max_sequence_length} tokens: {removed_text}"
-            )
+            # logger.warning(
+            #     "The following part of your input was truncated because `max_sequence_length` is set to "
+            #     f" {max_sequence_length} tokens: {removed_text}"
+            # )
 
         prompt_embeds = self.text_encoder_2(
             text_input_ids.to(device), output_hidden_states=False
