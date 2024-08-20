@@ -376,6 +376,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         else:
             batch_size = prompt_embeds.shape[0]
 
+        prompt_attention_mask = None
         if prompt_embeds is None:
             prompt_2 = prompt_2 or prompt
             prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
