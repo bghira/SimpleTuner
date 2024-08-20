@@ -497,12 +497,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             while len(available_images) > 0:
                 if len(available_images) < self.batch_size:
                     need_image_count = self.batch_size - len(available_images)
-                    self.logger.debug(
+                    print(
                         f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, but we need {need_image_count} more."
                     )
                     to_yield = self._yield_n_from_exhausted_bucket(
                         need_image_count, self.buckets[self.current_bucket]
                     )
+                    # # add the available images
+                    # to_yield.extend(
+                    #     self._validate_and_yield_images_from_samples(
+                    #         available_images, self.buckets[self.current_bucket]
+                    #     )
+                    # )
                 else:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     samples = random.sample(
