@@ -947,20 +947,25 @@ docs = ["requests (>=2.0.0)"]
 typing = ["mypy (>=1.0.0)", "types-setuptools"]
 
 [[package]]
-name = "lycoris-lora"
-version = "3.0.0.post1"
+name = "lycoris_lora"
+version = "3.0.1.dev3"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
-files = [
-    {file = "lycoris_lora-3.0.0.post1.tar.gz", hash = "sha256:8cefa00947eac4c85c77f4e1cb8ac9f85231f44728eeb1abaef92c717fc9f09f"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 einops = "*"
 toml = "*"
 torch = "*"
 tqdm = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/kohakublueleaf/lycoris"
+reference = "dev"
+resolved_reference = "bb0b2935b6aa7d70a05ee690f753634115ef7372"
 
 [[package]]
 name = "markdown"
@@ -3349,4 +3354,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "28e07cc29245e55127af7dca8b5d6e6881a63436c3df11adb246184ffc50be52"
+content-hash = "5bf43544e0388a0fdf4d08ce584ac452dec4c80d266e1c941d8023cb5da1afbb"
