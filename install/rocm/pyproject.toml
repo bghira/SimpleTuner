@@ -40,7 +40,7 @@ transformers = "^4"
 urllib3 = "<1.27"
 wandb = "^0.16"
 sentencepiece = "^0.2.0"
-optimum-quanto = "^0.2.4"
+optimum-quanto = {git = "https://github.com/bghira/optimum-quanto-simpletuner", rev = "simpletuner/lora-resume"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 
