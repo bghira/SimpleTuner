@@ -99,9 +99,10 @@ The following must be executed for an AMD MI300X to be useable:
 
 ```bash
 apt install amd-smi-lib
-cd /opt/rocm/share/amd_smi
+pushd /opt/rocm/share/amd_smi
 python3 -m pip install --upgrade pip
 python3 -m pip install .
+popd
 ```
 
 There, you will need to modify the following variables:
