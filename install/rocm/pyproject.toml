@@ -13,7 +13,7 @@ torchaudio = {version = "*", source = "pytorch-rocm"}
 torchmetrics = {version = "^1", source = "pytorch-rocm"}
 torchvision = {version = "*", source = "pytorch-rocm"}
 pytorch-triton-rocm = {version = "*", source = "pytorch-rocm"}
-accelerate = "^0.26"
+accelerate = "^0.33.0"
 boto3 = "^1"
 botocore = "^1"
 clip-interrogator = "^0.6"
