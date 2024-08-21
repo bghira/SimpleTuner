@@ -272,7 +272,10 @@ def configure_env():
     ).lower()
     env_contents["USE_DORA"] = "false"
     env_contents["USE_BITFIT"] = "false"
+    use_lycoris = False
+    use_lora = False
     if model_type == "lora":
+        use_lora = True
         use_lycoris = (
             prompt_user("Would you like to train a LyCORIS model? ([y]/n)", "y").lower()
             == "y"
@@ -633,7 +636,7 @@ def configure_env():
 
     quantization = (
         prompt_user(
-            "Would you like to enable model quantization? NOTE: Currently, a bug prevents resuming training once it has crashed, when quantisation is enabled. (y/n)",
+            f"Would you like to enable model quantization? {'NOTE: Currently, a bug prevents multi-GPU training with LoRA' if use_lora else ''}. (y/n)",
             "n",
         ).lower()
         == "y"

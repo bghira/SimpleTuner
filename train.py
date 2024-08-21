@@ -565,7 +565,7 @@ def main():
             transformer.to("cpu", dtype=base_weight_dtype)
         else:
             logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
-    if "quanto" in args.base_model_precision:
+    if "quanto" in args.base_model_precision and "lora" in args.model_type:
         is_quanto = True
         from helpers.training.quantisation import quantoise
 
@@ -581,6 +581,8 @@ def main():
                     controlnet=None,
                     args=args,
                 )
+    elif "lora" not in args.model_type:
+        args.base_model_precision = "no_change"
 
     controlnet = None
     lycoris_wrapped_network = None
@@ -608,7 +610,7 @@ def main():
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
         if "quanto" in args.base_model_precision:
-            # we'll quantise pretty much everything but the adapter, if we execute this here.
+            # since controlnet training uses no adapter currently, we just quantise the base transformer here.
             with accelerator.local_main_process_first():
                 quantoise(
                     unet=unet,
@@ -616,7 +618,7 @@ def main():
                     text_encoder_1=text_encoder_1,
                     text_encoder_2=text_encoder_2,
                     text_encoder_3=text_encoder_3,
-                    controlnet=controlnet,
+                    controlnet=None,
                     args=args,
                 )
 
