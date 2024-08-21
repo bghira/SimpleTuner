@@ -348,7 +348,7 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch):
             # get the data_backend
             data_backend = StateTracker.get_data_backend(data_backend_id)
             # remove the object
-            data_backend["vaecache"].data_backend.delete(filepaths[idx])
+            data_backend["vaecache"].cache_data_backend.delete(filepaths[idx])
             raise ValueError(
                 f"(id={data_backend_id}) Deleted cache file {filepaths[idx]}: contains NaN or Inf values: {latent}"
             )
