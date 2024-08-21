@@ -543,17 +543,19 @@ triton = ["triton (==2.1.0)"]
 
 [[package]]
 name = "diffusers"
-version = "0.31.0.dev0"
+version = "0.30.0"
 description = "State-of-the-art diffusion in PyTorch and JAX."
 optional = false
 python-versions = ">=3.8.0"
-files = []
-develop = false
+files = [
+    {file = "diffusers-0.30.0-py3-none-any.whl", hash = "sha256:114194eb61498aff06243ade750fca6fbc179ca9df68923bb175b70030bed495"},
+    {file = "diffusers-0.30.0.tar.gz", hash = "sha256:57acd59cab035f62bde1108fc4c93e76e6988a5b3f8ae9f06051146c1cecb2aa"},
+]
 
 [package.dependencies]
 filelock = "*"
 huggingface-hub = ">=0.23.2"
-importlib_metadata = "*"
+importlib-metadata = "*"
 numpy = "*"
 Pillow = "*"
 regex = "!=2019.12.17"
@@ -561,19 +563,13 @@ requests = "*"
 safetensors = ">=0.3.1"
 
 [package.extras]
-dev = ["GitPython (<3.1.19)", "Jinja2", "Jinja2", "accelerate (>=0.31.0)", "accelerate (>=0.31.0)", "compel (==0.1.8)", "datasets", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.1.5)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "torch (>=1.4)", "torchvision", "transformers (>=4.41.2)", "urllib3 (<=2.0.0)"]
+dev = ["GitPython (<3.1.19)", "Jinja2", "accelerate (>=0.31.0)", "compel (==0.1.8)", "datasets", "flax (>=0.4.1)", "hf-doc-builder (>=0.3.0)", "invisible-watermark (>=0.2.0)", "isort (>=5.5.4)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "ruff (==0.1.5)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "tensorboard", "torch (>=1.4)", "torchvision", "transformers (>=4.41.2)", "urllib3 (<=2.0.0)"]
 docs = ["hf-doc-builder (>=0.3.0)"]
 flax = ["flax (>=0.4.1)", "jax (>=0.4.1)", "jaxlib (>=0.4.1)"]
 quality = ["hf-doc-builder (>=0.3.0)", "isort (>=5.5.4)", "ruff (==0.1.5)", "urllib3 (<=2.0.0)"]
 test = ["GitPython (<3.1.19)", "Jinja2", "compel (==0.1.8)", "datasets", "invisible-watermark (>=0.2.0)", "k-diffusion (>=0.0.12)", "librosa", "parameterized", "pytest", "pytest-timeout", "pytest-xdist", "requests-mock (==1.10.0)", "safetensors (>=0.3.1)", "scipy", "sentencepiece (>=0.1.91,!=0.1.92)", "torchvision", "transformers (>=4.41.2)"]
 torch = ["accelerate (>=0.31.0)", "torch (>=1.4)"]
 training = ["Jinja2", "accelerate (>=0.31.0)", "datasets", "peft (>=0.6.0)", "protobuf (>=3.20.3,<4)", "tensorboard"]
-
-[package.source]
-type = "git"
-url = "https://github.com/huggingface/diffusers"
-reference = "HEAD"
-resolved_reference = "b38255006af56b98aab3a4027939e662ed343468"
 
 [[package]]
 name = "dill"
@@ -998,20 +994,25 @@ docs = ["requests (>=2.0.0)"]
 typing = ["mypy (>=1.0.0)", "types-setuptools"]
 
 [[package]]
-name = "lycoris-lora"
-version = "3.0.0.post1"
+name = "lycoris_lora"
+version = "3.0.1.dev3"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
-files = [
-    {file = "lycoris_lora-3.0.0.post1.tar.gz", hash = "sha256:8cefa00947eac4c85c77f4e1cb8ac9f85231f44728eeb1abaef92c717fc9f09f"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 einops = "*"
 toml = "*"
 torch = "*"
 tqdm = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/kohakublueleaf/lycoris"
+reference = "dev"
+resolved_reference = "bb0b2935b6aa7d70a05ee690f753634115ef7372"
 
 [[package]]
 name = "markdown"
@@ -1536,14 +1537,12 @@ numpy = [
 
 [[package]]
 name = "optimum-quanto"
-version = "0.2.4"
+version = "0.2.5.dev0"
 description = "A pytorch quantization backend for optimum."
 optional = false
 python-versions = ">=3.8.0"
-files = [
-    {file = "optimum_quanto-0.2.4-py3-none-any.whl", hash = "sha256:ca1d5187de57c7be629d747ac71ea62df01e47d51c6e9b8d3f99341e5a88c5ed"},
-    {file = "optimum_quanto-0.2.4.tar.gz", hash = "sha256:29ceefda5b411fb3a4a936faef076f00bcbb9065a27a864a8a140497eb323d16"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 ninja = "*"
@@ -1554,6 +1553,12 @@ torch = ">=2.4.0"
 [package.extras]
 dev = ["black", "pytest", "ruff"]
 examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "torchvision", "transformers"]
+
+[package.source]
+type = "git"
+url = "https://github.com/bghira/optimum-quanto-simpletuner"
+reference = "simpletuner/lora-resume"
+resolved_reference = "b7c9e3763e4de677e44674d48431d34e729a8ac3"
 
 [[package]]
 name = "packaging"
@@ -3554,4 +3559,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "802b17ffe4faf434b2cf1ad4fe1096984bb8dbc145ab374fcdc85090c35add82"
+content-hash = "ad17c0a42d5d5d8ffc076e2cb8d12b491de2f85fb38994d16c2f4ea51ca61769"

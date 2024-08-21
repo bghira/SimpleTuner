@@ -93,6 +93,18 @@ Copy `config/config.env.example` to `config/config.env`:
 cp config/config.env.example config/config.env
 ```
 
+#### AMD ROCm follow-up steps
+
+The following must be executed for an AMD MI300X to be useable:
+
+```bash
+apt install amd-smi-lib
+pushd /opt/rocm/share/amd_smi
+python3 -m pip install --upgrade pip
+python3 -m pip install .
+popd
+```
+
 There, you will need to modify the following variables:
 
 - `MODEL_TYPE` - Set this to `lora`.

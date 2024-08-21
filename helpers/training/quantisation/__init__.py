@@ -29,6 +29,13 @@ def _quanto_model(model, model_precision, base_model_precision=None):
     if model_precision == "int2-quanto":
         weight_quant = qint2
     elif model_precision == "int4-quanto":
+        if torch.cuda.is_available():
+            logger.error(
+                "int4-quanto is only supported on A100 and H100 GPUs, but other GPUs would support int2-quanto, int8-quanto or fp8-quanto... waiting 10 seconds for you to cancel."
+            )
+            import time
+
+            time.sleep(10)
         weight_quant = qint4
     elif model_precision == "int8-quanto":
         weight_quant = qint8
@@ -39,12 +46,9 @@ def _quanto_model(model, model_precision, base_model_precision=None):
             )
 
             return
-        logger.warning(
-            "An earlier experimental build of this code erroneously used int8 instead of fp8. If you are resuming training and see errors, please use int8 instead of fp8."
-        )
         weight_quant = qfloat8
     else:
-        raise ValueError(f"Invalid quantisation level: {args.base_model_precision}")
+        raise ValueError(f"Invalid quantisation level: {base_model_precision}")
     quantize(model, weights=weight_quant)
     logger.info("Freezing model.")
     freeze(model)

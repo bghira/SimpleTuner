@@ -177,12 +177,19 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
     return processed_images
 
 def load_image(image_file, input_size=448, max_num=12):
+    print(f"Original image filename: {image_file}")
     image = Image.open(image_file).convert('RGB')
+    width, height = image.size
+    print(f"Original image size: {image.size}")
+    mode = image.mode
+    print(f"Original image mode: {mode}")
     transform = build_transform(input_size=input_size)
     images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
+    print(f"Size after dynamic_preprocess: {images[0].size}")
     pixel_values = [transform(image) for image in images]
+    print(f"Size after transform: {pixel_values[0].shape}")
     pixel_values = torch.stack(pixel_values)
-    return pixel_values
+    return pixel_values, width, height
 
 def process_directory(
     args,
@@ -246,7 +253,8 @@ def process_directory(
                 logger.debug(f"Attempting to load image: {filename}")
                 logger.debug(f"Processing image: {filename}")
                 # set the max number of tiles in `max_num`
-                pixel_values = load_image(full_filepath, max_num=12).to(torch.bfloat16).to(device)
+                pixel_values, width, height = load_image(full_filepath, max_num=12)
+                pixel_values, width, height = pixel_values.to(torch.bfloat16).to(device), width, height
                 generation_config = dict(max_new_tokens=max_new_tokens, do_sample=False)
 
                 question = '<image>\n' + original_query_str
@@ -258,7 +266,7 @@ def process_directory(
                 # with Image.open(full_filepath) as img_file:
                 #     image_bytes = img_file.tobytes()
 
-                records.append({"filename": filename, "caption": response})
+                records.append({"filename": filename, "caption": response, "width": width, "height": height})
                 if (
                     total_to_process is not None
                     and total_processed >= total_to_process

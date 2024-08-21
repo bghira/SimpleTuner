@@ -947,20 +947,25 @@ docs = ["requests (>=2.0.0)"]
 typing = ["mypy (>=1.0.0)", "types-setuptools"]
 
 [[package]]
-name = "lycoris-lora"
-version = "3.0.0.post1"
+name = "lycoris_lora"
+version = "3.0.1.dev3"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
-files = [
-    {file = "lycoris_lora-3.0.0.post1.tar.gz", hash = "sha256:8cefa00947eac4c85c77f4e1cb8ac9f85231f44728eeb1abaef92c717fc9f09f"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 einops = "*"
 toml = "*"
 torch = "*"
 tqdm = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/kohakublueleaf/lycoris"
+reference = "dev"
+resolved_reference = "bb0b2935b6aa7d70a05ee690f753634115ef7372"
 
 [[package]]
 name = "markdown"
@@ -1511,14 +1516,12 @@ tests = ["Pillow", "accelerate", "diffusers (>=0.17.0)", "einops", "invisible-wa
 
 [[package]]
 name = "optimum-quanto"
-version = "0.2.4"
+version = "0.2.5.dev0"
 description = "A pytorch quantization backend for optimum."
 optional = false
 python-versions = ">=3.8.0"
-files = [
-    {file = "optimum_quanto-0.2.4-py3-none-any.whl", hash = "sha256:ca1d5187de57c7be629d747ac71ea62df01e47d51c6e9b8d3f99341e5a88c5ed"},
-    {file = "optimum_quanto-0.2.4.tar.gz", hash = "sha256:29ceefda5b411fb3a4a936faef076f00bcbb9065a27a864a8a140497eb323d16"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 ninja = "*"
@@ -1529,6 +1532,12 @@ torch = ">=2.4.0"
 [package.extras]
 dev = ["black", "pytest", "ruff"]
 examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "torchvision", "transformers"]
+
+[package.source]
+type = "git"
+url = "https://github.com/bghira/optimum-quanto-simpletuner"
+reference = "simpletuner/lora-resume"
+resolved_reference = "b7c9e3763e4de677e44674d48431d34e729a8ac3"
 
 [[package]]
 name = "packaging"
@@ -3349,4 +3358,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "28e07cc29245e55127af7dca8b5d6e6881a63436c3df11adb246184ffc50be52"
+content-hash = "d000d15929e980de547dcc0f71e8c6e974715f7e07ef2bbfa2c6b02424affa1d"

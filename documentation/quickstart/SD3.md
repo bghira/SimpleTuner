@@ -57,6 +57,18 @@ poetry install --no-root
 poetry install --no-root -C install/rocm
 ```
 
+#### AMD ROCm follow-up steps
+
+The following must be executed for an AMD MI300X to be useable:
+
+```bash
+apt install amd-smi-lib
+pushd /opt/rocm/share/amd_smi
+python3 -m pip install --upgrade pip
+python3 -m pip install .
+popd
+```
+
 #### Removing DeepSpeed & Bits n Bytes
 
 These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
