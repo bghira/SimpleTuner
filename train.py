@@ -610,7 +610,7 @@ def main():
             logger.info("Initializing controlnet weights from unet")
             controlnet = ControlNetModel.from_unet(unet)
         if "quanto" in args.base_model_precision:
-            # we'll quantise pretty much everything but the adapter, if we execute this here.
+            # since controlnet training uses no adapter currently, we just quantise the base transformer here.
             with accelerator.local_main_process_first():
                 quantoise(
                     unet=unet,
@@ -618,7 +618,7 @@ def main():
                     text_encoder_1=text_encoder_1,
                     text_encoder_2=text_encoder_2,
                     text_encoder_3=text_encoder_3,
-                    controlnet=controlnet,
+                    controlnet=None,
                     args=args,
                 )
 
