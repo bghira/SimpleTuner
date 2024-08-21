@@ -50,6 +50,17 @@ To install the ROCm-specific requirements:
 poetry install --no-root -C install/rocm
 ```
 
+#### AMD ROCm follow-up steps
+
+The following must be executed for an AMD MI300X to be useable:
+
+```bash
+apt install amd-smi-lib
+cd /opt/rocm/share/amd_smi
+python3 -m pip install --upgrade pip
+python3 -m pip install .
+```
+
 ### All platforms
 
 2. Copy `config/config.env.example` to `config/config.env` and then fill in the details.
