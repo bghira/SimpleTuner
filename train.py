@@ -871,9 +871,9 @@ def main():
         offload_param = accelerator.state.deepspeed_plugin.deepspeed_config[
             "zero_optimization"
         ]["offload_param"]
-        accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"][
-            "offload_param"
-        ]["pin_memory"] = False
+        # accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"][
+        #     "offload_param"
+        # ]["pin_memory"] = False
         if offload_param["device"] == "nvme":
             if offload_param["nvme_path"] == "none":
                 if args.offload_param_path is None:
