@@ -412,7 +412,11 @@ class SaveHookManager:
         if len(state.keys()) > 0:
             logging.error(f"LyCORIS failed to load: {state}")
             raise RuntimeError("Loading of LyCORIS model failed")
-        self.accelerator._lycoris_wrapped_network.to(self.accelerator.device)
+        self.accelerator._lycoris_wrapped_network.to(
+            device=self.accelerator.device, dtype=self.transformer.dtype
+        )
+        # print(f"transformer dtype: {self.transformer.dtype}")
+        # print(f"lycoris dtype: {self.accelerator._lycoris_wrapped_network}")
 
         logger.info("LyCORIS weights have been loaded from disk")
 
