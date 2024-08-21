@@ -183,6 +183,17 @@ def main():
         project_config=accelerator_project_config,
         kwargs_handlers=[process_group_kwargs],
     )
+
+    if accelerator.num_processes > 0:
+        # mulit-gpu safety checks & warnings
+        if args.model_type == "lora" and args.lora_type == "standard":
+            # multi-gpu PEFT checks & warnings
+            if "quanto" in args.base_model_precision:
+                logger.error(
+                    "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
+                )
+                sys.exit(1)
+
     StateTracker.set_accelerator(accelerator)
     webhook_handler = None
     if args.webhook_config is not None:
