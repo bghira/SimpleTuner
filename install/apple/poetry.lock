@@ -1516,14 +1516,12 @@ tests = ["Pillow", "accelerate", "diffusers (>=0.17.0)", "einops", "invisible-wa
 
 [[package]]
 name = "optimum-quanto"
-version = "0.2.4"
+version = "0.2.5.dev0"
 description = "A pytorch quantization backend for optimum."
 optional = false
 python-versions = ">=3.8.0"
-files = [
-    {file = "optimum_quanto-0.2.4-py3-none-any.whl", hash = "sha256:ca1d5187de57c7be629d747ac71ea62df01e47d51c6e9b8d3f99341e5a88c5ed"},
-    {file = "optimum_quanto-0.2.4.tar.gz", hash = "sha256:29ceefda5b411fb3a4a936faef076f00bcbb9065a27a864a8a140497eb323d16"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 ninja = "*"
@@ -1534,6 +1532,12 @@ torch = ">=2.4.0"
 [package.extras]
 dev = ["black", "pytest", "ruff"]
 examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "torchvision", "transformers"]
+
+[package.source]
+type = "git"
+url = "https://github.com/bghira/optimum-quanto-simpletuner"
+reference = "simpletuner/lora-resume"
+resolved_reference = "b7c9e3763e4de677e44674d48431d34e729a8ac3"
 
 [[package]]
 name = "packaging"
@@ -3354,4 +3358,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "5bf43544e0388a0fdf4d08ce584ac452dec4c80d266e1c941d8023cb5da1afbb"
+content-hash = "d000d15929e980de547dcc0f71e8c6e974715f7e07ef2bbfa2c6b02424affa1d"
