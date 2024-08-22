@@ -184,6 +184,13 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
 
+    if torch.cuda.is_available() and not torch.cuda.is_bf16_supported(
+        including_emulation=False
+    ):
+        raise ValueError(
+            "Currently-available CUDA hardware does not support bfloat16. You must use newer equipment."
+        )
+
     if accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
