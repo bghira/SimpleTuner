@@ -1248,7 +1248,10 @@ def main():
             args.resume_from_checkpoint = None
         else:
             logger.info(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
+            try:
+                accelerator.load_state(os.path.join(args.output_dir, path))
+            except Exception as e:
+                logger.error(f"Error during load_state: {e}")
             try:
                 if "constant" in args.lr_scheduler:
                     for g in optimizer.param_groups:
