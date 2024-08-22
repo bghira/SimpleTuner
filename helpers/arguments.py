@@ -1218,6 +1218,14 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_on_startup",
+        action="store_true",
+        default=False,
+        help=(
+            "When training begins, the starting model will have validation prompts run through it, for later comparison."
+        ),
+    )
+    parser.add_argument(
         "--validation_seed_source",
         type=str,
         default="cpu",
