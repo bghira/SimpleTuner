@@ -184,7 +184,14 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
 
-    if accelerator.num_processes > 0:
+    if torch.cuda.is_available() and not torch.cuda.is_bf16_supported(
+        including_emulation=False
+    ):
+        raise ValueError(
+            "Currently-available CUDA hardware does not support bfloat16. You must use newer equipment."
+        )
+
+    if accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
@@ -1219,7 +1226,6 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
-    # validation.run_validations(validation_type="base_model", step=0)
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
@@ -1241,7 +1247,10 @@ def main():
             args.resume_from_checkpoint = None
         else:
             logger.info(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
+            try:
+                accelerator.load_state(os.path.join(args.output_dir, path))
+            except Exception as e:
+                logger.error(f"Error during load_state: {e}")
             try:
                 if "constant" in args.lr_scheduler:
                     for g in optimizer.param_groups:
@@ -1389,6 +1398,8 @@ def main():
     logger.info(initial_msg)
     if webhook_handler is not None:
         webhook_handler.send(message=initial_msg)
+    if args.validation_on_startup and global_step <= 1:
+        validation.run_validations(validation_type="base_model", step=0)
 
     # Only show the progress bar once on each machine.
     show_progress_bar = True
