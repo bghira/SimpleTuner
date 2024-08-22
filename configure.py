@@ -489,23 +489,7 @@ def configure_env():
             1,
         )
     )
-    env_contents["USE_GRADIENT_CHECKPOINTING"] = (
-        "true"
-        if prompt_user(
-            "Would you like to use gradient checkpointing? This saves boatloads of memory. ([y]/n)",
-            "y",
-        ).lower()
-        == "y"
-        else "false"
-    )
-    env_contents["GRADIENT_ACCUMULATION_STEPS"] = int(
-        prompt_user(
-            "Set your number of gradient accumulation steps, or 1 to disable. This linearly increases training time with higher values.",
-            2,
-        )
-    )
-    if int(env_contents["GRADIENT_ACCUMULATION_STEPS"]) < 1:
-        env_contents["GRADIENT_ACCUMULATION_STEPS"] = 1
+    env_contents["USE_GRADIENT_CHECKPOINTING"] = "true"
 
     env_contents["CAPTION_DROPOUT_PROBABILITY"] = float(
         prompt_user("Set the caption dropout rate, or use 0.0 to disable it.", "0.1")
