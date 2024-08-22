@@ -436,13 +436,6 @@ class SaveHookManager:
                 try:
                     # pop models so that they are not loaded again
                     model = models.pop()
-
-                    # load diffusers style into model
-                    if self.args.controlnet or self.args.unet:
-                        merge_safetensors_files(
-                            os.path.join(input_dir, self.denoiser_subdir)
-                        )
-
                     load_model = self.denoiser_class.from_pretrained(
                         input_dir, subfolder=self.denoiser_subdir
                     )
