@@ -184,7 +184,7 @@ def main():
         kwargs_handlers=[process_group_kwargs],
     )
 
-    if accelerator.num_processes > 0:
+    if accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
