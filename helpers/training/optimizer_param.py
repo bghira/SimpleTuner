@@ -104,7 +104,7 @@ optimizer_choices = {
     "optimi-adan": {
         "precision": "any",
         "default_settings": {
-            "betas": (0.98, 0.92, 0.99),
+            "betas": (0.98, 0.92, 0.999),
             "weight_decay": 2e-2,
             "eps": 1e-6,
             "decouple_lr": False,
