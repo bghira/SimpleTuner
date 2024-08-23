@@ -1,6 +1,6 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
-from helpers.data_backend.csv import CSVDataBackend
+from helpers.data_backend.csv_url_list import CSVDataBackend
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
@@ -100,6 +100,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["csv_file"] = backend["csv_file"]
         if "csv_caption_column" in backend:
             output["config"]["csv_caption_column"] = backend["csv_caption_column"]
+        if "csv_url_column" in backend:
+            output["config"]["csv_url_column"] = backend["csv_url_column"]
     if "crop_aspect" in backend:
         choices = ["square", "preserve", "random", "closest"]
         if backend.get("crop_aspect", None) not in choices:
@@ -148,8 +150,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     )
     if "hash_filenames" in backend:
         output["config"]["hash_filenames"] = backend["hash_filenames"]
-    if "shorten_filenames" in backend and backend.get("type") == "csv":
-        output["config"]["shorten_filenames"] = backend["shorten_filenames"]
+    if "hash_filenames" in backend and backend.get("type") == "csv":
+        output["config"]["hash_filenames"] = backend["hash_filenames"]
 
     # check if caption_strategy=parquet with metadata_backend=json
     if (
@@ -635,7 +637,7 @@ def configure_multi_databackend(
                 csv_file=backend["csv_file"],
                 csv_cache_dir=backend["csv_cache_dir"],
                 compress_cache=args.compress_disk_cache,
-                shorten_filenames=backend.get("shorten_filenames", False),
+                hash_filenames=backend.get("hash_filenames", False),
             )
             # init_backend["instance_data_dir"] = backend.get("instance_data_dir", backend.get("instance_data_root", backend.get("csv_cache_dir")))
             init_backend["instance_data_dir"] = None
@@ -1092,8 +1094,10 @@ def get_csv_backend(
     id: str,
     csv_file: str,
     csv_cache_dir: str,
+    url_column: str,
+    caption_column: str,
     compress_cache: bool = False,
-    shorten_filenames: bool = False,
+    hash_filenames: bool = False,
 ) -> CSVDataBackend:
     from pathlib import Path
 
@@ -1102,8 +1106,11 @@ def get_csv_backend(
         id=id,
         csv_file=Path(csv_file),
         image_cache_loc=csv_cache_dir,
+        url_column=url_column,
+        caption_column=caption_column,
         compress_cache=compress_cache,
         shorten_filenames=shorten_filenames,
+        hash_filenames=hash_filenames,
     )
 
 
@@ -1112,6 +1119,7 @@ def check_csv_config(backend: dict, args) -> None:
         "csv_file": "This is the path to the CSV file containing your image URLs.",
         "csv_cache_dir": "This is the path to your temporary cache files where images will be stored. This can grow quite large.",
         "csv_caption_column": "This is the column in your csv which contains the caption(s) for the samples.",
+        "csv_url_column": "This is the column in your csv that contains image urls or paths.",
     }
     for key in required_keys.keys():
         if key not in backend:
