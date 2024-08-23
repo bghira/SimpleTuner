@@ -9,7 +9,8 @@ target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
 is_optimi_available = False
-from helpers.training.adam_bfloat16 import AdamWBF16
+from helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
+from helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
 
 try:
     from optimum.quanto import QTensor
@@ -34,6 +35,15 @@ optimizer_choices = {
             "eps": 1e-6,
         },
         "class": AdamWBF16,
+    },
+    "adamw_schedulefree": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-8,
+        },
+        "class": AdamWScheduleFreeKahan,
     },
     "optimi-stableadamw": {
         "precision": "any",
@@ -154,8 +164,8 @@ args_to_optimizer_mapping = {
 }
 
 deprecated_optimizers = {
-    "prodigy": "Prodigy optimiser has been removed due to issues with precision levels and convergence. Please use optimi-stableadamw or optimi-lion instead - for decoupled learning rate, use --optimizer_config=decoupled_lr=True.",
-    "dadaptation": "D-adaptation optimiser has been removed due to issues with precision levels and convergence. Please use optimi-stableadamw instead.",
+    "prodigy": "Prodigy optimiser has been removed due to issues with precision levels and convergence. Please use adamw_schedulefree instead.",
+    "dadaptation": "D-adaptation optimiser has been removed due to issues with precision levels and convergence. Please use adamw_schedulefree instead.",
     "adafactor": "Adafactor optimiser has been removed in favour of optimi-stableadamw, which offers improved memory efficiency and convergence.",
     "adamw8bit": "AdamW8Bit has been removed in favour of optimi-adamw optimiser, which offers better low-precision support. Please use this or adamw_bf16 instead.",
 }
