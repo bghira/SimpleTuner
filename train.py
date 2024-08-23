@@ -841,13 +841,14 @@ def main():
             f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
         )
         overrode_max_train_steps = True
-    if not is_lr_scheduler_disabled(args.optimizer):
+    is_schedulefree = is_lr_scheduler_disabled(args.optimizer)
+    if is_schedulefree:
         logger.info(
-            f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+            "Using experimental AdamW ScheduleFree optimiser from Facebook. Experimental due to newly added Kahan summation."
         )
     else:
         logger.info(
-            "Using experimental AdamW ScheduleFree optimiser from Facebook. Experimental due to newly added Kahan summation."
+            f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
         )
     if args.layer_freeze_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
@@ -988,7 +989,7 @@ def main():
     if is_lr_scheduler_disabled(args.optimizer):
         # we don't use LR schedulers with schedulefree schedulers (lol)
         lr_scheduler = None
-    if not use_deepspeed_scheduler:
+    if not use_deepspeed_scheduler and not is_schedulefree:
         logger.info(
             f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
         )
@@ -996,12 +997,15 @@ def main():
             args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
         )
     else:
-        logger.info(f"Using DeepSpeed learning rate scheduler")
-        lr_scheduler = accelerate.utils.DummyScheduler(
-            optimizer,
-            total_num_steps=args.max_train_steps,
-            warmup_num_steps=args.lr_warmup_steps,
-        )
+        logger.info(f"Using dummy learning rate scheduler")
+        if torch.backends.mps.is_available():
+            lr_scheduler = None
+        else:
+            lr_scheduler = accelerate.utils.DummyScheduler(
+                optimizer,
+                total_num_steps=args.max_train_steps,
+                warmup_num_steps=args.lr_warmup_steps,
+            )
     if lr_scheduler is not None:
         if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
             lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
@@ -2068,11 +2072,12 @@ def main():
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    if lr_scheduler is not None:
+                    if is_schedulefree:
+                        # hackjob method of retrieving LR from accelerated optims
+                        lr = StateTracker.get_last_lr()
+                    else:
                         lr_scheduler.step(**scheduler_kwargs)
                         lr = lr_scheduler.get_last_lr()[0]
-                    elif hasattr(optimizer, "last_lr"):
-                        lr = optimizer.last_lr
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"

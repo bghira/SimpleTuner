@@ -39,6 +39,7 @@ optimizer_choices = {
     "adamw_schedulefree": {
         "precision": "any",
         "override_lr_scheduler": True,
+        "can_warmup": True,
         "default_settings": {
             "betas": (0.9, 0.999),
             "weight_decay": 1e-2,
@@ -219,9 +220,12 @@ def optimizer_parameters(optimizer, args):
 
 def is_lr_scheduler_disabled(optimizer: str):
     """Check if the optimizer has a built-in LR scheduler"""
+    is_disabled = False
     if optimizer in optimizer_choices:
-        return optimizer_choices.get(optimizer).get("override_lr_scheduler", False)
-    return False
+        is_disabled = optimizer_choices.get(optimizer).get(
+            "override_lr_scheduler", False
+        )
+    return is_disabled
 
 
 def show_optimizer_defaults(optimizer: str = None):
@@ -278,7 +282,12 @@ def determine_optimizer_class_with_config(
     else:
         optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
         default_settings = optimizer_details.get("default_settings")
-        logger.info(f"cls: {optimizer_class}, settings: {default_settings}")
+    if optimizer_details.get("can_warmup", False):
+        logger.info(
+            f"Optimizer contains LR scheduler, warmup steps will be set to {args.lr_warmup_steps}."
+        )
+        default_settings["warmup_steps"] = args.lr_warmup_steps
+    logger.info(f"cls: {optimizer_class}, settings: {default_settings}")
     return default_settings, optimizer_class
 
 

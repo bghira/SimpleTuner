@@ -2,6 +2,7 @@ import torch
 from torch.optim.optimizer import Optimizer
 import math
 from typing import Iterable
+from helpers.training.state_tracker import StateTracker
 
 
 class AdamWScheduleFreeKahan(Optimizer):
@@ -140,5 +141,9 @@ class AdamWScheduleFreeKahan(Optimizer):
 
             self.k += 1
             self.last_lr = adjusted_lr
+            StateTracker.set_last_lr(adjusted_lr)
 
         return loss
+
+    def get_last_lr(self):
+        return self.last_lr
