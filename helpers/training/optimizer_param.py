@@ -38,6 +38,7 @@ optimizer_choices = {
     },
     "adamw_schedulefree": {
         "precision": "any",
+        "override_lr_scheduler": True,
         "default_settings": {
             "betas": (0.9, 0.999),
             "weight_decay": 1e-2,
@@ -214,6 +215,13 @@ def optimizer_parameters(optimizer, args):
         return optimizer_class, optimizer_details
     else:
         raise ValueError(f"Optimizer {optimizer} not found.")
+
+
+def is_lr_scheduler_disabled(optimizer: str):
+    """Check if the optimizer has a built-in LR scheduler"""
+    if optimizer in optimizer_choices:
+        return optimizer_choices.get(optimizer).get("override_lr_scheduler", False)
+    return False
 
 
 def show_optimizer_defaults(optimizer: str = None):

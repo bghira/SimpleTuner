@@ -33,6 +33,8 @@ from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
+from helpers.training.custom_schedule import get_lr_scheduler
+from helpers.training.optimizer_param import is_lr_scheduler_disabled
 from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
 from helpers.training.text_encoding import (
@@ -839,9 +841,14 @@ def main():
             f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
         )
         overrode_max_train_steps = True
-    logger.info(
-        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
-    )
+    if not is_lr_scheduler_disabled(args.optimizer):
+        logger.info(
+            f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+        )
+    else:
+        logger.info(
+            "Using experimental AdamW ScheduleFree optimiser from Facebook. Experimental due to newly added Kahan summation."
+        )
     if args.layer_freeze_strategy == "bitfit":
         from helpers.training.model_freeze import apply_bitfit_freezing
 
@@ -978,8 +985,9 @@ def main():
             optimizer,
         )
 
-    from helpers.training.custom_schedule import get_lr_scheduler
-
+    if is_lr_scheduler_disabled(args.optimizer):
+        # we don't use LR schedulers with schedulefree schedulers (lol)
+        lr_scheduler = None
     if not use_deepspeed_scheduler:
         logger.info(
             f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
@@ -994,10 +1002,11 @@ def main():
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
         )
-    if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
-        lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
-    if hasattr(lr_scheduler, "last_step"):
-        lr_scheduler.last_step = global_resume_step
+    if lr_scheduler is not None:
+        if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+            lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
+        if hasattr(lr_scheduler, "last_step"):
+            lr_scheduler.last_step = global_resume_step
 
     accelerator.wait_for_everyone()
 
@@ -1285,6 +1294,10 @@ def main():
         if "sampler" in backend:
             backend["sampler"].log_state()
 
+    if is_lr_scheduler_disabled(args.optimizer) and hasattr(optimizer, "train"):
+        # we typically have to call train() on the optim for schedulefree.
+        optimizer.train()
+
     total_steps_remaining_at_start = args.max_train_steps
     # We store the number of dataset resets that have occurred inside the checkpoint.
     first_epoch = StateTracker.get_epoch()
@@ -1399,7 +1412,11 @@ def main():
     if webhook_handler is not None:
         webhook_handler.send(message=initial_msg)
     if args.validation_on_startup and global_step <= 1:
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.eval()
         validation.run_validations(validation_type="base_model", step=0)
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.train()
 
     # Only show the progress bar once on each machine.
     show_progress_bar = True
@@ -2051,8 +2068,9 @@ def main():
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    lr_scheduler.step(**scheduler_kwargs)
-                    lr = lr_scheduler.get_last_lr()[0]
+                    if lr_scheduler is not None:
+                        lr_scheduler.step(**scheduler_kwargs)
+                        lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
@@ -2164,7 +2182,12 @@ def main():
                             args.output_dir, f"checkpoint-{global_step}"
                         )
                         print("\n")
+                        # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
+                        if is_lr_scheduler_disabled(args.optimizer):
+                            optimizer.eval()
                         accelerator.save_state(save_path)
+                        if is_lr_scheduler_disabled(args.optimizer):
+                            optimizer.train()
                         for _, backend in StateTracker.get_data_backends().items():
                             if "sampler" in backend:
                                 logger.debug(f"Backend: {backend}")
@@ -2185,7 +2208,11 @@ def main():
                 "lr": lr,
             }
             progress_bar.set_postfix(**logs)
+            if is_lr_scheduler_disabled(args.optimizer):
+                optimizer.eval()
             validation.run_validations(validation_type="intermediary", step=step)
+            if is_lr_scheduler_disabled(args.optimizer):
+                optimizer.train()
             if (
                 args.push_to_hub
                 and args.push_checkpoints_to_hub
@@ -2220,6 +2247,8 @@ def main():
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.eval()
         validation_images = validation.run_validations(
             validation_type="final",
             step=global_step,
