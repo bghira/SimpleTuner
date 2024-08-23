@@ -319,7 +319,6 @@ if ! [ -z "$USE_GRADIENT_CHECKPOINTING" ] && [[ "$USE_GRADIENT_CHECKPOINTING" ==
 fi
 
 if [ -z "$GRADIENT_ACCUMULATION_STEPS" ]; then
-    printf "GRADIENT_ACCUMULATION_STEPS not set, defaulting to 1.\n"
     export GRADIENT_ACCUMULATION_STEPS=1
 fi
 
