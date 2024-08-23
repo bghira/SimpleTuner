@@ -9,7 +9,8 @@ target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
 is_optimi_available = False
-from helpers.training.adam_bfloat16 import AdamWBF16
+from helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
+from helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
 
 try:
     from optimum.quanto import QTensor
@@ -34,6 +35,17 @@ optimizer_choices = {
             "eps": 1e-6,
         },
         "class": AdamWBF16,
+    },
+    "adamw_schedulefree": {
+        "precision": "any",
+        "override_lr_scheduler": True,
+        "can_warmup": True,
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-8,
+        },
+        "class": AdamWScheduleFreeKahan,
     },
     "optimi-stableadamw": {
         "precision": "any",
@@ -154,8 +166,8 @@ args_to_optimizer_mapping = {
 }
 
 deprecated_optimizers = {
-    "prodigy": "Prodigy optimiser has been removed due to issues with precision levels and convergence. Please use optimi-stableadamw or optimi-lion instead - for decoupled learning rate, use --optimizer_config=decoupled_lr=True.",
-    "dadaptation": "D-adaptation optimiser has been removed due to issues with precision levels and convergence. Please use optimi-stableadamw instead.",
+    "prodigy": "Prodigy optimiser has been removed due to issues with precision levels and convergence. Please use adamw_schedulefree instead.",
+    "dadaptation": "D-adaptation optimiser has been removed due to issues with precision levels and convergence. Please use adamw_schedulefree instead.",
     "adafactor": "Adafactor optimiser has been removed in favour of optimi-stableadamw, which offers improved memory efficiency and convergence.",
     "adamw8bit": "AdamW8Bit has been removed in favour of optimi-adamw optimiser, which offers better low-precision support. Please use this or adamw_bf16 instead.",
 }
@@ -204,6 +216,16 @@ def optimizer_parameters(optimizer, args):
         return optimizer_class, optimizer_details
     else:
         raise ValueError(f"Optimizer {optimizer} not found.")
+
+
+def is_lr_scheduler_disabled(optimizer: str):
+    """Check if the optimizer has a built-in LR scheduler"""
+    is_disabled = False
+    if optimizer in optimizer_choices:
+        is_disabled = optimizer_choices.get(optimizer).get(
+            "override_lr_scheduler", False
+        )
+    return is_disabled
 
 
 def show_optimizer_defaults(optimizer: str = None):
@@ -260,7 +282,12 @@ def determine_optimizer_class_with_config(
     else:
         optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
         default_settings = optimizer_details.get("default_settings")
-        logger.info(f"cls: {optimizer_class}, settings: {default_settings}")
+    if optimizer_details.get("can_warmup", False):
+        logger.info(
+            f"Optimizer contains LR scheduler, warmup steps will be set to {args.lr_warmup_steps}."
+        )
+        default_settings["warmup_steps"] = args.lr_warmup_steps
+    logger.info(f"cls: {optimizer_class}, settings: {default_settings}")
     return default_settings, optimizer_class
 
 
