@@ -87,7 +87,7 @@ try:
 except:
     print("[ERROR] Lycoris not available. Please install ")
 from tqdm.auto import tqdm
-from transformers import PretrainedConfig, CLIPTokenizer
+from transformers import PretrainedConfig
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
 
@@ -101,6 +101,8 @@ from diffusers import (
     EulerAncestralDiscreteScheduler,
     UniPCMultistepScheduler,
 )
+from diffusers.models.embeddings import get_2d_rotary_pos_embed
+from helpers.models.smoldit import get_resize_crop_region_for_grid
 
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
@@ -152,16 +154,11 @@ def main():
     if args.legacy:
         StateTracker.set_model_type("legacy")
     if args.hunyuan_dit:
+        model_type_label = "Hunyuan DiT"
         StateTracker.set_model_type("hunyuan_dit")
     if args.kolors:
         StateTracker.set_model_type("kolors")
-    if args.hunyuan_dit:
-        model_type_label = "Hunyuan DiT"
-        StateTracker.set_model_type("hunyuan")
     if args.smoldit:
-        from diffusers.models.embeddings import get_2d_rotary_pos_embed
-        from helpers.models.smoldit import get_resize_crop_region_for_grid
-
         StateTracker.set_model_type("smoldit")
 
     StateTracker.set_args(args)
@@ -466,6 +463,13 @@ def main():
             )
 
         sys.exit(0)
+    validation_prompts = None
+    validation_shortnames = None
+    validation_negative_prompt_embeds = None
+    validation_negative_pooled_embeds = None
+    validation_negative_prompt_embeds_2 = None
+    validation_negative_prompt_mask = None
+    validation_negative_prompt_mask_2 = None
 
     if accelerator.is_main_process:
         if args.flux:
@@ -478,6 +482,17 @@ def main():
             ) = prepare_validation_prompt_list(
                 args=args, embed_cache=StateTracker.get_default_text_embed_cache()
             )
+        elif args.hunyuan_dit:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_prompt_mask,
+                validation_negative_prompt_embeds_2,
+                validation_negative_prompt_mask_2,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
         else:
             (
                 validation_prompts,
@@ -487,11 +502,6 @@ def main():
             ) = prepare_validation_prompt_list(
                 args=args, embed_cache=StateTracker.get_default_text_embed_cache()
             )
-    else:
-        validation_prompts = None
-        validation_shortnames = None
-        validation_negative_prompt_embeds = None
-        validation_negative_pooled_embeds = None
     accelerator.wait_for_everyone()
 
     if args.model_type == "full" or not args.train_text_encoder:
@@ -863,7 +873,7 @@ def main():
     if args.gradient_checkpointing:
         if unet is not None:
             unet.enable_gradient_checkpointing()
-        if transformer is not None and not args.smoldit:
+        if transformer is not None and not any([args.hunyuan_dit, args.smoldit]):
             transformer.enable_gradient_checkpointing()
         if args.controlnet:
             controlnet.enable_gradient_checkpointing()
@@ -1222,6 +1232,9 @@ def main():
         vae_path=vae_path,
         weight_dtype=weight_dtype,
         embed_cache=StateTracker.get_default_text_embed_cache(),
+        validation_negative_prompt_embeds_2=validation_negative_prompt_embeds_2,
+        validation_negative_prompt_attention_mask=validation_negative_prompt_mask,
+        validation_negative_prompt_attention_mask_2=validation_negative_prompt_mask_2,
         validation_negative_pooled_embeds=validation_negative_pooled_embeds,
         validation_negative_prompt_embeds=validation_negative_prompt_embeds,
         text_encoder_2=text_encoder_2,
@@ -1912,6 +1925,59 @@ def main():
                             ),
                         }
                         model_pred = transformer(**inputs).sample
+                    elif args.hunyuan_dit:
+                        style = torch.tensor([0], device=accelerator.device)
+                        style = torch.cat([style] * noisy_latents.shape[0], dim=0)
+                        first_latent_shape = noisy_latents.shape
+                        height = first_latent_shape[1] * 8
+                        width = first_latent_shape[2] * 8
+                        grid_height = height // 8 // transformer.config.patch_size
+                        grid_width = width // 8 // transformer.config.patch_size
+                        base_size = 512 // 8 // transformer.config.patch_size
+                        grid_crops_coords = get_resize_crop_region_for_grid(
+                            (grid_height, grid_width), base_size
+                        )
+                        image_rotary_emb = get_2d_rotary_pos_embed(
+                            transformer.inner_dim // transformer.num_heads,
+                            grid_crops_coords,
+                            (grid_height, grid_width),
+                        )
+                        t_expand = torch.tensor(
+                            timesteps * noisy_latents.shape[0],
+                            device=accelerator.device,
+                        ).to(dtype=noisy_latents.dtype)
+                        # print(
+                        #     "input shapes:"
+                        #     f"\nnoisy_latents: {noisy_latents.shape}"
+                        #     f"\ntimesteps: {t_expand.shape}, {t_expand}"
+                        #     f"\nencoder_hidden_states: {encoder_hidden_states.shape}"
+                        #     f"\nbatch[encoder_attention_mask]: {batch['encoder_attention_mask'].shape}"
+                        #     f"\nbatch[t5_prompt_embeds]: {batch['t5_prompt_embeds'].shape}"
+                        #     f"\nbatch[t5_encoder_attention_mask]: {batch['t5_encoder_attention_mask'].shape}"
+                        #     f"\nbatch[added_cond_kwargs]: {batch['added_cond_kwargs']}"
+
+                        # )
+                        model_pred = transformer(
+                            noisy_latents,
+                            t_expand,
+                            encoder_hidden_states=encoder_hidden_states.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
+                            text_embedding_mask=batch["encoder_attention_mask"].to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
+                            encoder_hidden_states_t5=batch["t5_prompt_embeds"].to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
+                            text_embedding_mask_t5=batch[
+                                "t5_encoder_attention_mask"
+                            ].to(device=accelerator.device, dtype=base_weight_dtype),
+                            image_meta_size=batch["added_cond_kwargs"],
+                            style=style,
+                            image_rotary_emb=image_rotary_emb,
+                            return_dict=False,
+                        )[0]
+
                     elif unet is not None:
                         if args.legacy:
                             # SD 1.5 or 2.x

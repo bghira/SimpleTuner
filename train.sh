@@ -208,6 +208,7 @@ if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
 fi
 if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
+fi
 if [ -n "$HUNYUAN_DIT" ] && [[ "$HUNYUAN_DIT" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --hunyuan_dit"
 fi
@@ -305,18 +306,18 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
     printf "DATALOADER_CONFIG file %s not found, cannot continue.\n" "${DATALOADER_CONFIG}"
     exit 1
 fi
-if [ -z "$MAX_TRAIN_STEPS" ] && [ -z "$NUM_EPOCHS" ]; then
-    echo "Neither MAX_TRAIN_STEPS or NUM_EPOCHS were defined."
+if [ -z "$MAX_NUM_STEPS" ] && [ -z "$NUM_EPOCHS" ]; then
+    echo "Neither MAX_NUM_STEPS or NUM_EPOCHS were defined."
     exit 1
 fi
-if [ -z "$MAX_TRAIN_STEPS" ]; then
-    export MAX_TRAIN_STEPS=0
+if [ -z "$MAX_NUM_STEPS" ]; then
+    export MAX_NUM_STEPS=0
 fi
 if [ -z "$NUM_EPOCHS" ]; then
     export NUM_EPOCHS=0
 fi
-if [[ "$MAX_TRAIN_STEPS" == "0" ]] && [[ "$NUM_EPOCHS" == "0" ]]; then
-    echo "Both MAX_TRAIN_STEPS and NUM_EPOCHS cannot be zero."
+if [[ "$MAX_NUM_STEPS" == "0" ]] && [[ "$NUM_EPOCHS" == "0" ]]; then
+    echo "Both MAX_NUM_STEPS and NUM_EPOCHS cannot be zero."
     exit 1
 fi
 export SNR_GAMMA_ARG=""
@@ -369,9 +370,9 @@ if [ -n "$ASPECT_BUCKET_ROUNDING" ]; then
     export ASPECT_BUCKET_ROUNDING_ARGS="--aspect_bucket_rounding=${ASPECT_BUCKET_ROUNDING}"
 fi
 
-export MAX_TRAIN_STEPS_ARGS=""
+export MAX_NUM_STEPS_ARGS=""
 if [ -n "$MAX_NUM_STEPS" ] && [[ "$MAX_NUM_STEPS" != 0 ]]; then
-    export MAX_TRAIN_STEPS_ARGS="--max_train_steps=${MAX_NUM_STEPS}"
+    export MAX_NUM_STEPS_ARGS="--max_train_steps=${MAX_NUM_STEPS}"
 fi
 
 export CONTROLNET_ARGS=""
@@ -384,7 +385,7 @@ fi
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train.py \
     --model_type="${MODEL_TYPE}" ${DORA_ARGS} --pretrained_model_name_or_path="${MODEL_NAME}" ${XFORMERS_ARG} ${GRADIENT_ARG} --set_grads_to_none --gradient_accumulation_steps=${GRADIENT_ACCUMULATION_STEPS} \
     --resume_from_checkpoint="${RESUME_CHECKPOINT}" ${DELETE_ARGS} ${SNR_GAMMA_ARG} --data_backend_config="${DATALOADER_CONFIG}" \
-    --num_train_epochs=${NUM_EPOCHS} ${MAX_TRAIN_STEPS_ARGS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \
+    --num_train_epochs=${NUM_EPOCHS} ${MAX_NUM_STEPS_ARGS} --metadata_update_interval=${METADATA_UPDATE_INTERVAL} \
     ${OPTIMIZER_ARG} --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
     --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \

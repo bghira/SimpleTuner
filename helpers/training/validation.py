@@ -261,6 +261,24 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_prompt_embeds,
                 None,
             )
+        elif model_type == "hunyuan_dit":
+            (
+                validation_negative_prompt_embeds,
+                validation_negative_prompt_mask,
+                t5_validation_negative_prompt_embeds,
+                t5_validation_negative_prompt_mask,
+            ) = embed_cache.compute_embeddings_for_prompts(
+                [StateTracker.get_args().validation_negative_prompt],
+                load_from_cache=False,
+            )
+            return (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_prompt_mask,
+                t5_validation_negative_prompt_embeds,
+                t5_validation_negative_prompt_mask,
+            )
         elif model_type == "flux":
             (
                 validation_negative_prompt_embeds,
@@ -389,6 +407,9 @@ class Validation:
         embed_cache,
         validation_negative_pooled_embeds,
         validation_negative_prompt_embeds,
+        validation_negative_prompt_embeds_2,
+        validation_negative_prompt_attention_mask,
+        validation_negative_prompt_attention_mask_2,
         text_encoder_2,
         tokenizer_2,
         ema_model,
@@ -419,7 +440,10 @@ class Validation:
         self.validation_images = None
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
-        self.validation_negative_prompt_mask = None
+        self.validation_negative_prompt_mask = validation_negative_prompt_attention_mask
+        self.validation_negative_prompt_mask_2 = (
+            validation_negative_prompt_attention_mask_2
+        )
         self.validation_negative_pooled_embeds = validation_negative_pooled_embeds
         self.validation_negative_prompt_embeds = (
             validation_negative_prompt_embeds
@@ -429,6 +453,7 @@ class Validation:
             )
             else validation_negative_prompt_embeds[0]
         )
+        self.validation_negative_prompt_embeds_2 = validation_negative_prompt_embeds_2
         self.ema_model = ema_model
         self.vae = vae
         self.pipeline = None
@@ -588,6 +613,10 @@ class Validation:
             from helpers.models.smoldit import SmolDiTPipeline
 
             return SmolDiTPipeline
+        elif model_type == "hunyuan_dit":
+            from diffusers.pipelines import HunyuanDiTPipeline
+
+            return HunyuanDiTPipeline
         else:
             raise NotImplementedError(
                 f"Model type {model_type} not implemented for validation."
@@ -678,6 +707,23 @@ class Validation:
             # logger.debug(
             #     f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
             # )
+        elif StateTracker.get_model_type() == "hunyuan_dit":
+            self.validation_negative_pooled_embeds = None
+            (
+                current_validation_prompt_embeds,
+                current_validation_prompt_mask,
+                current_validation_t5_prompt_embeds,
+                current_validation_t5_prompt_mask,
+            ) = self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
+            prompt_embeds["prompt_attention_mask"] = current_validation_prompt_mask.to(
+                device=self.inference_device
+            )
+            prompt_embeds["prompt_embeds_2"] = current_validation_t5_prompt_embeds.to(
+                device=self.inference_device, dtype=self.weight_dtype
+            )
+            prompt_embeds["prompt_attention_mask_2"] = (
+                current_validation_t5_prompt_mask.to(device=self.inference_device)
+            )
         else:
             raise NotImplementedError(
                 f"Model type {StateTracker.get_model_type()} not implemented for validation."
@@ -1219,6 +1265,23 @@ class Validation:
                     pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.inference_device, dtype=self.weight_dtype)
+                if StateTracker.get_model_type() == "hunyuan_dit":
+                    if pipeline_kwargs.get("negative_prompt") is not None:
+                        del pipeline_kwargs["negative_prompt"]
+                    if pipeline_kwargs.get("prompt") is not None:
+                        del pipeline_kwargs["prompt"]
+                    pipeline_kwargs["negative_prompt_embeds"] = (
+                        self.validation_negative_prompt_embeds
+                    )
+                    pipeline_kwargs["negative_prompt_embeds_2"] = (
+                        self.validation_negative_prompt_embeds_2
+                    )
+                    pipeline_kwargs["negative_prompt_attention_mask"] = (
+                        self.validation_negative_prompt_mask
+                    )
+                    pipeline_kwargs["negative_prompt_attention_mask_2"] = (
+                        self.validation_negative_prompt_mask_2
+                    )
 
                 validation_image_results = self.pipeline(**pipeline_kwargs).images
                 if self.args.controlnet:

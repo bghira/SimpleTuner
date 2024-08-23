@@ -88,7 +88,8 @@ def load_diffusion_model(args, weight_dtype):
         unet = None
         transformer = HunyuanDiT2DModel.from_pretrained(
             args.pretrained_model_name_or_path,
-            subfolder="transformer",
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
+            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     else:

@@ -18,6 +18,7 @@ model_classes = {
         "kolors",
         "stable_diffusion_3",
         "stable_diffusion_legacy",
+        "hunyuan_dit",
     ],
     "lora": ["flux", "sdxl", "kolors", "stable_diffusion_3", "stable_diffusion_legacy"],
     "controlnet": ["sdxl", "stable_diffusion_legacy"],
@@ -30,6 +31,7 @@ default_models = {
     "kolors": "kwai-kolors/kolors-diffusers",
     "terminus": "ptx0/terminus-xl-velocity-v2",
     "stable_diffusion_3": "stabilityai/stable-diffusion-3-medium-diffusers",
+    "hunyuan_dit": "Tencent-Hunyuan/HunyuanDiT-v1.2-Diffusers",
 }
 
 default_cfg = {
@@ -39,6 +41,7 @@ default_cfg = {
     "kolors": 5.0,
     "terminus": 8.0,
     "stable_diffusion_3": 5.0,
+    "hunyuan_dit": 3.4,
 }
 
 lora_ranks = [1, 16, 64, 128, 256]

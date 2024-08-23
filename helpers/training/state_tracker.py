@@ -107,6 +107,7 @@ class StateTracker:
             "kolors",
             "smoldit",
             "flux",
+            "hunyuan_dit",
         ]:
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type

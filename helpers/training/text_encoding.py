@@ -1,4 +1,4 @@
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig, CLIPTokenizer
 import os
 from accelerate.logging import get_logger
 from .state_tracker import StateTracker
@@ -44,6 +44,10 @@ def import_model_class_from_model_name_or_path(
         from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 
         return ChatGLMModel
+    elif model_class == "BertModel":
+        from transformers import BertModel
+
+        return BertModel
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -70,22 +74,27 @@ def get_tokenizers(args):
 
             tokenizer_cls = T5Tokenizer
             is_t5_model = True
+        elif args.hunyuan_dit:
+            from transformers import BertTokenizer
+
+            tokenizer_cls = BertTokenizer
+
         elif args.kolors:
             from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
             tokenizer_cls = ChatGLMTokenizer
-            tokenizer_1 = tokenizer_cls.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer",
-                revision=args.revision,
-                use_fast=False,
-            )
+            # tokenizer_1 = tokenizer_cls.from_pretrained(
+            #     args.pretrained_model_name_or_path,
+            #     subfolder="tokenizer",
+            #     revision=args.revision,
+            #     use_fast=False,
+            # )
         else:
-            from transformers import CLIPTokenizer
+            tokenizer_cls = CLIPTokenizer
 
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
-
-        if is_t5_model:
+        if not is_t5_model:
+            tokenizer_1 = tokenizer_cls.from_pretrained(**tokenizer_kwargs)
+        else:
             text_encoder_path = (
                 args.pretrained_t5_model_name_or_path
                 if args.pretrained_t5_model_name_or_path is not None
@@ -121,18 +130,23 @@ def get_tokenizers(args):
         )
         if args.sd3:
             raise e
-    from transformers import T5TokenizerFast
+    from transformers import T5TokenizerFast, PreTrainedTokenizerFast, T5Tokenizer
 
     if not any([args.pixart_sigma, args.kolors]):
         try:
+            use_fast = False
             tokenizer_2_cls = CLIPTokenizer
             if args.flux:
                 tokenizer_2_cls = T5TokenizerFast
+            elif args.hunyuan_dit:
+                # use_fast = True
+                tokenizer_2_cls = T5Tokenizer
+
             tokenizer_2 = tokenizer_2_cls.from_pretrained(
                 args.pretrained_model_name_or_path,
                 subfolder="tokenizer_2",
                 revision=args.revision,
-                use_fast=False,
+                use_fast=use_fast,
             )
             if tokenizer_1 is None:
                 logger.info("Seems that we are training an SDXL refiner model.")
@@ -144,7 +158,7 @@ def get_tokenizers(args):
                     args.validation_using_datasets = True
         except Exception as e:
             logger.warning(
-                f"Could not load secondary tokenizer ({'OpenCLIP-G/14' if not args.flux else 'T5 XXL'}). Cannot continue: {e}"
+                f"Could not load secondary tokenizer {tokenizer_2_cls}. Cannot continue: {e}"
             )
             if args.flux or args.sd3:
                 raise e
@@ -213,22 +227,18 @@ def load_tes(
 
     if tokenizer_1 is not None and not args.smoldit:
         if args.pixart_sigma:
-            logger.info(
-                f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-            )
+            text_encoder_1_label = "T5-XXL v1.1 encoder"
         elif args.flux:
-            logger.info(
-                f"Loading OpenAI CLIP-L text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-            )
+            text_encoder_1_label = "OpenAI CLIP-L text encoder"
         elif args.kolors:
-            logger.info(
-                f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
-            )
+            text_encoder_1_label = "ChatGLM language model"
             text_encoder_variant = "fp16"
         else:
-            logger.info(
-                f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-            )
+            text_encoder_1_label = "CLIP text encoder"
+        logger.info(
+            f"Loading {text_encoder_1_label} from {text_encoder_path}/{text_encoder_subfolder}.."
+        )
+
         text_encoder_1 = text_encoder_cls_1.from_pretrained(
             text_encoder_path,
             subfolder=text_encoder_subfolder,
@@ -244,12 +254,14 @@ def load_tes(
         text_encoder_1.eval()
 
     if tokenizer_2 is not None:
+        text_encoder_2_label = "LAION OpenCLIP-G/14"
         if args.flux:
-            logger.info(
-                f"Loading T5 XXL v1.1 text encoder from {args.pretrained_model_name_or_path}/text_encoder_2.."
-            )
-        else:
-            logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
+            text_encoder_2_label = "T5 XXL v1.1"
+        elif args.hunyuan_dit:
+            text_encoder_2_label = "mT5 multi-lingual"
+        logger.info(
+            f"Loading {text_encoder_2_label} text encoder from {args.pretrained_model_name_or_path}/text_encoder_2.."
+        )
         text_encoder_2 = text_encoder_cls_2.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="text_encoder_2",

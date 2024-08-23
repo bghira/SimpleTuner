@@ -14,6 +14,8 @@ import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from helpers.training.multi_process import _get_rank as get_rank, should_log
+from helpers.models.flux import FluxPipeline
+from diffusers.pipelines.hunyuandit import HunyuanDiTPipeline
 
 logger = logging.getLogger("TextEmbeddingCache")
 if should_log():
@@ -96,6 +98,10 @@ def _encode_sd3_prompt_with_clip(
     return prompt_embeds, pooled_prompt_embeds
 
 
+# new models are using pipelines for embedding for convenience.
+text_pipelines = {"flux": FluxPipeline, "hunyuan_dit": HunyuanDiTPipeline}
+
+
 class TextEmbeddingCache:
     prompts = {}
 
@@ -127,10 +133,8 @@ class TextEmbeddingCache:
         self.cache_dir = cache_dir
         self.model_type = model_type
         self.pipeline = None
-        if self.model_type == "flux":
-            from diffusers.pipelines.flux import FluxPipeline
-
-            self.pipeline = FluxPipeline.from_pretrained(
+        if self.model_type in text_pipelines.keys():
+            self.pipeline = text_pipelines[self.model_type].from_pretrained(
                 pretrained_model_name_or_path=StateTracker.get_args().pretrained_model_name_or_path,
                 text_encoder=text_encoders[0],
                 text_encoder_2=text_encoders[1],
@@ -270,26 +274,57 @@ class TextEmbeddingCache:
         Returns:
             Tuple of (prompt_embeds, pooled_prompt_embeds).
         """
-        from helpers.models.flux import FluxPipeline
-
-        pipe = FluxPipeline(
-            self.pipeline.scheduler,
-            self.pipeline.vae,
-            self.pipeline.text_encoder,
-            self.pipeline.tokenizer,
-            self.pipeline.text_encoder_2,
-            self.pipeline.tokenizer_2,
-            self.pipeline.transformer,
-        )
-
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = pipe.encode_prompt(
-            prompt=prompt,
-            prompt_2=prompt,
-            device=self.accelerator.device,
-            max_sequence_length=StateTracker.get_args().tokenizer_max_length,
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
+            self.pipeline.encode_prompt(
+                prompt=prompt,
+                prompt_2=prompt,
+                device=self.accelerator.device,
+                max_sequence_length=StateTracker.get_args().tokenizer_max_length,
+            )
         )
 
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
+
+    def encode_hunyuan_prompt(
+        self,
+        text_encoders,
+        tokenizers,
+        prompt: str,
+        is_validation: bool = False,
+        return_masked_embed: bool = True,
+    ):
+        """
+        Encode a prompt for a Flux model.
+
+        Args:
+            text_encoders: List of text encoders.
+            tokenizers: List of tokenizers.
+            prompt: The prompt to encode.
+            num_images_per_prompt: The number of images to generate per prompt.
+            is_validation: Whether the prompt is for validation. No-op for SD3.
+
+        Returns:
+            Tuple of (prompt_embeds, pooled_prompt_embeds).
+        """
+        prompt_embeds, _, prompt_attention_mask, _ = self.pipeline.encode_prompt(
+            prompt=prompt,
+            device=self.accelerator.device,
+            max_sequence_length=77,
+            text_encoder_index=0,
+        )
+        prompt_embeds_t5, _, prompt_attention_mask_t5, _ = self.pipeline.encode_prompt(
+            prompt=prompt,
+            device=self.accelerator.device,
+            max_sequence_length=256,
+            text_encoder_index=1,
+        )
+
+        return (
+            prompt_embeds,
+            prompt_attention_mask,
+            prompt_embeds_t5,
+            prompt_attention_mask_t5,
+        )
 
     # Adapted from pipelines.StableDiffusion3Pipeline.encode_prompt
     def encode_sd3_prompt(
@@ -632,6 +667,12 @@ class TextEmbeddingCache:
             )
         elif self.model_type == "flux":
             output = self.compute_embeddings_for_flux_prompts(
+                raw_prompts,
+                return_concat=return_concat,
+                load_from_cache=load_from_cache,
+            )
+        elif self.model_type == "hunyuan_dit":
+            output = self.compute_embeddings_for_hunyuan_prompts(
                 raw_prompts,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
@@ -1085,6 +1126,153 @@ class TextEmbeddingCache:
             masks_all = torch.cat(masks_all, dim=0) if None not in masks_all else None
 
         return prompt_embeds_all, add_text_embeds_all, time_ids_all, masks_all
+
+    def compute_embeddings_for_hunyuan_prompts(
+        self,
+        prompts: list = None,
+        return_concat: bool = True,
+        is_validation: bool = False,
+        load_from_cache: bool = True,
+    ):
+        t5_prompt_embeds_all = []
+        t5_masks_all = []
+        prompt_embeds_all = []
+        add_text_embeds_all = []
+        time_ids_all = []
+        masks_all = []
+        should_encode = not load_from_cache
+        args = StateTracker.get_args()
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and is_validation
+        ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
+            load_from_cache = False
+            should_encode = True
+        self.write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(local_caption_split),
+            position=get_rank(),
+        )
+        with torch.no_grad():
+            for prompt in tqdm(
+                local_caption_split,
+                desc="Processing prompts",
+                disable=return_concat,
+                leave=False,
+                ncols=125,
+                position=get_rank() + self.accelerator.num_processes + 1,
+            ):
+                filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
+                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                if prompt is None:
+                    logger.error(f"Filename {filename} does not have a caption.")
+                    continue
+                logger.debug(debug_msg)
+                if return_concat and load_from_cache:
+                    try:
+                        # We attempt to load.
+                        prompt_embeds, masks, t5_prompt_embeds, t5_masks = (
+                            self.load_from_cache(filename)
+                        )
+                        logger.debug(
+                            f"Cached hunyuan text embeds: {prompt_embeds.shape}, {masks.shape}, {t5_prompt_embeds.shape}, {t5_masks.shape if masks is not None else None}"
+                        )
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.error(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
+                        )
+                        should_encode = True
+                        raise Exception(
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                        )
+                if should_encode:
+                    # If load_from_cache is True, should_encode would be False unless we failed to load.
+                    self.debug_log(f"Encoding prompt: {prompt}")
+                    prompt_embeds, masks, t5_prompt_embeds, t5_masks = (
+                        self.encode_hunyuan_prompt(
+                            self.text_encoders,
+                            self.tokenizers,
+                            [prompt],
+                            is_validation,
+                        )
+                    )
+                    logger.debug(
+                        f"hunyuan prompt embeds: {prompt_embeds.shape}, {masks.shape}, {t5_prompt_embeds.shape}, {t5_masks.shape}"
+                    )
+                    current_size = self.write_queue.qsize()
+                    if current_size >= 2048:
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large."
+                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
+                        )
+                        self.write_thread_bar.write(log_msg)
+                        while self.write_queue.qsize() > 100:
+                            time.sleep(0.1)
+
+                    self.debug_log(f"Adding embed to write queue: {filename}")
+                    self.save_to_cache(
+                        filename, (prompt_embeds, masks, t5_prompt_embeds, t5_masks)
+                    )
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                        t5_prompt_embeds = t5_prompt_embeds.to(self.accelerator.device)
+                        masks = masks.to(self.accelerator.device)
+                        t5_masks = t5_masks.to(self.accelerator.device)
+                    else:
+                        del prompt_embeds
+                        del t5_prompt_embeds
+                        del masks
+                        del t5_masks
+                        continue
+
+                if return_concat:
+                    prompt_embeds_all.append(prompt_embeds)
+                    t5_prompt_embeds_all.append(t5_prompt_embeds)
+                    masks_all.append(masks)
+                    t5_masks_all.append(t5_masks)
+
+            while self.write_queue.qsize() > 0:
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            self.write_thread_bar.close()
+            self.process_write_batches = False
+
+            if not return_concat:
+                del prompt_embeds_all
+                del t5_prompt_embeds_all
+                del masks_all
+                del t5_masks_all
+                return
+
+            logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
+            prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
+            t5_prompt_embeds_all = torch.cat(t5_prompt_embeds_all, dim=0)
+            # if any masks_all are None, we can't cat
+            masks_all = torch.cat(masks_all, dim=0) if None not in masks_all else None
+            t5_masks_all = (
+                torch.cat(t5_masks_all, dim=0) if None not in t5_masks_all else None
+            )
+
+        return prompt_embeds_all, masks_all, t5_prompt_embeds_all, t5_masks_all
 
     def compute_embeddings_for_sd3_prompts(
         self,

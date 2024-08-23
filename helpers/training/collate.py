@@ -156,7 +156,12 @@ def compute_latents(filepaths, data_backend_id: str):
 
 
 def compute_single_embedding(
-    caption, text_embed_cache, is_sdxl, is_sd3: bool = False, is_flux: bool = False
+    caption,
+    text_embed_cache,
+    is_sdxl,
+    is_sd3: bool = False,
+    is_flux: bool = False,
+    is_hunyuan_dit: bool = False,
 ):
     """Worker function to compute embedding for a single caption."""
     if caption == "" or not caption:
@@ -189,12 +194,15 @@ def compute_single_embedding(
             time_ids[0],
             masks[0] if masks is not None else None,
         )
+    elif is_hunyuan_dit:
+        return text_embed_cache.compute_embeddings_for_hunyuan_prompts([caption])
     else:
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
         )
         if type(prompt_embeds) == tuple:
-            if StateTracker.get_args().pixart_sigma or StateTracker.get_args().smoldit:
+            args = StateTracker.get_args()
+            if any([args.pixart_sigma, args.smoldit]):
                 # PixArt requires the attn mask be returned, too.
                 prompt_embeds, attn_mask = prompt_embeds
 
@@ -226,11 +234,6 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     is_sd3 = text_embed_cache.model_type == "sd3"
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
     is_hunyuan_dit = text_embed_cache.model_type == "hunyuan_dit"
-
-    if is_hunyuan_dit:
-        raise ValueError(
-            "`compute_prompt_embeddings()` is not yet supported for 'hunyuan_dit'."
-        )
     is_smoldit = text_embed_cache.model_type == "smoldit"
     is_flux = text_embed_cache.model_type == "flux"
 
@@ -244,6 +247,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
                 [is_sdxl] * len(captions),
                 [is_sd3] * len(captions),
                 [is_flux] * len(captions),
+                [is_hunyuan_dit] * len(captions),
             )
         )
 
@@ -279,6 +283,19 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             torch.stack(add_text_embeds),
             torch.stack(time_ids),
             torch.stack(masks) if None not in masks else None,
+        )
+    elif is_hunyuan_dit:
+        # hunyuan has not just the embed and its mask, but also the t5 embed and its mask
+        prompt_embeds = [t[0][0] for t in embeddings]
+        attn_masks = [t[1][0] for t in embeddings]
+        t5_prompt_embeds = [t[2][0] for t in embeddings]
+        t5_attn_masks = [t[3][0] for t in embeddings]
+
+        return (
+            torch.stack(prompt_embeds),
+            torch.stack(attn_masks),
+            torch.stack(t5_prompt_embeds),
+            torch.stack(t5_attn_masks),
         )
     else:
         # Separate the tuples
@@ -442,12 +459,18 @@ def collate_fn(batch):
     text_embed_cache = StateTracker.get_data_backend(data_backend_id)[
         "text_embed_cache"
     ]
+    extra_output_values = {}
 
     attn_mask = None
     batch_time_ids = None
+    add_text_embeds_all = None
     if StateTracker.get_args().flux:
         debug_log("Compute and stack Flux time ids")
         prompt_embeds_all, add_text_embeds_all, batch_time_ids, attn_mask = (
+            compute_prompt_embeddings(captions, text_embed_cache)
+        )
+    elif StateTracker.get_model_type() == "hunyuan_dit":
+        prompt_embeds_all, attn_mask, t5_prompt_embeds_all, t5_prompt_mask_all = (
             compute_prompt_embeddings(captions, text_embed_cache)
         )
     else:
@@ -458,6 +481,7 @@ def collate_fn(batch):
     if (
         StateTracker.get_model_type() == "sdxl"
         or StateTracker.get_model_type() == "kolors"
+        or StateTracker.get_model_type() == "hunyuan_dit"
     ):
         debug_log("Compute and stack SDXL time ids")
         batch_time_ids = gather_conditional_sdxl_size_features(
@@ -473,6 +497,11 @@ def collate_fn(batch):
     elif StateTracker.get_model_type() == "smoldit":
         attn_mask = add_text_embeds_all
 
+    if StateTracker.get_model_type() == "hunyuan_dit":
+        extra_output_values["t5_encoder_attention_mask"] = t5_prompt_mask_all
+        extra_output_values["t5_prompt_embeds"] = t5_prompt_embeds_all
+        extra_output_values["added_cond_kwargs"] = batch_time_ids
+
     return {
         "latent_batch": latent_batch,
         "prompt_embeds": prompt_embeds_all,
@@ -481,4 +510,5 @@ def collate_fn(batch):
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_latents,
         "encoder_attention_mask": attn_mask,
+        **extra_output_values,
     }
