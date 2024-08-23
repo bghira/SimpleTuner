@@ -38,7 +38,9 @@ def path_to_hashed_path(path: Path, hash_filenames: bool) -> Path:
 
 def html_to_file_loc(parent_directory: Path, url: str, hash_filenames: bool) -> str:
     filename = url_to_filename(url)
-    cached_loc = path_to_hashed_path(parent_directory.joinpath(filename), hash_filenames)
+    cached_loc = path_to_hashed_path(
+        parent_directory.joinpath(filename), hash_filenames
+    )
     return str(cached_loc.resolve())
 
 
@@ -94,12 +96,14 @@ class CSVDataBackend(BaseDataBackend):
                 data = requests.get(location, stream=True).raw.data
         if not location.startswith("http"):
             # read from local file
-            hashed_location = path_to_hashed_path(location, hash_filenames=self.hash_filenames and not already_hashed)
+            hashed_location = path_to_hashed_path(
+                location, hash_filenames=self.hash_filenames and not already_hashed
+            )
             try:
                 with open(hashed_location, "rb") as file:
                     data = file.read()
             except FileNotFoundError as e:
-                tqdm.write(f'ask was for file {location} bound to {hashed_location}')
+                tqdm.write(f"ask was for file {location} bound to {hashed_location}")
                 raise e
         if not as_byteIO:
             return data

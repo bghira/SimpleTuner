@@ -7,6 +7,7 @@ logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", 
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
+
 def load_scheduler_from_args(args):
     flow_matching = False
     if (args.sd3 and args.flow_matching_loss != "diffusion") or args.flux:

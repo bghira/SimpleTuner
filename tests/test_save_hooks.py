@@ -32,6 +32,7 @@ class TestSaveHookManager(unittest.TestCase):
             flux=False,
             pixart_sigma=False,
             flux_attention_masked_training=False,
+            hunyuan_dit=False,
         )
         if model_type == "sd3":
             args.sd3 = True

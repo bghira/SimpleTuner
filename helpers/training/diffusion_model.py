@@ -82,6 +82,16 @@ def load_diffusion_model(args, weight_dtype):
         transformer = SmolDiT2DModel(**SmolDiTConfigurations[args.smoldit_config])
         if "lora" in args.model_type:
             raise ValueError("SmolDiT does not yet support LoRA training.")
+    elif args.hunyuan_dit:
+        from diffusers import HunyuanDiT2DModel
+
+        unet = None
+        transformer = HunyuanDiT2DModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
+            torch_dtype=weight_dtype,
+            **pretrained_load_args,
+        )
     else:
         from diffusers import UNet2DConditionModel
 

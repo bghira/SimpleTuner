@@ -3,7 +3,7 @@ name = "simpletuner"
 version = "0.1.0"
 description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
-license = "SUL"
+license = "AGPLv3"
 readme = "README.md"
 
 [tool.poetry.dependencies]

@@ -50,13 +50,13 @@ Depending on your system, you will run one of 3 commands:
 
 ```bash
 # MacOS
-poetry install --no-root -C install/apple
+poetry install -C install/apple
 
 # Linux
-poetry install --no-root
+poetry install
 
 # Linux with ROCM
-poetry install --no-root -C install/rocm
+poetry install -C install/rocm
 ```
 
 #### Removing DeepSpeed & Bits n Bytes

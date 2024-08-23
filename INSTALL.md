@@ -21,7 +21,7 @@ You will require a minimum of 24G of total memory for an SDXL LoRA at a batch si
 To install the Apple-specific requirements:
 
 ```bash
-poetry install --no-root -C install/apple
+poetry install -C install/apple
 ```
 
 ### Linux + Nvidia/CUDA
@@ -29,7 +29,7 @@ poetry install --no-root -C install/apple
 The first command you'll run will install most of the dependencies:
 
 ```bash
-poetry install --no-root
+poetry install
 ```
 
 You may need to install LibGL for OpenCV2 to load images:
@@ -47,7 +47,7 @@ Due to `xformers` not supporting the ROCm platform, memory requirements for trai
 To install the ROCm-specific requirements:
 
 ```bash
-poetry install --no-root -C install/rocm
+poetry install -C install/rocm
 ```
 
 #### AMD ROCm follow-up steps

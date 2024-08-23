@@ -105,6 +105,10 @@ An SDXL-based model with ChatGLM (General Language Model) 6B as its text encoder
 
 Kolors support is almost as deep as SDXL, minus ControlNet training support.
 
+### Hunyian-DiT
+
+_Placeholder text._
+
 ---
 
 ## Hardware Requirements
