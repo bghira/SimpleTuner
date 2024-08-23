@@ -108,10 +108,6 @@ if [ -z "${TRACKER_RUN_NAME}" ]; then
     printf "TRACKER_RUN_NAME not set, exiting.\n"
     exit 1
 fi
-if [ -z "${NUM_EPOCHS}" ]; then
-    printf "NUM_EPOCHS not set, exiting.\n"
-    exit 1
-fi
 if [ -z "${VALIDATION_PROMPT}" ]; then
     printf "VALIDATION_PROMPT not set, exiting.\n"
     exit 1
@@ -307,7 +303,20 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
     printf "DATALOADER_CONFIG file %s not found, cannot continue.\n" "${DATALOADER_CONFIG}"
     exit 1
 fi
-
+if [ -z "$MAX_TRAIN_STEPS" ] && [ -z "$NUM_EPOCHS" ]; then
+    echo "Neither MAX_TRAIN_STEPS or NUM_EPOCHS were defined."
+    exit 1
+fi
+if [ -z "$MAX_TRAIN_STEPS" ]; then
+    export MAX_TRAIN_STEPS=0
+fi
+if [ -z "$NUM_EPOCHS" ]; then
+    export NUM_EPOCHS=0
+fi
+if [[ "$MAX_TRAIN_STEPS" == "0" ]] && [[ "$NUM_EPOCHS" == "0" ]]; then
+    echo "Both MAX_TRAIN_STEPS and NUM_EPOCHS cannot be zero."
+    exit 1
+fi
 export SNR_GAMMA_ARG=""
 if [ -n "$MIN_SNR_GAMMA" ]; then
     export SNR_GAMMA_ARG="--snr_gamma=${MIN_SNR_GAMMA}"
