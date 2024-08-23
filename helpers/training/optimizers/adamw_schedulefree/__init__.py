@@ -38,6 +38,7 @@ class AdamWScheduleFreeKahan(Optimizer):
         super(AdamWScheduleFreeKahan, self).__init__(params, defaults)
         self.k = 0
         self.lr_max = -1.0
+        self.last_lr = -1.0
         self.weight_sum = 0.0
 
     def _initialize_state(self, state, p):
@@ -138,5 +139,6 @@ class AdamWScheduleFreeKahan(Optimizer):
                     kahan_comp.copy_(p.data.sub(buffer).add(buffer.sub_(p.data)))
 
             self.k += 1
+            self.last_lr = adjusted_lr
 
         return loss

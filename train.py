@@ -2071,6 +2071,8 @@ def main():
                     if lr_scheduler is not None:
                         lr_scheduler.step(**scheduler_kwargs)
                         lr = lr_scheduler.get_last_lr()[0]
+                    elif hasattr(optimizer, "last_lr"):
+                        lr = optimizer.last_lr
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
