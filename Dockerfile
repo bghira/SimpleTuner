@@ -60,7 +60,7 @@ RUN git clone https://github.com/bghira/SimpleTuner --branch release
 
 # Install SimpleTuner
 RUN pip3 install poetry
-RUN cd SimpleTuner && python3 -m venv .venv && poetry install --no-root
+RUN cd SimpleTuner && python3 -m venv .venv && poetry install
 RUN chmod +x SimpleTuner/train.sh
 
 # Copy start script with exec permissions
