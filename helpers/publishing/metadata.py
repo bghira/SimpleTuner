@@ -1,43 +1,172 @@
 import os
 import logging
+import json
+import torch
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
+licenses = {
+    "flux": "flux-1-dev-non-commercial-license",
+    "sdxl": "creativeml-openrail-m",
+    "legacy": "openrail++",
+    "pixart_sigma": "openrail++",
+    "kolors": "apache-2.0",
+    "smoldit": "apache-2.0",
+    "sd3": "stabilityai-ai-community",
+}
+allowed_licenses = [
+    "apache-2.0",
+    "mit",
+    "openrail",
+    "bigscience-openrail-m",
+    "creativeml-openrail-m",
+    "bigscience-bloom-rail-1.0",
+    "bigcode-openrail-m",
+    "afl-3.0",
+    "artistic-2.0",
+    "bsl-1.0",
+    "bsd",
+    "bsd-2-clause",
+    "bsd-3-clause",
+    "bsd-3-clause-clear",
+    "c-uda",
+    "cc",
+    "cc0-1.0",
+    "cc-by-2.0",
+    "cc-by-2.5",
+    "cc-by-3.0",
+    "cc-by-4.0",
+    "cc-by-sa-3.0",
+    "cc-by-sa-4.0",
+    "cc-by-nc-2.0",
+    "cc-by-nc-3.0",
+    "cc-by-nc-4.0",
+    "cc-by-nd-4.0",
+    "cc-by-nc-nd-3.0",
+    "cc-by-nc-nd-4.0",
+    "cc-by-nc-sa-2.0",
+    "cc-by-nc-sa-3.0",
+    "cc-by-nc-sa-4.0",
+    "cdla-sharing-1.0",
+    "cdla-permissive-1.0",
+    "cdla-permissive-2.0",
+    "wtfpl",
+    "ecl-2.0",
+    "epl-1.0",
+    "epl-2.0",
+    "etalab-2.0",
+    "eupl-1.1",
+    "agpl-3.0",
+    "gfdl",
+    "gpl",
+    "gpl-2.0",
+    "gpl-3.0",
+    "lgpl",
+    "lgpl-2.1",
+    "lgpl-3.0",
+    "isc",
+    "lppl-1.3c",
+    "ms-pl",
+    "apple-ascl",
+    "mpl-2.0",
+    "odc-by",
+    "odbl",
+    "openrail++",
+    "osl-3.0",
+    "postgresql",
+    "ofl-1.1",
+    "ncsa",
+    "unlicense",
+    "zlib",
+    "pddl",
+    "lgpl-lr",
+    "deepfloyd-if-license",
+    "llama2",
+    "llama3",
+    "llama3.1",
+    "gemma",
+    "unknown",
+    "other",
+    "array",
+]
+for _model, _license in licenses.items():
+    if _license not in allowed_licenses:
+        licenses[_model] = "other"
+
 
 def _model_imports(args):
     output = "import torch\n"
-    output += "from diffusers import DiffusionPipeline\n"
+    output += "from diffusers import DiffusionPipeline"
+    if "lycoris" == args.lora_type.lower() and "lora" in args.model_type:
+        output += "\nfrom lycoris import create_lycoris_from_weights"
 
-    return f"{output}\n"
+    return f"{output}"
 
 
 def _model_load(args, repo_id: str = None):
+    hf_user_name = StateTracker.get_hf_username()
+    if hf_user_name is not None:
+        repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     if "lora" in args.model_type:
-        output = (
-            f"\nmodel_id = '{args.pretrained_model_name_or_path}'"
-            f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
-            f"\nprompt = '{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}'"
-            f"\nnegative_prompt = '{args.validation_negative_prompt}'"
-            f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
-            f"\pipeline.load_adapter(adapter_id)"
-            f"\npipeline.to({_torch_device()})"
-        )
+        if args.lora_type.lower() == "standard":
+            output = (
+                f"model_id = '{args.pretrained_model_name_or_path}'"
+                f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
+                f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
+                f"\npipeline.load_lora_weights(adapter_id)"
+            )
+        elif args.lora_type.lower() == "lycoris":
+            output = (
+                f"model_id = '{args.pretrained_model_name_or_path}'"
+                f"\nadapter_id = 'pytorch_lora_weights.safetensors' # you will have to download this manually"
+                "\nlora_scale = 1.0"
+            )
     else:
         output = (
-            f"\nmodel_id = '{repo_id if repo_id else os.path.join(args.output_dir, 'pipeline')}'"
-            f"\nprompt = '{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}'"
-            f"\nnegative_prompt = '{args.validation_negative_prompt}'"
+            f"model_id = '{repo_id if repo_id else os.path.join(args.output_dir, 'pipeline')}'"
             f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
-            f"\npipeline.to({_torch_device()})"
         )
+    if args.model_type == "lora" and args.lora_type.lower() == "lycoris":
+        output += f"\nwrapper, _ = create_lycoris_from_weights(lora_scale, adapter_id, pipeline.transformer)"
+        output += "\nwrapper.merge_to()"
 
     return output
 
 
 def _torch_device():
     return """'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'"""
+
+
+def _negative_prompt(args, in_call: bool = False):
+    if args.flux:
+        return ""
+    if not in_call:
+        return f"negative_prompt = '{args.validation_negative_prompt}'"
+    return "\n    negative_prompt=negative_prompt,"
+
+
+def _guidance_rescale(args):
+    if any([args.sd3, args.flux, args.pixart_sigma]):
+        return ""
+    return f"\n    guidance_rescale={args.validation_guidance_rescale},"
+
+
+def _validation_resolution(args):
+    if args.validation_resolution == "" or args.validation_resolution is None:
+        return f"width=1024,\n" f"    height=1024,"
+    resolutions = [args.validation_resolution]
+    if "," in args.validation_resolution:
+        # split the resolution into a list of resolutions
+        resolutions = args.validation_resolution.split(",")
+    for resolution in resolutions:
+        if "x" in resolution:
+            return (
+                f"width={resolution.split('x')[0]},\n"
+                f"    height={resolution.split('x')[1]},"
+            )
+        return f"width={resolution},\n" f"    height={resolution},"
 
 
 def code_example(args, repo_id: str = None):
@@ -49,19 +178,14 @@ def code_example(args, repo_id: str = None):
 {_model_load(args, repo_id)}
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
-negative_prompt = "{args.validation_negative_prompt}"
-
-pipeline = DiffusionPipeline.from_pretrained(model_id)
+{_negative_prompt(args)}
 pipeline.to({_torch_device()})
 image = pipeline(
-    prompt=prompt,
-    negative_prompt='{args.validation_negative_prompt}',
+    prompt=prompt,{_negative_prompt(args, in_call=True) if not args.flux else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
-    width=1152,
-    height=768,
-    guidance_scale={args.validation_guidance},
-    guidance_rescale={args.validation_guidance_rescale},
+    {_validation_resolution(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}
 ).images[0]
 image.save("output.png", format="PNG")
 ```
@@ -69,15 +193,38 @@ image.save("output.png", format="PNG")
     return code_example
 
 
+def model_type(args):
+    if "lora" in args.model_type:
+        if "standard" == args.lora_type.lower():
+            return "standard PEFT LoRA"
+        if "lycoris" == args.lora_type.lower():
+            return "LyCORIS adapter"
+    else:
+        return "full rank finetune"
+
+
 def lora_info(args):
     """Return a string with the LORA information."""
     if "lora" not in args.model_type:
         return ""
-    return f"""- LoRA Rank: {args.lora_rank}
+    if args.lora_type.lower() == "standard":
+        return f"""- LoRA Rank: {args.lora_rank}
 - LoRA Alpha: {args.lora_alpha}
 - LoRA Dropout: {args.lora_dropout}
 - LoRA initialisation style: {args.lora_init_type}
-"""
+    """
+    if args.lora_type.lower() == "lycoris":
+        lycoris_config_file = args.lycoris_config
+        # read the json file
+        with open(lycoris_config_file, "r") as file:
+            lycoris_config = json.load(file)
+        return f"""- LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
+
+
+def model_card_note(args):
+    """Return a string with the model card note."""
+    note_contents = args.model_card_note if args.model_card_note else ""
+    return f"\n{note_contents}\n"
 
 
 def save_model_card(
@@ -98,6 +245,7 @@ def save_model_card(
         )
     logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
+    optimizer_config = StateTracker.get_args().optimizer_config
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
     for dataset in StateTracker.get_data_backends().keys():
@@ -139,17 +287,18 @@ def save_model_card(
                 sub_idx += 1
 
             shortname_idx += 1
+    args = StateTracker.get_args()
     yaml_content = f"""---
-license: creativeml-openrail-m
+license: {licenses[StateTracker.get_model_type()]}
 base_model: "{base_model}"
 tags:
-  - {'stable-diffusion' if 'deepfloyd' not in StateTracker.get_args().model_type else 'deepfloyd-if'}
-  - {'stable-diffusion-diffusers' if 'deepfloyd' not in StateTracker.get_args().model_type else 'deepfloyd-if-diffusers'}
+  - {StateTracker.get_model_type()}
+  - {f'{StateTracker.get_model_type()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
   - simpletuner
-  - {StateTracker.get_args().model_type}
-{'  - template:sd-lora' if 'lora' in StateTracker.get_args().model_type else ''}
+  - {args.model_type}
+{'  - template:sd-lora' if 'lora' in args.model_type else ''}
 inference: true
 {widget_str}
 ---
@@ -157,12 +306,11 @@ inference: true
 """
     model_card_content = f"""# {repo_id}
 
-This is a {'LoRA' if 'lora' in StateTracker.get_args().model_type else 'full rank finetune'} derived from [{base_model}](https://huggingface.co/{base_model}).
+This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if StateTracker.get_args().sd3 and StateTracker.get_args().sd3_uses_diffusion else ''}
-
-{'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if StateTracker.get_args().validation_using_datasets else 'No validation prompt was used during training.'}
-
+{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.sd3 and args.flow_matching_loss == "diffusion" else ''}
+{'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
+{model_card_note(args)}
 {'```' if prompt else ''}
 {prompt}
 {'```' if prompt else ''}
@@ -194,10 +342,11 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().aura_flow or StateTracker.get_args().sd3) else StateTracker.get_args().prediction_type}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().sd3 or StateTracker.get_args().flux) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
-- Optimizer: {'AdamW, stochastic bf16' if StateTracker.get_args().adam_bfloat16 else 'AdamW8Bit' if StateTracker.get_args().use_8bit_adam else 'Adafactor' if StateTracker.get_args().use_adafactor_optimizer else 'Prodigy' if StateTracker.get_args().use_prodigy_optimizer else 'AdamW'}
-- Precision: {'Pure BF16' if StateTracker.get_args().adam_bfloat16 else StateTracker.get_args().mixed_precision}
+- Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
+- Precision: {'Pure BF16' if (StateTracker.get_args().adam_bfloat16 or torch.backends.mps.is_available()) else StateTracker.get_args().mixed_precision}
+- Quantised: {f'Yes: {StateTracker.get_args().base_model_precision}' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
 - Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
 {lora_info(args=StateTracker.get_args())}
 

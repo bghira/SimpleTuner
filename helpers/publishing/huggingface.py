@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", logging.INFO))
 
 
+LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"
+
+
 class HubManager:
     def __init__(self, config, repo_id: str = None):
         self.config = config
@@ -131,12 +134,12 @@ class HubManager:
 
     def upload_lora_model(self, override_path=None):
         lora_weights_path = os.path.join(
-            override_path or self.config.output_dir, "pytorch_lora_weights.safetensors"
+            override_path or self.config.output_dir, LORA_SAFETENSORS_FILENAME
         )
         try:
             upload_file(
                 repo_id=self._repo_id,
-                path_in_repo="/pytorch_lora_weights.safetensors",
+                path_in_repo=f"/{LORA_SAFETENSORS_FILENAME}",
                 path_or_fileobj=lora_weights_path,
                 commit_message=self._commit_message(),
             )

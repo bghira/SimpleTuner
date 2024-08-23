@@ -1,6 +1,6 @@
 # Dataloader configuration file
 
-Here is an example dataloader configuration file, as `multidatabackend.example.json`:
+Here is the most basic example of a dataloader configuration file, as `multidatabackend.example.json`.
 
 ```json
 [
@@ -8,34 +8,19 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
     "id": "something-special-to-remember-by",
     "type": "local",
     "instance_data_dir": "/path/to/data/tree",
-    "crop": false,
-    "crop_style": "random|center|corner|face",
-    "crop_aspect": "square|preserve|random",
-    "crop_aspect_buckets": [0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75],
-    "resolution": 1.0,
-    "resolution_type": "area|pixel",
-    "minimum_image_size": 1.0,
+    "crop": true,
+    "crop_style": "center",
+    "crop_aspect": "square",
+    "resolution": 1024,
+    "minimum_image_size": 768,
+    "maximum_image_size": 2048,
+    "target_downsample_size": 1024,
+    "resolution_type": "pixel_area",
     "prepend_instance_prompt": false,
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
-    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "caption_strategy": "textfile",
     "cache_dir_vae": "/path/to/vaecache",
-    "vae_cache_clear_each_epoch": true,
-    "probability": 1.0,
-    "repeats": 0,
-    "text_embeds": "alt-embed-cache"
-  },
-  {
-    "id": "another-special-name-for-another-backend",
-    "type": "aws",
-    "aws_bucket_name": "something-yummy",
-    "aws_region_name": null,
-    "aws_endpoint_url": "https://foo.bar/",
-    "aws_access_key_id": "wpz-764e9734523434",
-    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
-    "aws_data_prefix": "",
-    "cache_dir_vae": "s3prefix/for/vaecache",
-    "vae_cache_clear_each_epoch": true,
     "repeats": 0
   },
   {
@@ -50,13 +35,6 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
     "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
     "aws_data_prefix": "",
     "cache_dir": ""
-  },
-  {
-    "id": "alt-embed-cache",
-    "dataset_type": "text_embeds",
-    "default": false,
-    "type": "local",
-    "cache_dir": "/path/to/textembed_cache"
   }
 ]
 ```
@@ -69,8 +47,9 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 ### `dataset_type`
 
-- **Values:** `image` | `text_embeds`
-- **Description:** Text embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
+- **Values:** `image` | `text_embeds` | `image_embeds`
+- **Description:** `image` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one.
+- **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 
 ### `default`
 
@@ -82,22 +61,38 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 - **Only applies to `dataset_type=image`**
 - If unset, the `default` text_embeds dataset will be used. If set to an existing `id` of a `text_embeds` dataset, it will use that instead. Allows specific text embed datasets to be associated with a given image dataset.
 
+### `image_embeds`
+
+- **Only applies to `dataset_type=image`**
+- If unset, the VAE outputs will be stored on the image backend. Otherwise, you may set this to the `id` of an `image_embeds` dataset, and the VAE outputs will be stored there instead. Allows associating the image_embed dataset to the image data.
+
 ### `type`
 
-- **Values:** `aws` | `local`
-- **Description:** Determines the storage backend (local or cloud) used for this dataset.
+- **Values:** `aws` | `local` | `csv`
+- **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
 
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Path to the data on the filesystem.
 - **AWS:** S3 prefix for the data in the bucket.
 
+### `caption_strategy`
+
+- **textfile** requires your image.png be next to an image.txt that contains one or more captions, separated by newlines.
+- **instance_prompt** requires a value for `instance_prompt` also be provided, and will use **only** this value for the caption of every image in the set.
+- **filename** will use a converted and cleaned-up version of the filename as its caption, eg. after swapping underscores for spaces.
+- **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+
+Both `textfile` and `parquet` support multi-captions:
+- textfiles are split by newlines. Each new line will be its own separate caption.
+- parquet tables can have an iterable type in the field.
+
 ### Cropping Options
 
 - `crop`: Enables or disables image cropping.
 - `crop_style`: Selects the cropping style (`random`, `center`, `corner`, `face`).
-- `crop_aspect`: Chooses the cropping aspect (`random`, `square` or `preserve`).
-- `crop_aspect_buckets`: When `crop_aspect` is set to `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
+- `crop_aspect`: Chooses the cropping aspect (`closest`, `random`, `square` or `preserve`).
+- `crop_aspect_buckets`: When `crop_aspect` is set to `closest` or `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
 
 ### `resolution`
 
@@ -145,6 +140,10 @@ Here is an example dataloader configuration file, as `multidatabackend.example.j
 
 - Like `skip_file_discovery`, this option can be set to prevent repeated lookups of file lists during startup. It takes a boolean value, and if set to be `true`, the generated cache file will not be removed at launch. This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times. Additionally, on S3, backend listing can add up in cost and should be avoided. **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
 
+### `hash_filenames`
+
+- When set, the VAE cache entries' filenames will be hashed. This is not set by default for backwards compatibility, but it allows for datasets with very long filenames to be easily used.
+
 ## Filtering captions
 
 ### `caption_filter_list`
@@ -174,6 +173,149 @@ In order, the lines behave as follows:
 > ❗Use [regex 101](https://regex101.com) for help debugging and testing regular expressions.
 
 # Advanced techniques
+
+## Advanced Example Configuration
+
+```json
+[
+  {
+    "id": "something-special-to-remember-by",
+    "type": "local",
+    "instance_data_dir": "/path/to/data/tree",
+    "crop": false,
+    "crop_style": "random|center|corner|face",
+    "crop_aspect": "square|preserve|closest|random",
+    "crop_aspect_buckets": [0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75],
+    "resolution": 1.0,
+    "resolution_type": "area|pixel",
+    "minimum_image_size": 1.0,
+    "hash_filenames": true,
+    "prepend_instance_prompt": false,
+    "instance_prompt": "something to label every image",
+    "only_instance_prompt": false,
+    "caption_strategy": "filename|instanceprompt|parquet|textfile",
+    "cache_dir_vae": "/path/to/vaecache",
+    "vae_cache_clear_each_epoch": true,
+    "probability": 1.0,
+    "repeats": 0,
+    "text_embeds": "alt-embed-cache",
+    "image_embeds": "vae-embeds-example"
+  },
+  {
+    "id": "another-special-name-for-another-backend",
+    "type": "aws",
+    "aws_bucket_name": "something-yummy",
+    "aws_region_name": null,
+    "aws_endpoint_url": "https://foo.bar/",
+    "aws_access_key_id": "wpz-764e9734523434",
+    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+    "aws_data_prefix": "",
+    "cache_dir_vae": "s3prefix/for/vaecache",
+    "vae_cache_clear_each_epoch": true,
+    "repeats": 0
+  },
+  {
+      "id": "vae-embeds-example",
+      "type": "local",
+      "dataset_type": "image_embeds",
+      "disabled": false,
+  },
+  {
+    "id": "an example backend for text embeds.",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "aws",
+    "aws_bucket_name": "textembeds-something-yummy",
+    "aws_region_name": null,
+    "aws_endpoint_url": "https://foo.bar/",
+    "aws_access_key_id": "wpz-764e9734523434",
+    "aws_secret_access_key": "xyz-sdajkhfhakhfjd",
+    "aws_data_prefix": "",
+    "cache_dir": ""
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": false,
+    "type": "local",
+    "cache_dir": "/path/to/textembed_cache"
+  }
+]
+```
+
+## Train directly from CSV URL list
+
+**Note: Your CSV must contain the captions for your images.**
+
+> ⚠️ This is an advanced **and** experimental feature, and you may run into problems. If you do, please open an [issue](https://github.com/bghira/simpletuner/issues)!
+
+Instead of manually downloading your data from a URL list, you might wish to plug them in directly to the trainer.
+
+**Note:** It's always better to manually download the image data. Another strategy to save local disk space might be to try [using cloud storage with local encoder caches](#local-cache-with-cloud-dataset) instead.
+
+### Advantages
+
+- No need to directly download the data
+- Can make use of SimpleTuner's caption toolkit to directly caption the URL list
+- Saves on disk space, since only the image embeds (if applicable) and text embeds are stored
+
+### Disadvantages
+
+- Requires a costly and potentially slow aspect bucket scan where each image is downloaded and its metadata collected
+- The downloaded images are cached on-disk, which can grow to be very large. This is an area of improvement to work on, as the cache management in this version is very basic, write-only/delete-never
+- If your dataset has a large number of invalid URLs, these might waste time on resumption as, currently, bad samples are **never** removed from the URL list
+  - **Suggestion:** Run a URL validation task beforehand and remove any bad samples.
+
+### Configuration
+
+Required keys:
+
+- `type: "csv"`
+- `csv_caption_column`
+- `csv_cache_dir`
+- `caption_strategy: "csv"`
+
+```json
+[
+    {
+        "id": "csvtest",
+        "type": "csv",
+        "csv_caption_column": "caption",
+        "csv_file": "/Volumes/ml/dataset/test_list.csv",
+        "csv_cache_dir": "/Volumes/ml/cache/csv/test",
+        "cache_dir_vae": "/Volumes/ml/cache/vae/sdxl",
+        "caption_strategy": "csv",
+        "image_embeds": "image-embeds",
+        "crop": true,
+        "crop_aspect": "square",
+        "crop_style": "center",
+        "resolution": 1024,
+        "maximum_image_size": 1024,
+        "target_downsample_size": 1024,
+        "resolution_type": "pixel",
+        "minimum_image_size": 0,
+        "disabled": false,
+        "skip_file_discovery": "",
+        "preserve_data_backend_cache": false,
+        "hash_filenames": true
+    },
+    {
+      "id": "image-embeds",
+      "type": "local"
+    },
+    {
+        "id": "text-embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/Volumes/ml/cache/text/sdxl",
+        "disabled": false,
+        "preserve_data_backend_cache": false,
+        "skip_file_discovery": "",
+        "write_batch_size": 128
+    }
+]
+```
 
 ## Parquet caption strategy / JSON Lines datasets
 
@@ -216,7 +358,7 @@ Here is an example dataloader configuration that makes use of the captions and d
   "vae_cache_clear_each_epoch": true,
   "repeats": 1,
   "crop": true,
-  "crop_aspect": "random",
+  "crop_aspect": "closest",
   "crop_style": "random",
   "crop_aspect_buckets": [1.0, 0.75, 1.23],
   "resolution_type": "area"
@@ -242,6 +384,60 @@ As with other dataloader configurations:
 - `prepend_instance_prompt` and `instance_prompt` behave as normal.
 - Updating a sample's caption in between training runs will cache the new embed, but not remove the old (orphaned) unit.
 - When an image doesn't exist in a dataset, its filename will be used as its caption and an error will be emitted.
+
+## Local cache with cloud dataset
+
+In order to maximise the use of costly local NVMe storage, you may wish to store just the image files (png, jpg) on an S3 bucket, and use the local storage to cache your extracted feature maps from the text encoder(s) and VAE (if applicable).
+
+In this example configuration:
+
+- Image data is stored on an S3-compatible bucket
+- VAE data is stored in /local/path/to/cache/vae
+- Text embeds are stored in /local/path/to/cache/textencoder
+
+> ⚠️ Remember to configure the other dataset options, such as `resolution` and `crop`
+
+```json
+[
+    {
+        "id": "data",
+        "type": "aws",
+        "aws_bucket_name": "text-vae-embeds",
+        "aws_endpoint_url": "https://storage.provider.example",
+        "aws_access_key_id": "exampleAccessKey",
+        "aws_secret_access_key": "exampleSecretKey",
+        "aws_region_name": null,
+        "cache_dir_vae": "/local/path/to/cache/vae/",
+        "caption_strategy": "parquet",
+        "metadata_backend": "parquet",
+        "parquet": {
+            "path": "train.parquet",
+            "caption_column": "caption",
+            "filename_column": "filename",
+            "width_column": "width",
+            "height_column": "height",
+            "identifier_includes_extension": true
+        },
+        "preserve_data_backend_cache": false,
+        "image_embeds": "vae-embed-storage"
+    },
+    {
+        "id": "vae-embed-storage",
+        "type": "local",
+        "dataset_type": "image_embeds"
+    },
+    {
+        "id": "text-embed-storage",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/local/path/to/cache/textencoder/",
+        "write_batch_size": 128
+    }
+]
+```
+
+**Note:** The `image_embeds` dataset does not have any options to set for data paths. Those are configured via `cache_dir_vae` on the image backend.
 
 ## Custom aspect ratio-to-resolution mapping
 

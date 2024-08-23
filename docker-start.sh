@@ -26,5 +26,9 @@ fi
 # Start SSH server
 service ssh start
 
+# Load HF, WanDB tokens
+if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then huggingface-cli login --token "$HUGGING_FACE_HUB_TOKEN" --add-to-git-credential; else echo "HUGGING_FACE_HUB_TOKEN not set; skipping login"; fi
+if [ -n "$WANDB_TOKEN" ]; then wandb login "$WANDB_TOKEN"; else echo "WANDB_TOKEN not set; skipping login"; fi
+
 # 🫡
 sleep infinity

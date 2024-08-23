@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import sys
+import glob
 
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
@@ -31,6 +32,20 @@ from helpers.arguments import parse_args
 from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
+from helpers.training.schedulers import load_scheduler_from_args
+from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
+from helpers.training.diffusion_model import load_diffusion_model
+from helpers.training.text_encoding import (
+    load_tes,
+    determine_te_path_subfolder,
+    import_model_class_from_model_name_or_path,
+    get_tokenizers,
+)
+from helpers.training.error_handling import validate_deepspeed_compat_from_args
+from helpers.training.optimizer_param import (
+    determine_optimizer_class_with_config,
+    determine_params_to_optimize,
+)
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 from helpers.training.wrappers import unwrap_model
@@ -41,7 +56,6 @@ from helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.prompts import PromptHandler
 from accelerate.logging import get_logger
 
 logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -67,9 +81,12 @@ import torch.nn.functional as F
 import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import ProjectConfiguration, set_seed
+
+try:
+    from lycoris import LycorisNetwork
+except:
+    print("[ERROR] Lycoris not available. Please install ")
 from tqdm.auto import tqdm
-from helpers.training.model_freeze import freeze_transformer_blocks
-from helpers.training.custom_schedule import get_sd3_sigmas
 from transformers import PretrainedConfig, CLIPTokenizer
 from helpers.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
@@ -96,6 +113,20 @@ from diffusers.utils import (
 from diffusers.utils.import_utils import is_xformers_available
 from transformers.utils import ContextManagers
 
+from helpers.models.flux import (
+    prepare_latent_image_ids,
+    pack_latents,
+    unpack_latents,
+)
+
+is_optimi_available = False
+try:
+    from optimi import prepare_for_gradient_release
+
+    is_optimi_available = True
+except:
+    pass
+
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
 
@@ -108,146 +139,30 @@ SCHEDULER_NAME_MAP = {
 }
 
 
-def import_model_class_from_model_name_or_path(
-    pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
-):
-    text_encoder_config = PretrainedConfig.from_pretrained(
-        pretrained_model_name_or_path, subfolder=subfolder, revision=revision
-    )
-    model_class = text_encoder_config.architectures[0]
-
-    if model_class == "CLIPTextModel":
-        from transformers import CLIPTextModel
-
-        return CLIPTextModel
-    elif model_class == "CLIPTextModelWithProjection":
-        from transformers import CLIPTextModelWithProjection
-
-        return CLIPTextModelWithProjection
-    elif model_class == "T5EncoderModel":
-        from transformers import T5EncoderModel
-
-        return T5EncoderModel
-    elif model_class == "UMT5EncoderModel":
-        from transformers import UMT5EncoderModel
-
-        return UMT5EncoderModel
-    else:
-        raise ValueError(f"{model_class} is not supported.")
-
-
-def get_tokenizers(args):
-    tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
-    try:
-        tokenizer_kwargs = {
-            "pretrained_model_name_or_path": args.pretrained_model_name_or_path,
-            "subfolder": "tokenizer",
-            "revision": args.revision,
-        }
-        if not args.pixart_sigma and not args.aura_flow:
-            tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
-        else:
-            if args.pixart_sigma:
-                from transformers import T5Tokenizer
-
-                tokenizer_cls = T5Tokenizer
-            elif args.aura_flow:
-                from transformers import LlamaTokenizerFast
-
-                tokenizer_cls = LlamaTokenizerFast
-
-            text_encoder_path = (
-                args.pretrained_t5_model_name_or_path
-                if args.pretrained_t5_model_name_or_path is not None
-                else args.pretrained_model_name_or_path
-            )
-            logger.info(
-                f"Tokenizer path: {text_encoder_path}, custom T5 model path: {args.pretrained_t5_model_name_or_path} revision: {args.revision}"
-            )
-            try:
-                tokenizer_1 = tokenizer_cls.from_pretrained(
-                    text_encoder_path,
-                    subfolder="tokenizer",
-                    revision=args.revision,
-                    use_fast=False,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load tokenizer 1: {e}, attempting no subfolder"
-                )
-                tokenizer_1 = T5Tokenizer.from_pretrained(
-                    text_encoder_path,
-                    subfolder=None,
-                    revision=args.revision,
-                    use_fast=False,
-                )
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Primary tokenizer (CLIP-L/14) failed to load. Continuing to test whether we have just the secondary tokenizer.."
-            f"\nError: -> {e}"
-            f"\nTraceback: {traceback.format_exc()}"
-        )
-        if args.sd3:
-            raise e
-    if not args.pixart_sigma and not args.aura_flow:
-        try:
-            tokenizer_2 = CLIPTokenizer.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_2",
-                revision=args.revision,
-                use_fast=False,
-            )
-            if tokenizer_1 is None:
-                logger.info("Seems that we are training an SDXL refiner model.")
-                StateTracker.is_sdxl_refiner(True)
-                if args.validation_using_datasets is None:
-                    logger.warning(
-                        "Since we are training the SDXL refiner and --validation_using_datasets was not specified, it is now being enabled."
-                    )
-                    args.validation_using_datasets = True
-        except:
-            logger.warning(
-                "Could not load secondary tokenizer (OpenCLIP-G/14). Cannot continue."
-            )
-        if not tokenizer_1 and not tokenizer_2:
-            raise Exception("Failed to load tokenizer")
-    else:
-        if not tokenizer_1:
-            raise Exception("Failed to load tokenizer")
-
-    if args.sd3:
-        try:
-            from transformers import T5TokenizerFast
-
-            tokenizer_3 = T5TokenizerFast.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="tokenizer_3",
-                revision=args.revision,
-                use_fast=True,
-            )
-        except:
-            raise ValueError(
-                "Could not load tertiary tokenizer (T5-XXL v1.1). Cannot continue."
-            )
-    return tokenizer_1, tokenizer_2, tokenizer_3
-
-
 def main():
     StateTracker.set_model_type("sdxl")
     args = parse_args()
     torch.set_num_threads(args.torch_num_threads)
     if args.sd3:
         StateTracker.set_model_type("sd3")
+    if args.flux:
+        StateTracker.set_model_type("flux")
     if args.pixart_sigma:
         StateTracker.set_model_type("pixart_sigma")
-    if args.aura_flow:
-        StateTracker.set_model_type("aura_flow")
     if args.legacy:
         StateTracker.set_model_type("legacy")
     if args.hunyuan_dit:
         StateTracker.set_model_type("hunyuan_dit")
+    if args.kolors:
+        StateTracker.set_model_type("kolors")
+    if args.hunyuan_dit:
+        model_type_label = "Hunyuan DiT"
+        StateTracker.set_model_type("hunyuan")
+    if args.smoldit:
+        from diffusers.models.embeddings import get_2d_rotary_pos_embed
+        from helpers.models.smoldit import get_resize_crop_region_for_grid
+
+        StateTracker.set_model_type("smoldit")
 
     StateTracker.set_args(args)
     if not args.preserve_data_backend_cache:
@@ -273,6 +188,24 @@ def main():
         project_config=accelerator_project_config,
         kwargs_handlers=[process_group_kwargs],
     )
+
+    if torch.cuda.is_available() and not torch.cuda.is_bf16_supported(
+        including_emulation=False
+    ):
+        raise ValueError(
+            "Currently-available CUDA hardware does not support bfloat16. You must use newer equipment."
+        )
+
+    if accelerator.num_processes > 1:
+        # mulit-gpu safety checks & warnings
+        if args.model_type == "lora" and args.lora_type == "standard":
+            # multi-gpu PEFT checks & warnings
+            if "quanto" in args.base_model_precision:
+                logger.error(
+                    "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
+                )
+                sys.exit(1)
+
     StateTracker.set_accelerator(accelerator)
     webhook_handler = None
     if args.webhook_config is not None:
@@ -314,24 +247,7 @@ def main():
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):
-        if "lora" in args.model_type:
-            logger.error(
-                "LoRA can not be trained with DeepSpeed. Please disable DeepSpeed via 'accelerate config' before reattempting."
-            )
-            sys.exit(1)
-        if (
-            "gradient_accumulation_steps"
-            in accelerator.state.deepspeed_plugin.deepspeed_config
-        ):
-            args.gradient_accumulation_steps = (
-                accelerator.state.deepspeed_plugin.deepspeed_config[
-                    "gradient_accumulation_steps"
-                ]
-            )
-            logger.info(
-                f"Updated gradient_accumulation_steps to the value provided by DeepSpeed: {args.gradient_accumulation_steps}"
-            )
-
+        validate_deepspeed_compat_from_args(accelerator, args)
     # If passed along, set the training seed now.
     if args.seed is not None and args.seed != 0:
         set_seed(args.seed, args.seed_for_each_device)
@@ -345,6 +261,15 @@ def main():
             from helpers.publishing.huggingface import HubManager
 
             hub_manager = HubManager(config=args)
+        try:
+            import huggingface_hub
+
+            StateTracker.set_hf_user(huggingface_hub.whoami())
+            logger.info(
+                f"Logged into Hugging Face Hub as '{StateTracker.get_hf_username()}'"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log into Hugging Face Hub: {e}")
 
     vae_path = (
         args.pretrained_model_name_or_path
@@ -374,12 +299,19 @@ def main():
             * accelerator.num_processes
         )
 
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.bfloat16
-    if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
-        weight_dtype = torch.float32
-        args.adam_bfloat16 = False
+    is_quantized = (
+        False
+        if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
+        else True
+    )
+    weight_dtype = (
+        torch.bfloat16
+        if (
+            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+            or (args.base_model_default_dtype == "bf16" and is_quantized)
+        )
+        else torch.float32
+    )
     StateTracker.set_weight_dtype(weight_dtype)
 
     # Load scheduler, tokenizer and models.
@@ -389,67 +321,33 @@ def main():
     # If --disable_text_encoder is provided, we will skip loading entirely.
     tokenizer_1, tokenizer_2, tokenizer_3 = get_tokenizers(args)
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
+    text_encoder_cls_1, text_encoder_cls_2, text_encoder_cls_3 = None, None, None
     text_encoders = []
     tokenizers = []
-    if not args.pixart_sigma and not args.aura_flow:
-        # sdxl and sd3 use the sd 1.5 clip-L/14 as number one.
-        # sd2.x uses openclip vit-H/14
-        logger.info("Load CLIP text encoder..")
-        text_encoder_path = args.pretrained_model_name_or_path
-        text_encoder_subfolder = "text_encoder"
-    else:
-        text_encoder_path = (
-            args.pretrained_t5_model_name_or_path
-            if args.pretrained_t5_model_name_or_path is not None
-            else args.pretrained_model_name_or_path
-        )
-        # Google's version of the T5 XXL model doesn't have a subfolder :()
-        text_encoder_subfolder = "text_encoder"
+    text_encoder_path, text_encoder_subfolder = determine_te_path_subfolder(args)
+
     if tokenizer_1 is not None:
         text_encoder_cls_1 = import_model_class_from_model_name_or_path(
-            text_encoder_path, args.revision, subfolder=text_encoder_subfolder
+            text_encoder_path, args.revision, args, subfolder=text_encoder_subfolder
         )
     if tokenizer_2 is not None:
         text_encoder_cls_2 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_2",
         )
     if tokenizer_3 is not None and args.sd3:
         text_encoder_cls_3 = import_model_class_from_model_name_or_path(
             args.pretrained_model_name_or_path,
             args.revision,
+            args,
             subfolder="text_encoder_3",
         )
 
     # Load scheduler and models
-    flow_matching = False
-    if (args.sd3 and not args.sd3_uses_diffusion) or args.aura_flow:
-        # Stable Diffusion 3 and AuraFlow use rectified flow.
-        flow_matching = True
-        from diffusers import FlowMatchEulerDiscreteScheduler
+    args, flow_matching, noise_scheduler = load_scheduler_from_args(args)
 
-        noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="scheduler"
-        )
-        noise_scheduler_copy = copy.deepcopy(noise_scheduler)
-
-    else:
-        if args.legacy:
-            args.rescale_betas_zero_snr = True
-            args.training_scheduler_timestep_spacing = "trailing"
-
-        noise_scheduler = DDPMScheduler.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-            timestep_spacing=args.training_scheduler_timestep_spacing,
-        )
-        args.prediction_type = noise_scheduler.config.prediction_type
-        if args.sd3 and args.sd3_uses_diffusion:
-            logger.warning(
-                "Since --sd3_uses_diffusion is provided, we will be reparameterising the model to v-prediction diffusion objective. This will break things for a while. Perhaps forever.."
-            )
     # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
     # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
     # will try to assign the same optimizer with the same weights to all models during
@@ -460,47 +358,37 @@ def main():
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        if tokenizer_1 is not None:
-            if args.pixart_sigma or args.aura_flow:
-                logger.info(
-                    f"Loading {'T5-XXL v1.1' if not args.aura_flow else 'Eleuther-AI Pile T5-XL'} text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
-            else:
-                logger.info(
-                    f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
-                )
-            text_encoder_1 = text_encoder_cls_1.from_pretrained(
-                text_encoder_path,
-                subfolder=text_encoder_subfolder,
-                revision=args.revision,
-                variant=args.variant,
-            )
-
-        if tokenizer_2 is not None:
-            logger.info("Loading LAION OpenCLIP-G/14 text encoder..")
-            text_encoder_2 = text_encoder_cls_2.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="text_encoder_2",
-                revision=args.revision,
-                variant=args.variant,
-            )
-        if tokenizer_3 is not None and args.sd3:
-            logger.info("Loading T5-XXL v1.1 text encoder..")
-            text_encoder_3 = text_encoder_cls_3.from_pretrained(
-                args.pretrained_model_name_or_path,
-                subfolder="text_encoder_3",
-                revision=args.revision,
-                variant=args.variant,
-            )
+        tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
+        text_encoder_classes = [
+            text_encoder_cls_1,
+            text_encoder_cls_2,
+            text_encoder_cls_3,
+        ]
+        text_encoder_variant, text_encoder_1, text_encoder_2, text_encoder_3 = load_tes(
+            args=args,
+            text_encoder_classes=text_encoder_classes,
+            weight_dtype=weight_dtype,
+            tokenizers=tokenizers,
+            text_encoder_path=text_encoder_path,
+            text_encoder_subfolder=text_encoder_subfolder,
+        )
 
         logger.info(f"Load VAE: {vae_path}")
-        vae = AutoencoderKL.from_pretrained(
-            vae_path,
-            subfolder="vae" if args.pretrained_vae_model_name_or_path is None else None,
-            revision=args.revision,
-            force_upcast=False,
-            variant=args.variant,
-        )
+        vae_kwargs = {
+            "pretrained_model_name_or_path": vae_path,
+            "subfolder": "vae",
+            "revision": args.revision,
+            "force_upcast": False,
+            "variant": args.variant,
+        }
+        try:
+            vae = AutoencoderKL.from_pretrained(**vae_kwargs)
+        except:
+            logger.warning(
+                "Couldn't load VAE with default path. Trying without a subfolder.."
+            )
+            vae_kwargs["subfolder"] = None
+            vae = AutoencoderKL.from_pretrained(**vae_kwargs)
 
     if tokenizer_1 is not None:
         logger.info("Moving text encoder to GPU.")
@@ -531,263 +419,31 @@ def main():
         webhook_handler.send(
             message=f"Loading model: `{args.pretrained_model_name_or_path}`..."
         )
-    pretrained_load_args = {
-        "revision": args.revision,
-        "variant": args.variant,
-    }
-    if args.sd3:
-        # Stable Diffusion 3 uses a Diffusion transformer.
-        logger.info("Loading Stable Diffusion 3 diffusion transformer..")
-        unet = None
-        try:
-            from diffusers import SD3Transformer2DModel
-        except Exception as e:
-            logger.error(
-                f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"
-            )
-        transformer = SD3Transformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.pixart_sigma:
-        from diffusers.models import PixArtTransformer2DModel
 
-        unet = None
-        transformer = PixArtTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.aura_flow:
-        try:
-            from diffusers.models import AuraFlowTransformer2DModel
-        except:
-            raise Exception(
-                "The AuraFlow model is not available in this release. Please update to the latest version of Diffusers: https://github.com/huggingface/diffusers/pull/8796"
-            )
-
-        unet = None
-        transformer = AuraFlowTransformer2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    elif args.hunyuan_dit:
-        from diffusers import HunyuanDiT2DModel
-
-        unet = None
-        transformer = HunyuanDiT2DModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
-            **pretrained_load_args,
-        )
-    else:
-        logger.info("Loading U-net..")
-        transformer = None
-        unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", **pretrained_load_args
-        )
-
-    model_type_label = "SDXL"
-    if StateTracker.is_sdxl_refiner():
-        model_type_label = "SDXL Refiner"
-    if args.sd3:
-        model_type_label = "Stable Diffusion 3"
-    if args.pixart_sigma:
-        model_type_label = "PixArt Sigma"
-    if args.aura_flow:
-        model_type_label = "AuraFlow"
-    if args.legacy:
-        model_type_label = "Stable Diffusion 1.x/2.x"
-    if "deepfloyd" in args.model_type:
-        model_type_label = "DeepFloyd-IF"
-    if args.hunyuan_dit:
-        model_type_label = "Hunyuan DiT"
-
-    AURA_DIT_BLOCKS_REGEX = (
-        r"single_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
-    )
-    AURA_MMDIT_BLOCKS_REGEX = (
-        r"joint_transformer_blocks\..*\.attn\.to_([kvq]|out\.0\.weight)"
-    )
-
-    if args.controlnet:
-        if args.pixart_sigma or args.aura_flow:
-
-    if args.controlnet:
-        if args.pixart_sigma or args.hunyuan_dit:
-            raise ValueError(
-                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
-            )
-        if (
-            "deepfloyd" in StateTracker.get_args().model_type
-            or StateTracker.is_sdxl_refiner()
-            or args.sd3
-        ):
-            raise ValueError(
-                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
-            )
-        logger.info("Creating the controlnet..")
-        if args.controlnet_model_name_or_path:
-            logger.info("Loading existing controlnet weights")
-            controlnet = ControlNetModel.from_pretrained(
-                args.controlnet_model_name_or_path
-            )
-        else:
-            logger.info("Initializing controlnet weights from unet")
-            controlnet = ControlNetModel.from_unet(unet)
-    elif "lora" in args.model_type:
-        if args.pixart_sigma:
-            raise Exception(f"{model_type_label} does not support LoRA model training.")
-
-        logger.info("Using LoRA training mode.")
-        if webhook_handler is not None:
-            webhook_handler.send(message="Using LoRA training mode.")
-        # now we will add new LoRA weights to the attention layers
-        # Set correct lora layers
-        if transformer is not None:
-            transformer.requires_grad_(False)
-        if unet is not None:
-            unet.requires_grad_(False)
-        lora_initialisation_style = True
-        if hasattr(args, "lora_init_method") and args.lora_init_method is not None:
-            lora_initialisation_style = args.lora_init_method
-        lora_weight_init_type = (
-            "gaussian"
-            if torch.backends.mps.is_available()
-            else lora_initialisation_style
-        )
-        if args.use_dora:
-            logger.warning(
-                "DoRA support is experimental and not very thoroughly tested."
-            )
-            lora_weight_init_type = "gaussian"
-        if unet is not None:
-            unet_lora_config = LoraConfig(
-                r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
-                lora_dropout=args.lora_dropout,
-                init_lora_weights=lora_weight_init_type,
-                target_modules=["to_k", "to_q", "to_v", "to_out.0"],
-                use_dora=args.use_dora,
-            )
-            logger.info("Adding LoRA adapter to the unet model..")
-            unet.add_adapter(unet_lora_config)
-        if transformer is not None:
-            target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
-            if args.aura_flow:
-                target_modules = ["to_k", "to_q", "to_v", "to_out.0", "to_add_out"]
-                if args.aura_flow_target == "dit":
-                    target_modules = AURA_DIT_BLOCKS_REGEX
-                elif args.aura_flow_target == "mmdit":
-                    target_modules = AURA_MMDIT_BLOCKS_REGEX
-            transformer_lora_config = LoraConfig(
-                r=args.lora_rank,
-                lora_alpha=args.lora_alpha,
-                init_lora_weights=lora_weight_init_type,
-                target_modules=target_modules,
-                use_dora=args.use_dora,
-            )
-            transformer.add_adapter(transformer_lora_config)
-
-    logger.info(
-        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype} precision."
-    )
-    if unet is not None:
-        unet.to(accelerator.device, dtype=weight_dtype)
-    if transformer is not None:
-        transformer.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_xformers_memory_efficient_attention and not any(
-        [args.sd3, args.pixart_sigma, args.aura_flow]
-    ):
-        logger.info("Enabling xformers memory-efficient attention.")
-        if is_xformers_available():
-            import xformers  # type: ignore # noqa
-
-            if unet is not None:
-                unet.enable_xformers_memory_efficient_attention()
-            if transformer is not None:
-                transformer.enable_xformers_memory_efficient_attention()
-            if args.controlnet:
-                controlnet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError(
-                "xformers is not available. Make sure it is installed correctly"
-            )
-    elif args.enable_xformers_memory_efficient_attention:
-        logger.warning(
-            "xformers is not enabled, as it is incompatible with this model type."
-        )
-
-    if args.controlnet:
-        # We freeze the base u-net for controlnet training.
-        if unet is not None:
-            unet.requires_grad_(False)
-        if transformer is not None:
-            transformer.requires_grad_(False)
-        controlnet.train()
-        controlnet.to(device=accelerator.device, dtype=weight_dtype)
-        if args.train_text_encoder:
-            logger.warning(
-                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
-            )
-
-    if "lora" not in args.model_type and args.aura_flow:
-        # we might want to just train a piece of the whole aura model.
-        transformer = freeze_transformer_blocks(
-            transformer,
-            target_blocks=args.aura_flow_target,
-            first_unfrozen_dit_layer=args.aura_flow_first_unfrozen_dit_layer,
-            first_unfrozen_mmdit_layer=args.aura_flow_first_unfrozen_mmdit_layer,
-            use_bitfit=True if args.layer_freeze_strategy == "bitfit" else False,
-        )
-
-    # Move vae, unet and text_encoder to device and cast to weight_dtype
-    # The VAE is in bfloat16 to avoid NaN losses.
-    vae_dtype = torch.bfloat16
-    if hasattr(args, "vae_dtype"):
+    if vae is not None:
+        # The VAE is in bfloat16 to avoid NaN losses.
+        vae_dtype = torch.bfloat16
+        if hasattr(args, "vae_dtype"):
+            # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
+            if args.vae_dtype == "bf16":
+                vae_dtype = torch.bfloat16
+            elif args.vae_dtype == "fp16":
+                raise ValueError(
+                    "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
+                )
+            elif args.vae_dtype == "fp32":
+                vae_dtype = torch.float32
+            elif args.vae_dtype == "none" or args.vae_dtype == "default":
+                vae_dtype = torch.bfloat16
         logger.info(
-            f"Initialising VAE in {args.vae_dtype} precision, you may specify a different value if preferred: bf16, fp32, default"
+            f"Loading VAE onto accelerator, converting from {vae.dtype} to {vae_dtype}"
         )
-        # Let's use a case-switch for convenience: bf16, fp16, fp32, none/default
-        if args.vae_dtype == "bf16":
-            vae_dtype = torch.bfloat16
-        elif args.vae_dtype == "fp16":
-            raise ValueError(
-                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-            )
-        elif args.vae_dtype == "fp32":
-            vae_dtype = torch.float32
-        elif args.vae_dtype == "none" or args.vae_dtype == "default":
-            vae_dtype = torch.bfloat16
-    if args.pretrained_vae_model_name_or_path is not None:
-        logger.debug(f"Initialising VAE with weight dtype {vae_dtype}")
         vae.to(accelerator.device, dtype=vae_dtype)
-    else:
-        logger.debug(f"Initialising VAE with custom dtype {vae_dtype}")
-        vae.to(accelerator.device, dtype=vae_dtype)
-    StateTracker.set_vae_dtype(vae_dtype)
+        StateTracker.set_vae_dtype(vae_dtype)
     StateTracker.set_vae(vae)
-    logger.info("Loaded VAE into VRAM.")
 
     # Create a DataBackend, so that we can access our dataset.
     prompt_handler = None
-    if (
-        not args.disable_compel
-        and not args.sd3
-        and not args.pixart_sigma
-        and not args.aura_flow
-    ):
-        # SD3 and PixArt don't really work with prompt weighting.
-        prompt_handler = PromptHandler(
-            args=args,
-            text_encoders=[text_encoder_1, text_encoder_2],
-            tokenizers=[tokenizer_1, tokenizer_2],
-            accelerator=accelerator,
-            model_type="sdxl",
-        )
-
     try:
         if webhook_handler is not None:
             webhook_handler.send(
@@ -811,19 +467,35 @@ def main():
 
         sys.exit(0)
 
-    with accelerator.main_process_first():
-        (
-            validation_prompts,
-            validation_shortnames,
-            validation_negative_prompt_embeds,
-            validation_negative_pooled_embeds,
-        ) = prepare_validation_prompt_list(
-            args=args, embed_cache=StateTracker.get_default_text_embed_cache()
-        )
+    if accelerator.is_main_process:
+        if args.flux:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+                validation_negative_time_ids,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
+        else:
+            (
+                validation_prompts,
+                validation_shortnames,
+                validation_negative_prompt_embeds,
+                validation_negative_pooled_embeds,
+            ) = prepare_validation_prompt_list(
+                args=args, embed_cache=StateTracker.get_default_text_embed_cache()
+            )
+    else:
+        validation_prompts = None
+        validation_shortnames = None
+        validation_negative_prompt_embeds = None
+        validation_negative_pooled_embeds = None
     accelerator.wait_for_everyone()
-    # Grab GPU memory used:
 
     if args.model_type == "full" or not args.train_text_encoder:
+        # Grab GPU memory used:
         if torch.cuda.is_available():
             memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():
@@ -835,14 +507,24 @@ def main():
             memory_before_unload = 0
         if accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
+
+        if text_encoder_1 is not None:
+            text_encoder_1 = text_encoder_1.to("cpu")
+        if text_encoder_2 is not None:
+            text_encoder_2 = text_encoder_2.to("cpu")
+        if text_encoder_3 is not None:
+            text_encoder_3 = text_encoder_3.to("cpu")
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
         text_encoder_3 = None
         text_encoders = []
+        if prompt_handler is not None:
+            prompt_handler.text_encoders = []
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
+                backend["text_embed_cache"].pipeline = None
         reclaim_memory()
         if torch.cuda.is_available():
             memory_after_unload = torch.cuda.memory_allocated() / 1024**3
@@ -855,6 +537,274 @@ def main():
             f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
             " The real memories were the friends we trained a model on along the way."
         )
+
+    unet, transformer = load_diffusion_model(args, weight_dtype)
+    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+
+    model_type_label = "SDXL"
+    if StateTracker.is_sdxl_refiner():
+        model_type_label = "SDXL Refiner"
+    if args.sd3:
+        model_type_label = "Stable Diffusion 3"
+    if args.pixart_sigma:
+        model_type_label = "PixArt Sigma"
+    if args.legacy:
+        model_type_label = "Stable Diffusion 1.x/2.x"
+    if "deepfloyd" in args.model_type:
+        model_type_label = "DeepFloyd-IF"
+    if args.kolors:
+        model_type_label = "Kwai Kolors"
+
+    enable_adamw_bf16 = True if weight_dtype == torch.bfloat16 else False
+    base_weight_dtype = weight_dtype
+    is_quanto = False
+    if not disable_accelerator and is_quantized:
+        if args.base_model_default_dtype == "fp32":
+            base_weight_dtype = torch.float32
+            enable_adamw_bf16 = False
+        elif args.base_model_default_dtype == "bf16":
+            base_weight_dtype = torch.bfloat16
+            enable_adamw_bf16 = True
+        if unet is not None and unet.dtype != base_weight_dtype:
+            logger.info(
+                f"Moving U-net from {unet.dtype} to {base_weight_dtype} precision"
+            )
+            unet.to("cpu", dtype=base_weight_dtype)
+        elif transformer is not None and transformer.dtype != base_weight_dtype:
+            logger.info(
+                f"Moving transformer from {transformer.dtype} to {base_weight_dtype} precision"
+            )
+            transformer.to("cpu", dtype=base_weight_dtype)
+        else:
+            logger.info(f"Keeping some base model weights in {base_weight_dtype}.")
+    if "quanto" in args.base_model_precision and "lora" in args.model_type:
+        is_quanto = True
+        from helpers.training.quantisation import quantoise
+
+        # we'll quantise pretty much everything but the adapter, if we execute this here.
+        if not args.controlnet:
+            with accelerator.local_main_process_first():
+                quantoise(
+                    unet=unet,
+                    transformer=transformer,
+                    text_encoder_1=text_encoder_1,
+                    text_encoder_2=text_encoder_2,
+                    text_encoder_3=text_encoder_3,
+                    controlnet=None,
+                    args=args,
+                )
+    elif "lora" not in args.model_type:
+        args.base_model_precision = "no_change"
+
+    controlnet = None
+    lycoris_wrapped_network = None
+    lycoris_config = None
+    if args.controlnet:
+        if any(
+            [
+                args.pixart_sigma,
+                args.sd3,
+                args.kolors,
+                args.hunyuan_dit,
+                StateTracker.is_sdxl_refiner(),
+                "deepfloyd" in args.model_type,
+            ]
+        ):
+            raise ValueError(
+                f"ControlNet is not yet supported with {model_type_label} models. Please disable --controlnet, or switch model types."
+            )
+        logger.info("Creating the controlnet..")
+        if args.controlnet_model_name_or_path:
+            logger.info("Loading existing controlnet weights")
+            controlnet = ControlNetModel.from_pretrained(
+                args.controlnet_model_name_or_path
+            )
+        else:
+            logger.info("Initializing controlnet weights from unet")
+            controlnet = ControlNetModel.from_unet(unet)
+        if "quanto" in args.base_model_precision:
+            # since controlnet training uses no adapter currently, we just quantise the base transformer here.
+            with accelerator.local_main_process_first():
+                quantoise(
+                    unet=unet,
+                    transformer=transformer,
+                    text_encoder_1=text_encoder_1,
+                    text_encoder_2=text_encoder_2,
+                    text_encoder_3=text_encoder_3,
+                    controlnet=None,
+                    args=args,
+                )
+
+    elif "lora" in args.model_type and "standard" == args.lora_type.lower():
+        if args.pixart_sigma:
+            raise Exception(f"{model_type_label} does not support LoRA model training.")
+
+        logger.info(f"Using LoRA training mode (rank={args.lora_rank})")
+        if webhook_handler is not None:
+            webhook_handler.send(message="Using LoRA training mode.")
+        # now we will add new LoRA weights to the attention layers
+        # Set correct lora layers
+        if transformer is not None:
+            transformer.requires_grad_(False)
+        if unet is not None:
+            unet.requires_grad_(False)
+
+        lora_initialisation_style = True
+        if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
+            if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
+                logger.error(
+                    "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
+                )
+            elif is_quantized and args.lora_init_type == "loftq":
+                logger.error(
+                    "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
+                )
+            else:
+                lora_initialisation_style = (
+                    args.lora_init_type if args.lora_init_type != "default" else True
+                )
+        if args.use_dora:
+            if is_quanto:
+                logger.error(
+                    "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
+                )
+                args.use_dora = False
+            else:
+                logger.warning(
+                    "DoRA support is experimental and not very thoroughly tested."
+                )
+                lora_initialisation_style = "default"
+        target_modules = determine_adapter_target_modules(args, unet, transformer)
+        if unet is not None:
+            unet_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=(
+                    args.lora_alpha if args.lora_alpha is not None else args.lora_rank
+                ),
+                lora_dropout=args.lora_dropout,
+                init_lora_weights=lora_initialisation_style,
+                target_modules=target_modules,
+                use_dora=args.use_dora,
+            )
+            # if is_quanto:
+            #     unet_lora_config._register_custom_module(
+            #         mapping=quanto_peft_module_mapping
+            #     )
+            logger.info("Adding LoRA adapter to the unet model..")
+            unet.add_adapter(unet_lora_config)
+            if args.init_lora:
+                addkeys, misskeys = load_lora_weights(
+                    {"unet": unet}, args.init_lora, use_dora=args.use_dora
+                )
+                if addkeys:
+                    logger.warning(
+                        "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
+                        % (args.init_lora, str(addkeys))
+                    )
+                if misskeys:
+                    logger.warning(
+                        "The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys."
+                        % (args.init_lora, str(misskeys))
+                    )
+        elif transformer is not None:
+            transformer_lora_config = LoraConfig(
+                r=args.lora_rank,
+                lora_alpha=(
+                    args.lora_alpha if args.lora_alpha is not None else args.lora_rank
+                ),
+                init_lora_weights=lora_initialisation_style,
+                target_modules=target_modules,
+                use_dora=args.use_dora,
+            )
+            transformer.add_adapter(transformer_lora_config)
+
+            if args.init_lora:
+                addkeys, misskeys = load_lora_weights(
+                    {"transformer": transformer}, args.init_lora, use_dora=args.use_dora
+                )
+                if addkeys:
+                    logger.warning(
+                        "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
+                        % (args.init_lora, str(addkeys))
+                    )
+                if misskeys:
+                    logger.warning(
+                        "The following keys were part of the model but not found in %s:\n %s.\nThese keys will be initialized according to the lora weight initialisation. This could be an error, or intended behaviour in case a lora is finetuned with additional keys."
+                        % (args.init_lora, str(misskeys))
+                    )
+
+    elif "lora" in args.model_type and "lycoris" == args.lora_type.lower():
+        from lycoris import create_lycoris
+
+        if args.lycoris_config is None:
+            raise ValueError(
+                "--lora_type=lycoris requires you to add a JSON "
+                + "configuration file location with --lycoris_config"
+            )
+
+        with open(args.lycoris_config, "r") as f:
+            lycoris_config = json.load(f)
+
+        assert (
+            "multiplier" in lycoris_config
+        ), "lycoris_config JSON must contain multiplier key"
+        multiplier = int(lycoris_config["multiplier"])
+        assert (
+            "linear_dim" in lycoris_config
+        ), "lycoris_config JSON must contain linear_dim key"
+        linear_dim = int(lycoris_config["linear_dim"])
+        assert (
+            "linear_alpha" in lycoris_config
+        ), "lycoris_config JSON must contain linear_alpha key"
+        linear_alpha = int(lycoris_config["linear_alpha"])
+
+        apply_preset = lycoris_config.get("apply_preset", None)
+        if apply_preset is not None and apply_preset != {}:
+            LycorisNetwork.apply_preset(apply_preset)
+
+        # This is a kwarg, but mandatory.
+        assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
+
+        # Remove the positional arguments we extracted.
+        del lycoris_config["multiplier"]
+        del lycoris_config["linear_dim"]
+        del lycoris_config["linear_alpha"]
+
+        logger.info(f"Using lycoris training mode")
+        if webhook_handler is not None:
+            webhook_handler.send(message="Using lycoris training mode.")
+
+        # Freeze the models.
+        model_for_lycoris_wrap = None
+        if transformer is not None:
+            transformer.requires_grad_(False)
+            model_for_lycoris_wrap = transformer
+        if unet is not None:
+            unet.requires_grad_(False)
+            model_for_lycoris_wrap = unet
+
+        lycoris_wrapped_network = create_lycoris(
+            model_for_lycoris_wrap,
+            multiplier,
+            linear_dim,
+            linear_alpha,
+            **lycoris_config,
+        )
+        lycoris_wrapped_network.apply_to()
+        setattr(accelerator, "_lycoris_wrapped_network", lycoris_wrapped_network)
+        lycoris_num_params = sum(
+            p.numel() for p in lycoris_wrapped_network.parameters()
+        )
+        logger.info(
+            f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters"
+        )
+
+    if args.controlnet:
+        # We freeze the base u-net for controlnet training.
+        if unet is not None:
+            unet.requires_grad_(False)
+        if transformer is not None:
+            transformer.requires_grad_(False)
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -913,21 +863,18 @@ def main():
     if args.gradient_checkpointing:
         if unet is not None:
             unet.enable_gradient_checkpointing()
-        if transformer is not None:
+        if transformer is not None and not args.smoldit:
             transformer.enable_gradient_checkpointing()
         if args.controlnet:
             controlnet.enable_gradient_checkpointing()
         if hasattr(args, "train_text_encoder") and args.train_text_encoder:
             text_encoder_1.gradient_checkpointing_enable()
             text_encoder_2.gradient_checkpointing_enable()
-            if text_encoder_3:
-                text_encoder_3.gradient_checkpointing_enable()
+            # if text_encoder_3:
+            #     text_encoder_3.gradient_checkpointing_enable()
 
     logger.info(f"Learning rate: {args.learning_rate}")
-    extra_optimizer_args = {
-        "weight_decay": args.adam_weight_decay,
-        "eps": args.adam_epsilon,
-    }
+    extra_optimizer_args = {"lr": args.learning_rate}
     use_deepspeed_optimizer = False
     use_deepspeed_scheduler = False
     if (
@@ -939,7 +886,7 @@ def main():
         ]["offload_param"]
         accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"][
             "offload_param"
-        ]["pin_memory"] = False
+        ]["pin_memory"] = True
         if offload_param["device"] == "nvme":
             if offload_param["nvme_path"] == "none":
                 if args.offload_param_path is None:
@@ -956,6 +903,7 @@ def main():
 
         use_deepspeed_optimizer = True
         if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            logger.info("Using DeepSpeed optimizer (AdamW).")
             accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
                 "type": "AdamW",
                 "params": {
@@ -968,6 +916,7 @@ def main():
 
         use_deepspeed_scheduler = True
         if "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+            logger.info("Using DeepSpeed scheduler (WarmupLR).")
             accelerator.state.deepspeed_plugin.deepspeed_config["scheduler"] = {
                 "type": "WarmupLR",
                 "params": {
@@ -978,150 +927,24 @@ def main():
             }
 
     # Initialize the optimizer
-    if use_deepspeed_optimizer:
-        logger.info("Using DeepSpeed optimizer.")
-        optimizer_class = accelerate.utils.DummyOptim
-        extra_optimizer_args["lr"] = args.learning_rate
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["eps"] = args.adam_epsilon
-        extra_optimizer_args["weight_decay"] = args.adam_weight_decay
-    elif args.use_prodigy_optimizer:
-        logger.info("Using Prodigy optimizer. Experimental.")
-        try:
-            import prodigyopt
-        except ImportError:
-            raise ImportError(
-                "To use Prodigy, please install the prodigyopt library: `pip install prodigyopt`"
-            )
+    optimizer_args_from_config, optimizer_class = determine_optimizer_class_with_config(
+        args=args,
+        use_deepspeed_optimizer=use_deepspeed_optimizer,
+        is_quantized=is_quantized,
+        enable_adamw_bf16=enable_adamw_bf16,
+    )
+    extra_optimizer_args.update(optimizer_args_from_config)
 
-        optimizer_class = prodigyopt.Prodigy
-
-        if args.learning_rate <= 0.1:
-            logger.warn(
-                "Learning rate is too low. When using prodigy, it's generally better to set learning rate around 1.0"
-            )
-        extra_optimizer_args["lr"] = args.learning_rate
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["beta3"] = args.prodigy_beta3
-        extra_optimizer_args["weight_decay"] = args.prodigy_weight_decay
-        extra_optimizer_args["eps"] = args.prodigy_epsilon
-        extra_optimizer_args["decouple"] = args.prodigy_decouple
-        extra_optimizer_args["use_bias_correction"] = args.prodigy_use_bias_correction
-        extra_optimizer_args["safeguard_warmup"] = args.prodigy_safeguard_warmup
-        extra_optimizer_args["d_coef"] = args.prodigy_learning_rate
-    elif args.adam_bfloat16:
-        logger.info("Using bf16 AdamW optimizer with stochastic rounding.")
-        from helpers.training import adam_bfloat16
-
-        optimizer_class = adam_bfloat16.AdamWBF16
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
-    elif args.use_8bit_adam:
-        logger.info("Using 8bit AdamW optimizer.")
-        try:
-            import bitsandbytes as bnb  # type: ignore
-        except ImportError:
-            raise ImportError(
-                "Please install bitsandbytes to use 8-bit Adam. You can do so by running `pip install bitsandbytes`"
-            )
-
-        optimizer_class = bnb.optim.AdamW8bit
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
-    elif hasattr(args, "use_dadapt_optimizer") and args.use_dadapt_optimizer:
-        logger.info("Using D-Adaptation optimizer.")
-        try:
-            from dadaptation import DAdaptAdam
-        except ImportError:
-            raise ImportError(
-                "Please install the dadaptation library to make use of DaDapt optimizer."
-                "You can do so by running `pip install dadaptation`"
-            )
-
-        optimizer_class = DAdaptAdam
-        if (
-            hasattr(args, "dadaptation_learning_rate")
-            and args.dadaptation_learning_rate is not None
-        ):
-            logger.debug(
-                f"Overriding learning rate {args.learning_rate} with {args.dadaptation_learning_rate} for D-Adaptation optimizer."
-            )
-            args.learning_rate = args.dadaptation_learning_rate
-            extra_optimizer_args["decouple"] = True
-            extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-            extra_optimizer_args["lr"] = args.learning_rate
-
-    elif hasattr(args, "use_adafactor_optimizer") and args.use_adafactor_optimizer:
-        logger.info("Using Adafactor optimizer.")
-        try:
-            from transformers.optimization import Adafactor, AdafactorSchedule
-        except ImportError:
-            raise ImportError(
-                "Please install the latest transformers library to make use of Adafactor optimizer."
-                "You can do so by running `pip install transformers`, or, `poetry install` from the SimpleTuner directory."
-            )
-
-        optimizer_class = Adafactor
-        extra_optimizer_args = {}
-        if args.adafactor_relative_step:
-            extra_optimizer_args["lr"] = None
-            extra_optimizer_args["relative_step"] = True
-            extra_optimizer_args["scale_parameter"] = False
-            extra_optimizer_args["warmup_init"] = True
-        else:
-            extra_optimizer_args["lr"] = args.learning_rate
-            extra_optimizer_args["relative_step"] = False
-            extra_optimizer_args["scale_parameter"] = False
-            extra_optimizer_args["warmup_init"] = False
-    else:
-        logger.info("Using AdamW optimizer.")
-        optimizer_class = torch.optim.AdamW
-        extra_optimizer_args["betas"] = (args.adam_beta1, args.adam_beta2)
-        extra_optimizer_args["lr"] = args.learning_rate
-
-    if args.model_type == "full":
-        if args.controlnet:
-            params_to_optimize = controlnet.parameters()
-        elif unet is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, unet.parameters())
-            )
-        elif transformer is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, transformer.parameters())
-            )
-        if args.train_text_encoder:
-            raise ValueError(
-                "Full model tuning does not currently support text encoder training."
-            )
-    elif "lora" in args.model_type:
-        if args.controlnet:
-            raise ValueError(
-                "SimpleTuner does not currently support training a ControlNet LoRA."
-            )
-        if unet is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, unet.parameters())
-            )
-        if transformer is not None:
-            params_to_optimize = list(
-                filter(lambda p: p.requires_grad, transformer.parameters())
-            )
-        if args.train_text_encoder:
-            if args.sd3 or args.aura_flow or args.pixart_sigma:
-                raise ValueError(
-                    f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
-                )
-            else:
-                params_to_optimize = (
-                    params_to_optimize
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_1.parameters())
-                    )
-                    + list(
-                        filter(lambda p: p.requires_grad, text_encoder_2.parameters())
-                    )
-                )
+    params_to_optimize = determine_params_to_optimize(
+        args=args,
+        controlnet=controlnet,
+        unet=unet,
+        transformer=transformer,
+        text_encoder_1=text_encoder_1,
+        text_encoder_2=text_encoder_2,
+        model_type_label=model_type_label,
+        lycoris_wrapped_network=lycoris_wrapped_network,
+    )
 
     if use_deepspeed_optimizer:
         optimizer = optimizer_class(params_to_optimize)
@@ -1137,24 +960,46 @@ def main():
             )
             # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
             # --learning_rate
-            params_to_optimize[1]["lr"] = args.learning_rate
-            params_to_optimize[2]["lr"] = args.learning_rate
-            if args.sd3:
-                # Third text encoder.
-                params_to_optimize[3]["lr"] = args.learning_rate
+            params_to_optimize[1]["lr"] = float(args.learning_rate)
+            if text_encoder_2 is not None:
+                params_to_optimize[2]["lr"] = float(args.learning_rate)
 
         optimizer = optimizer_class(
             params_to_optimize,
             **extra_optimizer_args,
         )
+
+    if (
+        is_optimi_available
+        and args.optimizer_release_gradients
+        and "optimi" in args.optimizer
+    ):
+        logger.info("Marking model for gradient release.")
+        prepare_for_gradient_release(
+            (
+                controlnet
+                if args.controlnet
+                else transformer if transformer is not None else unet
+            ),
+            optimizer,
+        )
+
     from helpers.training.custom_schedule import get_lr_scheduler
 
-    logger.info(
-        f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
-    )
-    lr_scheduler = get_lr_scheduler(
-        args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    )
+    if not use_deepspeed_scheduler:
+        logger.info(
+            f"Loading {args.lr_scheduler} learning rate scheduler with {args.lr_warmup_steps} warmup steps"
+        )
+        lr_scheduler = get_lr_scheduler(
+            args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
+        )
+    else:
+        logger.info(f"Using DeepSpeed learning rate scheduler")
+        lr_scheduler = accelerate.utils.DummyScheduler(
+            optimizer,
+            total_num_steps=args.max_train_steps,
+            warmup_num_steps=args.lr_warmup_steps,
+        )
     if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
         lr_scheduler.num_update_steps_per_epoch = num_update_steps_per_epoch
     if hasattr(lr_scheduler, "last_step"):
@@ -1165,43 +1010,35 @@ def main():
     # Create EMA for the unet.
     ema_model = None
     if args.use_ema:
-        if args.sd3:
-            raise ValueError(
-                "Using EMA is not currently supported for Stable Diffusion 3 training."
-            )
-        if "lora" in args.model_type:
-            raise ValueError("Using EMA is not currently supported for LoRA training.")
+
         if accelerator.is_main_process:
             logger.info("Using EMA. Creating EMAModel.")
+
+            ema_model_cls = None
+            if unet is not None:
+                ema_model_cls = UNet2DConditionModel
+            elif args.pixart_sigma:
+                ema_model_cls = PixArtTransformer2DModel
+
+            ema_model_config = None
+            if unet is not None:
+                ema_model_config = unet.config
+            elif transformer is not None:
+                ema_model_config = transformer.config
 
             ema_model = EMAModel(
                 args,
                 accelerator,
-                unet.parameters() if unet is not None else transformer.parameters(),
-                model_cls=(
-                    UNet2DConditionModel
-                    if unet is not None
-                    else (
-                        SD3Transformer2DModel
-                        if args.sd3
-                        else (
-                            PixArtTransformer2DModel
-                            if args.pixart_sigma
-                            else (
-                                AuraFlowTransformer2DModel if args.aura_flow else None
-                            )
-                        )
-                    )
+                parameters=(
+                    unet.parameters() if unet is not None else transformer.parameters()
                 ),
-                model_config=(
-                    unet.config
-                    if unet is not None
-                    else transformer.config if transformer is not None else None
-                ),
+                model_cls=ema_model_cls,
+                model_config=ema_model_config,
                 decay=args.ema_decay,
                 foreach=not args.ema_foreach_disable,
             )
             logger.info("EMA model creation complete.")
+
         accelerator.wait_for_everyone()
 
     from helpers.training.save_hooks import SaveHookManager
@@ -1214,14 +1051,12 @@ def main():
         accelerator=accelerator,
         text_encoder_1=text_encoder_1,
         text_encoder_2=text_encoder_2,
-        text_encoder_3=text_encoder_3,
         use_deepspeed_optimizer=use_deepspeed_optimizer,
     )
     accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
     accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
     # Prepare everything with our `accelerator`.
-    disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
     train_dataloaders = []
     for _, backend in StateTracker.get_data_backends().items():
         if "train_dataloader" not in backend:
@@ -1250,6 +1085,7 @@ def main():
             unet = results[0]
         elif transformer is not None:
             transformer = results[0]
+
         if args.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(
@@ -1286,7 +1122,14 @@ def main():
     idx_count = 0
 
     if "lora" in args.model_type and args.train_text_encoder:
+        if args.lora_type.lower() == "lycoris":
+            logger.error(
+                "LyCORIS training is not meant to be combined with --train_text_encoder. It is powerful enough on its own!"
+            )
+            sys.exit(1)
         logger.info("Preparing text encoders for training.")
+        if args.sd3:
+            logger.info("NOTE: The third text encoder is not trained for SD3.")
         text_encoder_1, text_encoder_2 = accelerator.prepare(
             text_encoder_1, text_encoder_2
         )
@@ -1314,7 +1157,7 @@ def main():
         f" {args.num_train_epochs} epochs and {num_update_steps_per_epoch} steps per epoch."
     )
 
-    if not args.keep_vae_loaded and args.vae_cache_preprocess:
+    if not args.keep_vae_loaded and not args.vae_cache_ondemand:
         if torch.cuda.is_available():
             memory_before_unload = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():
@@ -1325,6 +1168,7 @@ def main():
             )
             memory_before_unload = 0
 
+        vae = vae.to("cpu")
         del vae
         vae = None
 
@@ -1341,7 +1185,7 @@ def main():
             memory_after_unload = 0
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(
-            f"After the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
+            f"After nuking the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM."
         )
 
     # Train!
@@ -1359,6 +1203,7 @@ def main():
     global_step = 0
     global_resume_step = 0
     StateTracker.set_global_step(global_step)
+
     # First_epoch represents the *currently training epoch*, as opposed to global_step, which represents
     #  the *last completed* optimization step.
     first_epoch = 1
@@ -1387,7 +1232,6 @@ def main():
         vae=vae,
         controlnet=controlnet if args.controlnet else None,
     )
-    # validation.run_validations(validation_type="base_model", step=0)
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
@@ -1409,7 +1253,23 @@ def main():
             args.resume_from_checkpoint = None
         else:
             logger.info(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
+            try:
+                accelerator.load_state(os.path.join(args.output_dir, path))
+            except Exception as e:
+                logger.error(f"Error during load_state: {e}")
+            try:
+                if "constant" in args.lr_scheduler:
+                    for g in optimizer.param_groups:
+                        if "lr" in g:
+                            g["lr"] = torch.tensor(args.learning_rate)
+                    for k, v in lr_scheduler.state_dict().items():
+                        if k in ("base_lrs", "_last_lr"):
+                            v[0] = args.learning_rate
+            except Exception as e:
+                logger.error(
+                    f"Could not update lr_scheduler {args.lr_scheduler} learning rate to {args.learning_rate} upon resume: {e}"
+                )
+
             for _, backend in StateTracker.get_data_backends().items():
                 if "sampler" in backend:
                     backend["sampler"].load_states(
@@ -1447,11 +1307,6 @@ def main():
             f"Reached the end ({current_epoch} epochs) of our training run ({args.num_train_epochs} epochs). This run will do zero steps."
         )
 
-    # if not use_deepspeed_scheduler:
-    #     lr_scheduler = get_lr_scheduler(
-    #         args, optimizer, accelerator, logger, use_deepspeed_scheduler=False
-    #     )
-
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
@@ -1475,6 +1330,55 @@ def main():
                 }
             },
         )
+
+    logger.info(
+        f"Moving the {'U-net' if unet is not None else 'diffusion transformer'} to GPU in {weight_dtype if not is_quantized else args.base_model_precision} precision."
+    )
+    if unet is not None:
+        if is_quantized:
+            unet.to(accelerator.device)
+        else:
+            unet.to(accelerator.device, dtype=weight_dtype)
+    if transformer is not None:
+        if is_quantized:
+            transformer.to(accelerator.device)
+        else:
+            transformer.to(accelerator.device, dtype=weight_dtype)
+    if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
+        accelerator._lycoris_wrapped_network = accelerator._lycoris_wrapped_network.to(
+            accelerator.device, dtype=weight_dtype
+        )
+    if args.enable_xformers_memory_efficient_attention and not any(
+        [args.sd3, args.pixart_sigma, args.flux, args.smoldit, args.kolors]
+    ):
+        logger.info("Enabling xformers memory-efficient attention.")
+        if is_xformers_available():
+            import xformers  # type: ignore # noqa
+
+            if unet is not None:
+                unet.enable_xformers_memory_efficient_attention()
+            if transformer is not None:
+                transformer.enable_xformers_memory_efficient_attention()
+            if args.controlnet:
+                controlnet.enable_xformers_memory_efficient_attention()
+        else:
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
+    elif args.enable_xformers_memory_efficient_attention:
+        logger.warning(
+            "xformers is not enabled, as it is incompatible with this model type."
+        )
+        args.enable_xformers_memory_efficient_attention = False
+
+    if args.controlnet:
+        controlnet.train()
+        controlnet.to(device=accelerator.device, dtype=weight_dtype)
+        if args.train_text_encoder:
+            logger.warning(
+                "Unknown results will occur when finetuning the text encoder alongside ControlNet."
+            )
+
     initial_msg = "\n***** Running training *****"
     total_num_batches = sum(
         [
@@ -1500,6 +1404,8 @@ def main():
     logger.info(initial_msg)
     if webhook_handler is not None:
         webhook_handler.send(message=initial_msg)
+    if args.validation_on_startup and global_step <= 1:
+        validation.run_validations(validation_type="base_model", step=0)
 
     # Only show the progress bar once on each machine.
     show_progress_bar = True
@@ -1597,7 +1503,11 @@ def main():
             if transformer is not None:
                 transformer.train()
                 training_models = [transformer]
-        if "lora" in args.model_type and args.train_text_encoder:
+        if (
+            "lora" in args.model_type
+            and args.train_text_encoder
+            and "standard" in args.lora_type.lower()
+        ):
             text_encoder_1.train()
             text_encoder_2.train()
             training_models.append(text_encoder_1)
@@ -1636,7 +1546,8 @@ def main():
             iterator_fn = bf.next_response
 
         while True:
-            step, batch = iterator_fn(*iterator_args)
+            step += 1
+            batch = iterator_fn(step, *iterator_args)
             training_logger.debug(f"Iterator: {iterator_fn}")
             if args.lr_scheduler == "cosine_with_restarts":
                 scheduler_kwargs["step"] = global_step
@@ -1648,7 +1559,7 @@ def main():
 
             # If we receive a False from the enumerator, we know we reached the next epoch.
             if batch is False:
-                logger.info(f"Reached the end of epoch {epoch}")
+                logger.debug(f"Reached the end of epoch {epoch}")
                 break
 
             if batch is None:
@@ -1685,36 +1596,40 @@ def main():
                             )
 
                 bsz = latents.shape[0]
+                if int(bsz) != int(args.train_batch_size):
+                    logger.error(
+                        f"Received {bsz} latents, but expected {args.train_batch_size}. Processing short batch."
+                    )
                 training_logger.debug(f"Working on batch size: {bsz}")
                 if flow_matching:
-                    # for weighting schemes where we sample timesteps non-uniformly
-                    # thanks to @Slickytail who implemented this correctly via #8528
-                    if args.weighting_scheme == "logit_normal":
-                        # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
-                        u = torch.normal(
-                            mean=args.logit_mean,
-                            std=args.logit_std,
-                            size=(bsz,),
-                            device="cpu",
-                        )
-                        u = torch.nn.functional.sigmoid(u)
-                    elif args.weighting_scheme == "mode":
-                        u = torch.rand(size=(bsz,), device="cpu")
-                        u = (
-                            1
-                            - u
-                            - args.mode_scale
-                            * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
+                    if not args.flux_fast_schedule:
+                        # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
+                        # also used by: https://github.com/XLabs-AI/x-flux/tree/main
+                        # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
+                        sigmas = torch.sigmoid(
+                            args.flow_matching_sigmoid_scale
+                            * torch.randn((bsz,), device=accelerator.device)
                         )
                     else:
-                        u = torch.rand(size=(bsz,), device="cpu")
-
-                    indices = (
-                        u * noise_scheduler_copy.config.num_train_timesteps
-                    ).long()
-                    timesteps = noise_scheduler_copy.timesteps[indices].to(
-                        device=latents.device
-                    )
+                        # fast schedule can only use these sigmas, and they can be sampled up to batch size times
+                        available_sigmas = [
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            1.0,
+                            0.75,
+                            0.5,
+                            0.25,
+                        ]
+                        sigmas = torch.tensor(
+                            random.choices(available_sigmas, k=bsz),
+                            device=accelerator.device,
+                        )
+                    timesteps = sigmas * 1000.0
+                    sigmas = sigmas.view(-1, 1, 1, 1)
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
                     # Biasing the timestep weights allows us to spend less time training irrelevant timesteps.
@@ -1740,23 +1655,27 @@ def main():
                 for timestep in timesteps.tolist():
                     timesteps_buffer.append((global_step, timestep))
 
+                if args.input_perturbation != 0 and (
+                    not args.input_perturbation_steps
+                    or global_step < args.input_perturbation_steps
+                ):
+                    input_perturbation = args.input_perturbation
+                    if args.input_perturbation_steps:
+                        input_perturbation *= 1.0 - (
+                            global_step / args.input_perturbation_steps
+                        )
+                    input_noise = noise + input_perturbation * torch.randn_like(latents)
+                else:
+                    input_noise = noise
+
                 if flow_matching:
-                    # Add noise according to flow matching.
-                    # TODO: Determine whether AuraFlow benefits from this.
-                    sigmas = get_sd3_sigmas(
-                        accelerator,
-                        noise_scheduler_copy,
-                        timesteps,
-                        n_dim=latents.ndim,
-                        dtype=latents.dtype,
-                    )
-                    noisy_latents = sigmas * noise + (1.0 - sigmas) * latents
+                    noisy_latents = (1 - sigmas) * latents + sigmas * input_noise
                 else:
                     # Add noise to the latents according to the noise magnitude at each timestep
                     # (this is the forward diffusion process)
                     noisy_latents = noise_scheduler.add_noise(
-                        latents, noise, timesteps
-                    ).to(accelerator.device)
+                        latents.float(), input_noise.float(), timesteps
+                    ).to(device=accelerator.device, dtype=weight_dtype)
 
                 encoder_hidden_states = batch["prompt_embeds"].to(
                     dtype=weight_dtype, device=accelerator.device
@@ -1772,14 +1691,17 @@ def main():
                 # Get the target for loss depending on the prediction type
                 if flow_matching:
                     # This is the flow-matching target for vanilla SD3.
-                    # If sd3_uses_diffusion, we will instead use v_prediction (see below)
-                    target = latents
+                    # If flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
+                    if args.flow_matching_loss == "diffusers":
+                        target = latents
+                    elif args.flow_matching_loss == "compatible":
+                        target = noise - latents
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction" or (
-                    args.sd3 and args.sd3_uses_diffusion
+                    flow_matching and args.flow_matching_loss == "diffusion"
                 ):
-                    # When not using flow-matching, SD3 is trained on velocity prediction objective.
+                    # When not using flow-matching, train on velocity prediction objective.
                     target = noise_scheduler.get_velocity(latents, noise, timesteps)
                 elif noise_scheduler.config.prediction_type == "sample":
                     # We set the target to latents here, but the model_pred will return the noise sample prediction.
@@ -1792,10 +1714,10 @@ def main():
                     )
 
                 # Predict the noise residual and compute loss
-                if args.sd3 or args.aura_flow:
+                if args.sd3:
                     # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                     added_cond_kwargs = None
-                elif StateTracker.get_model_type() == "sdxl":
+                elif StateTracker.get_model_type() == "sdxl" or args.kolors:
                     added_cond_kwargs = {
                         "text_embeds": add_text_embeds.to(
                             device=accelerator.device, dtype=weight_dtype
@@ -1804,9 +1726,10 @@ def main():
                             device=accelerator.device, dtype=weight_dtype
                         ),
                     }
-                elif args.pixart_sigma:
+                elif args.pixart_sigma or args.smoldit:
                     # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
-                    added_cond_kwargs = batch["batch_time_ids"]
+                    if "batch_time_ids" in batch:
+                        added_cond_kwargs = batch["batch_time_ids"]
                     batch["encoder_attention_mask"] = batch[
                         "encoder_attention_mask"
                     ].to(device=accelerator.device, dtype=weight_dtype)
@@ -1852,26 +1775,108 @@ def main():
                             raise Exception(
                                 "ControlNet predictions for transformer models are not yet implemented."
                             )
+                    elif args.flux:
+                        # handle guidance
+                        packed_noisy_latents = pack_latents(
+                            noisy_latents,
+                            batch_size=latents.shape[0],
+                            num_channels_latents=latents.shape[1],
+                            height=latents.shape[2],
+                            width=latents.shape[3],
+                        )
+                        if args.flux_guidance_mode == "constant":
+                            guidance_scale = float(args.flux_guidance_value)
+                        elif args.flux_guidance_mode == "random-range":
+                            guidance_scale = random.uniform(
+                                args.flux_guidance_min, args.flux_guidance_max
+                            )
+                        transformer_config = None
+                        if hasattr(transformer, "module"):
+                            transformer_config = transformer.module.config
+                        elif hasattr(transformer, "config"):
+                            transformer_config = transformer.config
+                        if transformer_config is not None and getattr(
+                            transformer_config, "guidance_embeds", False
+                        ):
+                            guidance = torch.tensor(
+                                [guidance_scale], device=accelerator.device
+                            )
+                            guidance = guidance.expand(latents.shape[0])
+                        else:
+                            guidance = None
+                        img_ids = prepare_latent_image_ids(
+                            latents.shape[0],
+                            latents.shape[2],
+                            latents.shape[3],
+                            accelerator.device,
+                            weight_dtype,
+                        )
+                        timesteps = (
+                            torch.tensor(timesteps)
+                            .expand(noisy_latents.shape[0])
+                            .to(device=accelerator.device)
+                            / 1000
+                        )
+
+                        text_ids = torch.zeros(
+                            packed_noisy_latents.shape[0],
+                            batch["prompt_embeds"].shape[1],
+                            3,
+                        ).to(device=accelerator.device, dtype=base_weight_dtype)
+                        training_logger.debug(
+                            "DTypes:"
+                            f"\n-> Text IDs shape: {text_ids.shape if hasattr(text_ids, 'shape') else None}, dtype: {text_ids.dtype if hasattr(text_ids, 'dtype') else None}"
+                            f"\n-> Image IDs shape: {img_ids.shape if hasattr(img_ids, 'shape') else None}, dtype: {img_ids.dtype if hasattr(img_ids, 'dtype') else None}"
+                            f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else None}, dtype: {timesteps.dtype if hasattr(timesteps, 'dtype') else None}"
+                            f"\n-> Guidance: {guidance}"
+                            f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
+                        )
+
+                        flux_transformer_kwargs = {
+                            "hidden_states": packed_noisy_latents.to(
+                                dtype=base_weight_dtype, device=accelerator.device
+                            ),
+                            # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
+                            "timestep": timesteps,
+                            "guidance": guidance,
+                            "pooled_projections": batch["add_text_embeds"].to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
+                            "encoder_hidden_states": batch["prompt_embeds"].to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
+                            "txt_ids": text_ids.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
+                            "img_ids": img_ids,
+                            "joint_attention_kwargs": None,
+                            "return_dict": False,
+                        }
+                        if args.flux_attention_masked_training:
+                            flux_transformer_kwargs["attention_mask"] = batch[
+                                "encoder_attention_mask"
+                            ]
+                            if flux_transformer_kwargs["attention_mask"] is None:
+                                raise ValueError(
+                                    "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
+                                )
+
+                        model_pred = transformer(**flux_transformer_kwargs)[0]
+
                     elif args.sd3:
                         # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                         #  image embeds are passed in with the TE-produced text embeds.
                         model_pred = transformer(
-                            hidden_states=noisy_latents,
+                            hidden_states=noisy_latents.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
                             timestep=timesteps,
-                            encoder_hidden_states=encoder_hidden_states,
+                            encoder_hidden_states=encoder_hidden_states.to(
+                                device=accelerator.device, dtype=base_weight_dtype
+                            ),
                             pooled_projections=add_text_embeds.to(
                                 device=accelerator.device, dtype=weight_dtype
                             ),
-                            return_dict=False,
-                        )[0]
-                    elif args.aura_flow:
-                        # AuraFlow also uses a MM-DiT model where the VAE-produced
-                        #  image embeds are passed in with the TE-produced text embeds.
-                        # Print the dtypes/shapes:
-                        model_pred = transformer(
-                            hidden_states=noisy_latents,
-                            encoder_hidden_states=encoder_hidden_states,
-                            timestep=timesteps,
                             return_dict=False,
                         )[0]
                     elif args.pixart_sigma:
@@ -1884,14 +1889,39 @@ def main():
                             return_dict=False,
                         )[0]
                         model_pred = model_pred.chunk(2, dim=1)[0]
+                    elif args.smoldit:
+                        first_latent_shape = noisy_latents.shape
+                        height = first_latent_shape[1] * 8
+                        width = first_latent_shape[2] * 8
+                        grid_height = height // 8 // transformer.config.patch_size
+                        grid_width = width // 8 // transformer.config.patch_size
+                        base_size = 512 // 8 // transformer.config.patch_size
+                        grid_crops_coords = get_resize_crop_region_for_grid(
+                            (grid_height, grid_width), base_size
+                        )
+                        inputs = {
+                            "hidden_states": noisy_latents,
+                            "timestep": timesteps,
+                            "encoder_hidden_states": encoder_hidden_states,
+                            "encoder_attention_mask": batch["encoder_attention_mask"],
+                            "image_rotary_emb": get_2d_rotary_pos_embed(
+                                transformer.inner_dim
+                                // transformer.config.num_attention_heads,
+                                grid_crops_coords,
+                                (grid_height, grid_width),
+                            ),
+                        }
+                        model_pred = transformer(**inputs).sample
                     elif unet is not None:
                         if args.legacy:
+                            # SD 1.5 or 2.x
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,
                                 encoder_hidden_states,
                             ).sample
                         else:
+                            # SDXL, Kolors, other default unet prediction.
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,
@@ -1902,14 +1932,24 @@ def main():
                         raise Exception(
                             "Unknown error occurred, no prediction could be made."
                         )
+                    # if we're quantising with quanto, we need to dequantise the result
+                    # if "quanto" in args.base_model_precision:
+                    #     if hasattr(model_pred, "dequantize") and isinstance(
+                    #         model_pred, QTensor
+                    #     ):
+                    #         model_pred = model_pred.dequantize()
+
+                    if args.flux:
+                        model_pred = unpack_latents(
+                            model_pred,
+                            height=latents.shape[2] * 8,
+                            width=latents.shape[3] * 8,
+                            vae_scale_factor=16,
+                        )
+
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
-
-                if flow_matching:
-                    # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
-                    # Preconditioning of the model outputs.
-                    model_pred = model_pred * (-sigmas) + noisy_latents
 
                 # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                 if (
@@ -1920,25 +1960,12 @@ def main():
                     model_pred = model_pred - noise
 
                 if flow_matching:
-                    # upstream TODO: weighting sceme needs to be experimented with :)
-                    # these weighting schemes use a uniform timestep sampling
-                    # and instead post-weight the loss
-                    if args.weighting_scheme == "sigma_sqrt":
-                        weighting = (sigmas**-2.0).float()
-                    elif args.weighting_scheme == "cosmap":
-                        bot = 1 - 2 * sigmas + 2 * sigmas**2
-                        weighting = 2 / (math.pi * bot)
-                    else:
-                        weighting = torch.ones_like(sigmas)
                     loss = torch.mean(
-                        (
-                            weighting.float()
-                            * (model_pred.float() - target.float()) ** 2
-                        ).reshape(target.shape[0], -1),
+                        ((model_pred.float() - target.float()) ** 2).reshape(
+                            target.shape[0], -1
+                        ),
                         1,
-                    )
-                    loss = loss.mean()
-
+                    ).mean()
                 elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug("Calculating loss")
                     loss = args.snr_weight * F.mse_loss(
@@ -1952,7 +1979,7 @@ def main():
                     snr = compute_snr(timesteps, noise_scheduler)
                     snr_divisor = snr
                     if noise_scheduler.config.prediction_type == "v_prediction" or (
-                        args.sd3 and args.sd3_uses_diffusion
+                        flow_matching and args.flow_matching_loss == "diffusion"
                     ):
                         snr_divisor = snr + 1
 
@@ -1996,28 +2023,42 @@ def main():
                             f"NaNs detected. Loss: {loss}, Model prediction: {model_pred}, Target: {target}"
                         )
                     accelerator.backward(loss)
+
+                    if not args.adam_bfloat16 and args.gradient_precision == "fp32":
+                        # After backward, convert gradients to fp32 for stable accumulation
+                        for param in params_to_optimize:
+                            if param.grad is not None:
+                                param.grad.data = param.grad.data.to(torch.float32)
+
                     grad_norm = None
                     if (
                         accelerator.sync_gradients
-                        and not args.use_adafactor_optimizer
+                        and args.optimizer != "optimi-stableadamw"
                         and args.max_grad_norm > 0
                     ):
-                        # Adafactor shouldn't have gradient clipping applied.
+                        # StableAdamW does not need clipping, similar to Adafactor.
                         grad_norm = accelerator.clip_grad_norm_(
                             params_to_optimize, args.max_grad_norm
                         )
                     training_logger.debug("Stepping components forward.")
-                    optimizer.step()
-                    lr_scheduler.step(**scheduler_kwargs)
+                    if args.optimizer_release_gradients:
+                        step_offset = 0  # simpletuner indexes steps from 1.
+                        should_not_release_gradients = (
+                            step + step_offset
+                        ) % args.gradient_accumulation_steps != 0
+                        training_logger.debug(
+                            f"step: {step}, should_not_release_gradients: {should_not_release_gradients}, args.optimizer_release_gradients: {args.optimizer_release_gradients}"
+                        )
+                        optimizer.optimizer_accumulation = should_not_release_gradients
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 try:
-                    if args.use_adafactor_optimizer:
-                        lr = lr_scheduler.get_lr()[0]
-                    else:
-                        lr = lr_scheduler.get_last_lr()[0]
+                    lr_scheduler.step(**scheduler_kwargs)
+                    lr = lr_scheduler.get_last_lr()[0]
                 except Exception as e:
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
@@ -2195,39 +2236,49 @@ def main():
             unet = unwrap_model(accelerator, unet)
         if transformer is not None:
             transformer = unwrap_model(accelerator, transformer)
-        if "lora" in args.model_type:
-            if args.sd3 or args.pixart_sigma or args.aura_flow:
-                transformer_lora_layers = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(transformer)
-                )
-            else:
+        if "lora" in args.model_type and "standard" == args.lora_type.lower():
+            if transformer is not None:
+                transformer_lora_layers = get_peft_model_state_dict(transformer)
+            elif unet is not None:
                 unet_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(unet)
                 )
+            else:
+                raise Exception(
+                    "Couldn't locate the unet or transformer model for export."
+                )
+
             if args.train_text_encoder:
                 text_encoder_1 = accelerator.unwrap_model(text_encoder_1)
                 text_encoder_lora_layers = convert_state_dict_to_diffusers(
                     get_peft_model_state_dict(text_encoder_1)
                 )
-                if not args.aura_flow and not args.pixart_sigma:
+                if text_encoder_2 is not None:
                     text_encoder_2 = accelerator.unwrap_model(text_encoder_2)
                     text_encoder_2_lora_layers = convert_state_dict_to_diffusers(
                         get_peft_model_state_dict(text_encoder_2)
                     )
-                    if args.sd3:
+                    if text_encoder_3 is not None:
                         text_encoder_3 = accelerator.unwrap_model(text_encoder_3)
-                        text_encoder_3_lora_layers = convert_state_dict_to_diffusers(
-                            get_peft_model_state_dict(text_encoder_3)
-                        )
             else:
                 text_encoder_lora_layers = None
                 text_encoder_2_lora_layers = None
-                text_encoder_3_lora_layers = None
+                # text_encoder_3_lora_layers = None
 
-            if args.sd3:
+            if args.flux:
+                from diffusers.pipelines import FluxPipeline
+
+                FluxPipeline.save_lora_weights(
+                    save_directory=args.output_dir,
+                    transformer_lora_layers=transformer_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                )
+            elif args.sd3:
                 StableDiffusion3Pipeline.save_lora_weights(
                     save_directory=args.output_dir,
                     transformer_lora_layers=transformer_lora_layers,
+                    text_encoder_lora_layers=text_encoder_lora_layers,
+                    text_encoder_2_lora_layers=text_encoder_2_lora_layers,
                 )
             else:
                 StableDiffusionXLPipeline.save_lora_weights(
@@ -2242,6 +2293,25 @@ def main():
             del text_encoder_lora_layers
             del text_encoder_2_lora_layers
             reclaim_memory()
+        elif "lora" in args.model_type and "lycoris" == args.lora_type.lower():
+            if accelerator.is_main_process or use_deepspeed_optimizer:
+                logger.info(f"Saving final LyCORIS checkpoint to {args.output_dir}")
+                # Save final LyCORIS checkpoint.
+                if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
+                    from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+                    accelerator._lycoris_wrapped_network.save_weights(
+                        os.path.join(args.output_dir, LORA_SAFETENSORS_FILENAME),
+                        list(accelerator._lycoris_wrapped_network.parameters())[
+                            0
+                        ].dtype,
+                        {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+                    )
+                    shutil.copy2(
+                        args.lycoris_config,
+                        os.path.join(args.output_dir, "lycoris_config.json"),
+                    )
+
         elif args.use_ema:
             if unet is not None:
                 ema_model.copy_to(unet.parameters())
@@ -2305,7 +2375,7 @@ def main():
                     ),
                     transformer=transformer,
                 )
-                if args.sd3_uses_diffusion:
+                if flow_matching and args.flow_matching_loss == "diffusion":
                     # Diffusion-based SD3 is currently fixed to a Euler v-prediction schedule.
                     pipeline.scheduler = SCHEDULER_NAME_MAP["euler"].from_pretrained(
                         args.pretrained_model_name_or_path,
@@ -2318,40 +2388,6 @@ def main():
                     logger.debug(
                         f"Setting scheduler to Euler for SD3. Config: {pipeline.scheduler.config}"
                     )
-            elif args.aura_flow:
-                from diffusers import AuraFlowPipeline
-
-                pipeline = AuraFlowPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    text_encoder=text_encoder_1
-                    or (
-                        text_encoder_cls_1.from_pretrained(
-                            args.pretrained_model_name_or_path,
-                            subfolder="text_encoder",
-                            revision=args.revision,
-                            variant=args.variant,
-                        )
-                        if args.save_text_encoder
-                        else None
-                    ),
-                    tokenizer=tokenizer_1,
-                    vae=vae
-                    or (
-                        AutoencoderKL.from_pretrained(
-                            vae_path,
-                            subfolder=(
-                                "vae"
-                                if args.pretrained_vae_model_name_or_path is None
-                                else None
-                            ),
-                            revision=args.revision,
-                            variant=args.variant,
-                            force_upcast=False,
-                        )
-                    ),
-                    transformer=transformer,
-                    torch_dtype=weight_dtype,
-                )
             elif args.legacy:
                 from diffusers import StableDiffusionPipeline
 
@@ -2386,9 +2422,47 @@ def main():
                     unet=unet,
                     torch_dtype=weight_dtype,
                 )
+            elif args.smoldit:
+                from helpers.models.smoldit import SmolDiTPipeline
+
+                pipeline = SmolDiTPipeline(
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae
+                    or (
+                        AutoencoderKL.from_pretrained(
+                            vae_path,
+                            subfolder=(
+                                "vae"
+                                if args.pretrained_vae_model_name_or_path is None
+                                else None
+                            ),
+                            revision=args.revision,
+                            variant=args.variant,
+                            force_upcast=False,
+                        )
+                    ),
+                    transformer=transformer,
+                    scheduler=None,
+                )
 
             else:
-                pipeline = StableDiffusionXLPipeline.from_pretrained(
+                sdxl_pipeline_cls = StableDiffusionXLPipeline
+                if args.kolors:
+                    from helpers.kolors.pipeline import KolorsPipeline
+
+                    sdxl_pipeline_cls = KolorsPipeline
+                pipeline = sdxl_pipeline_cls.from_pretrained(
                     args.pretrained_model_name_or_path,
                     text_encoder=(
                         text_encoder_cls_1.from_pretrained(
@@ -2429,17 +2503,17 @@ def main():
                     add_watermarker=args.enable_watermark,
                     torch_dtype=weight_dtype,
                 )
-                if args.validation_noise_scheduler is not None:
-                    pipeline.scheduler = SCHEDULER_NAME_MAP[
-                        args.validation_noise_scheduler
-                    ].from_pretrained(
-                        args.pretrained_model_name_or_path,
-                        revision=args.revision,
-                        subfolder="scheduler",
-                        prediction_type=args.prediction_type,
-                        timestep_spacing=args.training_scheduler_timestep_spacing,
-                        rescale_betas_zero_snr=args.rescale_betas_zero_snr,
-                    )
+            if not flow_matching and args.validation_noise_scheduler is not None:
+                pipeline.scheduler = SCHEDULER_NAME_MAP[
+                    args.validation_noise_scheduler
+                ].from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    revision=args.revision,
+                    subfolder="scheduler",
+                    prediction_type=args.prediction_type,
+                    timestep_spacing=args.training_scheduler_timestep_spacing,
+                    rescale_betas_zero_snr=args.rescale_betas_zero_snr,
+                )
             pipeline.save_pretrained(
                 os.path.join(args.output_dir, "pipeline"), safe_serialization=True
             )

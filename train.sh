@@ -1,8 +1,27 @@
 #!/usr/bin/env bash
+
 # Pull the default config.
 [ -f "config/config.env.example" ] && source config/config.env.example
 # Pull config from config.env
 [ -f "config/config.env" ] && source config/config.env
+
+# If the user has not provided VENV_PATH, we will assume $(pwd)/.venv
+if [ -z "${VENV_PATH}" ]; then
+    # what if we have VIRTUAL_ENV? use that instead
+    if [ -n "${VIRTUAL_ENV}" ]; then
+        export VENV_PATH="${VIRTUAL_ENV}"
+    else
+        export VENV_PATH="$(pwd)/.venv"
+    fi
+fi
+if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
+    export NVJITLINK_PATH="$(find "${VENV_PATH}" -name nvjitlink -type d)/lib"
+    # if it's not empty, we will add it to LD_LIBRARY_PATH at the front:
+    if [ -n "${NVJITLINK_PATH}" ]; then
+        export LD_LIBRARY_PATH="${NVJITLINK_PATH}:${LD_LIBRARY_PATH}"
+    fi
+    echo $NVJITLINK_PATH
+fi
 
 export PLATFORM
 PLATFORM=$(uname -s)
@@ -48,6 +67,19 @@ if [ -z "${MODEL_NAME}" ]; then
     printf "MODEL_NAME not set, exiting.\n"
     exit 1
 fi
+export LYCORIS_CONFIG_ARG=""
+if [ -n "$LYCORIS_CONFIG" ]; then
+    export LYCORIS_CONFIG_ARG="--lycoris_config=${LYCORIS_CONFIG}"
+fi
+if [ -n "$LORA_TYPE" ]; then
+    export LORA_TYPE_ARG="--lora_type=${LORA_TYPE}"
+fi
+if [ -n "$LORA_RANK" ]; then
+    export LORA_RANK_ARG="--lora_rank=${LORA_RANK}"
+fi
+if [ -n "$BASE_MODEL_PRECISION" ]; then
+    export BASE_MODEL_PRECISION_ARG="--base_model_precision=${BASE_MODEL_PRECISION}"
+fi
 if [ -z "${RESOLUTION}" ]; then
     printf "RESOLUTION not set, exiting.\n"
     exit 1
@@ -76,16 +108,20 @@ if [ -z "${TRACKER_RUN_NAME}" ]; then
     printf "TRACKER_RUN_NAME not set, exiting.\n"
     exit 1
 fi
-if [ -z "${NUM_EPOCHS}" ]; then
-    printf "NUM_EPOCHS not set, exiting.\n"
-    exit 1
-fi
 if [ -z "${VALIDATION_PROMPT}" ]; then
     printf "VALIDATION_PROMPT not set, exiting.\n"
     exit 1
 fi
 if [ -z "${VALIDATION_GUIDANCE}" ]; then
     printf "VALIDATION_GUIDANCE not set, exiting.\n"
+    exit 1
+fi
+if [ -z "${VALIDATION_GUIDANCE_REAL}" ]; then
+    printf "VALIDATION_GUIDANCE_REAL not set, defaulting to 1.0.\n"
+    export VALIDATION_GUIDANCE_REAL=1.0
+fi
+if [ -z "${VALIDATION_NO_CFG_UNTIL_TIMESTEP}" ]; then
+    printf "VALIDATION_NO_CFG_UNTIL_TIMESTEP not set, exiting.\n"
     exit 1
 fi
 if [ -z "${VALIDATION_GUIDANCE_RESCALE}" ]; then
@@ -103,6 +139,10 @@ fi
 if [ -z "${LR_SCHEDULE}" ]; then
     printf "LR_SCHEDULE not set, exiting.\n"
     exit 1
+fi
+export LR_END_ARG=""
+if [ -n "${LR_END}" ]; then
+    export LR_END_ARG="--lr_end=${LR_END}"
 fi
 if [ -z "${TRAIN_BATCH_SIZE}" ]; then
     printf "TRAIN_BATCH_SIZE not set, exiting.\n"
@@ -124,10 +164,13 @@ if [ -z "${TRAINER_EXTRA_ARGS}" ]; then
     printf "TRAINER_EXTRA_ARGS not set, defaulting to empty.\n"
     TRAINER_EXTRA_ARGS=""
 fi
+export MINIMUM_RESOLUTION_ARG=""
 if [ -z "$MINIMUM_RESOLUTION" ]; then
-    printf "MINIMUM_RESOLUTION not set, defaulting to RESOLUTION.\n"
-    export MINIMUM_RESOLUTION=$RESOLUTION
+    printf "MINIMUM_RESOLUTION not set, you might have problems with upscaled images.\n"
+else
+    export MINIMUM_RESOLUTION_ARG="--minimum_image_size=${MINIMUM_RESOLUTION}"
 fi
+
 if [ -z "$RESOLUTION_TYPE" ]; then
     printf "RESOLUTION_TYPE not set, defaulting to pixel.\n"
     export RESOLUTION_TYPE="pixel"
@@ -163,15 +206,53 @@ fi
 if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --pixart_sigma"
 fi
-if [ -n "$AURA_FLOW" ] && [[ "$AURA_FLOW" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --aura_flow"
-fi
 if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
 if [ -n "$HUNYUAN_DIT" ] && [[ "$HUNYUAN_DIT" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --hunyuan_dit"
 fi
+if [ -n "$KOLORS" ] && [[ "$KOLORS" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --kolors"
+fi
+if [ -n "$SMOLDIT" ] && [[ "$SMOLDIT" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --smoldit"
+fi
+if [ -n "$FLUX" ] && [[ "$FLUX" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux"
+    # if --flux_guidance_value is in TRAINER_EXTRA_ARGS, we will not add it again.
+    if [[ "${TRAINER_EXTRA_ARGS}" != *"--flux_guidance_value"* ]]; then
+        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_guidance_value=${FLUX_GUIDANCE_VALUE}"
+    fi
+    if [[ "${TRAINER_EXTRA_ARGS}" != *"--flux_lora_target"* ]]; then
+        export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=${FLUX_LORA_TARGET}"
+    fi
+fi
 
+
+if [ -z "$MAX_WORKERS" ]; then
+    printf "MAX_WORKERS not set, defaulting to 32.\n"
+    export MAX_WORKERS=32
+fi
+if [ -z "$READ_BATCH_SIZE" ]; then
+    printf "READ_BATCH_SIZE not set, defaulting to 25.\n"
+    export READ_BATCH_SIZE=25
+fi
+if [ -z "$WRITE_BATCH_SIZE" ]; then
+    printf "WRITE_BATCH_SIZE not set, defaulting to 64.\n"
+    export WRITE_BATCH_SIZE=64
+fi
+if [ -z "$AWS_MAX_POOL_CONNECTIONS" ]; then
+    printf "AWS_MAX_POOL_CONNECTIONS not set, defaulting to 128.\n"
+    export AWS_MAX_POOL_CONNECTIONS=128
+fi
+if [ -z "$TORCH_NUM_THREADS" ]; then
+    printf "TORCH_NUM_THREADS not set, defaulting to 8.\n"
+    export TORCH_NUM_THREADS=8
+fi
+if [ -z "$IMAGE_PROCESSING_BATCH_SIZE" ]; then
+    printf "IMAGE_PROCESSING_BATCH_SIZE not set, defaulting to 32.\n"
+    export IMAGE_PROCESSING_BATCH_SIZE=32
+fi
 
 export EMA_ARGS=""
 if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
@@ -181,32 +262,7 @@ if [ -n "$USE_EMA" ] && [[ "$USE_EMA" == "true" ]]; then
     fi
     export EMA_ARGS="--use_ema --ema_decay=${EMA_DECAY}"
 fi
-# OPTIMIZER can be "adamw", "adamw8bit", "adafactor", "dadaptation" and we'll use case-switch to detect and set --use_8bit_adam, --use_adafactor_optimizer, --use_dadapt_optimizer or nothing for plain adam.
-export OPTIMIZER_ARG=""
-case $OPTIMIZER in
-    "adamw")
-        export OPTIMIZER_ARG=""
-        ;;
-    "adamw8bit")
-        export OPTIMIZER_ARG="--use_8bit_adam"
-        ;;
-    "adamw_bf16")
-        export OPTIMIZER_ARG="--adam_bfloat16"
-        ;;
-    "adafactor")
-        export OPTIMIZER_ARG="--use_adafactor_optimizer"
-        ;;
-    "dadaptation")
-        export OPTIMIZER_ARG="--use_dadapt_optimizer"
-        ;;
-    "prodigy")
-        export OPTIMIZER_ARG="--use_prodigy_optimizer"
-        ;;
-    *)
-        echo "Unknown optimizer requested: $OPTIMIZER"
-        exit 1
-        ;;
-esac
+export OPTIMIZER_ARG="--optimizer=${OPTIMIZER}"
 
 export DELETE_ARGS=""
 if ! [ -z "$DELETE_SMALL_IMAGES" ] && [ $DELETE_SMALL_IMAGES -eq 1 ]; then
@@ -249,7 +305,20 @@ if ! [ -f "$DATALOADER_CONFIG" ]; then
     printf "DATALOADER_CONFIG file %s not found, cannot continue.\n" "${DATALOADER_CONFIG}"
     exit 1
 fi
-
+if [ -z "$MAX_TRAIN_STEPS" ] && [ -z "$NUM_EPOCHS" ]; then
+    echo "Neither MAX_TRAIN_STEPS or NUM_EPOCHS were defined."
+    exit 1
+fi
+if [ -z "$MAX_TRAIN_STEPS" ]; then
+    export MAX_TRAIN_STEPS=0
+fi
+if [ -z "$NUM_EPOCHS" ]; then
+    export NUM_EPOCHS=0
+fi
+if [[ "$MAX_TRAIN_STEPS" == "0" ]] && [[ "$NUM_EPOCHS" == "0" ]]; then
+    echo "Both MAX_TRAIN_STEPS and NUM_EPOCHS cannot be zero."
+    exit 1
+fi
 export SNR_GAMMA_ARG=""
 if [ -n "$MIN_SNR_GAMMA" ]; then
     export SNR_GAMMA_ARG="--snr_gamma=${MIN_SNR_GAMMA}"
@@ -261,7 +330,6 @@ if ! [ -z "$USE_GRADIENT_CHECKPOINTING" ] && [[ "$USE_GRADIENT_CHECKPOINTING" ==
 fi
 
 if [ -z "$GRADIENT_ACCUMULATION_STEPS" ]; then
-    printf "GRADIENT_ACCUMULATION_STEPS not set, defaulting to 1.\n"
     export GRADIENT_ACCUMULATION_STEPS=1
 fi
 
@@ -321,12 +389,13 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
     ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
-    --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
+    --train_batch="${TRAIN_BATCH_SIZE}" --max_workers=$MAX_WORKERS --read_batch_size=$READ_BATCH_SIZE --write_batch_size=$WRITE_BATCH_SIZE --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
+    --torch_num_threads=${TORCH_NUM_THREADS} --image_processing_batch_size=${IMAGE_PROCESSING_BATCH_SIZE} --vae_batch_size=$VAE_BATCH_SIZE \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
-    --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
-    --resolution_type="${RESOLUTION_TYPE}" \
+    ${MINIMUM_RESOLUTION_ARG} --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \
+    --resolution_type="${RESOLUTION_TYPE}" ${LYCORIS_CONFIG_ARG} ${LORA_TYPE_ARG} ${LORA_RANK_ARG} ${BASE_MODEL_PRECISION_ARG} ${LR_END_ARG} \
     --checkpointing_steps="${CHECKPOINTING_STEPS}" --checkpoints_total_limit="${CHECKPOINTING_LIMIT}" \
     --validation_steps="${VALIDATION_STEPS}" --tracker_run_name="${TRACKER_RUN_NAME}" --tracker_project_name="${TRACKER_PROJECT_NAME}" \
-    --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
+    --validation_guidance="${VALIDATION_GUIDANCE}" --validation_guidance_real="${VALIDATION_GUIDANCE_REAL}" --validation_guidance_rescale="${VALIDATION_GUIDANCE_RESCALE}" --validation_negative_prompt="${VALIDATION_NEGATIVE_PROMPT}" ${EMA_ARGS} ${CONTROLNET_ARGS}
 
 exit 0

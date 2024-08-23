@@ -13,10 +13,13 @@ from queue import Queue
 import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
-from helpers.training.multi_process import _get_rank as get_rank
+from helpers.training.multi_process import _get_rank as get_rank, should_log
 
 logger = logging.getLogger("TextEmbeddingCache")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 def _encode_sd3_prompt_with_t5(
@@ -25,6 +28,7 @@ def _encode_sd3_prompt_with_t5(
     prompt=None,
     num_images_per_prompt=1,
     device=None,
+    return_masked_embed: bool = True,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
     batch_size = len(prompt)
@@ -48,8 +52,15 @@ def _encode_sd3_prompt_with_t5(
     # duplicate text embeddings and attention mask for each generation per prompt, using mps friendly method
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
+    attention_mask = text_inputs.attention_mask.to(device)
 
-    return prompt_embeds
+    if return_masked_embed:
+        # for some reason, SAI's reference code doesn't bother to mask the prompt embeddings.
+        # this can lead to a problem where the model fails to represent short and long prompts equally well.
+        # additionally, the model learns the bias of the prompt embeds' noise.
+        return prompt_embeds * attention_mask.unsqueeze(-1).expand(prompt_embeds.shape)
+    else:
+        return prompt_embeds
 
 
 def _encode_sd3_prompt_with_clip(
@@ -115,6 +126,19 @@ class TextEmbeddingCache:
         self.accelerator = accelerator
         self.cache_dir = cache_dir
         self.model_type = model_type
+        self.pipeline = None
+        if self.model_type == "flux":
+            from diffusers.pipelines.flux import FluxPipeline
+
+            self.pipeline = FluxPipeline.from_pretrained(
+                pretrained_model_name_or_path=StateTracker.get_args().pretrained_model_name_or_path,
+                text_encoder=text_encoders[0],
+                text_encoder_2=text_encoders[1],
+                tokenizer=tokenizers[0],
+                tokenizer_2=tokenizers[1],
+                transformer=None,
+                vae=None,
+            )
         self.prompt_handler = prompt_handler
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
@@ -169,8 +193,8 @@ class TextEmbeddingCache:
             StateTracker.get_text_cache_files(data_backend_id=self.id)
             or StateTracker.set_text_cache_files(
                 self.data_backend.list_files(
-                    instance_data_root=self.cache_dir,
-                    str_pattern="*.pt",
+                    instance_data_dir=self.cache_dir,
+                    file_extensions=["pt"],
                 ),
                 data_backend_id=self.id,
             )
@@ -225,9 +249,56 @@ class TextEmbeddingCache:
         result = self.data_backend.torch_load(filename)
         return result
 
+    def encode_flux_prompt(
+        self,
+        text_encoders,
+        tokenizers,
+        prompt: str,
+        is_validation: bool = False,
+        return_masked_embed: bool = True,
+    ):
+        """
+        Encode a prompt for a Flux model.
+
+        Args:
+            text_encoders: List of text encoders.
+            tokenizers: List of tokenizers.
+            prompt: The prompt to encode.
+            num_images_per_prompt: The number of images to generate per prompt.
+            is_validation: Whether the prompt is for validation. No-op for SD3.
+
+        Returns:
+            Tuple of (prompt_embeds, pooled_prompt_embeds).
+        """
+        from helpers.models.flux import FluxPipeline
+
+        pipe = FluxPipeline(
+            self.pipeline.scheduler,
+            self.pipeline.vae,
+            self.pipeline.text_encoder,
+            self.pipeline.tokenizer,
+            self.pipeline.text_encoder_2,
+            self.pipeline.tokenizer_2,
+            self.pipeline.transformer,
+        )
+
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = pipe.encode_prompt(
+            prompt=prompt,
+            prompt_2=prompt,
+            device=self.accelerator.device,
+            max_sequence_length=StateTracker.get_args().tokenizer_max_length,
+        )
+
+        return prompt_embeds, pooled_prompt_embeds, time_ids, masks
+
     # Adapted from pipelines.StableDiffusion3Pipeline.encode_prompt
     def encode_sd3_prompt(
-        self, text_encoders, tokenizers, prompt: str, is_validation: bool = False
+        self,
+        text_encoders,
+        tokenizers,
+        prompt: str,
+        is_validation: bool = False,
+        return_masked_embed: bool = True,
     ):
         """
         Encode a prompt for an SD3 model.
@@ -270,6 +341,7 @@ class TextEmbeddingCache:
             prompt=prompt,
             num_images_per_prompt=num_images_per_prompt,
             device=self.accelerator.device,
+            return_masked_embed=return_masked_embed,
         )
 
         clip_prompt_embeds = torch.nn.functional.pad(
@@ -304,10 +376,6 @@ class TextEmbeddingCache:
         prompt_embeds_list = []
 
         emitted_warning = False
-        # If prompt_handler (Compel) is available, use it for all prompts
-        if self.prompt_handler and is_validation:
-            positive_prompt = self.prompt_handler.process_long_prompt(prompt)
-            return positive_prompt
         try:
             for tokenizer, text_encoder in zip(tokenizers, text_encoders):
                 if tokenizer is None or text_encoder is None:
@@ -315,19 +383,25 @@ class TextEmbeddingCache:
                     continue
                 if type(prompt) is not str and type(prompt) is not list:
                     prompt = str(prompt)
+                max_seq_len = 256 if self.model_type == "kolors" else 77
                 text_inputs = tokenizer(
-                    prompt, padding="max_length", truncation=True, return_tensors="pt"
+                    prompt,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt",
+                    max_length=max_seq_len,
                 )
-                text_input_ids = text_inputs.input_ids
-
                 untruncated_ids = tokenizer(
-                    prompt, padding="longest", return_tensors="pt"
+                    prompt,
+                    padding="longest",
+                    return_tensors="pt",
+                    max_length=max_seq_len,
                 ).input_ids
 
                 if untruncated_ids.shape[
                     -1
                 ] > tokenizer.model_max_length and not torch.equal(
-                    text_input_ids, untruncated_ids
+                    text_inputs.input_ids, untruncated_ids
                 ):
                     removed_text = tokenizer.batch_decode(
                         untruncated_ids[:, tokenizer.model_max_length - 1 : -1]
@@ -338,21 +412,42 @@ class TextEmbeddingCache:
                         logger.warning(
                             f"The following part of your input was truncated because CLIP can only handle sequences up to {tokenizer.model_max_length} tokens: {removed_text}"
                         )
-
-                prompt_embeds_output = text_encoder(
-                    text_input_ids.to(self.accelerator.device),
-                    output_hidden_states=True,
-                )
-                # We are always interested in the pooled output of the final text encoder
-                pooled_prompt_embeds = prompt_embeds_output[0]
-                prompt_embeds = prompt_embeds_output.hidden_states[-2]
-                del prompt_embeds_output
+                if self.model_type == "sdxl":
+                    prompt_embeds_output = text_encoder(
+                        text_inputs.input_ids.to(self.accelerator.device),
+                        output_hidden_states=True,
+                    )
+                    # We are always interested in the pooled output of the final text encoder
+                    pooled_prompt_embeds = prompt_embeds_output[0]
+                    prompt_embeds = prompt_embeds_output.hidden_states[-2]
+                elif self.model_type == "kolors":
+                    # we pass the attention mask into the text encoder. it transforms the embeds but does not attend to them.
+                    # unfortunately, kolors does not return the attention mask for later use by the U-net to avoid attending to the padding tokens.
+                    prompt_embeds_output = text_encoder(
+                        input_ids=text_inputs["input_ids"].to(self.accelerator.device),
+                        attention_mask=text_inputs["attention_mask"].to(
+                            self.accelerator.device
+                        ),
+                        position_ids=text_inputs["position_ids"],
+                        output_hidden_states=True,
+                    )
+                    # the ChatGLM encoder output is hereby mangled in fancy ways for Kolors to be useful.
+                    prompt_embeds = (
+                        prompt_embeds_output.hidden_states[-2].permute(1, 0, 2).clone()
+                    )
+                    # [max_sequence_length, batch, hidden_size] -> [batch, hidden_size]
+                    pooled_prompt_embeds = prompt_embeds_output.hidden_states[-1][
+                        -1, :, :
+                    ].clone()
+                else:
+                    raise ValueError(f"Unknown model type: {self.model_type}")
                 bs_embed, seq_len, _ = prompt_embeds.shape
                 prompt_embeds = prompt_embeds.view(bs_embed, seq_len, -1)
 
                 # Clear out anything we moved to the text encoder device
-                text_input_ids.to("cpu")
-                del text_input_ids
+                text_inputs.input_ids.to("cpu")
+                del prompt_embeds_output
+                del text_inputs
 
                 prompt_embeds_list.append(prompt_embeds)
         except Exception as e:
@@ -389,13 +484,21 @@ class TextEmbeddingCache:
         ).squeeze(dim=1)
 
     def encode_prompt(self, prompt: str, is_validation: bool = False):
-        if self.model_type == "sdxl":
+        if self.model_type == "sdxl" or self.model_type == "kolors":
             return self.encode_sdxl_prompt(
                 self.text_encoders, self.tokenizers, prompt, is_validation
             )
         elif self.model_type == "sd3":
             return self.encode_sd3_prompt(
-                self.text_encoders, self.tokenizers, prompt, is_validation
+                self.text_encoders,
+                self.tokenizers,
+                prompt,
+                is_validation,
+                return_masked_embed=(
+                    True
+                    if StateTracker.get_args().sd3_t5_mask_behaviour == "mask"
+                    else False
+                ),
             )
         else:
             return self.encode_legacy_prompt(
@@ -420,9 +523,7 @@ class TextEmbeddingCache:
 
         return text_inputs
 
-    def encode_t5_prompt(
-        self, input_ids, attention_mask, apply_attn_mask: bool = False
-    ):
+    def encode_t5_prompt(self, input_ids, attention_mask):
         text_input_ids = input_ids.to(self.text_encoders[0].device)
         attention_mask = attention_mask.to(self.text_encoders[0].device)
         prompt_embeds = self.text_encoders[0](
@@ -430,34 +531,26 @@ class TextEmbeddingCache:
             attention_mask=attention_mask,
             return_dict=False,
         )[0]
-        if apply_attn_mask:
-            # then we'll mangle the attention mask to be a bit more useful.
-            prompt_attention_mask = attention_mask.unsqueeze(-1).expand(
-                prompt_embeds.shape
-            )
-            prompt_embeds = prompt_embeds * prompt_attention_mask
         prompt_embeds = prompt_embeds.to("cpu")
 
         return prompt_embeds
 
-    def compute_t5_prompt(self, prompt: str, apply_attn_mask: bool = False):
+    def compute_t5_prompt(self, prompt: str):
         """
         Tokenise, encode, optionally mask, and then return a prompt_embed for a T5 model.
 
         Args:
             prompt: The prompt to encode.
-            apply_attn_mask: Whether to apply the attention mask to the embeddings. This is required for AuraFlow, and might also improve disk space efficiency.
         Returns:
             Tuple of (prompt_embeds, attention_mask)
         """
-        logger.debug(f"Computing deepfloyd prompt for: {prompt}")
+        logger.debug(f"Computing T5 caption for: {prompt}")
         text_inputs = self.tokenize_t5_prompt(
             prompt, tokenizer_max_length=StateTracker.get_args().tokenizer_max_length
         )
         result = self.encode_t5_prompt(
             text_inputs.input_ids,
             text_inputs.attention_mask,
-            apply_attn_mask=apply_attn_mask,
         )
         attn_mask = text_inputs.attention_mask
         del text_inputs
@@ -500,7 +593,7 @@ class TextEmbeddingCache:
         ]
 
         # If all prompts are cached and certain conditions are met, return None
-        if not uncached_prompts and not is_validation and not return_concat:
+        if not uncached_prompts and not return_concat:
             self.debug_log(
                 f"All prompts are cached, ignoring (uncached_prompts={uncached_prompts}, is_validation={is_validation}, return_concat={return_concat})"
             )
@@ -513,7 +606,7 @@ class TextEmbeddingCache:
         # Proceed with uncached prompts
         raw_prompts = uncached_prompts if uncached_prompts else all_prompts
         output = None
-        if self.model_type == "sdxl":
+        if self.model_type == "sdxl" or self.model_type == "kolors":
             output = self.compute_embeddings_for_sdxl_prompts(
                 raw_prompts,
                 return_concat=return_concat,
@@ -523,7 +616,7 @@ class TextEmbeddingCache:
         elif (
             self.model_type == "legacy"
             or self.model_type == "pixart_sigma"
-            or self.model_type == "aura_flow"
+            or self.model_type == "smoldit"
         ):
             # both sd1.x/2.x and t5 style models like pixart use this flow.
             output = self.compute_embeddings_for_legacy_prompts(
@@ -533,6 +626,12 @@ class TextEmbeddingCache:
             )
         elif self.model_type == "sd3":
             output = self.compute_embeddings_for_sd3_prompts(
+                raw_prompts,
+                return_concat=return_concat,
+                load_from_cache=load_from_cache,
+            )
+        elif self.model_type == "flux":
+            output = self.compute_embeddings_for_flux_prompts(
                 raw_prompts,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
@@ -588,7 +687,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=get_rank() + self.accelerator.num_processes,
+            position=get_rank(),
         )
         with torch.no_grad():
             for prompt in tqdm(
@@ -597,7 +696,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
-                position=get_rank(),
+                position=get_rank() + self.accelerator.num_processes + 1,
             ):
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
@@ -719,7 +818,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=0,
+            position=get_rank(),
         )
         with torch.no_grad():
             attention_mask = None
@@ -762,7 +861,9 @@ class TextEmbeddingCache:
 
                 if should_encode:
                     if StateTracker.get_model_type() == "hunyuan_dit":
-                        raise ValueError("Prompt encoding scheme has not been implemented for the 'hunyuan_dit' model yet.'")
+                        raise ValueError(
+                            "Prompt encoding scheme has not been implemented for the 'hunyuan_dit' model yet.'"
+                        )
                     # self.debug_log(f"Encoding prompt: {prompt}")
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
@@ -778,18 +879,15 @@ class TextEmbeddingCache:
                     if (
                         "deepfloyd" in StateTracker.get_args().model_type
                         or self.model_type == "pixart_sigma"
-                        or self.model_type == "aura_flow"
+                        or self.model_type == "smoldit"
                     ):
                         # TODO: Batch this
                         prompt_embeds, attention_mask = self.compute_t5_prompt(
                             prompt=prompt,
-                            apply_attn_mask=(
-                                True if self.model_type == "aura_flow" else False
-                            ),
                         )
                         if "deepfloyd" not in StateTracker.get_args().model_type:
                             # we have to store the attn mask with the embed for pixart.
-                            # aura doesn't require it, but it's just easier to keep.
+                            # smoldit requires the attn mask at inference time 💪🏽
                             prompt_embeds = (prompt_embeds, attention_mask)
                     else:
                         prompt_embeds = self.encode_legacy_prompt(
@@ -836,6 +934,158 @@ class TextEmbeddingCache:
             return prompt_embeds_all, attention_masks_all
         return prompt_embeds_all
 
+    def compute_embeddings_for_flux_prompts(
+        self,
+        prompts: list = None,
+        return_concat: bool = True,
+        is_validation: bool = False,
+        load_from_cache: bool = True,
+    ):
+        prompt_embeds_all = []
+        add_text_embeds_all = []
+        time_ids_all = []
+        masks_all = []
+        should_encode = not load_from_cache
+        args = StateTracker.get_args()
+        if should_encode:
+            local_caption_split = self.split_captions_between_processes(
+                prompts or self.prompts
+            )
+        else:
+            local_caption_split = prompts or self.prompts
+        if (
+            hasattr(args, "cache_clear_validation_prompts")
+            and args.cache_clear_validation_prompts
+            and is_validation
+        ):
+            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
+            load_from_cache = False
+            should_encode = True
+        self.write_thread_bar = tqdm(
+            desc="Write embeds to disk",
+            leave=False,
+            ncols=125,
+            disable=return_concat,
+            total=len(local_caption_split),
+            position=get_rank(),
+        )
+        with torch.no_grad():
+            for prompt in tqdm(
+                local_caption_split,
+                desc="Processing prompts",
+                disable=return_concat,
+                leave=False,
+                ncols=125,
+                position=get_rank() + self.accelerator.num_processes + 1,
+            ):
+                filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
+                prompt = PromptHandler.filter_caption(self.data_backend, prompt)
+                debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
+                if prompt is None:
+                    logger.error(f"Filename {filename} does not have a caption.")
+                    continue
+                logger.debug(debug_msg)
+                if return_concat and load_from_cache:
+                    try:
+                        # We attempt to load.
+                        _flux_embed = self.load_from_cache(filename)
+                        if len(_flux_embed) == 3:
+                            # legacy flux embed w/o attn mask
+                            prompt_embeds, add_text_embeds, time_ids = _flux_embed
+                            masks = None
+                        elif len(_flux_embed) == 4:
+                            # flux embed with attn mask
+                            prompt_embeds, add_text_embeds, time_ids, masks = (
+                                _flux_embed
+                            )
+                        del _flux_embed
+                        logger.debug(
+                            f"Cached Flux text embeds: {prompt_embeds.shape}, {add_text_embeds.shape}, {time_ids.shape}, {masks.shape if masks is not None else None}"
+                        )
+                    except Exception as e:
+                        # We failed to load. Now encode the prompt.
+                        logger.error(
+                            f"Failed retrieving prompt from cache:"
+                            f"\n-> prompt: {prompt}"
+                            f"\n-> filename: {filename}"
+                            f"\n-> error: {e}"
+                            f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
+                        )
+                        should_encode = True
+                        raise Exception(
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                        )
+                if should_encode:
+                    # If load_from_cache is True, should_encode would be False unless we failed to load.
+                    self.debug_log(f"Encoding prompt: {prompt}")
+                    prompt_embeds, pooled_prompt_embeds, time_ids, masks = (
+                        self.encode_flux_prompt(
+                            self.text_encoders,
+                            self.tokenizers,
+                            [prompt],
+                            is_validation,
+                        )
+                    )
+                    logger.debug(
+                        f"Flux prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}, {time_ids.shape}, {masks.shape}"
+                    )
+                    add_text_embeds = pooled_prompt_embeds
+                    current_size = self.write_queue.qsize()
+                    if current_size >= 2048:
+                        log_msg = str(
+                            f"[WARNING] Write queue size is {current_size}. This is quite large."
+                            " Consider increasing the write batch size. Delaying encode so that writes can catch up."
+                        )
+                        self.write_thread_bar.write(log_msg)
+                        while self.write_queue.qsize() > 100:
+                            time.sleep(0.1)
+
+                    self.debug_log(f"Adding embed to write queue: {filename}")
+                    self.save_to_cache(
+                        filename, (prompt_embeds, add_text_embeds, time_ids, masks)
+                    )
+                    if return_concat:
+                        prompt_embeds = prompt_embeds.to(self.accelerator.device)
+                        add_text_embeds = add_text_embeds.to(self.accelerator.device)
+                        time_ids = time_ids.to(self.accelerator.device)
+                        masks = masks.to(self.accelerator.device)
+                    else:
+                        del prompt_embeds
+                        del add_text_embeds
+                        del pooled_prompt_embeds
+                        del masks
+                        continue
+
+                if return_concat:
+                    prompt_embeds_all.append(prompt_embeds)
+                    add_text_embeds_all.append(add_text_embeds)
+                    time_ids_all.append(time_ids)
+                    masks_all.append(masks)
+
+            while self.write_queue.qsize() > 0:
+                time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            # Close the tqdm progress bar after the loop
+            self.write_thread_bar.close()
+            self.process_write_batches = False
+
+            if not return_concat:
+                del prompt_embeds_all
+                del add_text_embeds_all
+                del time_ids_all
+                del masks_all
+                return
+
+            logger.debug(f"Returning all prompt embeds: {prompt_embeds_all}")
+            prompt_embeds_all = torch.cat(prompt_embeds_all, dim=0)
+            add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
+            time_ids_all = torch.cat(time_ids_all, dim=0)
+            # if any masks_all are None, we can't cat
+            masks_all = torch.cat(masks_all, dim=0) if None not in masks_all else None
+
+        return prompt_embeds_all, add_text_embeds_all, time_ids_all, masks_all
+
     def compute_embeddings_for_sd3_prompts(
         self,
         prompts: list = None,
@@ -870,7 +1120,7 @@ class TextEmbeddingCache:
             ncols=125,
             disable=return_concat,
             total=len(local_caption_split),
-            position=get_rank() + self.accelerator.num_processes,
+            position=get_rank(),
         )
         with torch.no_grad():
             for prompt in tqdm(
@@ -879,7 +1129,7 @@ class TextEmbeddingCache:
                 disable=return_concat,
                 leave=False,
                 ncols=125,
-                position=get_rank(),
+                position=get_rank() + self.accelerator.num_processes + 1,
             ):
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
@@ -922,10 +1172,10 @@ class TextEmbeddingCache:
                         f"SD3 prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}"
                     )
                     add_text_embeds = pooled_prompt_embeds
-                    # If the prompt is empty, zero out the embeddings
-                    if prompt == "":
-                        prompt_embeds = torch.zeros_like(prompt_embeds)
-                        add_text_embeds = torch.zeros_like(add_text_embeds)
+                    # StabilityAI say not to zero them out.
+                    # if prompt == "":
+                    #     prompt_embeds = torch.zeros_like(prompt_embeds)
+                    #     add_text_embeds = torch.zeros_like(add_text_embeds)
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
                     if current_size >= 2048:
@@ -969,11 +1219,6 @@ class TextEmbeddingCache:
             add_text_embeds_all = torch.cat(add_text_embeds_all, dim=0)
 
         return prompt_embeds_all, add_text_embeds_all
-
-    def split_cache_between_processes(self, prompts: list):
-        # Use the accelerator to split the data
-        with self.accelerator.split_between_processes(prompts) as split_files:
-            self.prompts = split_files
 
     def __del__(self):
         """Ensure that the batch write thread is properly closed."""

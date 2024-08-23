@@ -41,7 +41,7 @@ class BaseDataBackend(ABC):
         pass
 
     @abstractmethod
-    def list_files(self, pattern: str, instance_data_root: str = None) -> tuple:
+    def list_files(self, file_extensions: list, instance_data_dir: str = None) -> tuple:
         """
         List all files matching the pattern.
         """
@@ -93,6 +93,7 @@ class BaseDataBackend(ABC):
         """
         We've read the gzip from disk. Just decompress it.
         """
+        gzip_data.seek(0)
         with gzip.GzipFile(fileobj=gzip_data, mode="rb") as file:
             decompressed_data = file.read()
         return BytesIO(decompressed_data)

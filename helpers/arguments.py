@@ -5,6 +5,15 @@ import time
 import logging
 import sys
 import torch
+from helpers.models.smoldit import SmolDiTConfigurationNames
+from helpers.training import quantised_precision_levels
+from helpers.training.optimizer_param import (
+    map_args_to_optimizer,
+    is_optimizer_deprecated,
+    is_optimizer_bf16,
+    map_deprecated_optimizer_parameter,
+    optimizer_choices,
+)
 
 logger = logging.getLogger("ArgsParser")
 # Are we the primary process?
@@ -91,38 +100,109 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--aura_flow",
+        "--kolors",
         action="store_true",
         default=False,
-        help=("This must be set when training an AuraFlow model."),
+        help=("This option must be provided when training a Kolors model."),
     )
     parser.add_argument(
-        "--aura_flow_target",
+        "--flux",
+        action="store_true",
+        default=False,
+        help=("This option must be provided when training a Flux model."),
+    )
+    parser.add_argument(
+        "--flux_lora_target",
         type=str,
-        choices=["all", "dit", "mmdit"],
-        default="dit",
+        choices=["mmdit", "context", "context+ffs", "all", "all+ffs", "ai-toolkit"],
+        default="all",
         help=(
-            "Aura Diffusion contains joint attention MM-DiT blocks as well as standard DiT. When training a LoRA, we can limit the blocks trained."
-            " The default option 'all' means all blocks will be trained. 'dit' will train only the standard DiT blocks,"
-            " and 'mmdit' will train only the MM-DiT blocks. Experimentation will likely prove fruitful,"
-            " as these LoRAs train quickly. The default is 'all'."
+            "Flux has single and joint attention blocks."
+            " By default, all attention layers are trained, but not the feed-forward layers"
+            " If 'mmdit' is provided, the text input layers will not be trained."
+            " If 'context' is provided, then ONLY the text attention layers are trained"
+            " If 'context+ffs' is provided, then text attention and text feed-forward layers are trained. This is somewhat similar to text-encoder-only training in earlier SD versions."
+            " If 'all' is provided, all layers will be trained, minus feed-forward."
+            " If 'all+ffs' is provided, all layers will be trained including feed-forward."
         ),
     )
     parser.add_argument(
-        "--aura_flow_first_unfrozen_dit_layer",
-        type=int,
-        default=20,
+        "--flow_matching_sigmoid_scale",
+        type=float,
+        default=1.0,
+        help="Scale factor for sigmoid timestep sampling for flow-matching models..",
+    )
+    parser.add_argument(
+        "--flux_fast_schedule",
+        action="store_true",
         help=(
-            "Due to the size of the Aura Flow model, by default only the 20th layer and up will be trained."
-            " More layers can be excluded to speed up training or reduce VRAM consumption further."
+            "An experimental feature to train Flux.1S using a noise schedule closer to what it was trained with,"
+            " which has improved results in short experiments. Thanks to @mhirki for the contribution."
         ),
     )
     parser.add_argument(
-        "--aura_flow_first_unfrozen_mmdit_layer",
-        type=int,
-        default=0,
+        "--flux_guidance_mode",
+        type=str,
+        choices=["constant", "random-range"],
+        default="constant",
         help=(
-            "By default, Aura Flow's MM-DiT blocks are not trained as they are very large and training them is unnecessary for finetuning."
+            "Flux has a 'guidance' value used during training time that reflects the CFG range of your training samples."
+            " The default mode 'constant' will use a single value for every sample."
+            " The mode 'random-range' will randomly select a value from the range of the CFG for each sample."
+            " Set the range using --flux_guidance_min and --flux_guidance_max."
+        ),
+    )
+    parser.add_argument(
+        "--flux_guidance_value",
+        type=float,
+        default=1.0,
+        help=(
+            "When using --flux_guidance_mode=constant, this value will be used for every input sample."
+            " Using a value of 1.0 seems to preserve the CFG distillation for the Dev model,"
+            " and using any other value will result in the resulting LoRA requiring CFG at inference time."
+        ),
+    )
+    parser.add_argument(
+        "--flux_guidance_min",
+        type=float,
+        default=0.0,
+    )
+    parser.add_argument(
+        "--flux_guidance_max",
+        type=float,
+        default=4.0,
+    )
+    parser.add_argument(
+        "--flux_attention_masked_training",
+        action="store_true",
+        default=False,
+        help="Use attention masking while training flux.",
+    )
+    parser.add_argument(
+        "--smoldit",
+        action="store_true",
+        default=False,
+        help=("Use the experimental SmolDiT model architecture."),
+    )
+    parser.add_argument(
+        "--smoldit_config",
+        type=str,
+        choices=SmolDiTConfigurationNames,
+        default="smoldit-base",
+        help=(
+            "The SmolDiT configuration to use. This is a list of pre-configured models."
+            " The default is 'smoldit-base'."
+        ),
+    )
+    parser.add_argument(
+        "--flow_matching_loss",
+        type=str,
+        choices=["diffusers", "compatible", "diffusion"],
+        default="compatible",
+        help=(
+            "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
+            " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
+            " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
         ),
     )
     parser.add_argument(
@@ -144,60 +224,35 @@ def parse_args(input_args=None):
         help=("This option must be provided when training a Stable Diffusion 3 model."),
     )
     parser.add_argument(
-        "--sd3_uses_diffusion",
-        action="store_true",
-        default=False,
-        help=(
-            "The rectified flow objective of stable diffusion 3 seems to hold few advantages, yet is very difficult to train with."
-            " If this option is supplied, a normal DDPM-based diffusion schedule will be used to train, instead of flow-matching."
-            " This will take a lot of data and even more compute to resolve. If possible, use a pretrained SD3 Diffusion model."
-        ),
-    )
-    parser.add_argument(
-        "--weighting_scheme",
+        "--sd3_t5_mask_behaviour",
         type=str,
-        default="logit_normal",
-        choices=["sigma_sqrt", "logit_normal", "mode"],
+        choices=["do-nothing", "mask"],
+        default="mask",
         help=(
-            "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
-            " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
-            " upstream Diffusers training examples use sigma_sqrt. The mode option is experimental,"
-            " as it is the most difficult to implement cleanly. In short experiments, logit_normal produced the best results."
+            "StabilityAI did not correctly implement their attention masking on T5 inputs for SD3 Medium."
+            " This option enables you to switch between their broken implementation or the corrected mask"
+            " implementation. Although, the corrected masking is still applied via hackish workaround,"
+            " manually applying the mask to the prompt embeds so that the padded positions are zero."
+            " This improves the results for short captions, but does not change the behaviour for long captions."
+            " It is important to note that this limitation currently prevents expansion of SD3 Medium's"
+            " prompt length, as it will unnecessarily attend to every token in the prompt embed,"
+            " even masked positions."
         ),
-    )
-    parser.add_argument(
-        "--logit_mean",
-        type=float,
-        default=0.0,
-        help=(
-            "As outlined in the Stable Diffusion 3 paper, using a logit_mean of -0.5 produced the highest quality FID results. The default here is 0.0."
-        ),
-    )
-    parser.add_argument(
-        "--logit_std",
-        type=float,
-        default=1.0,
-        help=("Stable Diffusion 3-specific training parameters."),
-    )
-    parser.add_argument(
-        "--mode_scale",
-        type=float,
-        default=1.29,
-        help=("Stable Diffusion 3-specific training parameters."),
     )
     parser.add_argument(
         "--lora_type",
-        type=str,
-        choices=["Standard"],
+        type=str.lower,
+        choices=["standard", "lycoris"],
+        default="standard",
         help=(
             "When training using --model_type=lora, you may specify a different type of LoRA to train here."
-            " Currently, only 'Standard' type is supported. This option exists for compatibility with Kohya configuration files."
+            " standard refers to training a vanilla LoRA via PEFT, lycoris refers to training with KohakuBlueleaf's library of the same name."
         ),
     )
     parser.add_argument(
         "--lora_init_type",
         type=str,
-        choices=["default", "gaussian", "loftq"],
+        choices=["default", "gaussian", "loftq", "olora", "pissa"],
         default="default",
         help=(
             "The initialization type for the LoRA model. 'default' will use Microsoft's initialization method,"
@@ -208,6 +263,12 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--init_lora",
+        type=str,
+        default=None,
+        help="Specify an existing LoRA safetensors file to initialize the LoRA and continue training or finetune an existing LoRA.",
+    )
+    parser.add_argument(
         "--lora_rank",
         type=int,
         default=16,
@@ -216,7 +277,8 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--lora_alpha",
         type=float,
-        default=16,
+        required=False,
+        default=None,
         help=(
             "The alpha value for the LoRA model. This is the learning rate for the LoRA update matrices."
         ),
@@ -228,6 +290,12 @@ def parse_args(input_args=None):
         help=(
             "LoRA dropout randomly ignores neurons during training. This can help prevent overfitting."
         ),
+    )
+    parser.add_argument(
+        "--lycoris_config",
+        type=str,
+        default="config/lycoris_config.json",
+        help=("The location for the JSON file of the Lycoris configuration."),
     )
     parser.add_argument(
         "--controlnet",
@@ -251,6 +319,30 @@ def parse_args(input_args=None):
         default=None,
         required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_transformer_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained transformer model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_transformer_subfolder",
+        type=str,
+        default="transformer",
+        help="The subfolder to load the transformer model from. Use 'none' for a flat directory.",
+    )
+    parser.add_argument(
+        "--pretrained_unet_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained unet model or model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--pretrained_unet_subfolder",
+        type=str,
+        default="unet",
+        help="The subfolder to load the unet model from. Use 'none' for a flat directory.",
     )
     parser.add_argument(
         "--pretrained_vae_model_name_or_path",
@@ -442,10 +534,17 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--vae_cache_preprocess",
         action="store_true",
+        default=True,
+        help=(
+            "This option is deprecated and will be removed in a future release. Use --vae_cache_ondemand instead."
+        ),
+    )
+    parser.add_argument(
+        "--vae_cache_ondemand",
+        action="store_true",
         default=False,
         help=(
-            "By default, will encode images during training. For some situations, pre-processing may be desired."
-            " To revert to the old behaviour, supply --vae_cache_preprocess=false."
+            "By default, will batch-encode images before training. For some situations, ondemand may be desired, but it greatly slows training and increases memory pressure."
         ),
     )
     parser.add_argument(
@@ -564,6 +663,18 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--data_backend_sampling",
+        type=str,
+        choices=["uniform", "auto-weighting"],
+        default="auto-weighting",
+        help=(
+            "When using multiple data backends, the sampling weighting can be set to 'uniform' or 'auto-weighting'."
+            " The default value is 'auto-weighting', which will automatically adjust the sampling weights based on the"
+            " number of images in each backend. 'uniform' will sample from each backend equally, which may be"
+            " more desirable for DreamBooth training with eg. ignore_epochs=True on your regularisation dataset."
+        ),
+    )
+    parser.add_argument(
         "--write_batch_size",
         type=int,
         default=64,
@@ -574,6 +685,23 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--read_batch_size",
+        type=int,
+        default=25,
+        help=(
+            "Used by the VAE cache to prefetch image data. This is the number of images to read ahead."
+        ),
+    )
+    parser.add_argument(
+        "--image_processing_batch_size",
+        type=int,
+        default=32,
+        help=(
+            "When resizing and cropping images, we do it in parallel using processes or threads."
+            " This defines how many images will be read into the queue before they are processed."
+        ),
+    )
+    parser.add_argument(
         "--enable_multiprocessing",
         default=False,
         action="store_true",
@@ -581,6 +709,21 @@ def parse_args(input_args=None):
             "If set, will use processes instead of threads during metadata caching operations."
             " For some systems, multiprocessing may be faster than threading, but will consume a lot more memory."
             " Use this option with caution, and monitor your system's memory usage."
+        ),
+    )
+    parser.add_argument(
+        "--max_workers",
+        default=32,
+        type=int,
+        help=("How many active threads or processes to run during VAE caching."),
+    )
+    parser.add_argument(
+        "--aws_max_pool_connections",
+        type=int,
+        default=128,
+        help=(
+            "When using AWS backends, the maximum number of connections to keep open to the S3 bucket at a single time."
+            " This should be greater or equal to the max_workers and aspect bucket worker count values."
         ),
     )
     parser.add_argument(
@@ -700,12 +843,13 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--resolution_type",
         type=str,
-        default="area",
-        choices=["pixel", "area"],
+        default="pixel_area",
+        choices=["pixel", "area", "pixel_area"],
         help=(
             "Resizing images maintains aspect ratio. This defines the resizing strategy."
-            " If 'pixel', the images will be resized to the resolution by pixel edge."
-            " If 'area', the images will be resized so the pixel area is this many megapixels."
+            " If 'pixel', the images will be resized to the resolution by the shortest pixel edge, if the target size does not match the current size."
+            " If 'area', the images will be resized so the pixel area is this many megapixels. Common rounded values such as `0.5` and `1.0` will be implicitly adjusted to their squared size equivalents."
+            " If 'pixel_area', the pixel value (eg. 1024) will be converted to the proper value for 'area', and then calculate everything the same as 'area' would."
         ),
     )
     parser.add_argument(
@@ -953,88 +1097,62 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--optimizer",
+        type=str,
+        choices=optimizer_choices.keys(),
+        required=True,
+        default=None,
+    )
+    parser.add_argument(
+        "--optimizer_config",
+        type=str,
+        default=None,
+        help=(
+            "When setting a given optimizer, this allows a comma-separated list of key-value pairs to be provided that will override the optimizer defaults."
+            " For example, `--optimizer_config=decouple_lr=True,weight_decay=0.01`."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_beta1",
+        type=float,
+        default=None,
+        help="The value to use for the first beta value in the optimiser, which is used for the first moment estimate. A range of 0.8-0.9 is common.",
+    )
+    parser.add_argument(
+        "--optimizer_beta2",
+        type=float,
+        default=None,
+        help="The value to use for the second beta value in the optimiser, which is used for the second moment estimate. A range of 0.999-0.9999 is common.",
+    )
+    parser.add_argument(
+        "--optimizer_release_gradients",
+        action="store_true",
+        help=(
+            "When using Optimi optimizers, this option will release the gradients after the optimizer step."
+            " This can save memory, but may slow down training. With Quanto, there may be no benefit."
+        ),
+    )
+    parser.add_argument(
         "--use_8bit_adam",
         action="store_true",
-        help="Whether or not to use 8-bit Adam from bitsandbytes.",
+        help="Deprecated in favour of --optimizer=optimi-adamw.",
     )
     parser.add_argument(
         "--use_adafactor_optimizer",
         action="store_true",
-        help="Whether or not to use the Adafactor optimizer.",
-    )
-    parser.add_argument(
-        "--adafactor_relative_step",
-        type=bool,
-        default=False,
-        help=(
-            "When set, will use the experimental Adafactor mode for relative step computations instead of the value set by --learning_rate."
-            " This is an experimental feature, and you are on your own for support."
-        ),
+        help="Deprecated in favour of --optimizer=stableadamw.",
     )
     parser.add_argument(
         "--use_prodigy_optimizer",
         action="store_true",
-        help="Whether or not to use the Prodigy optimizer.",
-    )
-    parser.add_argument(
-        "--prodigy_beta3",
-        type=float,
-        default=None,
-        help="coefficients for computing the Prodidy stepsize using running averages. If set to None, "
-        "uses the value of square root of beta2. Ignored if optimizer is adamW",
-    )
-    parser.add_argument(
-        "--prodigy_decouple",
-        type=bool,
-        default=True,
-        help="Use AdamW style decoupled weight decay",
-    )
-    parser.add_argument(
-        "--prodigy_use_bias_correction",
-        type=bool,
-        default=True,
-        help="Turn on Adam's bias correction. True by default. Ignored if optimizer is adamW",
-    )
-    parser.add_argument(
-        "--prodigy_safeguard_warmup",
-        type=bool,
-        default=True,
-        help="Remove lr from the denominator of D estimate to avoid issues during warm-up stage. True by default. "
-        "Ignored if optimizer is adamW",
-    )
-    parser.add_argument(
-        "--prodigy_learning_rate",
-        type=float,
-        default=0.5,
-        help=(
-            "Though this is called the prodigy learning rate, it corresponds to the d_coef parameter in the Prodigy optimizer."
-            " This acts as a coefficient in the expression for the estimate of d. Default for this trainer is 0.5, but the Prodigy"
-            " default is 1.0, which ends up over-cooking models."
-        ),
-    )
-    parser.add_argument(
-        "--prodigy_weight_decay",
-        type=float,
-        default=1e-2,
-        help="Weight decay to use. Prodigy default is 0, but SimpleTuner uses 1e-2.",
-    )
-    parser.add_argument(
-        "--prodigy_epsilon",
-        type=float,
-        default=1e-08,
-        help="Epsilon value for the Adam optimizer",
+        help="Deprecated and removed.",
     )
     parser.add_argument(
         "--use_dadapt_optimizer",
         action="store_true",
-        help="Whether or not to use the discriminator adaptation optimizer.",
+        help="Deprecated and removed.",
     )
-    parser.add_argument(
-        "--dadaptation_learning_rate",
-        type=float,
-        default=1.0,
-        help="Learning rate for the discriminator adaptation. Default: 1.0",
-    )
+
     parser.add_argument(
         "--adam_beta1",
         type=float,
@@ -1059,7 +1177,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--adam_bfloat16",
         action="store_true",
-        help="Whether or not to use stochastic bf16 in Adam. Currently the only supported optimizer.",
+        help="Deprecated in favour of --optimizer=adamw_bf16.",
     )
     parser.add_argument(
         "--max_grad_norm",
@@ -1089,12 +1207,28 @@ def parse_args(input_args=None):
         help="The name of the repository to keep in sync with the local `output_dir`.",
     )
     parser.add_argument(
+        "--model_card_note",
+        type=str,
+        default=None,
+        help=(
+            "Add a string to the top of your model card to provide users with some additional context."
+        ),
+    )
+    parser.add_argument(
         "--logging_dir",
         type=str,
         default="logs",
         help=(
             "[TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to"
             " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
+        ),
+    )
+    parser.add_argument(
+        "--validation_on_startup",
+        action="store_true",
+        default=False,
+        help=(
+            "When training begins, the starting model will have validation prompts run through it, for later comparison."
         ),
     )
     parser.add_argument(
@@ -1278,9 +1412,7 @@ def parse_args(input_args=None):
         "--disable_compel",
         action="store_true",
         help=(
-            "If provided, validation pipeline prompts will be handled using the typical prompt encoding strategy."
-            " Otherwise, the default behaviour is to use Compel for prompt embed generation."
-            " Note that the training input text embeds are not generated using Compel, and will be truncated to 77 tokens."
+            "This option does nothing. It is deprecated and will be removed in a future release."
         ),
     )
     parser.add_argument(
@@ -1306,6 +1438,55 @@ def parse_args(input_args=None):
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
         ),
     )
+    parser.add_argument(
+        "--gradient_precision",
+        type=str,
+        choices=["unmodified", "fp32"],
+        default=None,
+        help=(
+            "One of the hallmark discoveries of the Llama 3.1 paper is numeric instability when calculating"
+            " gradients in bf16 precision. The default behaviour when gradient accumulation steps are enabled"
+            " is now to use fp32 gradients, which is slower, but provides more accurate updates."
+        ),
+    )
+    parser.add_argument(
+        "--base_model_precision",
+        type=str,
+        default="no_change",
+        choices=quantised_precision_levels,
+        help=(
+            "When training a LoRA, you might want to quantise the base model to a lower precision to save more VRAM."
+            " The default value, 'no_change', does not quantise any weights."
+            " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
+            " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+        ),
+    )
+    parser.add_argument(
+        "--base_model_default_dtype",
+        type=str,
+        default="bf16",
+        choices=["bf16", "fp32"],
+        help=(
+            "Unlike --mixed_precision, this value applies specifically for the default weights of your quantised base model."
+            " When quantised, not every parameter can or should be quantised down to the target precision."
+            " By default, we use bf16 weights for the base model - but this can be changed to fp32 to enable"
+            " the use of other optimizers than adamw_bf16. However, this uses marginally more memory,"
+            " and may not be necessary for your use case."
+        ),
+    )
+    for i in range(1, 4):
+        parser.add_argument(
+            f"--text_encoder_{i}_precision",
+            type=str,
+            default=None,
+            choices=quantised_precision_levels,
+            help=(
+                f"When training a LoRA, you might want to quantise text encoder {i} to a lower precision to save more VRAM."
+                " The default value is to follow base_model_precision (no_change)."
+                " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
+                " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+            ),
+        )
     parser.add_argument(
         "--local_rank",
         type=int,
@@ -1346,6 +1527,18 @@ def parse_args(input_args=None):
         type=float,
         default=7.5,
         help="CFG value for validation images. Default: 7.5",
+    )
+    parser.add_argument(
+        "--validation_guidance_real",
+        type=float,
+        default=1.0,
+        help="Use real CFG sampling for Flux validation images. Default: 1.0 (no CFG)",
+    )
+    parser.add_argument(
+        "--validation_no_cfg_until_timestep",
+        type=int,
+        default=2,
+        help="When using real CFG sampling for Flux validation images, skip doing CFG on these timesteps. Default: 2",
     )
     parser.add_argument(
         "--validation_guidance_rescale",
@@ -1549,6 +1742,25 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--input_perturbation",
+        type=float,
+        default=0.0,
+        help=(
+            "Add additional noise only to the inputs fed to the model during training."
+            " This will make the training converge faster. A value of 0.1 is suggested if you want to enable this."
+            " Input perturbation seems to also work with flow-matching (e.g. SD3 and Flux)."
+        ),
+    )
+    parser.add_argument(
+        "--input_perturbation_steps",
+        type=float,
+        default=0,
+        help=(
+            "Only apply input perturbation over the first N steps with linear decay."
+            " This should prevent artifacts from showing up in longer training runs."
+        ),
+    )
+    parser.add_argument(
         "--lr_end",
         type=str,
         default="4e-7",
@@ -1561,8 +1773,9 @@ def parse_args(input_args=None):
         "--i_know_what_i_am_doing",
         action="store_true",
         help=(
-            "If you are using an optimizer other than AdamW, you must set this flag to continue."
-            " This is a safety feature to prevent accidental use of an unsupported optimizer, as weights are stored in bfloat16."
+            "This flag allows you to override some safety checks."
+            " It's not recommended to use this unless you are developing the platform."
+            " Generally speaking, issue reports submitted with this flag enabled will go to the bottom of the queue."
         ),
     )
     parser.add_argument(
@@ -1606,7 +1819,9 @@ def parse_args(input_args=None):
         args.cache_dir = os.path.join(args.output_dir, "cache")
 
     if args.pixart_sigma and args.hunyuan_dit and args.sd3:
-        raise ValueError("Cannot have all of '--pixart_sigma', '--hunyuan_dit', and, '--sd3' set to True.")
+        raise ValueError(
+            "Cannot have all of '--pixart_sigma', '--hunyuan_dit', and, '--sd3' set to True."
+        )
 
     if args.maximum_image_size is not None and not args.target_downsample_size:
         raise ValueError(
@@ -1647,45 +1862,50 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if not args.adam_bfloat16 and not args.i_know_what_i_am_doing:
-        raise ValueError(
-            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
-            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
-            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
-            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
-            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
+    if "int4" in args.base_model_precision and torch.cuda.is_available():
+        print(
+            "WARNING: int4 precision is ONLY supported on A100 and H100 or newer devices. Waiting 10 seconds to continue.."
         )
+        time.sleep(10)
 
-    if not args.i_know_what_i_am_doing and (
-        args.use_prodigy_optimizer
-        or args.use_dadapt_optimizer
-        or args.use_adafactor_optimizer
-        or args.use_8bit_adam
-    ):
+    model_is_bf16 = (
+        args.base_model_precision == "no_change"
+        and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+    ) or (
+        args.base_model_precision != "no_change"
+        and args.base_model_default_dtype == "bf16"
+    )
+    model_is_quantized = args.base_model_precision != "no_change"
+    # check optimiser validity
+    chosen_optimizer = map_args_to_optimizer(args)
+    is_optimizer_deprecated(chosen_optimizer)
+    from helpers.training.optimizer_param import optimizer_parameters
+
+    optimizer_cls, optimizer_details = optimizer_parameters(chosen_optimizer, args)
+    using_bf16_optimizer = optimizer_details.get("default_settings", {}).get(
+        "precision"
+    ) in ["any", "bf16"]
+    if using_bf16_optimizer and not model_is_bf16:
         raise ValueError(
-            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
-            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
-            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
-            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
-            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
+            f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
+    print(f"optimizer: {optimizer_details}")
 
     if torch.backends.mps.is_available():
-        if not args.unet_attention_slice and not args.legacy:
+        if (
+            not args.flux
+            and not args.sd3
+            and not args.unet_attention_slice
+            and not args.legacy
+        ):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if args.train_batch_size > 16:
+        if not args.smoldit and args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
                 "\nPlease reduce the batch size to 12 or lower."
-            )
-            sys.exit(1)
-        if args.lora_init_type == "loftq":
-            error_log(
-                "Because MacOS is not yet supported by Bits and Bytes, we cannot use LoftQ for weight initialisation."
-                " Use 'gaussian' or 'default' instead."
             )
             sys.exit(1)
 
@@ -1697,12 +1917,12 @@ def parse_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.legacy
+        and any([args.legacy, args.flux])
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
-        error_log(
-            f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible with SD 2.x. Please use a 2.x VAE to eliminate this error."
+        warning_log(
+            f"The VAE model {args.pretrained_vae_model_name_or_path} is not compatible. Please use a compatible VAE to eliminate this warning. The baked-in VAE will be used, instead."
         )
         args.pretrained_vae_model_name_or_path = None
     if (
@@ -1717,7 +1937,7 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.sd3 or args.aura_flow:
+    if args.sd3:
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
@@ -1782,38 +2002,104 @@ def parse_args(input_args=None):
 
     if args.sd3:
         args.pretrained_vae_model_name_or_path = None
-        if not args.disable_compel:
-            warning_log(
-                "Disabling Compel long-prompt weighting for SD3 inference, as it does not support Stable Diffusion 3."
-            )
-            args.disable_compel = True
+        args.disable_compel = True
 
-    t5_max_length = 512
-    if args.aura_flow and (
+    t5_max_length = 77
+    if args.sd3 and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
     ):
         if not args.i_know_what_i_am_doing:
             warning_log(
-                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
+                f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
             )
             args.tokenizer_max_length = t5_max_length
         else:
             warning_log(
-                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
             )
             warning_log(
-                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+                f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
+            )
+    flux_version = "dev"
+    model_max_seq_length = 512
+    if (
+        "schnell" in args.pretrained_model_name_or_path.lower()
+        or args.flux_fast_schedule
+    ):
+        if not args.flux_fast_schedule:
+            logger.error("Schnell requires --flux_fast_schedule.")
+            sys.exit(1)
+        flux_version = "schnell"
+        model_max_seq_length = 256
+
+    if args.flux:
+        if (
+            args.tokenizer_max_length is None
+            or int(args.tokenizer_max_length) > model_max_seq_length
+        ):
+            if not args.i_know_what_i_am_doing:
+                warning_log(
+                    f"Updating T5 XXL tokeniser max length to {model_max_seq_length} for Flux."
+                )
+                args.tokenizer_max_length = model_max_seq_length
+            else:
+                warning_log(
+                    f"-!- Flux supports a max length of {model_max_seq_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
+                )
+                warning_log(
+                    f"The model will begin to collapse after a short period of time, if the model you are continuing from has not been tuned beyond 256 tokens."
+                )
+        if flux_version == "dev":
+            if args.validation_num_inference_steps > 28:
+                warning_log(
+                    "Flux Dev expects around 28 or fewer inference steps. Consider limiting --validation_num_inference_steps to 28."
+                )
+            if args.validation_num_inference_steps < 15:
+                warning_log(
+                    "Flux Dev expects around 15 or more inference steps. Consider increasing --validation_num_inference_steps to 15."
+                )
+        if flux_version == "schnell" and args.validation_num_inference_steps > 4:
+            warning_log(
+                "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
 
+    if (args.optimizer_beta1 is not None and args.optimizer_beta2 is None) or (
+        args.optimizer_beta1 is None and args.optimizer_beta2 is not None
+    ):
+        error_log("Both --optimizer_beta1 and --optimizer_beta2 should be provided.")
+        sys.exit(1)
+
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3 or args.aura_flow:
+        if args.pixart_sigma or args.sd3:
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
                     f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
+
+    if args.gradient_accumulation_steps > 1:
+        if args.gradient_precision == "unmodified" or args.gradient_precision is None:
+            warning_log(
+                "Gradient accumulation steps are enabled, but gradient precision is set to 'unmodified'."
+                " This may lead to numeric instability. Consider disabling gradient accumulation steps. Continuing in 10 seconds.."
+            )
+            time.sleep(10)
+        elif args.gradient_precision == "fp32":
+            info_log(
+                "Gradient accumulation steps are enabled, and gradient precision is set to 'fp32'."
+            )
+            args.gradient_precision = "fp32"
+
+    if args.use_ema:
+        if args.sd3:
+            raise ValueError(
+                "Using EMA is not currently supported for Stable Diffusion 3 training."
+            )
+        if "lora" in args.model_type:
+            raise ValueError("Using EMA is not currently supported for LoRA training.")
+
     return args

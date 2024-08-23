@@ -13,3 +13,7 @@ def rank_info():
         return f"(Rank: {_get_rank()}) "
     except:
         return ""
+
+
+def should_log():
+    return _get_rank() == 0

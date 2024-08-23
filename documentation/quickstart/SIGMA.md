@@ -4,11 +4,29 @@ In this example, we'll be training a PixArt Sigma model using the SimpleTuner to
 
 ### Prerequisites
 
-Make sure that you have python installed. You can check this by running:
+Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
+
+You can check this by running:
 
 ```bash
 python --version
 ```
+
+If you don't have python 3.11 installed on Ubuntu, you can try the following:
+
+```bash
+apt -y install python3.11 python3.11-venv
+```
+
+#### Container image dependencies
+
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.4 image:
+
+```bash
+apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+```
+
+If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
@@ -39,11 +57,45 @@ poetry install --no-root
 poetry install --no-root -C install/rocm
 ```
 
+#### AMD ROCm follow-up steps
+
+The following must be executed for an AMD MI300X to be useable:
+
+```bash
+apt install amd-smi-lib
+pushd /opt/rocm/share/amd_smi
+python3 -m pip install --upgrade pip
+python3 -m pip install .
+popd
+```
+
+#### Removing DeepSpeed & Bits n Bytes
+
+These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
+
+To remove them after `poetry` has installed them, run the following command in the same terminal:
+
+```bash
+pip uninstall -y deepspeed bitsandbytes
+```
+
 ### Setting up the environment
 
 To run SimpleTuner, you will need to set up a configuration file, the dataset and model directories, and a dataloader configuration file.
 
 #### Configuration file
+
+An experimental script, `configure.py`, may allow you to entirely skip this section through an interactive step-by-step configuration. It contains some safety features that help avoid common pitfalls.
+
+**Note:** This doesn't configure your dataloader. You will still have to do that manually, later.
+
+To run it:
+
+```bash
+python configure.py
+```
+
+If you prefer to manually configure:
 
 Copy `config/config.env.example` to `config/config.env`:
 
@@ -57,7 +109,7 @@ There, you will need to modify the following variables:
 - `USE_BITFIT` - Set this to `false`.
 - `PIXART_SIGMA` - Set this to `true`.
 - `MODEL_NAME` - Set this to `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS`.
-- `BASE_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As PixArt Sigma comes in a 1024px or 2048xp model format, you should carefully set this to `1024x1024` for this example.
   - Additionally, PixArt was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - PixArt benefits from a very-low value. Set this between `3.6` to `4.4`.
@@ -73,7 +125,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-In your `BASE_DIR` directory, create a multidatabackend.json:
+In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 
 ```json
 [
@@ -107,7 +159,7 @@ In your `BASE_DIR` directory, create a multidatabackend.json:
 ]
 ```
 
-Then, navigate to the `BASE_DIR` directory and create a `datasets` directory:
+Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
 
 ```bash
 apt -y install git-lfs

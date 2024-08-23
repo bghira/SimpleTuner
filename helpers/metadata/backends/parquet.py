@@ -1,4 +1,5 @@
 from helpers.training.state_tracker import StateTracker
+from helpers.training import image_file_extensions
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
@@ -25,7 +26,7 @@ class ParquetMetadataBackend(MetadataBackend):
     def __init__(
         self,
         id: str,
-        instance_data_root: str,
+        instance_data_dir: str,
         cache_file: str,
         metadata_file: str,
         data_backend: BaseDataBackend,
@@ -39,6 +40,7 @@ class ParquetMetadataBackend(MetadataBackend):
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
+        repeats: int = 0,
     ):
         self.parquet_config = parquet_config
         self.parquet_path = parquet_config.get("path", None)
@@ -46,7 +48,7 @@ class ParquetMetadataBackend(MetadataBackend):
         self.is_json_file = self.parquet_path.endswith(".json")
         super().__init__(
             id=id,
-            instance_data_root=instance_data_root,
+            instance_data_dir=instance_data_dir,
             cache_file=cache_file,
             metadata_file=metadata_file,
             data_backend=data_backend,
@@ -59,6 +61,7 @@ class ParquetMetadataBackend(MetadataBackend):
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
             cache_file_suffix=cache_file_suffix,
+            repeats=repeats,
         )
         self.load_parquet_database()
         self.caption_cache = self._extract_captions_to_fast_list()
@@ -107,8 +110,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 if not identifier_includes_extension:
                     filename = os.path.splitext(filename)[0]
                 if not identifier_includes_path:
-                    # strip out self.instance_data_root
-                    filename = filename.replace(self.instance_data_root, "")
+                    # strip out self.instance_data_dir
+                    filename = filename.replace(self.instance_data_dir, "")
                     # any leading /
                     if filename.startswith("/"):
                         filename = filename[1:]
@@ -170,17 +173,6 @@ class ParquetMetadataBackend(MetadataBackend):
         logger.debug(f"Caption cache entry for idx {str(index)}: {result}")
         return result
 
-    def __len__(self):
-        """
-        Returns:
-            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
-        """
-        return sum(
-            len(bucket) // self.batch_size
-            for bucket in self.aspect_ratio_bucket_indices.values()
-            if len(bucket) >= self.batch_size
-        ) * (self.config.get("repeats", 0) + 1)
-
     def _discover_new_files(
         self, for_metadata: bool = False, ignore_existing_cache: bool = False
     ):
@@ -196,8 +188,8 @@ class ParquetMetadataBackend(MetadataBackend):
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(
-                instance_data_root=self.instance_data_root,
-                str_pattern="*.[jJpP][pPnN][gG]",
+                instance_data_dir=self.instance_data_dir,
+                file_extensions=image_file_extensions,
             )
             all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
@@ -447,9 +439,9 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = os.path.splitext(
                     os.path.split(image_path_str)[-1]
                 )[0]
-            if self.instance_data_root in image_path_filtered:
+            if self.instance_data_dir in image_path_filtered:
                 image_path_filtered = image_path_filtered.replace(
-                    self.instance_data_root, ""
+                    self.instance_data_dir, ""
                 )
                 # remove leading /
                 if image_path_filtered.startswith("/"):
@@ -458,7 +450,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 image_path_filtered = int(image_path_filtered)
 
             logger.debug(
-                f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_root}: {image_path_filtered}."
+                f"Reading image {image_path_str} metadata from parquet backend column {self.parquet_config.get('filename_column')} without instance root dir prefix {self.instance_data_dir}: {image_path_filtered}."
             )
 
             try:
@@ -475,8 +467,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 statistics["skipped"]["metadata_missing"] += 1
                 return aspect_ratio_bucket_indices
 
-            width_column = self.parquet_config.get("width_column")
-            height_column = self.parquet_config.get("height_column")
+            width_column = self.parquet_config.get("width_column", "width")
+            height_column = self.parquet_config.get("height_column", "height")
             if width_column is None or height_column is None:
                 raise ValueError(
                     "ParquetMetadataBackend requires width and height columns to be defined."
@@ -587,3 +579,18 @@ class ParquetMetadataBackend(MetadataBackend):
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices
+
+    def __len__(self):
+        """
+        Returns:
+            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
+        """
+
+        def repeat_len(bucket):
+            return len(bucket) * (self.repeats + 1)
+
+        return sum(
+            repeat_len(bucket) // self.batch_size
+            for bucket in self.aspect_ratio_bucket_indices.values()
+            if repeat_len(bucket) >= self.batch_size
+        )

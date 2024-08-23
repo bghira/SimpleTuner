@@ -17,6 +17,8 @@ from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.multi_process import rank_info
 from queue import Queue
 from concurrent.futures import as_completed
+from hashlib import sha256
+from helpers.training import image_file_extensions
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -54,8 +56,9 @@ class VAECache:
         vae,
         accelerator,
         metadata_backend: MetadataBackend,
-        instance_data_root: str,
-        data_backend: BaseDataBackend,
+        instance_data_dir: str,
+        image_data_backend: BaseDataBackend,
+        cache_data_backend: BaseDataBackend = None,
         cache_dir="vae_cache",
         resolution: float = 1024,
         maximum_image_size: float = None,
@@ -68,37 +71,44 @@ class VAECache:
         resolution_type: str = "pixel",
         minimum_image_size: int = None,
         max_workers: int = 32,
-        vae_cache_preprocess: bool = False,
+        vae_cache_ondemand: bool = False,
+        hash_filenames: bool = False,
     ):
         self.id = id
-        if data_backend.id != id:
+        if image_data_backend.id != id:
             raise ValueError(
-                f"VAECache received incorrect data_backend: {data_backend}"
+                f"VAECache received incorrect image_data_backend: {image_data_backend}"
             )
-        self.data_backend = data_backend
+        self.image_data_backend = image_data_backend
+        self.cache_data_backend = (
+            cache_data_backend if cache_data_backend is not None else image_data_backend
+        )
+        self.hash_filenames = hash_filenames
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
+        if self.cache_data_backend.type == "local":
+            self.cache_dir = os.path.abspath(self.cache_dir)
         if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
             # Remove trailing slash
             self.cache_dir = self.cache_dir[:-1]
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
-        self.data_backend.create_directory(self.cache_dir)
+        self.cache_data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
         self.process_queue_size = process_queue_size
         self.vae_batch_size = vae_batch_size
-        self.instance_data_root = instance_data_root
+        self.instance_data_dir = instance_data_dir
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
         if not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
-        self.vae_cache_preprocess = vae_cache_preprocess
+        self.vae_cache_ondemand = vae_cache_ondemand
 
         self.max_workers = max_workers
         if (maximum_image_size and not target_downsample_size) or (
@@ -120,73 +130,81 @@ class VAECache:
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
         """Get the cache filename for a given image filepath and its base name."""
-        if self.instance_data_root not in filepath:
-            if self.cache_dir in filepath:
-                return filepath, os.path.basename(filepath)
+        if filepath.endswith(".pt"):
+            return filepath, os.path.basename(filepath)
         # Extract the base name from the filepath and replace the image extension with .pt
-        base_filename = os.path.splitext(os.path.basename(filepath))[0] + ".pt"
-        # Find the subfolders the sample was in, and replace the instance_data_root with the cache_dir
-        subfolders = os.path.dirname(filepath).replace(self.instance_data_root, "")
-        if len(subfolders) > 0 and subfolders[0] == "/":
+        base_filename = os.path.splitext(os.path.basename(filepath))[0]
+        if self.hash_filenames:
+            base_filename = str(sha256(str(base_filename).encode()).hexdigest())
+        base_filename = str(base_filename) + ".pt"
+        # Find the subfolders the sample was in, and replace the instance_data_dir with the cache_dir
+        subfolders = ""
+        if self.instance_data_dir is not None:
+            subfolders = os.path.dirname(filepath).replace(self.instance_data_dir, "")
+        if len(subfolders) > 0 and subfolders[0] == "/" and self.cache_dir[0] != "/":
             subfolders = subfolders[1:]
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
+            # logger.debug(
+            #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
+            # )
         else:
             full_filename = os.path.join(self.cache_dir, base_filename)
+            # logger.debug(
+            #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {base_filename})"
+            # )
         return full_filename, base_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
-        generated_names = self.generate_vae_cache_filename(filepath)
-        # self.debug_log(f"VAE cache generated names: {generated_names}")
+        test_filepath, _ = self.generate_vae_cache_filename(filepath)
+        result = self.vae_path_to_image_path.get(test_filepath, None)
+        if result is None:
+            raise ValueError(
+                f"Could not find image path for cache file {filepath} (test_filepath: {test_filepath}). This occurs when you toggle the value for hashed_filenames without clearing your VAE cache. If it still occurs after clearing the cache, please open an issue: https://github.com/bghira/simpletuner/issues"
+            )
 
-        # Assuming the first item in generated_names is the one we want:
-        test_filepath = generated_names[0]
+        return result
 
-        # Remove the .pt extension and replace it with .png for testing:
-        test_filepath_no_ext, _ = os.path.splitext(test_filepath)
-        test_filepath_png = f"{test_filepath_no_ext}.png"
-
-        # More accurate handling of path prefix replacement:
-        if test_filepath_png.startswith(str(self.cache_dir)):
-            # Extract the relative path after the cache_dir
-            relative_path = os.path.relpath(test_filepath_png, self.cache_dir)
-            # Construct the new path by joining the relative path with the instance_data_root
-            test_filepath_png = os.path.join(self.instance_data_root, relative_path)
-            # self.debug_log(f"Converted to image data path: {test_filepath_png}")
-
-        # Prepare the JPG version as well
-        test_filepath_jpg = os.path.splitext(test_filepath_png)[0] + ".jpg"
-
-        return test_filepath_png, test_filepath_jpg
+    def build_vae_cache_filename_map(self, all_image_files: list):
+        """Build a map of image filepaths to their corresponding cache filenames."""
+        self.image_path_to_vae_path = {}
+        self.vae_path_to_image_path = {}
+        for image_file in all_image_files:
+            cache_filename, _ = self.generate_vae_cache_filename(image_file)
+            if self.cache_data_backend.type == "local":
+                cache_filename = os.path.abspath(cache_filename)
+            self.image_path_to_vae_path[image_file] = cache_filename
+            self.vae_path_to_image_path[cache_filename] = image_file
 
     def already_cached(self, filepath: str) -> bool:
-        test_path = self.generate_vae_cache_filename(filepath)[0]
-        if self.data_backend.exists(test_path):
+        test_path = self.image_path_to_vae_path.get(filepath, None)
+        if self.cache_data_backend.exists(test_path):
             return True
         return False
 
     def _read_from_storage(
         self, filename: str, hide_errors: bool = False
     ) -> torch.Tensor:
-        """Read a cache object from the storage backend.
+        """Read an image or cache object from the storage backend.
 
         Args:
-            filename (str): The path to the cache item, eg. `vae_cache/foo.pt`
+            filename (str): The path to the cache item, eg. `vae_cache/foo.pt` or `instance_data_dir/foo.png`
 
         Returns:
-            torch.Tensor: The cached Tensor object.
+            Image or cache object
         """
         if os.path.splitext(filename)[1] != ".pt":
             try:
-                return self.data_backend.read_image(filename)
+                return self.image_data_backend.read_image(filename)
             except Exception as e:
                 if self.delete_problematic_images:
-                    self.data_backend.delete(filename)
+                    self.metadata_backend.remove_image(filename)
+                    self.image_data_backend.delete(filename)
                     self.debug_log(
                         f"Deleted {filename} because it was problematic: {e}"
                     )
                 raise e
         try:
-            return self.data_backend.torch_load(filename).to("cpu")
+            return self.cache_data_backend.torch_load(filename).to("cpu")
         except Exception as e:
             if hide_errors:
                 self.debug_log(
@@ -212,9 +230,9 @@ class VAECache:
         all_image_files = StateTracker.get_image_files(
             data_backend_id=self.id
         ) or StateTracker.set_image_files(
-            self.data_backend.list_files(
-                instance_data_root=self.instance_data_root,
-                str_pattern="*.[jJpP][pPnN][gG]",
+            self.image_data_backend.list_files(
+                instance_data_dir=self.instance_data_dir,
+                file_extensions=image_file_extensions,
             ),
             data_backend_id=self.id,
         )
@@ -222,9 +240,9 @@ class VAECache:
         (
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
             or StateTracker.set_vae_cache_files(
-                self.data_backend.list_files(
-                    instance_data_root=self.cache_dir,
-                    str_pattern="*.pt",
+                self.cache_data_backend.list_files(
+                    instance_data_dir=self.cache_dir,
+                    file_extensions=["pt"],
                 ),
                 data_backend_id=self.id,
             )
@@ -250,6 +268,8 @@ class VAECache:
             revision=args.revision,
             force_upcast=False,
         ).to(self.accelerator.device)
+        if self.vae.device != self.accelerator.device:
+            self.vae = self.vae.to(self.accelerator.device)
         StateTracker.set_vae(self.vae)
 
     def rebuild_cache(self):
@@ -260,9 +280,9 @@ class VAECache:
         if self.accelerator.is_local_main_process:
             self.debug_log("Updating StateTracker with new VAE cache entry list.")
             StateTracker.set_vae_cache_files(
-                self.data_backend.list_files(
-                    instance_data_root=self.cache_dir,
-                    str_pattern="*.pt",
+                self.cache_data_backend.list_files(
+                    instance_data_dir=self.cache_dir,
+                    file_extensions=["pt"],
                 ),
                 data_backend_id=self.id,
             )
@@ -270,18 +290,18 @@ class VAECache:
         self.debug_log("-> Clearing cache objects")
         self.clear_cache()
         self.debug_log("-> Split tasks between GPU(s)")
-        self.split_cache_between_processes()
+        self.discover_unprocessed_files()
         self.debug_log("-> Load VAE")
         self.init_vae()
-        if StateTracker.get_args().vae_cache_preprocess:
+        if not StateTracker.get_args().vae_cache_ondemand:
             self.debug_log("-> Process VAE cache")
             self.process_buckets()
             if self.accelerator.is_local_main_process:
                 self.debug_log("Updating StateTracker with new VAE cache entry list.")
                 StateTracker.set_vae_cache_files(
-                    self.data_backend.list_files(
-                        instance_data_root=self.cache_dir,
-                        str_pattern="*.pt",
+                    self.cache_data_backend.list_files(
+                        instance_data_dir=self.cache_dir,
+                        file_extensions=["pt"],
                     ),
                     data_backend_id=self.id,
                 )
@@ -302,7 +322,9 @@ class VAECache:
             for filename in all_cache_files:
                 full_path = os.path.join(self.cache_dir, filename)
                 self.debug_log(f"Would delete: {full_path}")
-                futures.append(executor.submit(self.data_backend.delete, full_path))
+                futures.append(
+                    executor.submit(self.cache_data_backend.delete, full_path)
+                )
             for future in tqdm(
                 as_completed(futures),
                 total=len(futures),
@@ -336,23 +358,28 @@ class VAECache:
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
-        existing_cache_files = StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        existing_cache_files = set(
+            StateTracker.get_vae_cache_files(data_backend_id=self.id)
+        )
         # Convert cache filenames to their corresponding image filenames
-        existing_image_filenames = {
-            os.path.splitext(
-                self._image_filename_from_vaecache_filename(cache_file)[0]
-            )[0]
-            for cache_file in existing_cache_files
-        }
+        already_cached_images = []
+        for cache_file in existing_cache_files:
+            try:
+                n = self._image_filename_from_vaecache_filename(cache_file)
+                already_cached_images.append(n)
+                # print(f"Mapping: {n} -> {cache_file}")
+            except Exception as e:
+                logger.error(
+                    f"Could not find image path for cache file {cache_file}: {e}"
+                )
+                continue
 
         # Identify unprocessed files
-        unprocessed_files = [
-            file
-            for file in all_image_files
-            if os.path.splitext(file)[0] not in existing_image_filenames
+        self.local_unprocessed_files = [
+            file for file in all_image_files if file not in already_cached_images
         ]
 
-        return unprocessed_files
+        return self.local_unprocessed_files
 
     def _reduce_bucket(
         self,
@@ -396,23 +423,6 @@ class VAECache:
         # )
         return relevant_files
 
-    def split_cache_between_processes(self):
-        self.local_unprocessed_files = self.discover_unprocessed_files(self.cache_dir)
-        """
-        We used to split the VAE cache between GPU processes, but instead, we split the buckets.
-
-        This code remains as an artifact. It is no longer needed, as it causes a misalignment
-        between the assigned slice for this GPU and its slice of already-processed images.
-        """
-        # # Use the accelerator to split the data
-        # with self.accelerator.split_between_processes(
-        #     all_unprocessed_files
-        # ) as split_files:
-        #     self.local_unprocessed_files = split_files
-        # self.debug_log(
-        #     f"Before splitting, we had {len(all_unprocessed_files)} unprocessed files. After splitting, we have {len(self.local_unprocessed_files)} unprocessed files."
-        # )
-
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
         Encode a batch of input images. Images must be the same dimension.
@@ -433,7 +443,7 @@ class VAECache:
         uncached_image_indices = [
             i
             for i, filename in enumerate(full_filenames)
-            if not self.data_backend.exists(filename)
+            if not self.cache_data_backend.exists(filename)
         ]
         uncached_image_paths = [
             filepaths[i]
@@ -449,7 +459,7 @@ class VAECache:
         ]
         missing_image_pixel_values = []
         written_latents = []
-        if len(missing_images) > 0 and not self.vae_cache_preprocess:
+        if len(missing_images) > 0 and self.vae_cache_ondemand:
             missing_image_paths = [filepaths[i] for i in missing_images]
             missing_image_data_generator = self._read_from_storage_concurrently(
                 missing_image_paths, hide_errors=True
@@ -482,7 +492,7 @@ class VAECache:
         if (
             len(uncached_image_indices) > 0
             and load_from_cache
-            and self.vae_cache_preprocess
+            and not self.vae_cache_ondemand
         ):
             # We wanted only uncached images. Something went wrong.
             raise Exception(
@@ -493,9 +503,7 @@ class VAECache:
         if load_from_cache:
             # If all images are cached, simply load them
             latents = [
-                self._read_from_storage(
-                    filename, hide_errors=not self.vae_cache_preprocess
-                )
+                self._read_from_storage(filename, hide_errors=self.vae_cache_ondemand)
                 for filename in full_filenames
                 if filename not in uncached_images
             ]
@@ -511,7 +519,16 @@ class VAECache:
                 latents_uncached = self.vae.encode(
                     processed_images
                 ).latent_dist.sample()
-                latents_uncached = latents_uncached * self.vae.config.scaling_factor
+                if (
+                    hasattr(self.vae, "config")
+                    and hasattr(self.vae.config, "shift_factor")
+                    and self.vae.config.shift_factor is not None
+                ):
+                    latents_uncached = (
+                        latents_uncached - self.vae.config.shift_factor
+                    ) * self.vae.config.scaling_factor
+                else:
+                    latents_uncached = latents_uncached * self.vae.config.scaling_factor
                 logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
@@ -547,7 +564,7 @@ class VAECache:
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
             latents.append(latent_vector.clone())
 
-        self.data_backend.write_batch(filepaths, latents)
+        self.cache_data_backend.write_batch(filepaths, latents)
 
         return latents
 
@@ -603,7 +620,7 @@ class VAECache:
 
             # Process Pool Execution
             processed_images = []
-            with ThreadPoolExecutor() as executor:
+            with ThreadPoolExecutor(self.max_workers) as executor:
                 futures = [
                     executor.submit(
                         prepare_sample,
@@ -804,7 +821,7 @@ class VAECache:
                 # If --delete_problematic_images is supplied, we remove the image now:
                 if self.delete_problematic_images:
                     self.metadata_backend.remove_image(path)
-                    self.data_backend.delete(path)
+                    self.image_data_backend.delete(path)
                 return path, None
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -834,7 +851,7 @@ class VAECache:
             read_queue_item = self.read_queue.get()
             path, aspect_bucket = read_queue_item
             filepaths.append(path)
-        available_filepaths, batch_output = self.data_backend.read_image_batch(
+        available_filepaths, batch_output = self.image_data_backend.read_image_batch(
             filepaths, delete_problematic_images=self.delete_problematic_images
         )
         missing_image_count = len(filepaths) - len(available_filepaths)
@@ -894,7 +911,7 @@ class VAECache:
             shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
 
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             for bucket in shuffled_keys:
                 relevant_files = self._reduce_bucket(
                     bucket, aspect_bucket_cache, processed_images, do_shuffle
@@ -916,14 +933,10 @@ class VAECache:
                 ):
                     statistics["total"] += 1
                     filepath = self._process_raw_filepath(raw_filepath)
-                    (
-                        test_filepath_png,
-                        test_filepath_jpg,
-                    ) = self._image_filename_from_vaecache_filename(filepath)
-                    if (
-                        test_filepath_png not in self.local_unprocessed_files
-                        and test_filepath_jpg not in self.local_unprocessed_files
-                    ):
+                    test_filepath = self._image_filename_from_vaecache_filename(
+                        filepath
+                    )
+                    if test_filepath not in self.local_unprocessed_files:
                         statistics["not_local"] += 1
                         continue
                     try:

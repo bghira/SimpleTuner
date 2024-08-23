@@ -21,6 +21,7 @@ class StateTracker:
     global_step = 0
     global_resume_step = None
     epoch_step = 0
+    epoch_micro_step = 0
     epoch = 1
 
     ## Caches
@@ -47,6 +48,9 @@ class StateTracker:
     args = None
     # Aspect to resolution map, we'll store once generated for consistency.
     aspect_resolution_map = {}
+
+    # hugging face hub user details
+    hf_user = None
 
     webhook_handler = None
 
@@ -100,7 +104,9 @@ class StateTracker:
             "sdxl",
             "sd3",
             "pixart_sigma",
-            "aura_flow",
+            "kolors",
+            "smoldit",
+            "flux",
         ]:
             raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
@@ -108,6 +114,20 @@ class StateTracker:
     @classmethod
     def get_model_type(cls):
         return cls.model_type
+
+    @classmethod
+    def get_hf_user(cls):
+        return cls.hf_user
+
+    @classmethod
+    def set_hf_user(cls, hf_user):
+        cls.hf_user = hf_user
+
+    @classmethod
+    def get_hf_username(cls):
+        if cls.hf_user is not None and "name" in cls.hf_user:
+            return cls.hf_user["name"]
+        return None
 
     @classmethod
     def is_sdxl_refiner(cls, set_value=None):
@@ -356,6 +376,12 @@ class StateTracker:
     @classmethod
     def get_data_backend(cls, id: str):
         return cls.data_backends[id]
+
+    @classmethod
+    def get_dataset_size(cls, data_backend_id: str):
+        if "sampler" in cls.data_backends[data_backend_id]:
+            return len(cls.data_backends[data_backend_id]["sampler"])
+        return 0
 
     @classmethod
     def set_conditioning_dataset(

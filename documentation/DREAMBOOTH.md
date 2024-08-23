@@ -55,7 +55,38 @@ NUM_EPOCHS=0
 VALIDATION_STEPS=100
 VALIDATION_PROMPT="a photograph of subjectname"
 
-DATALOADER_CONFIG="multidatabackend-dreambooth.json"
+DATALOADER_CONFIG="config/multidatabackend-dreambooth.json"
+
+TRAINER_EXTRA_ARGS+=" --data_backend_sampling=uniform"    # dreambooth is best with uniform sampling.
+```
+
+### Quantised model training
+
+Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements.
+
+Inside your SimpleTuner venv:
+
+```bash
+pip install optimum-quanto
+```
+
+```bash
+# choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
+# int8-quanto was tested with a single subject dreambooth LoRA.
+# fp8-quanto does not work on Apple systems. you must use int levels.
+# int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
+# may the gods have mercy on your soul, should you push things Too Far.
+export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
+
+# Maybe you want the text encoders to remain full precision so your text embeds are cake.
+# We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
+# Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
+export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
+
+# When you're quantising the model, we're not in pure bf16 anymore.
+# Since adamw_bf16 will never work with this setup, select another optimiser.
+# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
+export OPTIMIZER="optimi-lion" # or maybe optimi-stableadamw
 ```
 
 Inside our dataloader config `multidatabackend-dreambooth.json`, it will look something like this:
@@ -71,7 +102,7 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "cache_dir_vae": "/training/vae_cache/subjectname",
         "repeats": 1,
         "crop": false,
-        "resolution": 0.5,
+        "resolution": 0.25,
         "resolution_type": "area",
         "minimum_image_size": 0.25
     },
@@ -84,9 +115,9 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "cache_dir_vae": "/training/vae_cache/regularisation",
         "repeats": 10,
         "ignore_epochs": true,
-        "resolution": 0.5,
+        "resolution": 0.25,
         "resolution_type": "area",
-        "minimum_image_size": 0.5
+        "minimum_image_size": 0.25
     },
     {
         "id": "textembeds",
@@ -101,7 +132,7 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
 Some key values have been tweaked to make training a single subject easier:
 
 - We now have two datasets configured. Regularisation data is optional, and training may work better without it. You can remove that dataset from the list if desired.
-- Resolution is set to `0.5` which will be approximately 512x512 training, which goes faster for SDXL models, and is the native resolution for 1.5 models.
+- Resolution is set to `0.25` which will be approximately 512x512 training, which goes faster for SDXL models, and is the native resolution for 1.5 models.
 - Minimum image size is set to `0.25` which will allow us to upsample some smaller images, which might be needed for datasets with a few important but low resolution images.
 - `caption_strategy` is now `instanceprompt`, which means we will use `instance_prompt` value for every image in the dataset as its caption.
   - **Note:** Using the instance prompt is the traditional method of Dreambooth training, but short captions may work better. If you find the model fails to generalise, it may be worth attempting to use captions.
@@ -109,6 +140,7 @@ Some key values have been tweaked to make training a single subject easier:
 For a regularisation dataset:
 
 - Set `ignore_epochs=true`, which will ensure this dataset does not count toward a "finished epoch"
+  - Also ensure you include `--data_backend_sampling=uniform` in your `TRAINER_EXTRA_ARGS`
 - Set `repeats` high enough that this dataset will never stop being sampled
 - `minimum_image_size` has been increased to ensure we don't introduce too many low-quality artifacts
 - Similarly, using more descriptive captions may help avoid forgetting. Switching from `instanceprompt` to `textfile` or other strategies will require creating `.txt` files for each image.

@@ -3,13 +3,19 @@ from PIL.ImageOps import exif_transpose
 from helpers.multiaspect.image import MultiaspectImage, resize_helpers
 from helpers.image_manipulation.cropping import crop_handlers
 from helpers.training.state_tracker import StateTracker
+from helpers.training.multi_process import should_log
 import logging
 import os
+from tqdm import tqdm
+from math import sqrt
 import random
 import time
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class TrainingSample:
@@ -152,10 +158,20 @@ class TrainingSample:
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution / 1e3
         elif self.resolution_type == "area":
-            self.target_area = self.resolution * 1e6  # Convert megapixels to pixels
+            # Convert pixel area to megapixels, remapping commonly used round values
+            # to their pixel_area equivalents for compatibility purposes.
+            self.target_area = {
+                0.25: 512**2,
+                0.5: 768**2,
+                1.0: 1024**2,
+                2.0: 1536**2,
+                4.0: 2048**2,
+            }.get(self.resolution, self.resolution * 1e6)
             # Store the pixel value, eg. 1024
             self.pixel_resolution = int(
-                MultiaspectImage._round_to_nearest_multiple(self.resolution * 1e3)
+                MultiaspectImage._round_to_nearest_multiple(
+                    sqrt(self.resolution * (1024**2))
+                )
             )
             # Store the megapixel value, eg. 1.0
             self.megapixel_resolution = self.resolution
@@ -196,7 +212,9 @@ class TrainingSample:
 
     def _select_random_aspect(self):
         """
-        This method returns a random aspect bucket from a list of configured, allowed values.
+        This method returns an aspect bucket based on the crop_aspect configuration.
+        If crop_aspect is "closest", it returns the closest aspect ratio.
+        If crop_aspect is "random", it returns a random aspect ratio based on weights.
 
         Returns:
             float: The selected aspect ratio.
@@ -205,80 +223,80 @@ class TrainingSample:
             raise ValueError(
                 "Aspect buckets are not defined in the data backend config."
             )
+
         if self.valid_metadata:
             self.aspect_ratio = self.image_metadata["aspect_ratio"]
             return self.aspect_ratio
-        if (
-            len(self.crop_aspect_buckets) > 0
-            and type(self.crop_aspect_buckets[0]) is dict
-        ):
-            has_portrait_buckets = any(
-                bucket["aspect"] < 1.0 for bucket in self.crop_aspect_buckets
-            )
-            has_landscape_buckets = any(
-                bucket["aspect"] > 1.0 for bucket in self.crop_aspect_buckets
-            )
-            # our aspect ratio is w / h
-            # so portrait is < 1.0 and landscape is > 1.0
-            if not has_portrait_buckets or not has_landscape_buckets:
-                return 1.0
-            if (
-                not has_portrait_buckets
-                and self.aspect_ratio < 1.0
-                or not has_landscape_buckets
-                and self.aspect_ratio > 1.0
-            ):
-                logger.warning(
-                    f"No {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect buckets found, defaulting to 1.0 square crop. Define a {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect bucket to avoid this warning"
-                )
-                return 1.0
-            total_weight = sum(bucket["weight"] for bucket in self.crop_aspect_buckets)
-            if total_weight != 1.0:
-                raise ValueError("The weights of aspect buckets must add up to 1.")
 
-            aspects = [bucket["aspect"] for bucket in self.crop_aspect_buckets]
-            weights = [bucket["weight"] for bucket in self.crop_aspect_buckets]
+        # Handle 'preserve' crop_aspect mode by picking the closest aspect ratio
+        if self.crop_aspect == "closest":
+            closest_aspect = min(
+                self.crop_aspect_buckets,
+                key=lambda bucket: abs(
+                    (bucket["aspect"] if isinstance(bucket, dict) else bucket)
+                    - self.aspect_ratio
+                ),
+            )
+            closest_aspect_value = (
+                closest_aspect["aspect"]
+                if isinstance(closest_aspect, dict)
+                else closest_aspect
+            )
+            # logger.debug(f"Selected closest aspect: {closest_aspect_value} for aspect ratio: {self.aspect_ratio}")
+            return closest_aspect_value
 
-            selected_aspect = random.choices(aspects, weights)[0]
-        elif (
-            len(self.crop_aspect_buckets) > 0
-            and type(self.crop_aspect_buckets[0]) is float
-        ):
-            has_landscape_buckets = any(
-                bucket > 1.0 for bucket in self.crop_aspect_buckets
-            )
-            has_portrait_buckets = any(
-                bucket < 1.0 for bucket in self.crop_aspect_buckets
-            )
-            if not has_portrait_buckets or not has_landscape_buckets:
-                return 1.0
+        # Handle 'random' crop_aspect mode by picking a random aspect ratio based on weights
+        if self.crop_aspect == "random":
             if (
-                not has_portrait_buckets
-                and self.aspect_ratio < 1.0
-                or not has_landscape_buckets
-                and self.aspect_ratio > 1.0
+                len(self.crop_aspect_buckets) > 0
+                and type(self.crop_aspect_buckets[0]) is dict
             ):
-                logger.warning(
-                    f"No {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect buckets found, defaulting to 1.0 square crop. Define a {'portrait' if self.aspect_ratio < 1.0 else 'landscape'} aspect bucket to avoid this warning"
+                has_portrait_buckets = any(
+                    bucket["aspect"] < 1.0 for bucket in self.crop_aspect_buckets
                 )
-                return 1.0
-            # filter to portrait or landscape buckets, depending on our aspect ratio
-            available_aspects = self._trim_aspect_bucket_list()
-            if len(available_aspects) == 0:
-                selected_aspect = 1.0
-                logger.warning(
-                    "Image dimensions do not fit into the configured aspect buckets. Using square crop."
+                has_landscape_buckets = any(
+                    bucket["aspect"] > 1.0 for bucket in self.crop_aspect_buckets
                 )
+                logger.error(
+                    f"has_portrait_buckets: {has_portrait_buckets}, has_landscape_buckets: {has_landscape_buckets}"
+                )
+
+                # Instead of defaulting to 1.0, use whatever buckets are available
+                aspects = [bucket["aspect"] for bucket in self.crop_aspect_buckets]
+                weights = [bucket["weight"] for bucket in self.crop_aspect_buckets]
+
+                # Ensure that the weights add up to 1.0
+                total_weight = sum(weights)
+                if total_weight != 1.0:
+                    raise ValueError("The weights of aspect buckets must add up to 1.")
+
+                selected_aspect = random.choices(aspects, weights)[0]
+                return selected_aspect
+
+            elif (
+                len(self.crop_aspect_buckets) > 0
+                and type(self.crop_aspect_buckets[0]) is float
+            ):
+                available_aspects = self._trim_aspect_bucket_list()
+                if len(available_aspects) == 0:
+                    selected_aspect = 1.0
+                    if should_log():
+                        tqdm.write(
+                            "[WARNING] Image dimensions do not fit into the configured aspect buckets. Using square crop."
+                        )
+                else:
+                    selected_aspect = random.choice(available_aspects)
+                return selected_aspect
+
             else:
-                selected_aspect = random.choice(available_aspects)
-        else:
-            raise ValueError(
-                "Aspect buckets must be a list of floats or dictionaries."
-                " If using a dictionary, it is expected to be in the format {'aspect': 1.0, 'weight': 0.5}."
-                " To provide multiple aspect ratios, use a list of dictionaries: [{'aspect': 1.0, 'weight': 0.5}, {'aspect': 1.5, 'weight': 0.5}]."
-            )
+                raise ValueError(
+                    "Aspect buckets must be a list of floats or dictionaries."
+                    " If using a dictionary, it is expected to be in the format {'aspect': 1.0, 'weight': 0.5}."
+                    " To provide multiple aspect ratios, use a list of dictionaries: [{'aspect': 1.0, 'weight': 0.5}, {'aspect': 1.5, 'weight': 0.5}]."
+                )
 
-        return selected_aspect
+        # Default to 1.0 if none of the conditions above match
+        return 1.0
 
     def prepare(self, return_tensor: bool = False):
         """
@@ -333,12 +351,12 @@ class TrainingSample:
         if self.original_size:
             return self.original_size[0] * self.original_size[1]
 
-    def _should_downsample_before_crop(self) -> bool:
+    def _should_resize_before_crop(self) -> bool:
         """
-        If the options to do so are enabled, we will downsample before cropping.
+        If the options to do so are enabled, or, the image require it; we will resize before cropping.
 
         Returns:
-            bool: True if the image should be downsampled before cropping, False otherwise.
+            bool: True if the image should be resized before cropping, False otherwise.
         """
         if (
             not self.crop_enabled
@@ -350,9 +368,19 @@ class TrainingSample:
             return (
                 self.current_size[0] > self.pixel_resolution
                 or self.current_size[1] > self.pixel_resolution
+            ) or (
+                self.current_size[0] < self.pixel_resolution
+                or self.current_size[1] < self.pixel_resolution
             )
         elif self.data_backend_config.get("resolution_type") == "area":
-            return self.area() > self.target_area
+            should_resize = (
+                self.area() > self.target_area
+                or self.area() < self.target_area
+                or self.current_size[0] < self.target_size[0]
+                or self.current_size[1] < self.target_size[1]
+            )
+            logger.debug(f"Should resize? {should_resize}")
+            return should_resize
         else:
             raise ValueError(
                 f"Unknown resolution type: {self.data_backend_config.get('resolution_type')}"
@@ -396,8 +424,9 @@ class TrainingSample:
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
-        if self._should_downsample_before_crop():
+        if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
+            logger.debug(f"resizing to {target_downsample_size}")
             self.resize(target_downsample_size)
         return self
 
@@ -435,14 +464,22 @@ class TrainingSample:
         )
         if self.crop_enabled:
             if self.crop_aspect == "square":
-                self.aspect_ratio = 1.0
                 self.target_size = (self.pixel_resolution, self.pixel_resolution)
                 _, self.intermediary_size, _ = self.target_size_calculator(
                     self.aspect_ratio, self.resolution, self.original_size
                 )
+                self.aspect_ratio = 1.0
                 self.correct_intermediary_square_size()
-                return self.target_size, self.intermediary_size, self.aspect_ratio
-        if self.crop_enabled and self.crop_aspect == "random":
+                square_crop_metadata = (
+                    self.target_size,
+                    self.intermediary_size,
+                    self.aspect_ratio,
+                )
+                logger.debug(f"Square crop metadata: {square_crop_metadata}")
+                return square_crop_metadata
+        if self.crop_enabled and (
+            self.crop_aspect == "random" or self.crop_aspect == "closest"
+        ):
             # Grab a random aspect ratio from a list.
             self.aspect_ratio = self._select_random_aspect()
         self.target_size, calculated_intermediary_size, self.aspect_ratio = (
@@ -493,12 +530,17 @@ class TrainingSample:
         self._downsample_before_crop()
         self.save_debug_image(f"images/{time.time()}-0.5-downsampled.png")
         if self.image is not None:
+            logger.debug(f"setting image: {self.image.size}")
             self.cropper.set_image(self.image)
+        logger.debug(f"Cropper size updating to {self.current_size}")
         self.cropper.set_intermediary_size(self.current_size[0], self.current_size[1])
         self.image, self.crop_coordinates = self.cropper.crop(
             self.target_size[0], self.target_size[1]
         )
         self.current_size = self.target_size
+        logger.debug(
+            f"Cropped to {self.image.size if self.image is not None else self.current_size} via crop coordinates {self.crop_coordinates} {'resulting in current_size of' if self.image is not None else ''} {self.current_size if self.image is not None else ''}"
+        )
         return self
 
     def resize(self, size: tuple = None):
@@ -518,6 +560,9 @@ class TrainingSample:
                 )
             size = self.target_size
             if self.target_size != self.intermediary_size:
+                logger.debug(
+                    f"we have to crop because target size {self.target_size} != intermediary size {self.intermediary_size}"
+                )
                 # Now we can resize the image to the intermediary size.
                 if self.image is not None:
                     self.image = self.image.resize(
@@ -532,6 +577,7 @@ class TrainingSample:
                 self.image, self.crop_coordinates = self.cropper.crop(
                     self.target_size[0], self.target_size[1]
                 )
+                logger.debug(f"crop coordinates: {self.crop_coordinates}")
                 return self
 
         if self.image and hasattr(self.image, "resize"):
@@ -540,6 +586,9 @@ class TrainingSample:
                 self.image.size
             )
         self.current_size = size
+        logger.debug(
+            f"Resized to {self.current_size} (aspect ratio: {self.aspect_ratio})"
+        )
         return self
 
     def get_image(self):
@@ -571,21 +620,14 @@ class TrainingSample:
         """
         Given an image path, manipulate the prefix and suffix to return its counterpart cache path.
         The image extension will be stripped and replaced with the appropriate value (.pt).
-        If the instance_data_root is found in the path, it will be replaced with the cache_dir.
+        If the instance_data_dir is found in the path, it will be replaced with the cache_dir.
 
         Returns:
             str: The cache path for the image.
         """
-        metadata_backend = StateTracker.get_data_backend(self.data_backend_id)[
-            "metadata_backend"
-        ]
         vae_cache = StateTracker.get_data_backend(self.data_backend_id)["vaecache"]
-        # remove metadata_backend.instance_data_root in exchange for vae_cache.cache_dir
-        partial_replacement = self._image_path.replace(
-            metadata_backend.instance_data_root, vae_cache.cache_dir
-        )
-        # replace .ext with .pt
-        return os.path.splitext(partial_replacement)[0] + ".pt"
+
+        return vae_cache.image_path_to_vae_path.get(self._image_path, None)
 
     def image_path(self, basename_only=False):
         """

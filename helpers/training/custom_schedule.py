@@ -6,7 +6,6 @@ import os
 import logging
 from torch.optim.lr_scheduler import LRScheduler
 from helpers.training.state_tracker import StateTracker
-from transformers.optimization import AdafactorSchedule
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -66,13 +65,17 @@ def get_sd3_sigmas(
     accelerator, noise_scheduler_copy, timesteps, n_dim=4, dtype=torch.float32
 ):
     sigmas = noise_scheduler_copy.sigmas.to(device=accelerator.device, dtype=dtype)
+    # print(f'sigmas: {sigmas.shape}')
     schedule_timesteps = noise_scheduler_copy.timesteps.to(accelerator.device)
     timesteps = timesteps.to(accelerator.device)
     step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+    # print(f'step_indices: {step_indices}')
 
     sigma = sigmas[step_indices].flatten()
     while len(sigma.shape) < n_dim:
+        # print('unsqueeze')
         sigma = sigma.unsqueeze(-1)
+    # print('return')
     return sigma
 
 
@@ -513,14 +516,6 @@ def get_lr_scheduler(
             optimizer,
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
-        )
-    elif args.use_adafactor_optimizer and args.adafactor_relative_step:
-        # Use the AdafactorScheduler.
-        logger.info(
-            "Using the AdafactorScheduler for learning rate, since --adafactor_relative_step has been supplied."
-        )
-        lr_scheduler = AdafactorSchedule(
-            optimizer=optimizer, initial_lr=args.learning_rate
         )
     elif args.lr_scheduler == "cosine_with_restarts":
         logger.info("Using Cosine with Restarts learning rate scheduler.")

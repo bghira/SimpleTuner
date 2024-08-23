@@ -171,6 +171,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         return results
 
+    def _yield_n_from_exhausted_bucket(self, n: int, bucket: str):
+        """
+        when a bucket is exhausted, and we have to populate the remainder of the batch,
+        we shall use this quick and dirty method to retrieve n samples from the exhausted bucket.
+        the thing is we can have a batch size of 4 and 1 image. so we'll have to just return the same image 4 times.
+        """
+        available_images = self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+        if len(available_images) == 0:
+            self.debug_log(f"Bucket {bucket} is empty.")
+            return []
+        samples = []
+        while len(samples) < n:
+            to_grab = min(n, len(available_images), (n - len(samples)))
+            if to_grab == 0:
+                break
+            samples.extend(random.sample(available_images, k=to_grab))
+
+        to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
+        return to_yield
+
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
         image_path = random.choice(
@@ -184,8 +204,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         If the path prefix isn't in the path, we'll add it.
         """
-        if self.metadata_backend.instance_data_root not in filepath:
-            filepath = os.path.join(self.metadata_backend.instance_data_root, filepath)
+        if (
+            self.metadata_backend.instance_data_dir is not None
+            and self.metadata_backend.instance_data_dir not in filepath
+            and not filepath.startswith("http")
+        ):
+            filepath = os.path.join(self.metadata_backend.instance_data_dir, filepath)
         image_data = self.data_backend.read_image(filepath)
         return image_data
 
@@ -233,7 +257,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
             return [
-                os.path.join(self.metadata_backend.instance_data_root, image)
+                (
+                    os.path.join(self.metadata_backend.instance_data_dir, image)
+                    if not image.startswith("http")
+                    else image
+                )
                 for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
                 if not self.metadata_backend.is_seen(image)
             ]
@@ -242,7 +270,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             for b, images in self.metadata_backend.aspect_ratio_bucket_indices.items():
                 unseen_images.extend(
                     [
-                        os.path.join(self.metadata_backend.instance_data_root, image)
+                        (
+                            os.path.join(self.metadata_backend.instance_data_dir, image)
+                            if not image.startswith("http")
+                            else image
+                        )
                         for image in images
                         if not self.metadata_backend.is_seen(image)
                     ]
@@ -365,6 +397,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         to_yield = []
         for image_path in samples:
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
+            if image_metadata is None:
+                image_metadata = {}
             if (
                 StateTracker.get_args().model_type
                 not in [
@@ -379,8 +413,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )
-            if image_metadata is None:
-                image_metadata = {}
             image_metadata["data_backend_id"] = self.id
             image_metadata["image_path"] = image_path
 
@@ -412,7 +444,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # strip leading /
         original_sample_path = original_sample_path.lstrip("/")
         full_path = os.path.join(
-            self.metadata_backend.instance_data_root, original_sample_path
+            self.metadata_backend.instance_data_dir, original_sample_path
         )
         conditioning_sample = TrainingSample(
             image=self.data_backend.read_image(full_path),
@@ -431,7 +463,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         outputs = list(samples)
         for sample in samples:
             sample_path = sample["image_path"].split(
-                self.metadata_backend.instance_data_root
+                self.metadata_backend.instance_data_dir
             )[-1]
             conditioning_sample = sampler.get_conditioning_sample(sample_path)
             outputs.append(conditioning_sample)
@@ -455,19 +487,36 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 self.debug_log(
                     f"From {len(self.buckets)} buckets, selected {self.buckets[self.current_bucket]} ({self.buckets[self.current_bucket]}) -> {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
-                if len(available_images) >= self.batch_size:
+                if len(available_images) > 0:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     break
                 else:
                     # Current bucket doesn't have enough images, try the next bucket
                     self.move_to_exhausted()
                     self.change_bucket()
-            while len(available_images) >= self.batch_size:
-                all_buckets_exhausted = False  # Found a non-exhausted bucket
-                samples = random.sample(available_images, k=self.batch_size)
-                to_yield = self._validate_and_yield_images_from_samples(
-                    samples, self.buckets[self.current_bucket]
-                )
+            while len(available_images) > 0:
+                if len(available_images) < self.batch_size:
+                    need_image_count = self.batch_size - len(available_images)
+                    self.debug_log(
+                        f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, but we need {need_image_count} more."
+                    )
+                    to_yield = self._yield_n_from_exhausted_bucket(
+                        need_image_count, self.buckets[self.current_bucket]
+                    )
+                    # # add the available images
+                    # to_yield.extend(
+                    #     self._validate_and_yield_images_from_samples(
+                    #         available_images, self.buckets[self.current_bucket]
+                    #     )
+                    # )
+                else:
+                    all_buckets_exhausted = False  # Found a non-exhausted bucket
+                    samples = random.sample(
+                        available_images, k=min(len(available_images), self.batch_size)
+                    )
+                    to_yield = self._validate_and_yield_images_from_samples(
+                        samples, self.buckets[self.current_bucket]
+                    )
                 self.debug_log(
                     f"Building batch with {len(self.batch_accumulator)} samples."
                 )

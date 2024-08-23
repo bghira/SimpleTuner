@@ -8,10 +8,14 @@
 
 For a fun and lightweight model, see [this quickstart guide](/documentation/quickstart/SIGMA.md)
 
-## AuraFlow
+## Kwai Kolors
 
-A full tutorial to start training an AuraFlow model is available in [this quickstart guide](/documentation/quickstart/AURAFLOW.md)
+An SDXL-like U-net based architecture that uses a language model called ChatGLM for its text parsing can be found [here](/documentation/quickstart/KOLORS.md)
 
 ## Stable Diffusion 3
 
 For personalisation of the Stable Diffusion 3 model family, see [this quickstart guide](/documentation/quickstart/SD3.md)
+
+## Flux.1
+
+For training of the enormous monster known as Flux, see [its specific quickstart guide](/documentation/quickstart/FLUX.md)

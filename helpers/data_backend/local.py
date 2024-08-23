@@ -6,6 +6,7 @@ import os
 import logging
 import torch
 from typing import Any
+from regex import regex
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -15,8 +16,8 @@ class LocalDataBackend(BaseDataBackend):
     def __init__(self, accelerator, id: str, compress_cache: bool = False):
         self.accelerator = accelerator
         self.id = id
-        self.compress_cache = compress_cache
         self.type = "local"
+        self.compress_cache = compress_cache
 
     def read(self, filepath, as_byteIO: bool = False):
         """Read and return the content of the file."""
@@ -63,42 +64,54 @@ class LocalDataBackend(BaseDataBackend):
         """Open the file in the specified mode."""
         return open(filepath, mode)
 
-    def list_files(self, str_pattern: str, instance_data_root: str):
+    def list_files(self, file_extensions: list, instance_data_dir: str):
         """
-        List all files matching the pattern.
+        List all files matching the given file extensions.
         Creates Path objects of each file found.
         """
         logger.debug(
-            f"LocalDataBackend.list_files: str_pattern={str_pattern}, instance_data_root={instance_data_root}"
+            f"LocalDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
         )
-        if instance_data_root is None:
-            raise ValueError("instance_data_root must be specified.")
+        if instance_data_dir is None:
+            raise ValueError("instance_data_dir must be specified.")
 
-        def _rglob_follow_symlinks(path: Path, pattern: str):
-            # Skip Spotlight directories
+        def _rglob_follow_symlinks(path: Path, extensions: list):
+            # Skip Spotlight and Jupyter directories
             forbidden_directories = [
                 ".Spotlight-V100",
                 ".Trashes",
                 ".fseventsd",
                 ".TemporaryItems",
                 ".zfs",
+                ".ipynb_checkpoints",
             ]
-            # Add Jupyter directories
-            forbidden_directories += [".ipynb_checkpoints"]
             if path.name in forbidden_directories:
                 return
 
-            for p in path.glob(pattern):
-                yield p
+            # If no extensions are provided, list all files
+            if not extensions:
+                for p in path.rglob("*"):
+                    if p.is_file():
+                        yield p
+            else:
+                for ext in extensions:
+                    for p in path.rglob(ext):
+                        yield p
+
             for p in path.iterdir():
                 if p.is_dir() and not p.is_symlink():
-                    yield from _rglob_follow_symlinks(p, pattern)
+                    yield from _rglob_follow_symlinks(p, extensions)
                 elif p.is_symlink():
                     real_path = Path(os.readlink(p))
                     if real_path.is_dir():
-                        yield from _rglob_follow_symlinks(real_path, pattern)
+                        yield from _rglob_follow_symlinks(real_path, extensions)
 
-        paths = list(_rglob_follow_symlinks(Path(instance_data_root), str_pattern))
+        # If file_extensions is None, list all files
+        extensions = (
+            [f"*.{ext.lower()}" for ext in file_extensions] if file_extensions else None
+        )
+
+        paths = list(_rglob_follow_symlinks(Path(instance_data_dir), extensions))
 
         # Group files by their parent directory
         path_dict = {}

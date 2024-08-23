@@ -11,11 +11,16 @@ def freeze_transformer_blocks(
     target_blocks: str,
     first_unfrozen_dit_layer: int = 0,
     first_unfrozen_mmdit_layer: int = 0,
+    freeze_direction: str = "up",
     use_bitfit: bool = False,
 ):
     if target_blocks not in ["any", "dit", "mmdit"]:
         raise ValueError(
             f"Invalid target_blocks value {target_blocks}. Choose from 'any', 'dit', 'mmdit'."
+        )
+    if freeze_direction not in ["up", "down"]:
+        raise ValueError(
+            f"Invalid freeze_direction value {freeze_direction}. Choose from 'up', 'down'."
         )
     if first_unfrozen_dit_layer < 0 or first_unfrozen_mmdit_layer < 0:
         raise ValueError(f"Invalid first_unfrozen layer value. Must be greater than 0.")
@@ -47,22 +52,37 @@ def freeze_transformer_blocks(
                     and layer_group != "joint_transformer_blocks"
                 ):
                     continue
-            if (
-                first_unfrozen_dit_layer is not None
-                and (
-                    layer_group == "single_transformer_blocks" or target_blocks == "any"
-                )
-                and layer_number >= first_unfrozen_dit_layer
-            ) or (
-                first_unfrozen_mmdit_layer is not None
-                and (
-                    layer_group == "joint_transformer_blocks" or target_blocks == "any"
-                )
-                and layer_number >= first_unfrozen_mmdit_layer
-            ):
-                if not use_bitfit or "bias" in name:
-                    param.requires_grad = True
-                    logger.debug(f"Unfreezing {name}.")
+            should_train = False
+            if first_unfrozen_dit_layer is not None:
+                if layer_group == "single_transformer_blocks" or target_blocks == "any":
+                    if first_unfrozen_dit_layer == 0:
+                        should_train = True
+                    if (
+                        freeze_direction == "up"
+                        and layer_number < first_unfrozen_dit_layer
+                    ) or (
+                        freeze_direction == "down"
+                        and layer_number > first_unfrozen_dit_layer
+                    ):
+                        should_train = True
+
+            if first_unfrozen_mmdit_layer is not None:
+                if layer_group == "joint_transformer_blocks" or target_blocks == "any":
+                    if first_unfrozen_mmdit_layer == 0:
+                        should_train = True
+                    if (
+                        freeze_direction == "up"
+                        and layer_number < first_unfrozen_mmdit_layer
+                    ) or (
+                        freeze_direction == "down"
+                        and layer_number > first_unfrozen_mmdit_layer
+                    ):
+                        should_train = True
+
+            if should_train:
+                param.requires_grad = True
+                logger.debug(f"Unfreezing {name}.")
+
         except Exception as e:
             logger.error(e)
             raise e

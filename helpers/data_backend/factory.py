@@ -1,6 +1,8 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
+from helpers.data_backend.csv_url_list import CSVDataBackend
 from helpers.data_backend.base import BaseDataBackend
+from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
 
 from helpers.training.exceptions import MultiDatasetExhausted
@@ -8,7 +10,7 @@ from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.multiaspect.sampler import MultiAspectSampler
 from helpers.prompts import PromptHandler
 from helpers.caching.vae import VAECache
-from helpers.training.multi_process import rank_info, _get_rank as get_rank
+from helpers.training.multi_process import should_log, rank_info, _get_rank as get_rank
 from helpers.training.collate import collate_fn
 from helpers.training.state_tracker import StateTracker
 
@@ -19,12 +21,20 @@ import logging
 import io
 import time
 import threading
+from tqdm import tqdm
 import queue
+from math import sqrt
 
 logger = logging.getLogger("DataBackendFactory")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel(logging.ERROR)
 prefetch_log = logging.getLogger("DataBackendPrefetch")
-prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+if should_log():
+    prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
+else:
+    prefetch_log.setLevel(logging.ERROR)
 
 # For prefetching.
 
@@ -45,6 +55,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["caption_filter_list"] = backend["caption_filter_list"]
         output["dataset_type"] = "text_embeds"
 
+        return output
+    elif backend.get("dataset_type", None) == "image_embeds":
+        # no overrides for image embed backends
         return output
     else:
         ## Check for settings we shouldn't have for non-text datasets.
@@ -80,8 +93,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop"] = backend["crop"]
     else:
         output["config"]["crop"] = False
+    if backend.get("type") == "csv":
+        if "csv_cache_dir" in backend:
+            output["config"]["csv_cache_dir"] = backend["csv_cache_dir"]
+        if "csv_file" in backend:
+            output["config"]["csv_file"] = backend["csv_file"]
+        if "csv_caption_column" in backend:
+            output["config"]["csv_caption_column"] = backend["csv_caption_column"]
+        if "csv_url_column" in backend:
+            output["config"]["csv_url_column"] = backend["csv_url_column"]
     if "crop_aspect" in backend:
-        choices = ["square", "preserve", "random"]
+        choices = ["square", "preserve", "random", "closest"]
         if backend.get("crop_aspect", None) not in choices:
             raise ValueError(
                 f"(id={backend['id']}) crop_aspect must be one of {choices}."
@@ -89,8 +111,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop_aspect"] = backend["crop_aspect"]
         if (
             output["config"]["crop_aspect"] == "random"
-            and "crop_aspect_buckets" not in backend
-        ):
+            or output["config"]["crop_aspect"] == "closest"
+        ) and "crop_aspect_buckets" not in backend:
             raise ValueError(
                 f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
                 " This should be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
@@ -123,9 +145,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["caption_strategy"] = backend["caption_strategy"]
     else:
         output["config"]["caption_strategy"] = args.caption_strategy
-    output["config"]["instance_data_root"] = backend.get(
+    output["config"]["instance_data_dir"] = backend.get(
         "instance_data_dir", backend.get("aws_data_prefix", "")
     )
+    if "hash_filenames" in backend:
+        output["config"]["hash_filenames"] = backend["hash_filenames"]
+    if "hash_filenames" in backend and backend.get("type") == "csv":
+        output["config"]["hash_filenames"] = backend["hash_filenames"]
 
     # check if caption_strategy=parquet with metadata_backend=json
     if (
@@ -133,7 +159,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and backend.get("metadata_backend", "json") == "json"
     ):
         raise ValueError(
-            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json."
+            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json. Instead, it is recommended to use the textfile strategy and extract your captions into txt files."
         )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
@@ -161,6 +187,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
+        and not args.smoldit
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -179,6 +206,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
+        and not args.smoldit
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -190,17 +218,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 def print_bucket_info(metadata_backend):
     # Print table header
     if get_rank() == 0:
-        print(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
+        tqdm.write(f"{rank_info()} | {'Bucket':<10} | {'Image Count (per-GPU)':<12}")
 
         # Print separator
-        print("-" * 30)
+        tqdm.write("-" * 30)
 
         # Print each bucket's information
         for bucket in metadata_backend.aspect_ratio_bucket_indices:
             image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
             if image_count == 0:
                 continue
-            print(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
+            tqdm.write(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
 
 
 def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
@@ -222,7 +250,11 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 
     bytes_string = data_backend.read(parquet_path)
     pq = io.BytesIO(bytes_string)
-    df = pd.read_parquet(pq)
+    if parquet_path.endswith(".jsonl"):
+        df = pd.read_json(pq, lines=True)
+    else:
+        df = pd.read_parquet(pq)
+
     caption_column = parquet_config.get(
         "caption_column", args.parquet_caption_column or "description"
     )
@@ -305,7 +337,13 @@ def configure_multi_databackend(
         )
 
     text_embed_backends = {}
+    image_embed_backends = {}
+
+    ###                                            ###
+    #    now we configure the text embed backends    #
+    ###                                            ###
     default_text_embed_backend_id = None
+    text_embed_cache_dir_paths = []
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is None or dataset_type != "text_embeds":
@@ -329,6 +367,9 @@ def configure_multi_databackend(
         init_backend = init_backend_config(backend, args, accelerator)
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         if backend["type"] == "local":
+            text_embed_cache_dir_paths.append(
+                backend.get("cache_dir", args.cache_dir_text)
+            )
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
@@ -343,10 +384,15 @@ def configure_multi_databackend(
                 aws_access_key_id=backend["aws_access_key_id"],
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
             init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+        elif backend["type"] == "csv":
+            raise ValueError("Cannot use CSV backend for text embed storage.")
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -411,7 +457,68 @@ def configure_multi_databackend(
         default_text_embed_backend_id = list(text_embed_backends.keys())[0]
     info_log("Completed loading text embed services.")
 
-    all_captions = []
+    ###                                             ###
+    #    now we configure the image embed backends    #
+    ###                                             ###
+    for backend in data_backend_config:
+        dataset_type = backend.get("dataset_type", None)
+        if dataset_type is None or dataset_type != "image_embeds":
+            continue
+        if ("disabled" in backend and backend["disabled"]) or (
+            "disable" in backend and backend["disable"]
+        ):
+            info_log(f"Skipping disabled data backend {backend['id']} in config file.")
+            continue
+
+        info_log(f'Configuring VAE image embed backend: {backend["id"]}')
+        # Retrieve some config file overrides for commandline arguments,
+        #  there currently isn't much for text embeds.
+        init_backend = init_backend_config(backend, args, accelerator)
+        existing_config = StateTracker.get_data_backend_config(init_backend["id"])
+        if existing_config is not None and existing_config != {}:
+            raise ValueError(
+                f"You can only have one backend named {init_backend['id']}"
+            )
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+        if backend["type"] == "local":
+            init_backend["data_backend"] = get_local_backend(
+                accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
+            )
+        elif backend["type"] == "aws":
+            check_aws_config(backend)
+            init_backend["data_backend"] = get_aws_backend(
+                identifier=init_backend["id"],
+                aws_bucket_name=backend["aws_bucket_name"],
+                aws_region_name=backend["aws_region_name"],
+                aws_endpoint_url=backend["aws_endpoint_url"],
+                aws_access_key_id=backend["aws_access_key_id"],
+                aws_secret_access_key=backend["aws_secret_access_key"],
+                accelerator=accelerator,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
+            )
+            # S3 buckets use the aws_data_prefix as their prefix/ for all data.
+            # Ensure we have a trailing slash on the prefix:
+            init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+        elif backend["type"] == "csv":
+            raise ValueError("Cannot use CSV backend for image embed storage.")
+        else:
+            raise ValueError(f"Unknown data backend type: {backend['type']}")
+
+        preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+        if not preserve_data_backend_cache and accelerator.is_local_main_process:
+            StateTracker.delete_cache_files(
+                data_backend_id=init_backend["id"],
+                preserve_data_backend_cache=preserve_data_backend_cache,
+            )
+
+        image_embed_backends[init_backend["id"]] = init_backend
+
+    ###                                       ###
+    #    now we configure the image backends    #
+    ###                                       ###
+    vae_cache_dir_paths = []  # tracking for duplicates
     for backend in data_backend_config:
         dataset_type = backend.get("dataset_type", None)
         if dataset_type is not None and (
@@ -431,10 +538,46 @@ def configure_multi_databackend(
             or backend["id"] in StateTracker.get_data_backends()
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
+        resolution_type = backend.get("resolution_type", args.resolution_type)
+        if resolution_type == "pixel_area":
+            pixel_edge_length = backend.get("resolution")
+            if pixel_edge_length is None or (
+                type(pixel_edge_length) is not int
+                or not str(pixel_edge_length).isdigit()
+            ):
+                raise ValueError(
+                    f"Resolution type 'pixel_area' requires a 'resolution' field to be set in the backend config using an integer in the format: 1024"
+                )
+            # we'll convert pixel_area to area
+            backend["resolution_type"] = "area"
+            backend["resolution"] = (pixel_edge_length * pixel_edge_length) / (1000**2)
+            # convert the other megapixel values.
+            if (
+                backend.get("maximum_image_size", None) is not None
+                and backend["maximum_image_size"] > 0
+            ):
+                backend["maximum_image_size"] = (
+                    backend["maximum_image_size"] * backend["maximum_image_size"]
+                ) / 1_000_000
+            if (
+                backend.get("target_downsample_size", None) is not None
+                and backend["target_downsample_size"] > 0
+            ):
+                backend["target_downsample_size"] = (
+                    backend["target_downsample_size"]
+                    * backend["target_downsample_size"]
+                ) / 1_000_000
+            if (
+                backend.get("minimum_image_size", None) is not None
+                and backend["minimum_image_size"] > 0
+            ):
+                backend["minimum_image_size"] = (
+                    backend["minimum_image_size"] * backend["minimum_image_size"]
+                ) / 1_000_000
+
         info_log(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
-        info_log(f"Configured backend: {init_backend}")
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],
@@ -454,10 +597,19 @@ def configure_multi_databackend(
             init_backend["data_backend"] = get_local_backend(
                 accelerator, init_backend["id"], compress_cache=args.compress_disk_cache
             )
-            init_backend["instance_data_root"] = backend["instance_data_dir"]
+            init_backend["instance_data_dir"] = backend.get(
+                "instance_data_dir", backend.get("instance_data_root")
+            )
+            if init_backend["instance_data_dir"] is None:
+                raise ValueError(
+                    "A local backend requires instance_data_dir be defined and pointing to the image data directory."
+                )
             # Remove trailing slash
-            if init_backend["instance_data_root"][-1] == "/":
-                init_backend["instance_data_root"] = init_backend["instance_data_root"][
+            if (
+                init_backend["instance_data_dir"] is not None
+                and init_backend["instance_data_dir"][-1] == "/"
+            ):
+                init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
                     :-1
                 ]
         elif backend["type"] == "aws":
@@ -471,9 +623,34 @@ def configure_multi_databackend(
                 aws_secret_access_key=backend["aws_secret_access_key"],
                 accelerator=accelerator,
                 compress_cache=args.compress_disk_cache,
+                max_pool_connections=backend.get(
+                    "max_pool_connections", args.aws_max_pool_connections
+                ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
-            init_backend["instance_data_root"] = backend["aws_data_prefix"]
+            init_backend["instance_data_dir"] = backend["aws_data_prefix"]
+        elif backend["type"] == "csv":
+            check_csv_config(backend=backend, args=args)
+            init_backend["data_backend"] = get_csv_backend(
+                accelerator=accelerator,
+                id=backend["id"],
+                csv_file=backend["csv_file"],
+                csv_cache_dir=backend["csv_cache_dir"],
+                compress_cache=args.compress_disk_cache,
+                hash_filenames=backend.get("hash_filenames", False),
+            )
+            # init_backend["instance_data_dir"] = backend.get("instance_data_dir", backend.get("instance_data_root", backend.get("csv_cache_dir")))
+            init_backend["instance_data_dir"] = None
+            # if init_backend["instance_data_dir"] is None:
+            #     raise ValueError("CSV backend requires one of instance_data_dir, instance_data_root or csv_cache_dir to be set, as we require a location to place metadata lists.")
+            # Remove trailing slash
+            if (
+                init_backend["instance_data_dir"] is not None
+                and init_backend["instance_data_dir"][-1] == "/"
+            ):
+                init_backend["instance_data_dir"] = init_backend["instance_data_dir"][
+                    :-1
+                ]
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -486,6 +663,15 @@ def configure_multi_databackend(
             raise ValueError(
                 f"Text embed backend {text_embed_id} not found in data backend config file."
             )
+        # Do we have a specific VAE embed backend?
+        image_embed_backend_id = backend.get("image_embeds", None)
+        image_embed_data_backend = init_backend
+        if image_embed_backend_id is not None:
+            if image_embed_backend_id not in image_embed_backends:
+                raise ValueError(
+                    f"Could not find image embed backend ID in multidatabackend config: {image_embed_backend_id}"
+                )
+            image_embed_data_backend = image_embed_backends[image_embed_backend_id]
         info_log(f"(id={init_backend['id']}) Loading bucket manager.")
         metadata_backend_args = {}
         metadata_backend = backend.get("metadata_backend", "json")
@@ -504,9 +690,10 @@ def configure_multi_databackend(
                 )
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
+
         init_backend["metadata_backend"] = BucketManager_cls(
             id=init_backend["id"],
-            instance_data_root=init_backend["instance_data_root"],
+            instance_data_dir=init_backend["instance_data_dir"],
             data_backend=init_backend["data_backend"],
             accelerator=accelerator,
             resolution=backend.get("resolution", args.resolution),
@@ -519,18 +706,25 @@ def configure_multi_databackend(
                 "metadata_update_interval", args.metadata_update_interval
             ),
             cache_file=os.path.join(
-                init_backend["instance_data_root"],
+                backend.get(
+                    "instance_data_dir",
+                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+                ),
                 "aspect_ratio_bucket_indices",
             ),
             metadata_file=os.path.join(
-                init_backend["instance_data_root"],
+                backend.get(
+                    "instance_data_dir",
+                    backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
+                ),
                 "aspect_ratio_bucket_metadata",
             ),
             delete_problematic_images=args.delete_problematic_images or False,
             delete_unwanted_images=backend.get(
                 "delete_unwanted_images", args.delete_unwanted_images
             ),
-            cache_file_suffix=backend.get("cache_file_suffix", None),
+            cache_file_suffix=backend.get("cache_file_suffix", init_backend["id"]),
+            repeats=init_backend["config"].get("repeats", 0),
             **metadata_backend_args,
         )
 
@@ -571,30 +765,45 @@ def configure_multi_databackend(
             "target_downsample_size",
             "parquet",
         ]
+        # we will set the latest version by default.
+        current_config_version = latest_config_version()
         if init_backend["metadata_backend"].config != {}:
             prev_config = init_backend["metadata_backend"].config
-            logger.debug(f"Found existing config: {prev_config}")
+            # if the prev config used an old default config version, we will update defaults here.
+            current_config_version = prev_config.get("config_version", None)
+            if current_config_version is None:
+                # backwards compatibility for non-versioned config files, so that we do not enable life-changing options.
+                current_config_version = 1
+
+            logger.debug(
+                f"Found existing config (version={current_config_version}): {prev_config}"
+            )
             logger.debug(f"Comparing against new config: {init_backend['config']}")
             # Check if any values differ between the 'backend' values and the 'config' values:
             for key, _ in prev_config.items():
                 logger.debug(f"Checking config key: {key}")
-                if (
-                    key in backend
-                    and prev_config[key] != backend[key]
-                    and key not in excluded_keys
-                ):
-                    if not args.override_dataset_config:
-                        raise Exception(
-                            f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
-                            f"\n-> Expected value {key}={prev_config[key]} differs from current value={backend[key]}."
-                            f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
-                            f"\n{prev_config}"
-                        )
-                    else:
-                        logger.warning(
-                            f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
-                        )
-                        prev_config[key] = backend[key]
+                if key not in excluded_keys:
+                    if key in backend and prev_config[key] != backend[key]:
+                        if not args.override_dataset_config:
+                            raise Exception(
+                                f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
+                                f"\n-> Expected value {key}={prev_config.get(key)} differs from current value={backend.get(key)}."
+                                f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
+                                f"\n{prev_config}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Overriding config value {key}={prev_config[key]} with {backend[key]}"
+                            )
+                            prev_config[key] = backend[key]
+                    elif key not in backend:
+                        if should_log():
+                            logger.warning(
+                                f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
+                            )
+                        init_backend["config"][key] = prev_config[key]
+
+        init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         info_log(f"Configured backend: {init_backend}")
 
@@ -692,7 +901,7 @@ def configure_multi_databackend(
             info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions = PromptHandler.get_all_captions(
                 data_backend=init_backend["data_backend"],
-                instance_data_root=init_backend["instance_data_root"],
+                instance_data_dir=init_backend["instance_data_dir"],
                 prepend_instance_prompt=prepend_instance_prompt,
                 instance_prompt=instance_prompt,
                 use_captions=use_captions,
@@ -715,15 +924,38 @@ def configure_multi_databackend(
         # Register the backend here so the sampler can be found.
         StateTracker.register_data_backend(init_backend)
 
+        default_hash_option = True
+        hash_filenames = init_backend["config"].get(
+            "hash_filenames", default_hash_option
+        )
+        init_backend["config"]["hash_filenames"] = hash_filenames
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+        logger.debug(f"Hashing filenames: {hash_filenames}")
+
         if "deepfloyd" not in StateTracker.get_args().model_type:
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
+            vae_cache_dir = backend.get("cache_dir_vae", None)
+            if vae_cache_dir in vae_cache_dir_paths:
+                raise ValueError(
+                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
+                )
+            vae_cache_dir_paths.append(vae_cache_dir)
+
+            if (
+                vae_cache_dir is not None
+                and vae_cache_dir in text_embed_cache_dir_paths
+            ):
+                raise ValueError(
+                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
+                )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 vae=StateTracker.get_vae(),
                 accelerator=accelerator,
                 metadata_backend=init_backend["metadata_backend"],
-                data_backend=init_backend["data_backend"],
-                instance_data_root=init_backend["instance_data_root"],
+                image_data_backend=init_backend["data_backend"],
+                cache_data_backend=image_embed_data_backend["data_backend"],
+                instance_data_dir=init_backend["instance_data_dir"],
                 delete_problematic_images=backend.get(
                     "delete_problematic_images", args.delete_problematic_images
                 ),
@@ -743,19 +975,29 @@ def configure_multi_databackend(
                     "minimum_image_size",
                     args.minimum_image_size,
                 ),
-                vae_batch_size=args.vae_batch_size,
-                write_batch_size=args.write_batch_size,
+                vae_batch_size=backend.get("vae_batch_size", args.vae_batch_size),
+                write_batch_size=backend.get("write_batch_size", args.write_batch_size),
+                read_batch_size=backend.get("read_batch_size", args.read_batch_size),
                 cache_dir=backend.get("cache_dir_vae", args.cache_dir_vae),
-                max_workers=backend.get("max_workers", 32),
-                process_queue_size=backend.get("process_queue_size", 64),
-                vae_cache_preprocess=args.vae_cache_preprocess,
+                max_workers=backend.get("max_workers", args.max_workers),
+                process_queue_size=backend.get(
+                    "image_processing_batch_size", args.image_processing_batch_size
+                ),
+                vae_cache_ondemand=args.vae_cache_ondemand,
+                hash_filenames=hash_filenames,
             )
 
-            if args.vae_cache_preprocess:
+            if not args.vae_cache_ondemand:
                 info_log(f"(id={init_backend['id']}) Discovering cache objects..")
                 if accelerator.is_local_main_process:
                     init_backend["vaecache"].discover_all_files()
                 accelerator.wait_for_everyone()
+            all_image_files = StateTracker.get_image_files(
+                data_backend_id=init_backend["id"]
+            )
+            init_backend["vaecache"].build_vae_cache_filename_map(
+                all_image_files=all_image_files
+            )
 
         if (
             (
@@ -783,23 +1025,20 @@ def configure_multi_databackend(
         accelerator.wait_for_everyone()
 
         if (
-            args.vae_cache_preprocess
+            not args.vae_cache_ondemand
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
         ):
-            init_backend["vaecache"].split_cache_between_processes()
-            if args.vae_cache_preprocess:
+            init_backend["vaecache"].discover_unprocessed_files()
+            if not args.vae_cache_ondemand:
                 init_backend["vaecache"].process_buckets()
-            logger.debug(
-                f"Encoding images during training: {not args.vae_cache_preprocess}"
-            )
+            logger.debug(f"Encoding images during training: {args.vae_cache_ondemand}")
             accelerator.wait_for_everyone()
+
+        info_log(f"Configured backend: {init_backend}")
 
         StateTracker.register_data_backend(init_backend)
         init_backend["metadata_backend"].save_cache()
-
-    # After configuring all backends, register their captions.
-    StateTracker.set_caption_files(all_captions)
 
     # For each image backend, connect it to its conditioning backend.
     for backend in data_backend_config:
@@ -850,6 +1089,52 @@ def get_local_backend(
     )
 
 
+def get_csv_backend(
+    accelerator,
+    id: str,
+    csv_file: str,
+    csv_cache_dir: str,
+    url_column: str,
+    caption_column: str,
+    compress_cache: bool = False,
+    hash_filenames: bool = False,
+) -> CSVDataBackend:
+    from pathlib import Path
+
+    return CSVDataBackend(
+        accelerator=accelerator,
+        id=id,
+        csv_file=Path(csv_file),
+        image_cache_loc=csv_cache_dir,
+        url_column=url_column,
+        caption_column=caption_column,
+        compress_cache=compress_cache,
+        shorten_filenames=shorten_filenames,
+        hash_filenames=hash_filenames,
+    )
+
+
+def check_csv_config(backend: dict, args) -> None:
+    required_keys = {
+        "csv_file": "This is the path to the CSV file containing your image URLs.",
+        "csv_cache_dir": "This is the path to your temporary cache files where images will be stored. This can grow quite large.",
+        "csv_caption_column": "This is the column in your csv which contains the caption(s) for the samples.",
+        "csv_url_column": "This is the column in your csv that contains image urls or paths.",
+    }
+    for key in required_keys.keys():
+        if key not in backend:
+            raise ValueError(
+                f"Missing required key {key} in CSV backend config: {required_keys[key]}"
+            )
+    if not args.compress_disk_cache:
+        logger.warning(
+            "You can save more disk space for cache objects by providing --compress_disk_cache and recreating its contents"
+        )
+    caption_strategy = backend.get("caption_strategy")
+    if caption_strategy is None or caption_strategy != "csv":
+        raise ValueError("CSV backend requires a caption_strategy of 'csv'.")
+
+
 def check_aws_config(backend: dict) -> None:
     """
     Check the configuration for an AWS backend.
@@ -880,6 +1165,7 @@ def get_aws_backend(
     accelerator,
     identifier: str,
     compress_cache: bool = False,
+    max_pool_connections: int = 128,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -890,10 +1176,8 @@ def get_aws_backend(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         compress_cache=compress_cache,
+        max_pool_connections=max_pool_connections,
     )
-
-
-step = None
 
 
 def select_dataloader_index(step, backends):
@@ -906,37 +1190,52 @@ def select_dataloader_index(step, backends):
         backend_ids.append(backend_id)
 
     # Convert to a torch tensor for easy sampling
-    weights = torch.tensor(weights)
+    weights = torch.tensor(weights, dtype=torch.float32)
     weights /= weights.sum()  # Normalize the weights
-
     if weights.sum() == 0:
         return None
 
     # Sample a backend index based on the weights
     chosen_index = torch.multinomial(weights, 1).item()
-    return backend_ids[chosen_index]
+    chosen_backend_id = backend_ids[chosen_index]
+
+    return chosen_backend_id
 
 
 def get_backend_weight(backend_id, backend, step):
-    # Implement your logic to determine the weight for each backend
-    # For example, a simple linear decay based on the step count
     backend_config = StateTracker.get_data_backend_config(backend_id)
     prob = backend_config.get("probability", 1)
-    disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
-    adjusted_prob = (
-        0 if step > disable_step else max(0, prob * (1 - step / disable_step))
-    )
-    return adjusted_prob
 
+    if StateTracker.get_args().data_backend_sampling == "uniform":
+        return prob
+    elif StateTracker.get_args().data_backend_sampling == "auto-weighting":
+        # Get the dataset length (assuming you have a method or property to retrieve it)
+        dataset_length = StateTracker.get_dataset_size(backend_id)
 
-def random_dataloader_iterator(backends: dict):
-    prefetch_log_debug("Random dataloader iterator launched.")
-    global step
-    if step is None:
-        step = StateTracker.get_epoch_step()
+        # Calculate the weight based on dataset length
+        length_factor = dataset_length / sum(
+            StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends()
+        )
+
+        # Adjust the probability by length factor
+        adjusted_prob = prob * length_factor
+
+        disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
+        adjusted_prob = (
+            0
+            if step > disable_step
+            else max(0, adjusted_prob * (1 - step / disable_step))
+        )
+
+        return adjusted_prob
     else:
-        step = 0
+        raise ValueError(
+            f"Unknown sampling weighting method: {StateTracker.get_args().data_backend_sampling}"
+        )
 
+
+def random_dataloader_iterator(step, backends: dict):
+    prefetch_log_debug("Random dataloader iterator launched.")
     gradient_accumulation_steps = StateTracker.get_args().gradient_accumulation_steps
     logger.debug(f"Backends to select from {backends}")
     if backends == {}:
@@ -945,9 +1244,8 @@ def random_dataloader_iterator(backends: dict):
         )
         StateTracker.clear_exhausted_buckets()
         StateTracker.set_repeats(repeats=0)
-        return (step, False)
+        return False
     while backends:
-        step += 1
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
 
@@ -959,7 +1257,7 @@ def random_dataloader_iterator(backends: dict):
         chosen_iter = iter(backends[chosen_backend_id])
 
         try:
-            return (step, next(chosen_iter))
+            return next(chosen_iter)
         except MultiDatasetExhausted:
             # We may want to repeat the same dataset multiple times in a single epoch.
             # If so, we can just reset the iterator and keep going.
@@ -995,7 +1293,7 @@ def random_dataloader_iterator(backends: dict):
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
                 StateTracker.clear_exhausted_buckets()
-                return (step, False)
+                return False
 
 
 class BatchFetcher:

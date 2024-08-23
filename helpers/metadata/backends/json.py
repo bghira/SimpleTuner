@@ -3,15 +3,20 @@ from helpers.data_backend.base import BaseDataBackend
 from helpers.metadata.backends.base import MetadataBackend
 from helpers.image_manipulation.training_sample import TrainingSample
 from helpers.image_manipulation.load import load_image
+from helpers.training.multi_process import should_log
 import json
 import logging
 import os
 import traceback
 from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
+from helpers.training import image_file_extensions
 
 logger = logging.getLogger("JsonMetadataBackend")
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+if should_log():
+    target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+else:
+    target_level = "ERROR"
 logger.setLevel(target_level)
 
 
@@ -19,7 +24,7 @@ class JsonMetadataBackend(MetadataBackend):
     def __init__(
         self,
         id: str,
-        instance_data_root: str,
+        instance_data_dir: str,
         cache_file: str,
         metadata_file: str,
         data_backend: BaseDataBackend,
@@ -32,10 +37,11 @@ class JsonMetadataBackend(MetadataBackend):
         metadata_update_interval: int = 3600,
         minimum_image_size: int = None,
         cache_file_suffix: str = None,
+        repeats: int = 0,
     ):
         super().__init__(
             id=id,
-            instance_data_root=instance_data_root,
+            instance_data_dir=instance_data_dir,
             cache_file=cache_file,
             metadata_file=metadata_file,
             data_backend=data_backend,
@@ -48,18 +54,8 @@ class JsonMetadataBackend(MetadataBackend):
             metadata_update_interval=metadata_update_interval,
             minimum_image_size=minimum_image_size,
             cache_file_suffix=cache_file_suffix,
+            repeats=repeats,
         )
-
-    def __len__(self):
-        """
-        Returns:
-            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
-        """
-        return sum(
-            len(bucket) // self.batch_size
-            for bucket in self.aspect_ratio_bucket_indices.values()
-            if len(bucket) >= self.batch_size
-        ) * (self.config.get("repeats", 0) + 1)
 
     def _discover_new_files(
         self, for_metadata: bool = False, ignore_existing_cache: bool = False
@@ -83,8 +79,8 @@ class JsonMetadataBackend(MetadataBackend):
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
             all_image_files = self.data_backend.list_files(
-                instance_data_root=self.instance_data_root,
-                str_pattern="*.[jJpP][pPnN][gG]",
+                instance_data_dir=self.instance_data_dir,
+                file_extensions=image_file_extensions,
             )
             all_image_files = StateTracker.set_image_files(
                 all_image_files, data_backend_id=self.data_backend.id
@@ -268,3 +264,18 @@ class JsonMetadataBackend(MetadataBackend):
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices
+
+    def __len__(self):
+        """
+        Returns:
+            int: The number of batches in the dataset, accounting for images that can't form a complete batch and are discarded.
+        """
+
+        def repeat_len(bucket):
+            return len(bucket) * (self.repeats + 1)
+
+        return sum(
+            repeat_len(bucket) // self.batch_size
+            for bucket in self.aspect_ratio_bucket_indices.values()
+            if repeat_len(bucket) >= self.batch_size
+        )

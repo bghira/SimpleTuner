@@ -10,6 +10,8 @@ python -m venv .venv
 pip3 install -U poetry pip
 ```
 
+> ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config.env` file.
+
 ### MacOS (Apple Silicon)
 
 The experience of training a model may be disappointing on Apple hardware due to the lack of memory-efficient attention - things require more VRAM here.
@@ -30,34 +32,13 @@ The first command you'll run will install most of the dependencies:
 poetry install --no-root
 ```
 
-#### Optional, possibly not required steps
+You may need to install LibGL for OpenCV2 to load images:
 
-You will possibly need to install some Linux-specific dependencies (Ubuntu is used here):
-
-> ⚠️ This command can break certain container deployments. If it does, you'll have to redeploy the container.
-
+_(Ubuntu)_
 ```bash
-apt -y install nvidia-cuda-dev nvidia-cuda-toolkit
+apt -y install libgl1-mesa-dri
 ```
 
-If you get an error about missing cudNN library, you will want to install torch manually (replace 118 with your CUDA version if not using 11.8):
-
-```bash
-pip3 install xformers torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118 --force
-```
-
-Alternatively, Pytorch Nightly may be used (currently Torch 2.3) with Xformers 0.0.23.post1+cu118 (note that this includes torchtriton now):
-
-```bash
-pip3 install --pre torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
-pip3 install --pre git+https://github.com/facebookresearch/xformers.git@main#egg=xformers
-```
-
-If the egg install for Xformers does not work, try including `xformers` on the first line, and run only that:
-
-```bash
-pip3 install --pre xformers torch torchvision torchaudio torchtriton --extra-index-url https://download.pytorch.org/whl/nightly/cu118 --force
-```
 
 ### Linux + AMD / ROCm
 
@@ -67,6 +48,18 @@ To install the ROCm-specific requirements:
 
 ```bash
 poetry install --no-root -C install/rocm
+```
+
+#### AMD ROCm follow-up steps
+
+The following must be executed for an AMD MI300X to be useable:
+
+```bash
+apt install amd-smi-lib
+pushd /opt/rocm/share/amd_smi
+python3 -m pip install --upgrade pip
+python3 -m pip install .
+popd
 ```
 
 ### All platforms
