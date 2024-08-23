@@ -1,6 +1,6 @@
 from helpers.data_backend.local import LocalDataBackend
 from helpers.data_backend.aws import S3DataBackend
-from helpers.data_backend.csv_ import CSVDataBackend
+from helpers.data_backend.csv_url_list import CSVDataBackend
 from helpers.data_backend.base import BaseDataBackend
 from helpers.training.default_settings import default, latest_config_version
 from helpers.caching.text_embeds import TextEmbeddingCache
