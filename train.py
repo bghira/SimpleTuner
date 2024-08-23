@@ -2190,10 +2190,10 @@ def main():
                         )
                         print("\n")
                         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
-                        if is_lr_scheduler_disabled(args.optimizer):
+                        if is_schedulefree:
                             optimizer.eval()
                         accelerator.save_state(save_path)
-                        if is_lr_scheduler_disabled(args.optimizer):
+                        if is_schedulefree:
                             optimizer.train()
                         for _, backend in StateTracker.get_data_backends().items():
                             if "sampler" in backend:
@@ -2215,10 +2215,10 @@ def main():
                 "lr": lr,
             }
             progress_bar.set_postfix(**logs)
-            if is_lr_scheduler_disabled(args.optimizer):
+            if is_schedulefree:
                 optimizer.eval()
             validation.run_validations(validation_type="intermediary", step=step)
-            if is_lr_scheduler_disabled(args.optimizer):
+            if is_schedulefree:
                 optimizer.train()
             if (
                 args.push_to_hub
@@ -2254,7 +2254,7 @@ def main():
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        if is_lr_scheduler_disabled(args.optimizer):
+        if is_schedulefree:
             optimizer.eval()
         validation_images = validation.run_validations(
             validation_type="final",
