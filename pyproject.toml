@@ -3,8 +3,9 @@ name = "simpletuner"
 version = "0.1.0"
 description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
-license = "SUL"
+license = "AGPLv3"
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"

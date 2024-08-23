@@ -3,8 +3,9 @@ name = "simpletuner"
 version = "0.1.0"
 description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
-license = "SUL"
+license = "AGPLv3"
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
@@ -42,6 +43,7 @@ optimum = "^1.21.2"
 optimum-quanto = {git = "https://github.com/bghira/optimum-quanto-simpletuner", rev = "simpletuner/lora-resume"}
 torch-optimi = "^0.2.1"
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
+sentencepiece = "^0.2.0"
 
 
 [build-system]
