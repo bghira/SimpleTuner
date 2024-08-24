@@ -91,27 +91,6 @@ python3 -m pip install .
 popd
 ```
 
-#### Removing DeepSpeed & Bits n Bytes
-
-These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
-
-To remove them after `poetry` has installed them, run the following command in the same terminal:
-
-```bash
-pip uninstall -y deepspeed bitsandbytes
-```
-
-#### Custom Diffusers build
-
-We currently rely on Git upstream Diffusers builds for the most recent fixes in the Flux ecosystem.
-
-To obtain the correct build, run the following commands:
-
-```bash
-pip uninstall diffusers
-pip install git+https://github.com/huggingface/diffusers
-```
-
 ### Setting up the environment
 
 To run SimpleTuner, you will need to set up a configuration file, the dataset and model directories, and a dataloader configuration file.
