@@ -1240,12 +1240,20 @@ class Validation:
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
         for validation_image in validation_images[validation_shortname]:
+            res = self.validation_resolutions[validation_img_idx]
+            if "x" in res:
+                res_label = str(res)
+            elif type(res) is tuple:
+                res_label = f"{res[0]}x{res[1]}"
+            else:
+                res_label = f"{res}x{res}"
             validation_image.save(
                 os.path.join(
                     self.save_dir,
-                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{str(self.validation_resolutions[validation_img_idx])}.png",
+                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{res_label}.png",
                 )
             )
+            validation_img_idx += 1
 
     def _log_validations_to_webhook(
         self, validation_images, validation_shortname, validation_prompt
