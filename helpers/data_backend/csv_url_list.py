@@ -1,11 +1,8 @@
 import fnmatch
-import io
-from datetime import datetime
-from urllib.request import url2pathname
+import hashlib
 
 import pandas as pd
 import requests
-from PIL import Image
 
 from helpers.data_backend.base import BaseDataBackend
 from helpers.image_manipulation.load import load_image
@@ -28,23 +25,21 @@ def url_to_filename(url: str) -> str:
     return url.split("/")[-1]
 
 
-def shorten_and_clean_filename(filename: str, no_op: bool):
-    if no_op:
-        return filename
-    filename = filename.replace("%20", "-").replace(" ", "-")
-    if len(filename) > 250:
-        filename = filename[:120] + "---" + filename[126:]
-    return filename
+def str_hash(filename: str) -> str:
+    return str(hashlib.sha256(str(filename).encode()).hexdigest())
 
 
-def html_to_file_loc(parent_directory: Path, url: str, shorten_filenames: bool) -> str:
+def path_to_hashed_path(path: Path, hash_filenames: bool) -> Path:
+    path = Path(path).resolve()
+    if hash_filenames:
+        return path.parent.joinpath(str_hash(path.stem) + path.suffix)
+    return path
+
+
+def html_to_file_loc(parent_directory: Path, url: str, hash_filenames: bool) -> str:
     filename = url_to_filename(url)
-    cached_loc = str(
-        parent_directory.joinpath(
-            shorten_and_clean_filename(filename, no_op=shorten_filenames)
-        )
-    )
-    return cached_loc
+    cached_loc = path_to_hashed_path(parent_directory.joinpath(filename), hash_filenames)
+    return str(cached_loc.resolve())
 
 
 class CSVDataBackend(BaseDataBackend):
@@ -54,29 +49,28 @@ class CSVDataBackend(BaseDataBackend):
         id: str,
         csv_file: Path,
         compress_cache: bool = False,
-        image_url_col: str = "url",
-        caption_column: str = "caption",
         url_column: str = "url",
+        caption_column: str = "caption",
         image_cache_loc: Optional[str] = None,
-        shorten_filenames: bool = False,
+        hash_filenames: bool = True,
     ):
         self.id = id
         self.type = "csv"
         self.compress_cache = compress_cache
-        self.shorten_filenames = shorten_filenames
+        self.hash_filenames = hash_filenames
         self.csv_file = csv_file
         self.accelerator = accelerator
-        self.image_url_col = image_url_col
-        self.df = pd.read_csv(csv_file, index_col=image_url_col)
+        self.url_column = url_column
+        self.df = pd.read_csv(csv_file, index_col=url_column)
         self.df = self.df.groupby(level=0).last()  # deduplicate by index (image loc)
         self.caption_column = caption_column
-        self.url_column = url_column
         self.image_cache_loc = (
             Path(image_cache_loc) if image_cache_loc is not None else None
         )
 
     def read(self, location, as_byteIO: bool = False):
         """Read and return the content of the file."""
+        already_hashed = False
         if isinstance(location, Path):
             location = str(location.resolve())
         if location.startswith("http"):
@@ -85,11 +79,12 @@ class CSVDataBackend(BaseDataBackend):
                 cached_loc = html_to_file_loc(
                     self.image_cache_loc,
                     location,
-                    shorten_filenames=self.shorten_filenames,
+                    self.hash_filenames,
                 )
                 if os.path.exists(cached_loc):
                     # found cache
                     location = cached_loc
+                    already_hashed = True
                 else:
                     # actually go to website
                     data = requests.get(location, stream=True).raw.data
@@ -99,8 +94,13 @@ class CSVDataBackend(BaseDataBackend):
                 data = requests.get(location, stream=True).raw.data
         if not location.startswith("http"):
             # read from local file
-            with open(location, "rb") as file:
-                data = file.read()
+            hashed_location = path_to_hashed_path(location, hash_filenames=self.hash_filenames and not already_hashed)
+            try:
+                with open(hashed_location, "rb") as file:
+                    data = file.read()
+            except FileNotFoundError as e:
+                tqdm.write(f'ask was for file {location} bound to {hashed_location}')
+                raise e
         if not as_byteIO:
             return data
         return BytesIO(data)
@@ -114,9 +114,7 @@ class CSVDataBackend(BaseDataBackend):
             filepath = Path(filepath)
         # Not a huge fan of auto-shortening filenames, as we hash things for that in other cases.
         # However, this is copied in from the original Arcade-AI CSV backend implementation for compatibility.
-        filepath = filepath.parent.joinpath(
-            shorten_and_clean_filename(filepath.name, no_op=self.shorten_filenames)
-        )
+        filepath = path_to_hashed_path(filepath, self.hash_filenames)
         filepath.parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, "wb") as file:
             # Check if data is a Tensor, and if so, save it appropriately
@@ -137,6 +135,7 @@ class CSVDataBackend(BaseDataBackend):
         if filepath in self.df.index:
             self.df.drop(filepath, inplace=True)
             # self.save_state()
+        filepath = path_to_hashed_path(filepath, self.hash_filenames)
         if os.path.exists(filepath):
             logger.debug(f"Deleting file: {filepath}")
             os.remove(filepath)
@@ -146,13 +145,15 @@ class CSVDataBackend(BaseDataBackend):
 
     def exists(self, filepath):
         """Check if the file exists."""
-        if isinstance(filepath, Path):
-            filepath = str(filepath.resolve())
-        return filepath in self.df.index or os.path.exists(filepath)
+        if isinstance(filepath, str) and "http" in filepath:
+            return filepath in self.df.index
+        else:
+            filepath = path_to_hashed_path(filepath, self.hash_filenames)
+            return os.path.exists(filepath)
 
     def open_file(self, filepath, mode):
         """Open the file in the specified mode."""
-        return open(filepath, mode)
+        return open(path_to_hashed_path(filepath, self.hash_filenames), mode)
 
     def list_files(
         self, file_extensions: list = None, instance_data_dir: str = None
@@ -291,9 +292,9 @@ class CSVDataBackend(BaseDataBackend):
         """
         Save a torch tensor to a file.
         """
+
         if isinstance(location, str) or isinstance(location, Path):
-            if location not in self.df.index:
-                self.df.loc[location] = pd.Series()
+            location = path_to_hashed_path(location, self.hash_filenames)
             location = self.open_file(location, "wb")
 
         if self.compress_cache:
@@ -309,7 +310,7 @@ class CSVDataBackend(BaseDataBackend):
             self.write(filepath, data)
 
     def save_state(self):
-        self.df.to_csv(self.csv_file, index_label=self.image_url_col)
+        self.df.to_csv(self.csv_file, index_label=self.url_column)
 
     def get_caption(self, image_path: str) -> str:
         if self.caption_column is None:

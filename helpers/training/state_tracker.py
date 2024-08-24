@@ -49,6 +49,9 @@ class StateTracker:
     # Aspect to resolution map, we'll store once generated for consistency.
     aspect_resolution_map = {}
 
+    # for schedulefree
+    last_lr = 0.0
+
     # hugging face hub user details
     hf_user = None
 
@@ -530,3 +533,11 @@ class StateTracker:
         logger.debug(
             f"Aspect resolution map: {cls.aspect_resolution_map[dataloader_resolution]}"
         )
+
+    @classmethod
+    def get_last_lr(cls):
+        return cls.last_lr
+
+    @classmethod
+    def set_last_lr(cls, last_lr: float):
+        cls.last_lr = float(last_lr)

@@ -467,8 +467,8 @@ class ParquetMetadataBackend(MetadataBackend):
                 statistics["skipped"]["metadata_missing"] += 1
                 return aspect_ratio_bucket_indices
 
-            width_column = self.parquet_config.get("width_column")
-            height_column = self.parquet_config.get("height_column")
+            width_column = self.parquet_config.get("width_column", "width")
+            height_column = self.parquet_config.get("height_column", "height")
             if width_column is None or height_column is None:
                 raise ValueError(
                     "ParquetMetadataBackend requires width and height columns to be defined."
