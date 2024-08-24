@@ -91,7 +91,7 @@ class AdamWScheduleFreeKahan(Optimizer):
             lr = group["lr"]
             eps = group["eps"]
             weight_decay = group["weight_decay"]
-            warmup_steps = group["warmup_steps"]
+            warmup_steps = group.get("warmup_steps", 0)
             kahan_sum = group["kahan_sum"]
 
             k = self.k
