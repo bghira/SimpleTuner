@@ -41,9 +41,9 @@ optimizer_choices = {
         "override_lr_scheduler": True,
         "can_warmup": True,
         "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-2,
-            "eps": 1e-8,
+            "betas": (0.9, 0.990),
+            "weight_decay": 1e-4,
+            "eps": 1e-6,
         },
         "class": AdamWScheduleFreeKahan,
     },
