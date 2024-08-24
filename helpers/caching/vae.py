@@ -789,6 +789,10 @@ class VAECache:
                     qlen = self.vae_input_queue.qsize()
         except Exception as e:
             logger.error(f"Error encoding images {vae_input_filepaths}: {e}")
+            if "out of memory" in str(e).lower():
+                import sys
+
+                sys.exit(1)
             # Remove all of the errored images from the bucket. They will be captured on restart.
             for filepath in vae_input_filepaths:
                 self.metadata_backend.remove_image(filepath)
