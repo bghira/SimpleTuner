@@ -1012,7 +1012,7 @@ tqdm = "*"
 type = "git"
 url = "https://github.com/kohakublueleaf/lycoris"
 reference = "dev"
-resolved_reference = "bb0b2935b6aa7d70a05ee690f753634115ef7372"
+resolved_reference = "c426501a0a3c95b9ede99b3cff81ca1509278554"
 
 [[package]]
 name = "markdown"
