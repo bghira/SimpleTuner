@@ -70,13 +70,13 @@ Depending on your system, you will run one of 3 commands:
 
 ```bash
 # MacOS
-poetry install --no-root -C install/apple
+poetry install -C install/apple
 
 # Linux
-poetry install --no-root
+poetry install
 
 # Linux with ROCM
-poetry install --no-root -C install/rocm
+poetry install -C install/rocm
 ```
 
 #### AMD ROCm follow-up steps
@@ -89,27 +89,6 @@ pushd /opt/rocm/share/amd_smi
 python3 -m pip install --upgrade pip
 python3 -m pip install .
 popd
-```
-
-#### Removing DeepSpeed & Bits n Bytes
-
-These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
-
-To remove them after `poetry` has installed them, run the following command in the same terminal:
-
-```bash
-pip uninstall -y deepspeed bitsandbytes
-```
-
-#### Custom Diffusers build
-
-We currently rely on Git upstream Diffusers builds for the most recent fixes in the Flux ecosystem.
-
-To obtain the correct build, run the following commands:
-
-```bash
-pip uninstall diffusers
-pip install git+https://github.com/huggingface/diffusers
 ```
 
 ### Setting up the environment

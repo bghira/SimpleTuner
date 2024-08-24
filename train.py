@@ -1265,7 +1265,7 @@ def main():
             except Exception as e:
                 logger.error(f"Error during load_state: {e}")
             try:
-                if "constant" in args.lr_scheduler:
+                if "constant" in args.lr_scheduler and not is_schedulefree:
                     for g in optimizer.param_groups:
                         if "lr" in g:
                             g["lr"] = torch.tensor(args.learning_rate)
