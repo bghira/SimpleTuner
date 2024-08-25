@@ -5,6 +5,7 @@ description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
 license = "SUL"
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
