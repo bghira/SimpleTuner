@@ -264,7 +264,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flux_guidance_mode {constant,random-range}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
-                [--flux_guidance_max FLUX_GUIDANCE_MAX] [--smoldit]
+                [--flux_guidance_max FLUX_GUIDANCE_MAX]
+                [--flux_attention_masked_training] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--pixart_sigma] [--sd3]
@@ -276,6 +277,10 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--lycoris_config LYCORIS_CONFIG] [--controlnet]
                 [--controlnet_model_name_or_path]
                 --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
+                [--pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH]
+                [--pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER]
+                [--pretrained_unet_model_name_or_path PRETRAINED_UNET_MODEL_NAME_OR_PATH]
+                [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--prediction_type {epsilon,v_prediction,sample}]
@@ -344,8 +349,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--ema_foreach_disable]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
-                [--offload_param_path OFFLOAD_PARAM_PATH]
-                [--optimizer {adamw_bf16,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}]
+                [--offload_param_path OFFLOAD_PARAM_PATH] --optimizer
+                {adamw_bf16,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
                 [--optimizer_config OPTIMIZER_CONFIG]
                 [--optimizer_beta1 OPTIMIZER_BETA1]
                 [--optimizer_beta2 OPTIMIZER_BETA2]
@@ -358,8 +363,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
                 [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
                 [--model_card_note MODEL_CARD_NOTE]
-                [--logging_dir LOGGING_DIR]
-                [--validation_seed_source {gpu,cpu}]
+                [--logging_dir LOGGING_DIR] [--benchmark_base_model]
+                [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
                 [--allow_tf32] [--validation_using_datasets]
@@ -476,6 +481,8 @@ options:
                         resulting LoRA requiring CFG at inference time.
   --flux_guidance_min FLUX_GUIDANCE_MIN
   --flux_guidance_max FLUX_GUIDANCE_MAX
+  --flux_attention_masked_training
+                        Use attention masking while training flux.
   --smoldit             Use the experimental SmolDiT model architecture.
   --smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}
                         The SmolDiT configuration to use. This is a list of
@@ -546,6 +553,18 @@ options:
   --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
                         huggingface.co/models.
+  --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
+                        Path to pretrained transformer model or model
+                        identifier from huggingface.co/models.
+  --pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER
+                        The subfolder to load the transformer model from. Use
+                        'none' for a flat directory.
+  --pretrained_unet_model_name_or_path PRETRAINED_UNET_MODEL_NAME_OR_PATH
+                        Path to pretrained unet model or model identifier from
+                        huggingface.co/models.
+  --pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER
+                        The subfolder to load the unet model from. Use 'none'
+                        for a flat directory.
   --pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH
                         Path to an improved VAE to stabilize training. For
                         more details check out:
@@ -976,7 +995,7 @@ options:
                         When using DeepSpeed ZeRo stage 2 or 3 with NVMe
                         offload, this may be specified to provide a path for
                         the offload.
-  --optimizer {adamw_bf16,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
+  --optimizer {adamw_bf16,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
   --optimizer_config OPTIMIZER_CONFIG
                         When setting a given optimizer, this allows a comma-
                         separated list of key-value pairs to be provided that
@@ -1031,6 +1050,16 @@ options:
                         [TensorBoard](https://www.tensorflow.org/tensorboard)
                         log directory. Will default to
                         *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***.
+  --benchmark_base_model
+                        If set, before training, the base model images will be
+                        sampled via the same prompts and saved to the output
+                        directory. These samples will be stitched to each
+                        validation output. Note that currently this cannot be
+                        enabled after training begins.
+  --validation_on_startup
+                        When training begins, the starting model will have
+                        validation prompts run through it, for later
+                        comparison.
   --validation_seed_source {gpu,cpu}
                         Some systems may benefit from using CPU-based seeds
                         for reproducibility. On other systems, this may cause

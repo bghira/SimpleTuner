@@ -22,6 +22,7 @@ from diffusers.schedulers import (
 from diffusers.utils.torch_utils import is_compiled_module
 from helpers.multiaspect.image import MultiaspectImage
 from helpers.image_manipulation.brightness import calculate_luminance
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
@@ -706,7 +707,7 @@ class Validation:
             )
         ):
             logger.debug(
-                f"mask: {current_validation_prompt_mask.shape if current_validation_prompt_mask is not None else None}"
+                f"mask: {current_validation_prompt_mask.shape if type(current_validation_prompt_mask) is torch.Tensor else None}"
             )
             assert current_validation_prompt_mask is not None
             prompt_embeds["prompt_mask"] = current_validation_prompt_mask
@@ -714,31 +715,83 @@ class Validation:
 
         return prompt_embeds
 
-    def stitch_benchmark_images(self, validation_image_results, benchmark_image):
+    def _benchmark_path(self, benchmark: str = "base_model"):
+        # does the benchmark directory exist?
+        if not os.path.exists(os.path.join(self.args.output_dir, "benchmarks")):
+            os.makedirs(os.path.join(self.args.output_dir, "benchmarks"), exist_ok=True)
+        return os.path.join(self.args.output_dir, "benchmarks", benchmark)
+
+    def stitch_benchmark_image(
+        self, validation_image_result, benchmark_image, separator_width=5
+    ):
         """
         For each image, make a new canvas and place it side by side with its equivalent from {self.validation_image_inputs}
+        Add "base model" text to the left image and "checkpoint" text to the right image
+        Include a separator between the images
         """
-        stitched_validation_images = []
-        for idx, image in enumerate(validation_image_results):
-            new_width = image.size[0] * 2
-            new_height = image.size[1]
-            new_image = Image.new("RGB", (new_width, new_height))
-            new_image.paste(image, (0, 0))
-            new_image.paste(benchmark_image, (image.size[0], 0))
-            stitched_validation_images.append(new_image)
 
-        return stitched_validation_images
+        # Calculate new dimensions
+        new_width = validation_image_result.size[0] * 2 + separator_width
+        new_height = validation_image_result.size[1]
 
-    def _benchmark_image(self, shortname):
+        # Create a new image with a white background
+        new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+        # Paste the images with a gap between them
+        new_image.paste(validation_image_result, (0, 0))
+        new_image.paste(
+            benchmark_image, (validation_image_result.size[0] + separator_width, 0)
+        )
+
+        # Create a drawing object
+        draw = ImageDraw.Draw(new_image)
+
+        # Use a default font
+        try:
+            font = ImageFont.truetype("arial.ttf", 36)
+        except IOError:
+            font = ImageFont.load_default()
+
+        # Add text to the left image
+        draw.text(
+            (10, 10),
+            "base model",
+            fill=(255, 255, 255),
+            font=font,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0),
+        )
+
+        # Add text to the right image
+        draw.text(
+            (validation_image_result.size[0] + separator_width + 10, 10),
+            "checkpoint",
+            fill=(255, 255, 255),
+            font=font,
+            stroke_width=2,
+            stroke_fill=(0, 0, 0),
+        )
+
+        # Draw a vertical line as a separator
+        line_color = (200, 200, 200)  # Light gray
+        for i in range(separator_width):
+            x = validation_image_result.size[0] + i
+            draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+        return new_image
+
+    def _benchmark_image(self, shortname, resolution):
         """
         We will retrieve the benchmark image for the shortname.
         """
         if not self.benchmark_exists():
             return None
-        base_model_benchmark = os.path.join(self.args.output_dir, "benchmark")
+        base_model_benchmark = self._benchmark_path("base_model")
         benchmark_image = None
+        _test_filename = f"{shortname}_{resolution[0]}x{resolution[1]}.png"
         for _benchmark_image in os.listdir(base_model_benchmark):
-            if _benchmark_image.startswith(shortname):
+            _basename = os.path.basename(_benchmark_image)
+            if _basename == _test_filename:
                 benchmark_image = Image.open(
                     os.path.join(base_model_benchmark, _benchmark_image)
                 )
@@ -753,7 +806,7 @@ class Validation:
         if not self.benchmark_exists():
             return None
         benchmark_images = []
-        base_model_benchmark = os.path.join(self.args.output_dir, "benchmark")
+        base_model_benchmark = self._benchmark_path("base_model")
         for _benchmark_image in os.listdir(base_model_benchmark):
             if _benchmark_image.endswith(".png"):
                 benchmark_images.append(
@@ -768,24 +821,29 @@ class Validation:
 
         return benchmark_images
 
-    def benchmark_exists(self):
+    def benchmark_exists(self, benchmark: str = "base_model"):
         """
         Determines whether the base model benchmark outputs already exist.
         """
-        base_model_benchmark = os.path.join(self.args.output_dir, "benchmark")
+        base_model_benchmark = self._benchmark_path()
 
         return os.path.exists(base_model_benchmark)
 
-    def save_benchmark(self):
+    def save_benchmark(self, benchmark: str = "base_model"):
         """
         Saves the benchmark outputs for the base model.
         """
-        base_model_benchmark = os.path.join(self.args.output_dir, "benchmark")
+        base_model_benchmark = self._benchmark_path(benchmark=benchmark)
         if not os.path.exists(base_model_benchmark):
             os.makedirs(base_model_benchmark, exist_ok=True)
-        benchmark_images = self.validation_images
-        for shortname, prompt, image in benchmark_images:
-            image.save(os.path.join(base_model_benchmark, f"{shortname}.png"))
+        for shortname, image_list in self.validation_images.items():
+            for idx, image in enumerate(image_list):
+                width, height = image.size
+                image.save(
+                    os.path.join(
+                        base_model_benchmark, f"{shortname}_{width}x{height}.png"
+                    )
+                )
 
     def _update_state(self):
         """Updates internal state with the latest from StateTracker."""
@@ -849,7 +907,6 @@ class Validation:
 
     def setup_scheduler(self):
         if self.args.validation_noise_scheduler is None:
-            print("no scheduler")
             return
         if self.flow_matching:
             # NO TOUCHIE FOR FLOW-MATCHING.
@@ -1225,8 +1282,15 @@ class Validation:
                     validation_image_results = self.stitch_conditioning_images(
                         validation_image_results, extra_validation_kwargs["image"]
                     )
-                # if self.benchmark_exists():
-
+                elif self.args.benchmark_base_model and self.benchmark_exists(
+                    "base_model"
+                ):
+                    benchmark_image = self._benchmark_image(
+                        validation_shortname, resolution
+                    )
+                    validation_image_results[0] = self.stitch_benchmark_image(
+                        validation_image_results[0], benchmark_image
+                    )
                 validation_images[validation_shortname].extend(validation_image_results)
             except Exception as e:
                 import traceback
@@ -1235,6 +1299,7 @@ class Validation:
                     f"Error generating validation image: {e}, {traceback.format_exc()}"
                 )
                 continue
+
         return validation_images
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
