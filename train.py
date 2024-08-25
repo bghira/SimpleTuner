@@ -1257,6 +1257,7 @@ def main():
             optimizer.eval()
         if not is_quantized:
             if unet is not None and unet.device != accelerator.device:
+                logger.info(f"Moving Unet to GPU. (dtype={unet.dtype})")
                 unet.to(accelerator.device)
             if transformer is not None and transformer.device != accelerator.device:
                 transformer.to(accelerator.device)
@@ -1968,6 +1969,13 @@ def main():
                             ).sample
                         else:
                             # SDXL, Kolors, other default unet prediction.
+                            print(
+                                "shapes:"
+                                f"\nnoisy_latents: {noisy_latents.shape}"
+                                f"\ntimesteps: {timesteps.shape}"
+                                f"\nencoder_hidden_states: {encoder_hidden_states.shape}"
+                                f"\nadded_cond_kwargs: {[v.shape for v in added_cond_kwargs.values()] if added_cond_kwargs is not None else None}"
+                            )
                             model_pred = unet(
                                 noisy_latents,
                                 timesteps,

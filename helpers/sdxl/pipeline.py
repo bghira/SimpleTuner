@@ -1376,7 +1376,7 @@ class StableDiffusionXLPipeline(
                 noise_pred = self.unet(
                     latent_model_input.to(self.unet.device),
                     t,
-                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states=prompt_embeds.to(self.unet.device),
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
