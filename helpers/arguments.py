@@ -1313,6 +1313,15 @@ def parse_args(input_args=None):
         help="The name of the project for WandB or Tensorboard.",
     )
     parser.add_argument(
+        "--tracker_image_layout",
+        choices=["gallery", "table"],
+        default="gallery",
+        help=(
+            "When running validations with multiple images, you may want them all placed together in a table, row-wise."
+            " Gallery mode, the default, will allow use of a slider to view the historical images easily."
+        ),
+    )
+    parser.add_argument(
         "--validation_prompt",
         type=str,
         default=None,

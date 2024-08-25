@@ -1339,37 +1339,57 @@ class Validation:
                     f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
                 ]
 
-                columns = [
-                    "Prompt",
-                    *resolution_list,
-                    "Mean Luminance",
-                ]
-                table = wandb.Table(columns=columns)
+                if self.args.tracker_image_layout == "table":
+                    columns = [
+                        "Prompt",
+                        *resolution_list,
+                        "Mean Luminance",
+                    ]
+                    table = wandb.Table(columns=columns)
 
-                # Process each prompt and its associated images
-                for prompt_shortname, image_list in validation_images.items():
-                    wandb_images = []
-                    luminance_values = []
-                    logger.debug(
-                        f"Prompt {prompt_shortname} has {len(image_list)} images"
+                    # Process each prompt and its associated images
+                    for prompt_shortname, image_list in validation_images.items():
+                        wandb_images = []
+                        luminance_values = []
+                        logger.debug(
+                            f"Prompt {prompt_shortname} has {len(image_list)} images"
+                        )
+                        for image in image_list:
+                            logger.debug(f"Adding to table: {image}")
+                            wandb_image = wandb.Image(image)
+                            wandb_images.append(wandb_image)
+                            luminance = calculate_luminance(image)
+                            luminance_values.append(luminance)
+                        mean_luminance = torch.tensor(luminance_values).mean().item()
+                        while len(wandb_images) < len(resolution_list):
+                            # any missing images will crash it. use None so they are indexed.
+                            logger.debug("Found a missing image - masking with a None")
+                            wandb_images.append(None)
+                        table.add_data(prompt_shortname, *wandb_images, mean_luminance)
+
+                    # Log the table to Weights & Biases
+                    tracker.log(
+                        {"Validation Gallery": table},
+                        step=StateTracker.get_global_step(),
                     )
-                    for image in image_list:
-                        logger.debug(f"Adding to table: {image}")
-                        wandb_image = wandb.Image(image)
-                        wandb_images.append(wandb_image)
-                        luminance = calculate_luminance(image)
-                        luminance_values.append(luminance)
-                    mean_luminance = torch.tensor(luminance_values).mean().item()
-                    while len(wandb_images) < len(resolution_list):
-                        # any missing images will crash it. use None so they are indexed.
-                        logger.debug("Found a missing image - masking with a None")
-                        wandb_images.append(None)
-                    table.add_data(prompt_shortname, *wandb_images, mean_luminance)
 
-                # Log the table to Weights & Biases
-                tracker.log(
-                    {"Validation Gallery": table}, step=StateTracker.get_global_step()
-                )
+                elif self.args.tracker_image_layout == "gallery":
+                    gallery_images = {}
+                    for prompt_shortname, image_list in validation_images.items():
+                        logger.debug(
+                            f"Prompt {prompt_shortname} has {len(image_list)} images"
+                        )
+                        for idx, image in enumerate(image_list):
+                            wandb_image = wandb.Image(
+                                image,
+                                caption=f"{prompt_shortname} - {resolution_list[idx]}",
+                            )
+                            gallery_images[
+                                f"{prompt_shortname} - {resolution_list[idx]}"
+                            ] = wandb_image
+
+                    # Log all images in one call to prevent the global step from ticking
+                    tracker.log(gallery_images, step=StateTracker.get_global_step())
 
     def finalize_validation(self, validation_type, enable_ema_model: bool = True):
         """Cleans up and restores original state if necessary."""
