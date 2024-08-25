@@ -2449,6 +2449,26 @@ def main():
                     logger.debug(
                         f"Setting scheduler to Euler for SD3. Config: {pipeline.scheduler.config}"
                     )
+            elif args.flux:
+                from diffusers.pipelines import FluxPipeline
+
+                pipeline = FluxPipeline.from_pretrained(
+                    args.pretrained_model_name_or_path,
+                    transformer=transformer,
+                    text_encoder=text_encoder_1
+                    or (
+                        text_encoder_cls_1.from_pretrained(
+                            args.pretrained_model_name_or_path,
+                            subfolder="text_encoder",
+                            revision=args.revision,
+                            variant=args.variant,
+                        )
+                        if args.save_text_encoder
+                        else None
+                    ),
+                    tokenizer=tokenizer_1,
+                    vae=vae,
+                )
             elif args.legacy:
                 from diffusers import StableDiffusionPipeline
 
