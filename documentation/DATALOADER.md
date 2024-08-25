@@ -78,7 +78,7 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `caption_strategy`
 
-- **textfile** requires your image.png be next to an image.txt that contains one or more captions, separated by newlines.
+- **textfile** requires your image.png be next to an image.txt that contains one or more captions, separated by newlines. These image+text pairs **must be in the same directory**.
 - **instance_prompt** requires a value for `instance_prompt` also be provided, and will use **only** this value for the caption of every image in the set.
 - **filename** will use a converted and cleaned-up version of the filename as its caption, eg. after swapping underscores for spaces.
 - **parquet** will pull captions from the parquet table that contains the rest of the image metadata. use the `parquet` field to configure this. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
@@ -96,19 +96,83 @@ Both `textfile` and `parquet` support multi-captions:
 
 ### `resolution`
 
-- **Area-Based:** Cropping/sizing is done by megapixel count.
-- **Pixel-Based:** Resizing or cropping uses the smaller edge as the basis for calculation.
+- **resolution_type=area:** The final image size is determined by megapixel count - a value of 1.05 here will correspond to aspect buckets around 1024^2 (1024x1024) total pixel area, ~1_050_000 pixels.
+- **resolution_type=pixel_area:** Like `area`, the final image size is by its area, but measures in pixels rather than megapixels. A value of 1024 here will generate aspect buckets around 1024^2 (1024x1024) total pixel area, ~1_050_000 pixels.
+- **resolution_type=pixel:** The final image size will be determined by the smaller edge being this value.
+
+> **NOTE**: Whether images are upscaled, downscaled, or cropped, rely on the values of `minimum_image_size`, `maximum_target_size`, `target_downsample_size`, `crop`, and `crop_aspect`.
 
 ### `minimum_image_size`
 
-- **Area Comparison:** Specified in megapixels. Considers the entire pixel area.
-- **Pixel Comparison:** Both image edges must exceed this value, specified in pixels.
+- Any images whose size ends up falling underneath this value will be **excluded** from training.
+- When `resolution` is measured in megapixels (`resolution_type=area`), this should be in megapixels too (eg. `1.05` megapixels to exclude images under 1024x1024 **area**)
+- When `resolution` is measured in pixels, you should use the same unit here (eg. `1024` to exclude images under 1024px **shorter edge length**)
+- **Recommendation**: Keep `minimum_image_size` equal to `resolution` unless you want to risk training on poorly-upsized images.
+
+#### Examples
+
+##### Configuration
+```json
+    "minimum_image_size": 1024,
+    "resolution": 1024,
+    "resolution_type": "pixel"
+```
+##### Outcome
+- Any images with a shorter edge less than **1024px** will be completely excluded from training.
+- Images like `768x1024` or `1280x768` would be excluded, but `1760x1024` and `1024x1024` would not.
+- No image will be upsampled, because `minimum_image_size` is equal to `resolution`
+
+##### Configuration
+```json
+    "minimum_image_size": 1024,
+    "resolution": 1024,
+    "resolution_type": "pixel_area" # different from the above configuration, which is 'pixel'
+```
+##### Outcome
+- The image's total area (width * height) being less than the minimum area (1024 * 1024) will result in it being excluded from training.
+- Images like `1280x800` would **not** be excluded because `(1280 * 800)` is less than `(1024 * 1024)`
+- No image will be upsampled, because `minimum_image_size` is equal to `resolution`
+
+##### Configuration
+```json
+    "minimum_image_size": 0, # or completely unset, not present in the config
+    "resolution": 1024,
+    "resolution_type": "pixel",
+    "crop": false
+```
+
+##### Outcome
+- Images will be resized so their shorter edge is 1024px while maintaining their aspect ratio
+- No images will be excluded based on size
+- Small images will be upscaled using naive `PIL.resize` methods that do not look good
+  - Upscaling is recommended to avoid unless done by hand using an upscaler of your choice before beginning training
 
 ### `maximum_image_size` and `target_downsample_size`
 
-- `maximum_image_size` specifies the maximum image size that will be considered croppable. It will downsample images before cropping if they are larger than this.
+Images are not resized before cropping **unless** `maximum_image_size` and `target_downsample_size` are both set. In other words, a `4096x4096` image will be directly cropped to a `1024x1024` target, which may be undesirable.
+
+- `maximum_image_size` specifies the threshold at which the resizing will begin. It will downsample images before cropping if they are larger than this.
 - `target_downsample_size` specifies how large the image will be after resample and before it is cropped.
-- **Example**: A 20 megapixel image is too large to crop to 1 megapixel without losing context. Set `maximum_size_image=5.0` and `target_downsample_size=2.0` to resize any images larger than 5 megapixels down to 2 megapixels before cropping to 1 megapixel.
+
+#### Examples
+
+##### Configuration
+```json
+    "resolution_type": "pixel_area",
+    "resolution": 1024,
+    "maximum_image_size": 1536,
+    "target_downsample_size": 1280,
+    "crop": true,
+    "crop_aspect": "square"
+```
+
+##### Outcome
+- Any images with a pixel area greater than `(1536 * 1536)` will be resized so that its pixel area is roughly `(1280 * 1280)` while maintaining its original aspect ratio
+- Final image size will be random-cropped to a pixel area of `(1024 * 1024)`
+- Useful for training on eg. 20 megapixel datasets that need to be resized substantially before cropping to avoid massive loss of scene context in the image (like cropping a picture of a person to just a tile wall or a blurry section of the background)
+
+
+---
 
 ### `prepend_instance_prompt`
 
@@ -130,15 +194,24 @@ Both `textfile` and `parquet` support multi-captions:
 
 ### `ignore_epochs`
 
-- When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets _without_ this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
+- This should only be used for subject training, eg. [Dreambooth](/documentation/DREAMBOOTH.md). When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets _without_ this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
 
 ### `skip_file_discovery`
 
-- This allows specifying the commandline option `--skip_file_discovery` just for a particular dataset at a time. This is helpful if you have datasets you don't need the trainer to scan on every startup, eg. their latents/embeds are already cached fully. This allows quicker startup and resumption of training. This parameter accepts a comma or space separated list of values, eg. `vae metadata aspect text` to skip file discovery for one or more stages of the loader configuration.
+- You probably don't want to ever set this - it is useful only for very large datasets.
+- This parameter accepts a comma or space separated list of values, eg. `vae metadata aspect text` to skip file discovery for one or more stages of the loader configuration.
+- This is equivalent to the commandline option `--skip_file_discovery`
+- This is helpful if you have datasets you don't need the trainer to scan on every startup, eg. their latents/embeds are already cached fully. This allows quicker startup and resumption of training.
 
 ### `preserve_data_cache_backend`
 
-- Like `skip_file_discovery`, this option can be set to prevent repeated lookups of file lists during startup. It takes a boolean value, and if set to be `true`, the generated cache file will not be removed at launch. This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times. Additionally, on S3, backend listing can add up in cost and should be avoided. **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
+- You probably don't want to ever set this - it is useful only for very large AWS datasets.
+- Like `skip_file_discovery`, this option can be set to prevent unnecessary, lengthy and costly filesystem scans at startup.
+- It takes a boolean value, and if set to be `true`, the generated filesystem list cache file will not be removed at launch.
+- This is helpful for very large and slow storage systems such as S3 or local SMR spinning hard drives that have extremely slow response times.
+- Additionally, on S3, backend listing can add up in cost and should be avoided.
+
+> ⚠️ **Unfortunately, this cannot be set if the data is actively being changed.** The trainer will not see any new data that is added to the pool, it will have to do another full scan.
 
 ### `hash_filenames`
 
