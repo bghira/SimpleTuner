@@ -1223,6 +1223,7 @@ class Validation:
                 continue
 
             try:
+                # print(f"pipeline dtype: {self.pipeline.unet.device}")
                 pipeline_kwargs = {
                     "prompt": None,
                     "negative_prompt": None,
