@@ -1242,6 +1242,36 @@ def main():
     if not args.train_text_encoder:
         validation.clear_text_encoders()
 
+    if (
+        args.benchmark_base_model
+        and not validation.benchmark_exists("base_model")
+        and (
+            accelerator.is_main_process
+            or (use_deepspeed_optimizer and accelerator.is_local_main_process)
+        )
+    ):
+        logger.info(
+            f"Benchmarking base model for comparison. Set DISABLE_BENCHMARK=true to disable this behaviour."
+        )
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.eval()
+        if not is_quantized:
+            if unet is not None and unet.device != accelerator.device:
+                unet.to(accelerator.device)
+            if transformer is not None and transformer.device != accelerator.device:
+                transformer.to(accelerator.device)
+        if getattr(accelerator, "_lycoris_wrapped_network", None) is not None:
+            accelerator._lycoris_wrapped_network = (
+                accelerator._lycoris_wrapped_network.to(
+                    accelerator.device, dtype=weight_dtype
+                )
+            )
+        # we'll run validation on base model if it hasn't already.
+        validation.run_validations(validation_type="base_model", step=0)
+        validation.save_benchmark("base_model")
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.train()
+
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
         if args.resume_from_checkpoint != "latest":
@@ -1415,18 +1445,13 @@ def main():
     logger.info(initial_msg)
     if webhook_handler is not None:
         webhook_handler.send(message=initial_msg)
-    if is_lr_scheduler_disabled(args.optimizer):
-        optimizer.eval()
     if args.validation_on_startup and global_step <= 1:
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.eval()
         # normal run-of-the-mill validation on startup.
         validation.run_validations(validation_type="base_model", step=0)
-    if args.benchmark_base_model and global_step <= 1:
-        if not validation.benchmark_exists("base_model"):
-            # we'll run validation on base model if it hasn't already.
-            validation.run_validations(validation_type="base_model", step=0)
-            validation.save_benchmark("base_model")
-    if is_lr_scheduler_disabled(args.optimizer):
-        optimizer.train()
+        if is_lr_scheduler_disabled(args.optimizer):
+            optimizer.train()
 
     # Only show the progress bar once on each machine.
     show_progress_bar = True

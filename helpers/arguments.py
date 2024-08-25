@@ -1223,7 +1223,7 @@ def parse_args(input_args=None):
         default=False,
         help=(
             "If set, before training, the base model images will be sampled via the same prompts and saved to the output directory."
-            " These samples will be stitched to each validation output. Note that currently this cannot be enabled after training begins."
+            " These samples will be stitched to each validation output."
         ),
     )
     parser.add_argument(
