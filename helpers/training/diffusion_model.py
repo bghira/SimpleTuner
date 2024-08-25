@@ -98,6 +98,7 @@ def load_diffusion_model(args, weight_dtype):
             args.pretrained_unet_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_unet_subfolder),
+            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
 
