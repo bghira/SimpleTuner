@@ -1374,16 +1374,22 @@ class Validation:
                     )
 
                 elif self.args.tracker_image_layout == "gallery":
+                    gallery_images = {}
                     for prompt_shortname, image_list in validation_images.items():
                         logger.debug(
                             f"Prompt {prompt_shortname} has {len(image_list)} images"
                         )
-                        for image in image_list:
-                            wandb_image = wandb.Image(image, caption=prompt_shortname)
-                            tracker.log(
-                                {f"Validation Image - {prompt_shortname}": wandb_image},
-                                step=StateTracker.get_global_step(),
+                        for idx, image in enumerate(image_list):
+                            wandb_image = wandb.Image(
+                                image,
+                                caption=f"{prompt_shortname} - {resolution_list[idx]}",
                             )
+                            gallery_images[
+                                f"{prompt_shortname} - {resolution_list[idx]}"
+                            ] = wandb_image
+
+                    # Log all images in one call to prevent the global step from ticking
+                    tracker.log(gallery_images, step=StateTracker.get_global_step())
 
     def finalize_validation(self, validation_type, enable_ema_model: bool = True):
         """Cleans up and restores original state if necessary."""
