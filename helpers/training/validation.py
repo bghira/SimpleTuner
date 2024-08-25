@@ -738,9 +738,9 @@ class Validation:
         new_image = Image.new("RGB", (new_width, new_height), color="white")
 
         # Paste the images with a gap between them
-        new_image.paste(validation_image_result, (0, 0))
+        new_image.paste(benchmark_image, (0, 0))
         new_image.paste(
-            benchmark_image, (validation_image_result.size[0] + separator_width, 0)
+            validation_image_result, (benchmark_image.size[0] + separator_width, 0)
         )
 
         # Create a drawing object
