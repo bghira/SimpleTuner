@@ -1379,7 +1379,9 @@ class StableDiffusionXLPipeline(
                     encoder_hidden_states=prompt_embeds.to(self.unet.device),
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
-                    added_cond_kwargs=added_cond_kwargs,
+                    added_cond_kwargs={
+                        k: v.to(self.unet.device) for k, v in added_cond_kwargs.items()
+                    },
                     return_dict=False,
                 )[0]
 
