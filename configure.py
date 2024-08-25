@@ -354,10 +354,14 @@ def configure_env():
         finishing_count_type = prompt_user(
             "Should we schedule the end of training by epochs, or steps?", "steps"
         ).lower()
+    default_checkpointing_interval = 500
     if finishing_count_type == "steps":
-        env_contents["MAX_NUM_STEPS"] = prompt_user(
-            "Set the maximum number of steps", 10000
+        env_contents["MAX_NUM_STEPS"] = int(
+            prompt_user("Set the maximum number of steps", 10000)
         )
+        if env_contents["MAX_NUM_STEPS"] < default_checkpointing_interval:
+            # reduce the default checkpointing interval offered to the user so that they get a reasonable value.
+            default_checkpointing_interval = env_contents["MAX_NUM_STEPS"] // 10
         env_contents["NUM_EPOCHS"] = 0
     else:
         env_contents["NUM_EPOCHS"] = prompt_user(
@@ -366,7 +370,7 @@ def configure_env():
         env_contents["MAX_NUM_STEPS"] = 0
 
     checkpointing_interval = prompt_user(
-        "Set the checkpointing interval (in steps)", 500
+        "Set the checkpointing interval (in steps)", default_checkpointing_interval
     )
     env_contents["CHECKPOINTING_STEPS"] = int(checkpointing_interval)
     checkpointing_limit = prompt_user(
