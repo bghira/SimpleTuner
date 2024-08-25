@@ -1288,9 +1288,11 @@ class Validation:
                     benchmark_image = self._benchmark_image(
                         validation_shortname, resolution
                     )
-                    validation_image_results[0] = self.stitch_benchmark_image(
-                        validation_image_results[0], benchmark_image
-                    )
+                    if benchmark_image is not None:
+                        # user might have added new resolutions or something.
+                        validation_image_results[0] = self.stitch_benchmark_image(
+                            validation_image_results[0], benchmark_image
+                        )
                 validation_images[validation_shortname].extend(validation_image_results)
             except Exception as e:
                 import traceback
