@@ -130,7 +130,7 @@ Both `textfile` and `parquet` support multi-captions:
 ```
 ##### Outcome
 - The image's total area (width * height) being less than the minimum area (1024 * 1024) will result in it being excluded from training.
-- Images like `1280x800` would **not** be excluded because `(1280 * 800)` is less than `(1024 * 1024)`
+- Images like `1280x960` would **not** be excluded because `(1280 * 960)` is less than `(1024 * 1024)`
 - No image will be upsampled, because `minimum_image_size` is equal to `resolution`
 
 ##### Configuration
