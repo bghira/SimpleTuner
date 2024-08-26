@@ -21,35 +21,45 @@ from transformers import (
     AutoProcessor,
     AutoModel,
     AutoTokenizer,
-
 )
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
-device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+device = (
+    "cuda"
+    if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available() else "cpu"
+)
 
 logger = logging.getLogger("Captioner")
+
 
 # load the existing parquet file if it exists
 def load_input_parquet(parquet_path: str):
     df = pd.read_parquet(path=parquet_path)
     return df
 
+
 # Load InterVL2-8B model, only need 24G VRAM,if you wanna to load bigger models like 26B or 72B,you should need 1-3 80G A100
 def load_model(model_name_or_path="OpenGVLab/InternVL2-8B"):
-    model = AutoModel.from_pretrained(
-        model_name_or_path,
-        torch_dtype=torch.bfloat16,
-        low_cpu_mem_usage=True,
-        trust_remote_code=True).eval().to(device)
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, use_fast=False)
-
-    return (
-        model,
-        tokenizer
+    model = (
+        AutoModel.from_pretrained(
+            model_name_or_path,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+            trust_remote_code=True,
+        )
+        .eval()
+        .to(device)
     )
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name_or_path, trust_remote_code=True, use_fast=False
+    )
+
+    return (model, tokenizer)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -74,7 +84,7 @@ def parse_args():
         "--query_str",
         type=str,
         default="",
-        help="The query string to use for captioning. This instructs the model how to behave. Not normally needed for InvernVL",
+        help="The query string to use for captioning. This instructs the model how to behave. Not normally needed for InternVL",
     )
     parser.add_argument(
         "--precision",
@@ -113,18 +123,22 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+
 def build_transform(input_size):
     MEAN, STD = IMAGENET_MEAN, IMAGENET_STD
-    transform = T.Compose([
-        T.Lambda(lambda img: img.convert('RGB') if img.mode != 'RGB' else img),
-        T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
-        T.ToTensor(),
-        T.Normalize(mean=MEAN, std=STD)
-    ])
+    transform = T.Compose(
+        [
+            T.Lambda(lambda img: img.convert("RGB") if img.mode != "RGB" else img),
+            T.Resize((input_size, input_size), interpolation=InterpolationMode.BICUBIC),
+            T.ToTensor(),
+            T.Normalize(mean=MEAN, std=STD),
+        ]
+    )
     return transform
 
+
 def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_size):
-    best_ratio_diff = float('inf')
+    best_ratio_diff = float("inf")
     best_ratio = (1, 1)
     area = width * height
     for ratio in target_ratios:
@@ -138,19 +152,27 @@ def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, height, image_
                 best_ratio = ratio
     return best_ratio
 
-def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbnail=False):
+
+def dynamic_preprocess(
+    image, min_num=1, max_num=12, image_size=448, use_thumbnail=False
+):
     orig_width, orig_height = image.size
     aspect_ratio = orig_width / orig_height
 
     # calculate the existing image aspect ratio
     target_ratios = set(
-        (i, j) for n in range(min_num, max_num + 1) for i in range(1, n + 1) for j in range(1, n + 1) if
-        i * j <= max_num and i * j >= min_num)
+        (i, j)
+        for n in range(min_num, max_num + 1)
+        for i in range(1, n + 1)
+        for j in range(1, n + 1)
+        if i * j <= max_num and i * j >= min_num
+    )
     target_ratios = sorted(target_ratios, key=lambda x: x[0] * x[1])
 
     # find the closest aspect ratio to the target
     target_aspect_ratio = find_closest_aspect_ratio(
-        aspect_ratio, target_ratios, orig_width, orig_height, image_size)
+        aspect_ratio, target_ratios, orig_width, orig_height, image_size
+    )
 
     # calculate the target width and height
     target_width = image_size * target_aspect_ratio[0]
@@ -165,7 +187,7 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
             (i % (target_width // image_size)) * image_size,
             (i // (target_width // image_size)) * image_size,
             ((i % (target_width // image_size)) + 1) * image_size,
-            ((i // (target_width // image_size)) + 1) * image_size
+            ((i // (target_width // image_size)) + 1) * image_size,
         )
         # split the image
         split_img = resized_img.crop(box)
@@ -176,20 +198,24 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
         processed_images.append(thumbnail_img)
     return processed_images
 
+
 def load_image(image_file, input_size=448, max_num=12):
-    print(f"Original image filename: {image_file}")
-    image = Image.open(image_file).convert('RGB')
+    # print(f"Original image filename: {image_file}")
+    image = Image.open(image_file).convert("RGB")
     width, height = image.size
-    print(f"Original image size: {image.size}")
+    # print(f"Original image size: {image.size}")
     mode = image.mode
-    print(f"Original image mode: {mode}")
+    # print(f"Original image mode: {mode}")
     transform = build_transform(input_size=input_size)
-    images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
-    print(f"Size after dynamic_preprocess: {images[0].size}")
+    images = dynamic_preprocess(
+        image, image_size=input_size, use_thumbnail=True, max_num=max_num
+    )
+    # print(f"Size after dynamic_preprocess: {images[0].size}")
     pixel_values = [transform(image) for image in images]
-    print(f"Size after transform: {pixel_values[0].shape}")
+    # print(f"Size after transform: {pixel_values[0].shape}")
     pixel_values = torch.stack(pixel_values)
     return pixel_values, width, height
+
 
 def process_directory(
     args,
@@ -254,11 +280,22 @@ def process_directory(
                 logger.debug(f"Processing image: {filename}")
                 # set the max number of tiles in `max_num`
                 pixel_values, width, height = load_image(full_filepath, max_num=12)
-                pixel_values, width, height = pixel_values.to(torch.bfloat16).to(device), width, height
+                pixel_values, width, height = (
+                    pixel_values.to(torch.bfloat16).to(device),
+                    width,
+                    height,
+                )
                 generation_config = dict(max_new_tokens=max_new_tokens, do_sample=False)
 
-                question = '<image>\n' + original_query_str
-                response = model.chat(tokenizer, pixel_values, question, generation_config, history=None, return_history=False)
+                question = "<image>\n" + str(original_query_str)
+                response = model.chat(
+                    tokenizer,
+                    pixel_values,
+                    question,
+                    generation_config,
+                    history=None,
+                    return_history=False,
+                )
 
                 total_processed += 1
                 logger.debug(f"Best match for {filename}: {response}")
@@ -266,11 +303,15 @@ def process_directory(
                 # with Image.open(full_filepath) as img_file:
                 #     image_bytes = img_file.tobytes()
 
-                records.append({"filename": filename, "caption": response, "width": width, "height": height})
-                if (
-                    total_to_process is not None
-                    and total_processed >= total_to_process
-                ):
+                records.append(
+                    {
+                        "filename": filename,
+                        "caption": response,
+                        "width": width,
+                        "height": height,
+                    }
+                )
+                if total_to_process is not None and total_processed >= total_to_process:
                     break
 
             except Exception as e:
@@ -295,6 +336,7 @@ def process_directory(
     combined_df = combined_df.drop_duplicates(subset=["filename"])
     combined_df.to_parquet(parquet_path, engine="pyarrow")
     logger.info(f"Processed Parquet file saved to {output_parquet}")
+
 
 def main():
     args = parse_args()
