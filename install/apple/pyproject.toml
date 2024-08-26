@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
 license = "SUL"
+package-mode = false
 readme = "README.md"
 
 [tool.poetry.dependencies]
