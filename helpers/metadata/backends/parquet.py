@@ -590,7 +590,7 @@ class ParquetMetadataBackend(MetadataBackend):
             return len(bucket) * (self.repeats + 1)
 
         return sum(
-            repeat_len(bucket) // self.batch_size
+            (repeat_len(bucket) + (self.batch_size - 1)) // self.batch_size
             for bucket in self.aspect_ratio_bucket_indices.values()
             if repeat_len(bucket) >= self.batch_size
         )

@@ -503,12 +503,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     to_yield = self._yield_n_from_exhausted_bucket(
                         need_image_count, self.buckets[self.current_bucket]
                     )
-                    # # add the available images
-                    # to_yield.extend(
-                    #     self._validate_and_yield_images_from_samples(
-                    #         available_images, self.buckets[self.current_bucket]
-                    #     )
-                    # )
+                    # add the available images
+                    to_yield.extend(
+                        self._validate_and_yield_images_from_samples(
+                            available_images, self.buckets[self.current_bucket]
+                        )
+                    )
                 else:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
                     samples = random.sample(
@@ -576,16 +576,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         backend_config = StateTracker.get_data_backend_config(self.id)
         repeats = backend_config.get("repeats", 0)
         # We need at least a multiplier of 1. Repeats is the number of extra sample steps.
-        multiplier = 1
-        if repeats > 0:
-            multiplier = repeats + 1
-        return (
+        multiplier = repeats + 1 if repeats > 0 else 1
+
+        total_samples = (
             sum(
                 len(indices)
                 for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()
             )
             * multiplier
         )
+
+        # Calculate the total number of full batches
+        total_batches = (total_samples + (self.batch_size - 1)) // self.batch_size
+
+        return total_batches
 
     @staticmethod
     def convert_to_human_readable(

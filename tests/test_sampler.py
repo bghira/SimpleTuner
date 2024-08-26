@@ -19,7 +19,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.metadata_backend = Mock(spec=JsonMetadataBackend)
         self.metadata_backend.id = "foo"
         self.metadata_backend.aspect_ratio_bucket_indices = {
-            "1.0": ["image1", "image2"]
+            "1.0": ["image1", "image2", "image3", "image4"],
         }
         self.metadata_backend.seen_images = {}
         self.data_backend = MockDataBackend()
