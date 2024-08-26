@@ -172,7 +172,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
-    "metadata_backend": "json"
+    "metadata_backend": "discovery"
   },
   {
     "id": "text-embeds",

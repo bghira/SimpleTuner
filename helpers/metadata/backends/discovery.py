@@ -12,7 +12,7 @@ from io import BytesIO
 from helpers.image_manipulation.brightness import calculate_luminance
 from helpers.training import image_file_extensions
 
-logger = logging.getLogger("JsonMetadataBackend")
+logger = logging.getLogger("DiscoveryMetadataBackend")
 if should_log():
     target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 else:
@@ -20,7 +20,7 @@ else:
 logger.setLevel(target_level)
 
 
-class JsonMetadataBackend(MetadataBackend):
+class DiscoveryMetadataBackend(MetadataBackend):
     def __init__(
         self,
         id: str,
@@ -275,7 +275,7 @@ class JsonMetadataBackend(MetadataBackend):
             return len(bucket) * (self.repeats + 1)
 
         return sum(
-            repeat_len(bucket) // self.batch_size
+            (repeat_len(bucket) + (self.batch_size - 1)) // self.batch_size
             for bucket in self.aspect_ratio_bucket_indices.values()
             if repeat_len(bucket) >= self.batch_size
         )

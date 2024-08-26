@@ -4,7 +4,7 @@ from PIL import Image
 from unittest import skip
 from unittest.mock import Mock, MagicMock, patch
 from helpers.multiaspect.sampler import MultiAspectSampler
-from helpers.metadata.backends.json import JsonMetadataBackend
+from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from helpers.multiaspect.state import BucketStateManager
 from tests.helpers.data import MockDataBackend
 from accelerate import PartialState
@@ -16,7 +16,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.process_state = PartialState()
         self.accelerator = MagicMock()
         self.accelerator.log = MagicMock()
-        self.metadata_backend = Mock(spec=JsonMetadataBackend)
+        self.metadata_backend = Mock(spec=DiscoveryMetadataBackend)
         self.metadata_backend.id = "foo"
         self.metadata_backend.aspect_ratio_bucket_indices = {
             "1.0": ["image1", "image2", "image3", "image4"],

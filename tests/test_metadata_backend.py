@@ -1,7 +1,7 @@
 import unittest, json
 from PIL import Image
 from unittest.mock import Mock, patch, MagicMock
-from helpers.metadata.backends.json import JsonMetadataBackend
+from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
 
@@ -30,8 +30,8 @@ class TestMetadataBackend(unittest.TestCase):
             "helpers.training.state_tracker.StateTracker._save_to_disk",
             return_value=True,
         ), patch("pathlib.Path.exists", return_value=True):
-            with self.assertLogs("JsonMetadataBackend", level="WARNING"):
-                self.metadata_backend = JsonMetadataBackend(
+            with self.assertLogs("DiscoveryMetadataBackend", level="WARNING"):
+                self.metadata_backend = DiscoveryMetadataBackend(
                     id="foo",
                     instance_data_dir=self.instance_data_dir,
                     cache_file=self.cache_file,
@@ -90,7 +90,7 @@ class TestMetadataBackend(unittest.TestCase):
     def test_load_cache_invalid(self):
         invalid_cache_data = "this is not valid json"
         with patch.object(self.data_backend, "read", return_value=invalid_cache_data):
-            with self.assertLogs("JsonMetadataBackend", level="WARNING"):
+            with self.assertLogs("DiscoveryMetadataBackend", level="WARNING"):
                 self.metadata_backend.reload_cache()
 
     def test_save_cache(self):
