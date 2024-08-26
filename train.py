@@ -1492,13 +1492,13 @@ def main():
             for backend_id, backend in StateTracker.get_data_backends().items():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
                 if (
-                    "crop" in backend_config
-                    and backend_config["crop"] is True
-                    and "crop_aspect" in backend_config
-                    and backend_config["crop_aspect"] is not None
-                    and backend_config["crop_aspect"] == "random"
+                    backend_config.get("crop")
+                    and backend_config.get("crop_aspect") == "random"
                     and "metadata_backend" in backend
                     and not args.aspect_bucket_disable_rebuild
+                ) or (
+                    backend_config.get("vae_cache_clear_each_epoch")
+                    and "vaecache" in backend
                 ):
                     # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                     if accelerator.is_main_process:
@@ -1525,16 +1525,6 @@ def main():
                         logger.info("Rebuilding VAE cache..")
                         backend["vaecache"].rebuild_cache()
                     # no need to manually call metadata_backend.save_cache() here.
-                elif (
-                    "vae_cache_clear_each_epoch" in backend_config
-                    and backend_config["vae_cache_clear_each_epoch"]
-                    and "vaecache" in backend
-                ):
-                    # If the user has specified that this should happen,
-                    # we will clear the cache and then rebuild it. This is useful for random crops.
-                    logger.debug("VAE Cache rebuild is enabled. Rebuilding.")
-                    logger.debug(f"Backend config: {backend_config}")
-                    backend["vaecache"].rebuild_cache()
         current_epoch = epoch
         StateTracker.set_epoch(epoch)
         if args.lr_scheduler == "cosine_with_restarts":
