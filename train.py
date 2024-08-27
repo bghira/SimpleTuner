@@ -53,6 +53,7 @@ from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_mana
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
+from helpers.training import steps_remaining_in_epoch
 from helpers.training.custom_schedule import (
     generate_timestep_weights,
     segmented_timestep_selection,
@@ -119,6 +120,7 @@ from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
     unpack_latents,
+    get_mobius_guidance,
 )
 
 is_optimi_available = False
@@ -1821,12 +1823,33 @@ def main():
                             height=latents.shape[2],
                             width=latents.shape[3],
                         )
-                        if args.flux_guidance_mode == "constant":
-                            guidance_scale = float(args.flux_guidance_value)
-                        elif args.flux_guidance_mode == "random-range":
-                            guidance_scale = random.uniform(
-                                args.flux_guidance_min, args.flux_guidance_max
+                        if args.flux_guidance_mode == "mobius":
+                            guidance = get_mobius_guidance(
+                                args,
+                                global_step,
+                                num_update_steps_per_epoch,
+                                latents.shape[0],
+                                accelerator.device,
                             )
+                        elif args.flux_guidance_mode == "constant":
+                            guidance_scale = float(args.flux_guidance_value)
+                            guidance = torch.tensor(
+                                [guidance_scale], device=accelerator.device
+                            ).expand(latents.shape[0])
+
+                        elif args.flux_guidance_mode == "random-range":
+                            # Generate a list of random values within the specified range for each latent
+                            guidance_scales = [
+                                random.uniform(
+                                    args.flux_guidance_min, args.flux_guidance_max
+                                )
+                                for _ in range(latents.shape[0])
+                            ]
+                            guidance = torch.tensor(
+                                guidance_scales, device=accelerator.device
+                            )
+
+                        # Now `guidance` will have different values for each latent in `latents`.
                         transformer_config = None
                         if hasattr(transformer, "module"):
                             transformer_config = transformer.module.config
