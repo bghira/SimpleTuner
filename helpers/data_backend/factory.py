@@ -154,12 +154,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["hash_filenames"] = backend["hash_filenames"]
 
     # check if caption_strategy=parquet with metadata_backend=json
-    if (
-        output["config"]["caption_strategy"] == "parquet"
-        and backend.get("metadata_backend", "json") == "json"
+    current_metadata_backend_type = backend.get("metadata_backend", "discovery")
+    if output["config"]["caption_strategy"] == "parquet" and (
+        current_metadata_backend_type == "json"
+        or current_metadata_backend_type == "discovery"
     ):
         raise ValueError(
-            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend=json. Instead, it is recommended to use the textfile strategy and extract your captions into txt files."
+            f"(id={backend['id']}) Cannot use caption_strategy=parquet with metadata_backend={current_metadata_backend_type}. Instead, it is recommended to use the textfile strategy and extract your captions into txt files."
         )
 
     maximum_image_size = backend.get("maximum_image_size", args.maximum_image_size)
@@ -674,11 +675,11 @@ def configure_multi_databackend(
             image_embed_data_backend = image_embed_backends[image_embed_backend_id]
         info_log(f"(id={init_backend['id']}) Loading bucket manager.")
         metadata_backend_args = {}
-        metadata_backend = backend.get("metadata_backend", "json")
-        if metadata_backend == "json":
-            from helpers.metadata.backends.json import JsonMetadataBackend
+        metadata_backend = backend.get("metadata_backend", "discovery")
+        if metadata_backend == "json" or metadata_backend == "discovery":
+            from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 
-            BucketManager_cls = JsonMetadataBackend
+            BucketManager_cls = DiscoveryMetadataBackend
         elif metadata_backend == "parquet":
             from helpers.metadata.backends.parquet import ParquetMetadataBackend
 

@@ -3,7 +3,7 @@ from unittest.mock import patch, Mock, MagicMock
 from PIL import Image
 from pathlib import Path
 from helpers.multiaspect.dataset import MultiAspectDataset
-from helpers.metadata.backends.json import JsonMetadataBackend
+from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from helpers.data_backend.base import BaseDataBackend
 
 
@@ -11,7 +11,7 @@ class TestMultiAspectDataset(unittest.TestCase):
     def setUp(self):
         self.instance_data_dir = "/some/fake/path"
         self.accelerator = Mock()
-        self.metadata_backend = Mock(spec=JsonMetadataBackend)
+        self.metadata_backend = Mock(spec=DiscoveryMetadataBackend)
         self.metadata_backend.__len__ = Mock(return_value=10)
         self.image_metadata = {
             "image_path": "fake_image_path",

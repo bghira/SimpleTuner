@@ -143,12 +143,17 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--flux_guidance_mode",
         type=str,
-        choices=["constant", "random-range"],
+        choices=["constant", "random-range", "mobius"],
         default="constant",
         help=(
             "Flux has a 'guidance' value used during training time that reflects the CFG range of your training samples."
             " The default mode 'constant' will use a single value for every sample."
             " The mode 'random-range' will randomly select a value from the range of the CFG for each sample."
+            " The mode 'mobius' will use a value that is a function of the remaining steps in the epoch, constructively"
+            " deconstructing the constructed deconstructions to then Mobius them back into the constructed reconstructions,"
+            " possibly resulting in the exploration of what is known as the Mobius space, a new continuous"
+            " realm of possibility brought about by destroying the model so that you can make it whole once more."
+            " Or so according to DataVoid, anyway. This is just a Flux-specific implementation of Mobius."
             " Set the range using --flux_guidance_min and --flux_guidance_max."
         ),
     )
@@ -2070,6 +2075,16 @@ def parse_args(input_args=None):
             warning_log(
                 "Flux Schnell requires fewer inference steps. Consider reducing --validation_num_inference_steps to 4."
             )
+
+        if args.flux_guidance_mode == "mobius":
+            logger.warning(
+                "Mobius training is only for the most elite. Pardon my English, but this is not for those who don't like to destroy something beautiful every now and then. If you feel perhaps this is not for you, please consider using a different guidance mode."
+            )
+            if args.flux_guidance_min < 1.0:
+                logger.warning(
+                    "Flux minimum guidance value for Mobius training is 1.0. Updating value.."
+                )
+                args.flux_guidance_min = 1.0
 
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"

@@ -53,6 +53,7 @@ from helpers.training.deepspeed import deepspeed_zero_init_disabled_context_mana
 from helpers.training.wrappers import unwrap_model
 from helpers.data_backend.factory import configure_multi_databackend
 from helpers.data_backend.factory import random_dataloader_iterator
+from helpers.training import steps_remaining_in_epoch
 from helpers.training.custom_schedule import (
     generate_timestep_weights,
     segmented_timestep_selection,
@@ -119,6 +120,7 @@ from helpers.models.flux import (
     prepare_latent_image_ids,
     pack_latents,
     unpack_latents,
+    get_mobius_guidance,
 )
 
 is_optimi_available = False
@@ -1351,6 +1353,7 @@ def main():
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
+    guidance_values_table = None
     if accelerator.is_main_process:
         # Copy args into public_args:
         public_args = copy.deepcopy(args)
@@ -1469,6 +1472,7 @@ def main():
 
     # Some values that are required to be initialised later.
     timesteps_buffer = []
+    guidance_values_list = []
     train_loss = 0.0
     grad_norm = None
     step = global_step
@@ -1492,13 +1496,13 @@ def main():
             for backend_id, backend in StateTracker.get_data_backends().items():
                 backend_config = StateTracker.get_data_backend_config(backend_id)
                 if (
-                    "crop" in backend_config
-                    and backend_config["crop"] is True
-                    and "crop_aspect" in backend_config
-                    and backend_config["crop_aspect"] is not None
-                    and backend_config["crop_aspect"] == "random"
+                    backend_config.get("crop")
+                    and backend_config.get("crop_aspect") == "random"
                     and "metadata_backend" in backend
                     and not args.aspect_bucket_disable_rebuild
+                ) or (
+                    backend_config.get("vae_cache_clear_each_epoch")
+                    and "vaecache" in backend
                 ):
                     # when the aspect ratio is random, we need to shuffle the dataset on each epoch.
                     if accelerator.is_main_process:
@@ -1525,16 +1529,6 @@ def main():
                         logger.info("Rebuilding VAE cache..")
                         backend["vaecache"].rebuild_cache()
                     # no need to manually call metadata_backend.save_cache() here.
-                elif (
-                    "vae_cache_clear_each_epoch" in backend_config
-                    and backend_config["vae_cache_clear_each_epoch"]
-                    and "vaecache" in backend
-                ):
-                    # If the user has specified that this should happen,
-                    # we will clear the cache and then rebuild it. This is useful for random crops.
-                    logger.debug("VAE Cache rebuild is enabled. Rebuilding.")
-                    logger.debug(f"Backend config: {backend_config}")
-                    backend["vaecache"].rebuild_cache()
         current_epoch = epoch
         StateTracker.set_epoch(epoch)
         if args.lr_scheduler == "cosine_with_restarts":
@@ -1831,12 +1825,30 @@ def main():
                             height=latents.shape[2],
                             width=latents.shape[3],
                         )
-                        if args.flux_guidance_mode == "constant":
-                            guidance_scale = float(args.flux_guidance_value)
-                        elif args.flux_guidance_mode == "random-range":
-                            guidance_scale = random.uniform(
-                                args.flux_guidance_min, args.flux_guidance_max
+                        if args.flux_guidance_mode == "mobius":
+                            guidance_scales = get_mobius_guidance(
+                                args,
+                                global_step,
+                                num_update_steps_per_epoch,
+                                latents.shape[0],
+                                accelerator.device,
                             )
+                        elif args.flux_guidance_mode == "constant":
+                            guidance_scales = [
+                                float(args.flux_guidance_value)
+                            ] * latents.shape[0]
+
+                        elif args.flux_guidance_mode == "random-range":
+                            # Generate a list of random values within the specified range for each latent
+                            guidance_scales = [
+                                random.uniform(
+                                    args.flux_guidance_min, args.flux_guidance_max
+                                )
+                                for _ in range(latents.shape[0])
+                            ]
+                        guidance_values_list.append(guidance_scales)
+
+                        # Now `guidance` will have different values for each latent in `latents`.
                         transformer_config = None
                         if hasattr(transformer, "module"):
                             transformer_config = transformer.module.config
@@ -1846,9 +1858,8 @@ def main():
                             transformer_config, "guidance_embeds", False
                         ):
                             guidance = torch.tensor(
-                                [guidance_scale], device=accelerator.device
+                                guidance_scales, device=accelerator.device
                             )
-                            guidance = guidance.expand(latents.shape[0])
                         else:
                             guidance = None
                         img_ids = prepare_latent_image_ids(
@@ -2121,14 +2132,19 @@ def main():
                     logger.error(
                         f"Failed to get the last learning rate from the scheduler. Error: {e}"
                     )
-                logs = {
+                wandb_logs = {
                     "train_loss": train_loss,
                     "optimization_loss": loss,
                     "learning_rate": lr,
                     "epoch": epoch,
                 }
+                if args.flux and guidance_values_list:
+                    # avg the values
+                    guidance_values = torch.tensor(guidance_values_list).mean()
+                    wandb_logs["mean_cfg"] = guidance_values.item()
+                    guidance_values_list = []
                 if grad_norm is not None:
-                    logs["grad_norm"] = grad_norm
+                    wandb_logs["grad_norm"] = grad_norm
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1
@@ -2146,7 +2162,7 @@ def main():
                             ),
                             global_step=global_step,
                         )
-                        logs["ema_decay_value"] = ema_model.get_decay()
+                        wandb_logs["ema_decay_value"] = ema_model.get_decay()
                     accelerator.wait_for_everyone()
 
                 # Log scatter plot to wandb
@@ -2157,7 +2173,7 @@ def main():
                         for iteration, timestep in timesteps_buffer
                     ]
                     table = wandb.Table(data=data, columns=["global_step", "timestep"])
-                    logs["timesteps_scatter"] = wandb.plot.scatter(
+                    wandb_logs["timesteps_scatter"] = wandb.plot.scatter(
                         table,
                         "global_step",
                         "timestep",
@@ -2171,13 +2187,13 @@ def main():
                 avg_training_data_luminance = sum(training_luminance_values) / len(
                     training_luminance_values
                 )
-                logs["train_luminance"] = avg_training_data_luminance
+                wandb_logs["train_luminance"] = avg_training_data_luminance
 
                 logger.debug(
                     f"Step {global_step} of {args.max_train_steps}: loss {loss.item()}, lr {lr}, epoch {epoch}/{args.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {train_loss}"
                 )
                 accelerator.log(
-                    logs,
+                    wandb_logs,
                     step=global_step,
                 )
                 if webhook_handler is not None:
@@ -2253,6 +2269,9 @@ def main():
                 "step_loss": loss.detach().item(),
                 "lr": lr,
             }
+            if "mean_cfg" in wandb_logs:
+                logs["mean_cfg"] = wandb_logs["mean_cfg"]
+
             progress_bar.set_postfix(**logs)
             if is_schedulefree:
                 optimizer.eval()

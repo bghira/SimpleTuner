@@ -112,3 +112,18 @@ lycoris_defaults = {
         },
     },
 }
+
+
+def steps_remaining_in_epoch(current_step: int, steps_per_epoch: int) -> int:
+    """
+    Calculate the number of steps remaining in the current epoch.
+
+    Args:
+        current_step (int): The current step within the epoch.
+        steps_per_epoch (int): Total number of steps in the epoch.
+
+    Returns:
+        int: Number of steps remaining in the current epoch.
+    """
+    remaining_steps = steps_per_epoch - (current_step % steps_per_epoch)
+    return remaining_steps

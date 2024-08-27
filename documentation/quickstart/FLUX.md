@@ -263,7 +263,7 @@ create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
-    "metadata_backend": "json"
+    "metadata_backend": "discovery"
   },
   {
     "id": "dreambooth-subject",
@@ -278,7 +278,7 @@ create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
     "instance_data_dir": "datasets/dreambooth-subject",
     "caption_strategy": "instanceprompt",
     "instance_prompt": "the name of your subject goes here",
-    "metadata_backend": "json"
+    "metadata_backend": "discovery"
   },
   {
     "id": "text-embeds",
