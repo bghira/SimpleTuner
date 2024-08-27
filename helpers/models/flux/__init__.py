@@ -19,18 +19,15 @@ def get_mobius_guidance(args, global_step, steps_per_epoch, batch_size, device):
     if (
         steps_remaining <= threshold_step_count
     ):  # Last few steps in the epoch, set guidance to 1.0
-        guidance_values = torch.ones(batch_size, device=device)
+        guidance_values = [1.0 for _ in range(batch_size)]
     else:
         # Sample between flux_guidance_min and flux_guidance_max with bias towards 1.0
-        guidance_values = torch.tensor(
-            [
-                random.uniform(args.flux_guidance_min, args.flux_guidance_max)
-                * scale_factor
-                + (1.0 - scale_factor)
-                for _ in range(batch_size)
-            ],
-            device=device,
-        )
+        guidance_values = [
+            random.uniform(args.flux_guidance_min, args.flux_guidance_max)
+            * scale_factor
+            + (1.0 - scale_factor)
+            for _ in range(batch_size)
+        ]
 
     return guidance_values
 
