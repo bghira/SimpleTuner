@@ -369,6 +369,7 @@ class CosineAnnealingHardRestarts(LRScheduler):
         self.T_mult = T_mult
         self.eta_min = eta_min
         self.T_cur = last_step
+        self.last_step = last_step
         super().__init__(optimizer, last_step, verbose)
 
     def get_lr(self):

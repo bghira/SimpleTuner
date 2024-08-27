@@ -203,7 +203,7 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 - This is equivalent to the commandline option `--skip_file_discovery`
 - This is helpful if you have datasets you don't need the trainer to scan on every startup, eg. their latents/embeds are already cached fully. This allows quicker startup and resumption of training.
 
-### `preserve_data_cache_backend`
+### `preserve_data_backend_cache`
 
 - You probably don't want to ever set this - it is useful only for very large AWS datasets.
 - Like `skip_file_discovery`, this option can be set to prevent unnecessary, lengthy and costly filesystem scans at startup.

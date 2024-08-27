@@ -141,6 +141,19 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--flux_schedule_shift",
+        type=float,
+        default=None,
+        help=(
+            "Shift the noise schedule. This is a value between 0 and ~4.0, where 0 disables the timestep-dependent shift,"
+            " and anything greater than 0 will shift the timestep sampling accordingly. The SD3 model was trained with"
+            " a shift value of 3. The value for Flux is unknown. Higher values result in less noisy timesteps sampled,"
+            " which results in a lower mean loss value, but not necessarily better results. Early reports indicate"
+            " that modification of this value can change how the contrast is learnt by the model, and whether fine"
+            " details are ignored or accentuated."
+        ),
+    )
+    parser.add_argument(
         "--flux_guidance_mode",
         type=str,
         choices=["constant", "random-range", "mobius"],
