@@ -1670,6 +1670,13 @@ def main():
                             device=accelerator.device,
                         )
                     timesteps = sigmas * 1000.0
+                    if (
+                        args.flux_schedule_shift is not None
+                        and args.flux_schedule_shift > 0
+                    ):
+                        timesteps = (timesteps * args.flux_schedule_shift) / (
+                            1 + (args.flux_schedule_shift - 1) * timesteps
+                        )
                     sigmas = sigmas.view(-1, 1, 1, 1)
                 else:
                     # Sample a random timestep for each image, potentially biased by the timestep weights.
