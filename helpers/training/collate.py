@@ -450,21 +450,21 @@ def collate_fn(batch):
         )
 
     if (
-        StateTracker.get_model_type() == "sdxl"
-        or StateTracker.get_model_type() == "kolors"
+        StateTracker.get_model_family() == "sdxl"
+        or StateTracker.get_model_family() == "kolors"
     ):
         debug_log("Compute and stack SDXL time ids")
         batch_time_ids = gather_conditional_sdxl_size_features(
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
         debug_log(f"Time ids stacked to {batch_time_ids.shape}: {batch_time_ids}")
-    elif StateTracker.get_model_type() == "pixart_sigma":
+    elif StateTracker.get_model_family() == "pixart_sigma":
         debug_log("Compute and stack PixArt time ids")
         batch_time_ids = gather_conditional_pixart_size_features(
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
         attn_mask = add_text_embeds_all
-    elif StateTracker.get_model_type() == "smoldit":
+    elif StateTracker.get_model_family() == "smoldit":
         attn_mask = add_text_embeds_all
 
     return {

@@ -41,6 +41,16 @@ default_cfg = {
     "stable_diffusion_3": 5.0,
 }
 
+model_labels = {
+    "sd3": "Stable Diffusion 3",
+    "flux": "FLUX",
+    "pixart_sigma": "PixArt Sigma",
+    "kolors": "Kwai Kolors",
+    "terminus": "Terminus",
+    "sdxl": "Stable Diffusion XL",
+    "legacy": "Stable Diffusion",
+}
+
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
     1: "3e-4",

@@ -1,5 +1,9 @@
+from datetime import timedelta
+from accelerate.utils import ProjectConfiguration
+from accelerate import InitProcessGroupKwargs
 import argparse
 import os
+from typing import Dict, List, Optional, Tuple
 import random
 import time
 import logging
@@ -72,6 +76,15 @@ def parse_args(input_args=None):
         help=(
             "The standard deviation of the data used in the soft min weighting method."
             " This is required when using the soft min SNR calculation method."
+        ),
+    )
+    parser.add_argument(
+        "--model_family",
+        choices=["pixart_sigma", "kolors", "sd3", "flux", "smoldit", "sdxl", "legacy"],
+        default=None,
+        help=(
+            "The model family to train. This option is required to specify the model family if"
+            " one of the deprecated options such as --flux is not provided."
         ),
     )
     parser.add_argument(
@@ -2136,5 +2149,105 @@ def parse_args(input_args=None):
             )
         if "lora" in args.model_type:
             raise ValueError("Using EMA is not currently supported for LoRA training.")
+    args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
+    args.accelerator_project_config = ProjectConfiguration(
+        project_dir=args.output_dir, logging_dir=args.logging_dir
+    )
+    # Create the custom configuration
+    args.process_group_kwargs = InitProcessGroupKwargs(
+        timeout=timedelta(seconds=5400)
+    )  # 1.5 hours
+
+    # Enable TF32 for faster training on Ampere GPUs,
+    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    if args.allow_tf32 and torch.cuda.is_available():
+        logger.info(
+            "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
+        )
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    elif torch.cuda.is_available():
+        logger.warning(
+            "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
+        )
+
+    args.is_quantized = (
+        False
+        if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
+        else True
+    )
+    args.weight_dtype = (
+        torch.bfloat16
+        if (
+            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+            or (args.base_model_default_dtype == "bf16" and args.is_quantized)
+        )
+        else torch.float32
+    )
+    args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+
+    if "lora" not in args.model_type:
+        args.base_model_precision = "no_change"
+    elif "lycoris" == args.lora_type.lower():
+        from lycoris import create_lycoris
+
+        if args.lycoris_config is None:
+            raise ValueError(
+                "--lora_type=lycoris requires you to add a JSON "
+                + "configuration file location with --lycoris_config"
+            )
+        # is it readable?
+        if not os.path.isfile(args.lycoris_config) or not os.access(
+            args.lycoris_config, os.R_OK
+        ):
+            raise ValueError(
+                f"Could not find the JSON configuration file at {args.lycoris_config}"
+            )
+        import json
+
+        with open(args.lycoris_config, "r") as f:
+            lycoris_config = json.load(f)
+        assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
+        assert (
+            "multiplier" in lycoris_config
+        ), "lycoris_config JSON must contain multiplier key"
+        assert (
+            "linear_dim" in lycoris_config
+        ), "lycoris_config JSON must contain linear_dim key"
+        assert (
+            "linear_alpha" in lycoris_config
+        ), "lycoris_config JSON must contain linear_alpha key"
+
+    elif "standard" == args.lora_type.lower():
+        if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
+            if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
+                logger.error(
+                    "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
+                )
+            elif args.is_quantized and args.lora_init_type == "loftq":
+                logger.error(
+                    "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
+                )
+            else:
+                args.lora_initialisation_style = (
+                    args.lora_init_type if args.lora_init_type != "default" else True
+                )
+        if args.use_dora:
+            if "quanto" in args.base_model_precision:
+                logger.error(
+                    "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
+                )
+                args.use_dora = False
+            else:
+                logger.warning(
+                    "DoRA support is experimental and not very thoroughly tested."
+                )
+                args.lora_initialisation_style = "default"
+
+    # Check if we have a valid gradient accumulation steps.
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError(
+            f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
+        )
 
     return args

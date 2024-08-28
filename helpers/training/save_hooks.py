@@ -132,7 +132,7 @@ class SaveHookManager:
             self.denoiser_class = UNet2DConditionModel
             self.denoiser_subdir = "unet"
             self.pipeline_class = StableDiffusionXLPipeline
-            if StateTracker.get_model_type() == "legacy":
+            if StateTracker.get_model_family() == "legacy":
                 self.pipeline_class = StableDiffusionPipeline
         elif self.transformer is not None:
             if args.sd3:

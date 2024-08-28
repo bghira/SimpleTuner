@@ -289,11 +289,11 @@ def save_model_card(
             shortname_idx += 1
     args = StateTracker.get_args()
     yaml_content = f"""---
-license: {licenses[StateTracker.get_model_type()]}
+license: {licenses[StateTracker.get_model_family()]}
 base_model: "{base_model}"
 tags:
-  - {StateTracker.get_model_type()}
-  - {f'{StateTracker.get_model_type()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
+  - {StateTracker.get_model_family()}
+  - {f'{StateTracker.get_model_family()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
   - simpletuner

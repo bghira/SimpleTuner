@@ -377,7 +377,6 @@ class Validation:
     def __init__(
         self,
         accelerator,
-        prompt_handler,
         unet,
         transformer,
         args,
@@ -400,7 +399,7 @@ class Validation:
         is_deepspeed: bool = False,
     ):
         self.accelerator = accelerator
-        self.prompt_handler = prompt_handler
+        self.prompt_handler = None
         self.unet = unet
         self.transformer = transformer
         self.controlnet = controlnet
@@ -524,7 +523,7 @@ class Validation:
             )
 
     def _pipeline_cls(self):
-        model_type = StateTracker.get_model_type()
+        model_type = StateTracker.get_model_family()
         if model_type == "sdxl":
             if self.args.controlnet:
                 from diffusers.pipelines import StableDiffusionXLControlNetPipeline
@@ -598,10 +597,10 @@ class Validation:
         prompt_embeds = {}
         current_validation_prompt_mask = None
         if (
-            StateTracker.get_model_type() == "sdxl"
-            or StateTracker.get_model_type() == "sd3"
-            or StateTracker.get_model_type() == "kolors"
-            or StateTracker.get_model_type() == "flux"
+            StateTracker.get_model_family() == "sdxl"
+            or StateTracker.get_model_family() == "sd3"
+            or StateTracker.get_model_family() == "kolors"
+            or StateTracker.get_model_family() == "flux"
         ):
             _embed = self.embed_cache.compute_embeddings_for_prompts(
                 [validation_prompt]
@@ -648,9 +647,9 @@ class Validation:
             # if current_validation_time_ids is not None:
             #     prompt_embeds["time_ids"] = current_validation_time_ids
         elif (
-            StateTracker.get_model_type() == "legacy"
-            or StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "smoldit"
+            StateTracker.get_model_family() == "legacy"
+            or StateTracker.get_model_family() == "pixart_sigma"
+            or StateTracker.get_model_family() == "smoldit"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
@@ -681,7 +680,7 @@ class Validation:
             # )
         else:
             raise NotImplementedError(
-                f"Model type {StateTracker.get_model_type()} not implemented for validation."
+                f"Model type {StateTracker.get_model_family()} not implemented for validation."
             )
 
         current_validation_prompt_embeds = current_validation_prompt_embeds.to(
@@ -699,10 +698,10 @@ class Validation:
         prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
         if (
-            StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "smoldit"
+            StateTracker.get_model_family() == "pixart_sigma"
+            or StateTracker.get_model_family() == "smoldit"
             or (
-                StateTracker.get_model_type() == "flux"
+                StateTracker.get_model_family() == "flux"
                 and StateTracker.get_args().flux_attention_masked_training
             )
         ):
@@ -1260,12 +1259,12 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                if StateTracker.get_model_type() == "flux":
+                if StateTracker.get_model_family() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
                 if (
-                    StateTracker.get_model_type() == "pixart_sigma"
-                    or StateTracker.get_model_type() == "smoldit"
+                    StateTracker.get_model_family() == "pixart_sigma"
+                    or StateTracker.get_model_family() == "smoldit"
                 ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]

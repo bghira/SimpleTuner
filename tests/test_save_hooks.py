@@ -39,7 +39,7 @@ class TestSaveHookManager(unittest.TestCase):
             args.flux = True
 
         self.args = args
-        StateTracker.set_model_type(model_type)
+        StateTracker.set_model_family(model_type)
 
     def _test_hook_manager(self, expected_denoiser_class, expected_pipeline_class):
         model_hooks = SaveHookManager(

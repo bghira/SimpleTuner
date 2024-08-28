@@ -310,9 +310,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def configure_multi_databackend(
-    args: dict, accelerator, text_encoders, tokenizers, prompt_handler
-):
+def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -412,7 +410,7 @@ def configure_multi_databackend(
             tokenizers=tokenizers,
             accelerator=accelerator,
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
-            model_type=StateTracker.get_model_type(),
+            model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", 1),
         )
         with accelerator.main_process_first():
