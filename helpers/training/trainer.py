@@ -454,12 +454,8 @@ class Trainer:
         if "lora" in self.config.model_type or self.config.controlnet:
             if self.transformer is not None:
                 self.transformer.requires_grad_(False)
-            else:
-                logger.error("Could not freeze transformer. Not found.")
             if self.unet is not None:
                 self.unet.requires_grad_(False)
-            else:
-                logger.error("Could not freeze unet. Not found.")
 
     def init_load_base_model(self):
         if self.webhook_handler is not None:
