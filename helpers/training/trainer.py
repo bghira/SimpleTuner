@@ -456,6 +456,7 @@ class Trainer:
                 self.transformer.requires_grad_(False)
             if self.unet is not None:
                 self.unet.requires_grad_(False)
+        self.accelerator.wait_for_everyone()
 
     def init_load_base_model(self):
         if self.webhook_handler is not None:
@@ -465,6 +466,7 @@ class Trainer:
         self.unet, self.transformer = load_diffusion_model(
             self.config, self.config.weight_dtype
         )
+        self.accelerator.wait_for_everyone()
 
     def init_data_backend(self):
         try:
@@ -508,6 +510,7 @@ class Trainer:
             self.webhook_handler.send(
                 message=f"Collected the following data backends: {collected_data_backend_str}"
             )
+        self.accelerator.wait_for_everyone()
 
     def init_validation_prompts(self):
         if self.accelerator.is_main_process:
@@ -659,6 +662,7 @@ class Trainer:
                     controlnet=None,
                     args=self.config,
                 )
+        self.accelerator.wait_for_everyone()
 
     def init_trainable_peft_adapter(self):
         if "lora" not in self.config.model_type:
@@ -770,6 +774,7 @@ class Trainer:
             logger.info(
                 f"LyCORIS network has been initialized with {lycoris_num_params:,} parameters"
             )
+        self.accelerator.wait_for_everyone()
 
     def init_post_load_freeze(self):
         if self.config.layer_freeze_strategy == "bitfit":
@@ -1113,6 +1118,7 @@ class Trainer:
                 self.text_encoder_1, self.text_encoder_2
             )
         self._recalculate_training_steps()
+        self.accelerator.wait_for_everyone()
 
     def init_unload_vae(self):
         if self.config.keep_vae_loaded or self.config.vae_cache_ondemand:
@@ -1157,6 +1163,7 @@ class Trainer:
         if not self.config.train_text_encoder:
             self.validation.clear_text_encoders()
         self.init_benchmark_base_model()
+        self.accelerator.wait_for_everyone()
 
     def init_benchmark_base_model(self):
         if not self.config.benchmark_base_model or self.validation.benchmark_exists(
@@ -1281,6 +1288,7 @@ class Trainer:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
+        self.accelerator.wait_for_everyone()
 
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
