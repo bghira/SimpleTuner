@@ -81,10 +81,8 @@ def parse_args(input_args=None):
         "--model_family",
         choices=["pixart_sigma", "kolors", "sd3", "flux", "smoldit", "sdxl", "legacy"],
         default=None,
-        help=(
-            "The model family to train. This option is required to specify the model family if"
-            " one of the deprecated options such as --flux is not provided."
-        ),
+        required=True,
+        help=("The model family to train. This option is required."),
     )
     parser.add_argument(
         "--model_type",
@@ -102,26 +100,6 @@ def parse_args(input_args=None):
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
             " LoRA is a smaller model that can be used for faster training."
         ),
-    )
-    parser.add_argument(
-        "--legacy",
-        action="store_true",
-        default=False,
-        help=(
-            "This option must be provided when training a Stable Diffusion 1.x or 2.x model."
-        ),
-    )
-    parser.add_argument(
-        "--kolors",
-        action="store_true",
-        default=False,
-        help=("This option must be provided when training a Kolors model."),
-    )
-    parser.add_argument(
-        "--flux",
-        action="store_true",
-        default=False,
-        help=("This option must be provided when training a Flux model."),
     )
     parser.add_argument(
         "--flux_lora_target",
