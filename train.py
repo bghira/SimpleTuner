@@ -34,11 +34,11 @@ if __name__ == "__main__":
         trainer.init_unload_vae()
 
         trainer.init_load_base_model()
+        trainer.init_precision()
         trainer.init_controlnet_model()
         trainer.init_freeze_models()
         trainer.init_trainable_peft_adapter()
         trainer.init_ema_model()
-        trainer.init_precision()
 
         trainer.init_validations()
         trainer.init_benchmark_base_model()
