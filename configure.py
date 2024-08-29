@@ -485,13 +485,9 @@ def configure_env():
             continue
     env_contents["MODEL_TYPE"] = model_type
     env_contents["MODEL_NAME"] = model_name
-    for cls in model_classes[model_type]:
-        if cls == "sdxl":
-            continue
-        env_contents[cls.upper()] = "false"
-    env_contents[model_class.upper()] = "true"
+    env_contents["MODEL_FAMILY"] = model_class.lower()
     # Flux-specific options
-    if "FLUX" in env_contents and env_contents["FLUX"] == "true":
+    if "FLUX" in env_contents and env_contents["MODEL_FAMILY"] == "flux":
         if env_contents["MODEL_TYPE"].lower() == "lora" and not use_lycoris:
             flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit"]
             flux_target_layers = None
