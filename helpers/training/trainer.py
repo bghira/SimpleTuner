@@ -557,7 +557,7 @@ class Trainer:
         return curent_memory_allocated
 
     def init_unload_text_encoder(self):
-        if self.config.model_type != "full" or self.config.train_text_encoder:
+        if self.config.model_type != "full" and self.config.train_text_encoder:
             return
         memory_before_unload = self.stats_memory_used()
         if self.accelerator.is_main_process:
