@@ -33,7 +33,7 @@ def get_mobius_guidance(args, global_step, steps_per_epoch, batch_size, device):
 
 
 def update_flux_schedule_to_fast(args, noise_scheduler_to_copy):
-    if args.flux_fast_schedule and args.flux:
+    if args.flux_fast_schedule and args.model_family.lower() == "flux":
         # 4-step noise schedule [0.7, 0.1, 0.1, 0.1] from SD3-Turbo paper
         for i in range(0, 250):
             noise_scheduler_to_copy.sigmas[i] = 1.0

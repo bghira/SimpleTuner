@@ -237,7 +237,7 @@ class Trainer:
                 logger.warning(
                     "Using --sd3 is deprecated. Please use --model_family=sd3."
                 )
-            if self.config.flux:
+            if self.config.model_family == "flux":
                 model_family = "flux"
                 logger.warning(
                     "Using --flux is deprecated. Please use --model_family=flux."
@@ -264,8 +264,9 @@ class Trainer:
                 logger.warning(
                     "Training SDXL without specifying --model_family is deprecated. Please use --model_family=sdxl."
                 )
-        elif model_family not in model_classes["full"].keys():
+        elif model_family not in model_classes["full"]:
             raise ValueError(f"Invalid model family specified: {model_family}")
+        print(f"Model family: {model_family}")
         self._set_model_paths()
         StateTracker.set_model_family(model_family)
         self.config.model_type_label = model_labels[model_family.lower()]
@@ -514,7 +515,7 @@ class Trainer:
 
     def init_validation_prompts(self):
         if self.accelerator.is_main_process:
-            if self.config.flux:
+            if self.config.model_family == "flux":
                 (
                     self.validation_prompts,
                     self.validation_shortnames,
@@ -1818,7 +1819,7 @@ class Trainer:
                                 raise Exception(
                                     "ControlNet predictions for transformer models are not yet implemented."
                                 )
-                        elif self.config.flux:
+                        elif self.config.model_family == "flux":
                             # handle guidance
                             packed_noisy_latents = pack_latents(
                                 noisy_latents,
@@ -2023,7 +2024,7 @@ class Trainer:
                         #     ):
                         #         model_pred = model_pred.dequantize()
 
-                        if self.config.flux:
+                        if self.config.model_family == "flux":
                             model_pred = unpack_latents(
                                 model_pred,
                                 height=latents.shape[2] * 8,
@@ -2410,7 +2411,7 @@ class Trainer:
                     text_encoder_lora_layers = None
                     text_encoder_2_lora_layers = None
 
-                if self.config.flux:
+                if self.config.model_family == "flux":
                     from diffusers.pipelines import FluxPipeline
 
                     FluxPipeline.save_lora_weights(
@@ -2556,7 +2557,7 @@ class Trainer:
                         logger.debug(
                             f"Setting scheduler to Euler for SD3. Config: {self.pipeline.scheduler.config}"
                         )
-                elif self.config.flux:
+                elif self.config.model_family == "flux":
                     from diffusers.pipelines import FluxPipeline
 
                     self.pipeline = FluxPipeline.from_pretrained(

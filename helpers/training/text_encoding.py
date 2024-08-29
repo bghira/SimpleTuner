@@ -8,13 +8,14 @@ logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", 
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
+
 def import_model_class_from_model_name_or_path(
     pretrained_model_name_or_path: str,
     revision: str,
     args,
     subfolder: str = "text_encoder",
 ):
-    if args.smoldit:
+    if args.model_family.lower() == "smoldit":
         from transformers import AutoModelForSeq2SeqLM
 
         return AutoModelForSeq2SeqLM
@@ -50,7 +51,7 @@ def import_model_class_from_model_name_or_path(
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
     try:
-        if args.smoldit:
+        if args.model_family.lower() == "smoldit":
             from transformers import AutoTokenizer
 
             tokenizer_1 = AutoTokenizer.from_pretrained(
@@ -64,12 +65,12 @@ def get_tokenizers(args):
             "revision": args.revision,
         }
         is_t5_model = False
-        if args.pixart_sigma:
+        if args.model_family.lower() == "pixart_sigma":
             from transformers import T5Tokenizer
 
             tokenizer_cls = T5Tokenizer
             is_t5_model = True
-        elif args.kolors:
+        elif args.model_family.lower() == "kolors":
             from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
             tokenizer_cls = ChatGLMTokenizer
@@ -80,7 +81,7 @@ def get_tokenizers(args):
                 use_fast=False,
             )
         else:
-            from transformers import CLIPTokenizer 
+            from transformers import CLIPTokenizer
 
             tokenizer_1 = CLIPTokenizer.from_pretrained(**tokenizer_kwargs)
 
@@ -118,14 +119,14 @@ def get_tokenizers(args):
             f"\nError: -> {e}"
             f"\nTraceback: {traceback.format_exc()}"
         )
-        if args.sd3:
+        if args.model_family in ["sd3"]:
             raise e
     from transformers import T5TokenizerFast
 
-    if not any([args.pixart_sigma, args.kolors]):
+    if args.model_family not in ["pixart_sigma", "kolors"]:
         try:
             tokenizer_2_cls = CLIPTokenizer
-            if args.flux:
+            if args.model_family.lower() == "flux":
                 tokenizer_2_cls = T5TokenizerFast
             tokenizer_2 = tokenizer_2_cls.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -143,9 +144,9 @@ def get_tokenizers(args):
                     args.validation_using_datasets = True
         except Exception as e:
             logger.warning(
-                f"Could not load secondary tokenizer ({'OpenCLIP-G/14' if not args.flux else 'T5 XXL'}). Cannot continue: {e}"
+                f"Could not load secondary tokenizer ({'OpenCLIP-G/14' if args.model_family != 'flux' else 'T5 XXL'}). Cannot continue: {e}"
             )
-            if args.flux or args.sd3:
+            if args.model_family in ["flux", "sd3"]:
                 raise e
         if not tokenizer_1 and not tokenizer_2:
             raise Exception("Failed to load tokenizer")
@@ -153,7 +154,7 @@ def get_tokenizers(args):
         if not tokenizer_1:
             raise Exception("Failed to load tokenizer")
 
-    if args.sd3:
+    if args.model_family == "sd3":
         try:
             tokenizer_3 = T5TokenizerFast.from_pretrained(
                 args.pretrained_model_name_or_path,
@@ -169,17 +170,17 @@ def get_tokenizers(args):
 
 
 def determine_te_path_subfolder(args):
-    if args.kolors:
+    if args.model_family.lower() == "kolors":
         logger.info("Loading Kolors ChatGLM language model..")
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
-    elif args.smoldit:
+    elif args.model_family.lower() == "smoldit":
         text_encoder_path = "EleutherAI/pile-t5-base"
         text_encoder_subfolder = None
-    elif args.flux:
+    elif args.model_family.lower() == "flux":
         text_encoder_path = args.pretrained_model_name_or_path
         text_encoder_subfolder = "text_encoder"
-    elif args.pixart_sigma:
+    elif args.model_family.lower() == "pixart_sigma":
         text_encoder_path = (
             args.pretrained_t5_model_name_or_path
             if args.pretrained_t5_model_name_or_path is not None
@@ -197,22 +198,29 @@ def determine_te_path_subfolder(args):
     return text_encoder_path, text_encoder_subfolder
 
 
-def load_tes(args, text_encoder_classes, tokenizers, weight_dtype, text_encoder_path, text_encoder_subfolder):
+def load_tes(
+    args,
+    text_encoder_classes,
+    tokenizers,
+    weight_dtype,
+    text_encoder_path,
+    text_encoder_subfolder,
+):
     text_encoder_cls_1, text_encoder_cls_2, text_encoder_cls_3 = text_encoder_classes
     tokenizer_1, tokenizer_2, tokenizer_3 = tokenizers
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoder_variant = args.variant
-    
+
     if tokenizer_1 is not None and not args.smoldit:
-        if args.pixart_sigma:
+        if args.model_family.lower() == "pixart_sigma":
             logger.info(
                 f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
             )
-        elif args.flux:
+        elif args.model_family.lower() == "flux":
             logger.info(
                 f"Loading OpenAI CLIP-L text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
             )
-        elif args.kolors:
+        elif args.model_family.lower() == "kolors":
             logger.info(
                 f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
             )
@@ -228,7 +236,7 @@ def load_tes(args, text_encoder_classes, tokenizers, weight_dtype, text_encoder_
             variant=text_encoder_variant,
             torch_dtype=weight_dtype,
         )
-    elif args.smoldit:
+    elif args.model_family.lower() == "smoldit":
         text_encoder_1 = text_encoder_cls_1.from_pretrained(
             "EleutherAI/pile-t5-base",
             torch_dtype=weight_dtype,
@@ -236,7 +244,7 @@ def load_tes(args, text_encoder_classes, tokenizers, weight_dtype, text_encoder_
         text_encoder_1.eval()
 
     if tokenizer_2 is not None:
-        if args.flux:
+        if args.model_family.lower() == "flux":
             logger.info(
                 f"Loading T5 XXL v1.1 text encoder from {args.pretrained_model_name_or_path}/text_encoder_2.."
             )
@@ -249,7 +257,7 @@ def load_tes(args, text_encoder_classes, tokenizers, weight_dtype, text_encoder_
             torch_dtype=weight_dtype,
             variant=args.variant,
         )
-    if tokenizer_3 is not None and args.sd3:
+    if tokenizer_3 is not None and args.model_family == "sd3":
         logger.info("Loading T5-XXL v1.1 text encoder..")
         text_encoder_3 = text_encoder_cls_3.from_pretrained(
             args.pretrained_model_name_or_path,

@@ -194,7 +194,7 @@ def compute_single_embedding(
             [caption]
         )
         if type(prompt_embeds) == tuple:
-            if StateTracker.get_args().pixart_sigma or StateTracker.get_args().smoldit:
+            if StateTracker.get_model_family() in ["pixart_sigma", "smoldit"]:
                 # PixArt requires the attn mask be returned, too.
                 prompt_embeds, attn_mask = prompt_embeds
 
@@ -439,7 +439,7 @@ def collate_fn(batch):
 
     attn_mask = None
     batch_time_ids = None
-    if StateTracker.get_args().flux:
+    if StateTracker.get_model_family() == "flux":
         debug_log("Compute and stack Flux time ids")
         prompt_embeds_all, add_text_embeds_all, batch_time_ids, attn_mask = (
             compute_prompt_embeddings(captions, text_embed_cache)

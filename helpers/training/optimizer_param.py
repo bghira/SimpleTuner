@@ -354,7 +354,7 @@ def determine_params_to_optimize(
                 filter(lambda p: p.requires_grad, transformer.parameters())
             )
         if args.train_text_encoder:
-            if args.sd3 or args.pixart_sigma:
+            if args.model_family in ["sd3", "pixart_sigma"]:
                 raise ValueError(
                     f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
@@ -364,7 +364,7 @@ def determine_params_to_optimize(
                     filter(lambda p: p.requires_grad, text_encoder_1.parameters())
                 )
                 # if text_encoder_2 is not None, add its parameters
-                if text_encoder_2 is None and not args.flux:
+                if text_encoder_2 is None and args.model_family not in ["flux"]:
                     # but not flux. it has t5 as enc 2.
                     params_to_optimize = params_to_optimize + list(
                         filter(lambda p: p.requires_grad, text_encoder_2.parameters())

@@ -34,9 +34,9 @@ class TestSaveHookManager(unittest.TestCase):
             flux_attention_masked_training=False,
         )
         if model_type == "sd3":
-            args.sd3 = True
+            args.model_family = "sd3"
         elif model_type == "flux":
-            args.flux = True
+            args.model_family = "flux"
 
         self.args = args
         StateTracker.set_model_family(model_type)

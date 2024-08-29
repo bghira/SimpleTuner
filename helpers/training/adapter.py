@@ -2,13 +2,14 @@ import peft
 import torch
 import safetensors.torch
 
+
 def determine_adapter_target_modules(args, unet, transformer):
     if unet is not None:
         return ["to_k", "to_q", "to_v", "to_out.0"]
     elif transformer is not None:
         target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
 
-        if args.flux and args.flux_lora_target == "all":
+        if args.model_family.lower() == "flux" and args.flux_lora_target == "all":
             # target_modules = mmdit layers here
             target_modules = [
                 "to_k",
@@ -36,7 +37,7 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "add_v_proj",
                 "to_add_out",
                 "ff_context.net.0.proj",
-                "ff_context.net.2"
+                "ff_context.net.2",
             ]
         elif args.flux_lora_target == "all+ffs":
             target_modules = [
@@ -79,33 +80,39 @@ def determine_adapter_target_modules(args, unet, transformer):
 
         return target_modules
 
+
 @torch.no_grad()
 def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
-    additional_keys=set()
+    additional_keys = set()
     state_dict = safetensors.torch.load_file(filename)
-    for (prefix, model) in dictionary.items():
-        lora_layers = {(prefix+"."+x):y for (x,y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)}
+    for prefix, model in dictionary.items():
+        lora_layers = {
+            (prefix + "." + x): y
+            for (x, y) in model.named_modules()
+            if isinstance(y, peft.tuners.lora.layer.Linear)
+        }
     missing_keys = set(
-        [x + ".lora_A.weight" for x in lora_layers.keys()] + [x + ".lora_B.weight" for x in lora_layers.keys()] +
-        ([x + ".lora_magnitude_vector.weight"] if use_dora else [])
+        [x + ".lora_A.weight" for x in lora_layers.keys()]
+        + [x + ".lora_B.weight" for x in lora_layers.keys()]
+        + ([x + ".lora_magnitude_vector.weight"] if use_dora else [])
     )
-    for (k,v) in state_dict.items():
+    for k, v in state_dict.items():
         if "lora_A" in k:
-            kk = k.replace(".lora_A.weight","")
+            kk = k.replace(".lora_A.weight", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_A[loraKey].weight.copy_(v)
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
         elif "lora_B" in k:
-            kk = k.replace(".lora_B.weight","")
+            kk = k.replace(".lora_B.weight", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_B[loraKey].weight.copy_(v)
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
         elif ".alpha" in k or ".lora_alpha" in k:
-            kk = k.replace(".lora_alpha","").replace(".alpha","")
+            kk = k.replace(".lora_alpha", "").replace(".alpha", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_alpha[loraKey] = v
         elif ".lora_magnitude_vector" in k:

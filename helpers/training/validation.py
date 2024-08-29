@@ -443,8 +443,9 @@ class Validation:
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
         self.flow_matching = (
-            self.args.sd3 and self.args.flow_matching_loss != "diffusion"
-        ) or self.args.flux
+            self.args.model_family == "sd3"
+            and self.args.flow_matching_loss != "diffusion"
+        ) or self.args.model_family == "flux"
         self.deepspeed = is_deepspeed
         self.inference_device = (
             accelerator.device
@@ -656,7 +657,7 @@ class Validation:
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if any([self.args.pixart_sigma, self.args.smoldit]):
+            if StateTracker.get_model_family() in ["pixart_sigma", "smoldit"]:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -1009,7 +1010,7 @@ class Validation:
                     self.accelerator, self.transformer
                 )
 
-            if self.args.sd3 and self.args.train_text_encoder:
+            if self.args.model_family == "sd3" and self.args.train_text_encoder:
                 if self.text_encoder_1 is not None:
                     extra_pipeline_kwargs["text_encoder"] = unwrap_model(
                         self.accelerator, self.text_encoder_1
@@ -1185,15 +1186,13 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if not any(
-                [
-                    self.deepfloyd,
-                    self.args.pixart_sigma,
-                    self.flow_matching,
-                    self.args.kolors,
-                    self.args.flux,
-                ]
-            ):
+            if not self.flow_matching and self.args.model_family not in [
+                "deepfloyd",
+                "pixart_sigma",
+                "kolors",
+                "flux",
+                "sd3",
+            ]:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
                 )
@@ -1243,7 +1242,7 @@ class Validation:
                     )
                 if (
                     isinstance(self.args.validation_no_cfg_until_timestep, int)
-                    and self.args.flux
+                    and self.args.model_family == "flux"
                 ):
                     pipeline_kwargs["no_cfg_until_timestep"] = (
                         self.args.validation_no_cfg_until_timestep

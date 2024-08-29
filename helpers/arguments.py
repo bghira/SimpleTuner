@@ -1942,10 +1942,8 @@ def parse_args(input_args=None):
 
     if torch.backends.mps.is_available():
         if (
-            not args.flux
-            and not args.sd3
+            args.model_family.lower() not in ["sd3", "flux", "legacy"]
             and not args.unet_attention_slice
-            and not args.legacy
         ):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
@@ -1966,7 +1964,7 @@ def parse_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and any([args.legacy, args.flux])
+        and args.model_family in ["legacy", "flux"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -1986,7 +1984,7 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.sd3:
+    if args.model_family == "sd3":
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
@@ -2049,12 +2047,12 @@ def parse_args(input_args=None):
     else:
         args.validation_torch_compile = False
 
-    if args.sd3:
+    if args.model_family == "sd3":
         args.pretrained_vae_model_name_or_path = None
         args.disable_compel = True
 
     t5_max_length = 77
-    if args.sd3 and (
+    if args.model_family == "sd3" and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
     ):
@@ -2082,7 +2080,7 @@ def parse_args(input_args=None):
         flux_version = "schnell"
         model_max_seq_length = 256
 
-    if args.flux:
+    if args.model_family == "flux":
         if (
             args.tokenizer_max_length is None
             or int(args.tokenizer_max_length) > model_max_seq_length
@@ -2133,10 +2131,10 @@ def parse_args(input_args=None):
         sys.exit(1)
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3:
+        if args.model_family == "pixart_sigma" or args.model_family == "sd3":
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
-                    f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+                    f"{'PixArt Sigma' if args.model_family == 'pixart_sigma' else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
 
@@ -2154,7 +2152,7 @@ def parse_args(input_args=None):
             args.gradient_precision = "fp32"
 
     if args.use_ema:
-        if args.sd3:
+        if args.model_family == "sd3":
             raise ValueError(
                 "Using EMA is not currently supported for Stable Diffusion 3 training."
             )
