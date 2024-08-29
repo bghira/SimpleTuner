@@ -346,7 +346,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
-- Precision: {'Pure BF16' if (StateTracker.get_args().adam_bfloat16 or torch.backends.mps.is_available()) else StateTracker.get_args().mixed_precision}
+- Precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Quantised: {f'Yes: {StateTracker.get_args().base_model_precision}' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
 - Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
 {lora_info(args=StateTracker.get_args())}
