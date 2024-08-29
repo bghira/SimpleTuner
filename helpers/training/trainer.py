@@ -2101,7 +2101,7 @@ class Trainer:
                         self.accelerator.backward(loss)
 
                         if (
-                            not self.config.adam_bfloat16
+                            self.config.optimizer != "adam_bfloat16"
                             and self.config.gradient_precision == "fp32"
                         ):
                             # After backward, convert gradients to fp32 for stable accumulation

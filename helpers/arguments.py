@@ -12,7 +12,6 @@ import torch
 from helpers.models.smoldit import SmolDiTConfigurationNames
 from helpers.training import quantised_precision_levels
 from helpers.training.optimizer_param import (
-    map_args_to_optimizer,
     is_optimizer_deprecated,
     is_optimizer_bf16,
     map_deprecated_optimizer_parameter,
@@ -554,14 +553,6 @@ def parse_args(input_args=None):
             " The default setting 'recreate' will delete any inconsistent cache entries and rebuild it."
             " Alternatively, 'sync' will update the bucket configuration so that the image is in a bucket that matches its latent size."
             " The recommended behaviour is to use the default value and allow the cache to be recreated."
-        ),
-    )
-    parser.add_argument(
-        "--vae_cache_preprocess",
-        action="store_true",
-        default=True,
-        help=(
-            "This option is deprecated and will be removed in a future release. Use --vae_cache_ondemand instead."
         ),
     )
     parser.add_argument(
@@ -1158,27 +1149,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--use_8bit_adam",
-        action="store_true",
-        help="Deprecated in favour of --optimizer=optimi-adamw.",
-    )
-    parser.add_argument(
-        "--use_adafactor_optimizer",
-        action="store_true",
-        help="Deprecated in favour of --optimizer=stableadamw.",
-    )
-    parser.add_argument(
-        "--use_prodigy_optimizer",
-        action="store_true",
-        help="Deprecated and removed.",
-    )
-    parser.add_argument(
-        "--use_dadapt_optimizer",
-        action="store_true",
-        help="Deprecated and removed.",
-    )
-
-    parser.add_argument(
         "--adam_beta1",
         type=float,
         default=0.9,
@@ -1198,11 +1168,6 @@ def parse_args(input_args=None):
         type=float,
         default=1e-08,
         help="Epsilon value for the Adam optimizer",
-    )
-    parser.add_argument(
-        "--adam_bfloat16",
-        action="store_true",
-        help="Deprecated in favour of --optimizer=adamw_bf16.",
     )
     parser.add_argument(
         "--max_grad_norm",
@@ -1460,13 +1425,6 @@ def parse_args(input_args=None):
             "When set, the validation pipeline will not generate unconditional samples."
             " This is useful to speed up validations with a single prompt on slower systems, or if you are not"
             " interested in unconditional space generations."
-        ),
-    )
-    parser.add_argument(
-        "--disable_compel",
-        action="store_true",
-        help=(
-            "This option does nothing. It is deprecated and will be removed in a future release."
         ),
     )
     parser.add_argument(
@@ -1846,7 +1804,7 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    if args.adam_bfloat16 and args.mixed_precision != "bf16":
+    if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
             logging.error(
                 "You cannot use --adam_bfloat16 without --mixed_precision=bf16."
@@ -1926,7 +1884,7 @@ def parse_args(input_args=None):
     )
     model_is_quantized = args.base_model_precision != "no_change"
     # check optimiser validity
-    chosen_optimizer = map_args_to_optimizer(args)
+    chosen_optimizer = args.optimizer
     is_optimizer_deprecated(chosen_optimizer)
     from helpers.training.optimizer_param import optimizer_parameters
 

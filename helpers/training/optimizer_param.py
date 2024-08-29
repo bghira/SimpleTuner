@@ -265,16 +265,6 @@ def is_optimizer_deprecated(optimizer: str) -> bool:
         raise ValueError(deprecated_optimizers.get(optimizer))
 
 
-def map_args_to_optimizer(args) -> str:
-    for key in args_to_optimizer_mapping:
-        if hasattr(args, key) and getattr(args, key):
-            print(
-                "[ERROR] The use of --use_adafactor_optimizer, --use_prodigy_optimizer, --use_dadaptation_optimizer, --adam_bfloat16, and --use_8bit_adam is deprecated. Please use --optimizer instead."
-            )
-            return args_to_optimizer_mapping.get(key)
-    return getattr(args, "optimizer")
-
-
 def map_deprecated_optimizer_parameter(optimizer: str) -> str:
     return args_to_optimizer_mapping.get(optimizer, None)
 
