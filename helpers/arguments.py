@@ -1240,6 +1240,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--model_card_safe_for_work",
+        action="store_true",
+        default=False,
+        help=(
+            "Hugging Face Hub requires a warning to be added to models that may generate NSFW content."
+            " This is done by default in SimpleTuner for safety purposes, but can be disabled with this option."
+            " Additionally, removing the not-for-all-audiences tag from the README.md in the repo will also disable this warning"
+            " on previously-uploaded models."
+        ),
+    )
+    parser.add_argument(
         "--logging_dir",
         type=str,
         default="logs",
