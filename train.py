@@ -2127,6 +2127,7 @@ def main():
                     optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
+            wandb_logs = {}
             if accelerator.sync_gradients:
                 try:
                     if is_schedulefree:
