@@ -1490,7 +1490,7 @@ def parse_args(input_args=None):
         parser.add_argument(
             f"--text_encoder_{i}_precision",
             type=str,
-            default=None,
+            default="no_change",
             choices=quantised_precision_levels,
             help=(
                 f"When training a LoRA, you might want to quantise text encoder {i} to a lower precision to save more VRAM."
