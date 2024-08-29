@@ -366,6 +366,9 @@ if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
         export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_checkpoints_to_hub"
     fi
 fi
+if [ -n "$MODEL_CARD_SAFE_FOR_WORK" ] && [[ "$MODEL_CARD_SAFE_FOR_WORK" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_card_safe_for_work"
+fi
 
 export ASPECT_BUCKET_ROUNDING_ARGS=""
 if [ -n "$ASPECT_BUCKET_ROUNDING" ]; then
