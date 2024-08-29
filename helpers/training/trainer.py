@@ -2146,6 +2146,7 @@ class Trainer:
                         )
 
                 # Checks if the accelerator has performed an optimization step behind the scenes
+                wandb_logs = {}
                 if self.accelerator.sync_gradients:
                     try:
                         if self.config.is_schedulefree:
