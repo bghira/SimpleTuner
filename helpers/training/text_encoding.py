@@ -211,7 +211,7 @@ def load_tes(
     text_encoder_1, text_encoder_2, text_encoder_3 = None, None, None
     text_encoder_variant = args.variant
 
-    if tokenizer_1 is not None and not args.smoldit:
+    if tokenizer_1 is not None and not args.model_family == "smoldit":
         if args.model_family.lower() == "pixart_sigma":
             logger.info(
                 f"Loading T5-XXL v1.1 text encoder from {text_encoder_path}/{text_encoder_subfolder}.."

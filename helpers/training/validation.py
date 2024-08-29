@@ -987,7 +987,7 @@ class Validation:
                     extra_pipeline_kwargs["text_encoder_2"] = None
                     extra_pipeline_kwargs["tokenizer_2"] = None
 
-            if self.args.smoldit:
+            if self.args.model_family == "smoldit":
                 extra_pipeline_kwargs["transformer"] = unwrap_model(
                     self.accelerator, self.transformer
                 )
@@ -1050,7 +1050,7 @@ class Validation:
             while attempt < 3:
                 attempt += 1
                 try:
-                    if self.args.smoldit:
+                    if self.args.model_family == "smoldit":
                         self.pipeline = pipeline_cls(
                             vae=self.vae,
                             transformer=unwrap_model(

@@ -236,18 +236,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--pixart_sigma",
-        action="store_true",
-        default=False,
-        help=("This must be set when training a PixArt Sigma model."),
-    )
-    parser.add_argument(
-        "--sd3",
-        action="store_true",
-        default=False,
-        help=("This option must be provided when training a Stable Diffusion 3 model."),
-    )
-    parser.add_argument(
         "--sd3_t5_mask_behaviour",
         type=str,
         choices=["do-nothing", "mask"],
@@ -1906,7 +1894,7 @@ def parse_args(input_args=None):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if not args.smoldit and args.train_batch_size > 16:
+        if args.model_family != "smoldit" and args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
