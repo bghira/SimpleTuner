@@ -385,6 +385,9 @@ if [ -n "$CONTROLNET" ] && [[ "$CONTROLNET" == "true" ]]; then
     export CONTROLNET_ARGS="--controlnet"
 fi
 
+if [ -n "$MODEL_FAMILY" ]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=${MODEL_FAMILY}"
+fi
 
 # Run the training script.
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train.py \
