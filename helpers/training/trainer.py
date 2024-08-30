@@ -232,7 +232,7 @@ class Trainer:
             logger.warning(
                 "Using --model_family (or MODEL_FAMILY) to specify which model you are training will be required in a future release."
             )
-            if self.config.sd3:
+            if self.config.model_family == "sd3":
                 model_family = "sd3"
                 logger.warning(
                     "Using --sd3 is deprecated. Please use --model_family=sd3."
@@ -242,22 +242,22 @@ class Trainer:
                 logger.warning(
                     "Using --flux is deprecated. Please use --model_family=flux."
                 )
-            if self.config.pixart_sigma:
+            if self.config.model_family == "pixart_sigma":
                 model_family = "pixart_sigma"
                 logger.warning(
                     "Using --pixart_sigma is deprecated. Please use --model_family=pixart_sigma."
                 )
-            if self.config.legacy:
+            if self.config.model_family == "legacy":
                 model_family = "legacy"
                 logger.warning(
                     "Using --legacy is deprecated. Please use --model_family=legacy."
                 )
-            if self.config.kolors:
+            if self.config.model_family == "kolors":
                 model_family = "kolors"
                 logger.warning(
                     "Using --kolors is deprecated. Please use --model_family=kolors."
                 )
-            if self.config.smoldit:
+            if self.config.model_family == "smoldit":
                 model_family = "smoldit"
             if model_family is None:
                 model_family = "sdxl"
@@ -390,7 +390,7 @@ class Trainer:
                 self.config,
                 subfolder="text_encoder_2",
             )
-        if self.tokenizer_3 is not None and self.config.sd3:
+        if self.tokenizer_3 is not None and self.config.model_family == "sd3":
             self.text_encoder_cls_3 = import_model_class_from_model_name_or_path(
                 self.config.pretrained_model_name_or_path,
                 self.config.revision,
@@ -792,7 +792,7 @@ class Trainer:
         if self.config.gradient_checkpointing:
             if self.unet is not None:
                 self.unet.enable_gradient_checkpointing()
-            if self.transformer is not None and not self.config.smoldit:
+            if self.transformer is not None and self.config.model_family != "smoldit":
                 self.transformer.enable_gradient_checkpointing()
             if self.config.controlnet:
                 self.controlnet.enable_gradient_checkpointing()
@@ -1112,7 +1112,7 @@ class Trainer:
 
         if "lora" in self.config.model_type and self.config.train_text_encoder:
             logger.info("Preparing text encoders for training.")
-            if self.config.sd3:
+            if self.config.model_family == "sd3":
                 logger.info("NOTE: The third text encoder is not trained for SD3.")
             self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(
                 self.text_encoder_1, self.text_encoder_2
@@ -1346,13 +1346,15 @@ class Trainer:
                     target_device, dtype=self.config.weight_dtype
                 )
             )
-        if self.config.enable_xformers_memory_efficient_attention and not any(
-            [
-                self.config.sd3,
-                self.config.pixart_sigma,
-                self.config.flux,
-                self.config.smoldit,
-                self.config.kolors,
+        if (
+            self.config.enable_xformers_memory_efficient_attention
+            and self.config.model_family
+            not in [
+                "sd3",
+                "pixart_sigma",
+                "flux",
+                "smoldit",
+                "kolors",
             ]
         ):
             logger.info("Enabling xformers memory-efficient attention.")
@@ -1751,11 +1753,12 @@ class Trainer:
                         )
 
                     # Predict the noise residual and compute loss
-                    if self.config.sd3:
+                    if self.config.model_family == "sd3":
                         # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
                         added_cond_kwargs = None
                     elif (
-                        StateTracker.get_model_family() == "sdxl" or self.config.kolors
+                        StateTracker.get_model_family() == "sdxl"
+                        or self.config.model_family == "kolors"
                     ):
                         added_cond_kwargs = {
                             "text_embeds": add_text_embeds.to(
@@ -1767,7 +1770,10 @@ class Trainer:
                                 dtype=self.config.weight_dtype,
                             ),
                         }
-                    elif self.config.pixart_sigma or self.config.smoldit:
+                    elif (
+                        self.config.model_family == "pixart_sigma"
+                        or self.config.model_family == "smoldit"
+                    ):
                         # pixart requires an input of {"resolution": .., "aspect_ratio": ..}
                         if "batch_time_ids" in batch:
                             added_cond_kwargs = batch["batch_time_ids"]
@@ -1936,7 +1942,7 @@ class Trainer:
 
                             model_pred = self.transformer(**flux_transformer_kwargs)[0]
 
-                        elif self.config.sd3:
+                        elif self.config.model_family == "sd3":
                             # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
                             #  image embeds are passed in with the TE-produced text embeds.
                             model_pred = self.transformer(
@@ -1955,7 +1961,7 @@ class Trainer:
                                 ),
                                 return_dict=False,
                             )[0]
-                        elif self.config.pixart_sigma:
+                        elif self.config.model_family == "pixart_sigma":
                             model_pred = self.transformer(
                                 noisy_latents,
                                 encoder_hidden_states=encoder_hidden_states,
@@ -1965,7 +1971,7 @@ class Trainer:
                                 return_dict=False,
                             )[0]
                             model_pred = model_pred.chunk(2, dim=1)[0]
-                        elif self.config.smoldit:
+                        elif self.config.model_family == "smoldit":
                             first_latent_shape = noisy_latents.shape
                             height = first_latent_shape[1] * 8
                             width = first_latent_shape[2] * 8
@@ -1995,7 +2001,7 @@ class Trainer:
                             }
                             model_pred = self.transformer(**inputs).sample
                         elif self.unet is not None:
-                            if self.config.legacy:
+                            if self.config.model_family == "legacy":
                                 # SD 1.5 or 2.x
                                 model_pred = self.unet(
                                     noisy_latents,
@@ -2417,7 +2423,7 @@ class Trainer:
                         transformer_lora_layers=transformer_lora_layers,
                         text_encoder_lora_layers=text_encoder_lora_layers,
                     )
-                elif self.config.sd3:
+                elif self.config.model_family == "sd3":
                     StableDiffusion3Pipeline.save_lora_weights(
                         save_directory=self.config.output_dir,
                         transformer_lora_layers=transformer_lora_layers,
@@ -2481,7 +2487,7 @@ class Trainer:
 
             if self.config.model_type == "full":
                 # Now we build a full SDXL Pipeline to export the model with.
-                if self.config.sd3:
+                if self.config.model_family == "sd3":
                     self.pipeline = StableDiffusion3Pipeline.from_pretrained(
                         self.config.pretrained_model_name_or_path,
                         text_encoder=self.text_encoder_1
@@ -2575,7 +2581,7 @@ class Trainer:
                         tokenizer=self.tokenizer_1,
                         vae=self.vae,
                     )
-                elif self.config.legacy:
+                elif self.config.model_family == "legacy":
                     from diffusers import StableDiffusionPipeline
 
                     self.pipeline = StableDiffusionPipeline.from_pretrained(
@@ -2610,7 +2616,7 @@ class Trainer:
                         unet=self.unet,
                         torch_dtype=self.config.weight_dtype,
                     )
-                elif self.config.smoldit:
+                elif self.config.model_family == "smoldit":
                     from helpers.models.smoldit import SmolDiTPipeline
 
                     self.pipeline = SmolDiTPipeline(
@@ -2647,7 +2653,7 @@ class Trainer:
 
                 else:
                     sdxl_pipeline_cls = StableDiffusionXLPipeline
-                    if self.config.kolors:
+                    if self.config.model_family == "kolors":
                         from helpers.kolors.pipeline import KolorsPipeline
 
                         sdxl_pipeline_cls = KolorsPipeline
