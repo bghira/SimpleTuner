@@ -101,7 +101,7 @@ class StateTracker:
             json.dump(data, f)
 
     @classmethod
-    def set_model_type(cls, model_type: str):
+    def set_model_family(cls, model_type: str):
         if model_type not in [
             "legacy",
             "sdxl",
@@ -115,7 +115,7 @@ class StateTracker:
         cls.model_type = model_type
 
     @classmethod
-    def get_model_type(cls):
+    def get_model_family(cls):
         return cls.model_type
 
     @classmethod

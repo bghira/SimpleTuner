@@ -1,5 +1,9 @@
+from datetime import timedelta
+from accelerate.utils import ProjectConfiguration
+from accelerate import InitProcessGroupKwargs
 import argparse
 import os
+from typing import Dict, List, Optional, Tuple
 import random
 import time
 import logging
@@ -8,7 +12,6 @@ import torch
 from helpers.models.smoldit import SmolDiTConfigurationNames
 from helpers.training import quantised_precision_levels
 from helpers.training.optimizer_param import (
-    map_args_to_optimizer,
     is_optimizer_deprecated,
     is_optimizer_bf16,
     map_deprecated_optimizer_parameter,
@@ -75,6 +78,13 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--model_family",
+        choices=["pixart_sigma", "kolors", "sd3", "flux", "smoldit", "sdxl", "legacy"],
+        default=None,
+        required=True,
+        help=("The model family to train. This option is required."),
+    )
+    parser.add_argument(
         "--model_type",
         type=str,
         choices=[
@@ -90,26 +100,6 @@ def parse_args(input_args=None):
             "The training type to use. 'full' will train the full model, while 'lora' will train the LoRA model."
             " LoRA is a smaller model that can be used for faster training."
         ),
-    )
-    parser.add_argument(
-        "--legacy",
-        action="store_true",
-        default=False,
-        help=(
-            "This option must be provided when training a Stable Diffusion 1.x or 2.x model."
-        ),
-    )
-    parser.add_argument(
-        "--kolors",
-        action="store_true",
-        default=False,
-        help=("This option must be provided when training a Kolors model."),
-    )
-    parser.add_argument(
-        "--flux",
-        action="store_true",
-        default=False,
-        help=("This option must be provided when training a Flux model."),
     )
     parser.add_argument(
         "--flux_lora_target",
@@ -222,18 +212,6 @@ def parse_args(input_args=None):
             " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
         ),
-    )
-    parser.add_argument(
-        "--pixart_sigma",
-        action="store_true",
-        default=False,
-        help=("This must be set when training a PixArt Sigma model."),
-    )
-    parser.add_argument(
-        "--sd3",
-        action="store_true",
-        default=False,
-        help=("This option must be provided when training a Stable Diffusion 3 model."),
     )
     parser.add_argument(
         "--sd3_t5_mask_behaviour",
@@ -541,14 +519,6 @@ def parse_args(input_args=None):
             " The default setting 'recreate' will delete any inconsistent cache entries and rebuild it."
             " Alternatively, 'sync' will update the bucket configuration so that the image is in a bucket that matches its latent size."
             " The recommended behaviour is to use the default value and allow the cache to be recreated."
-        ),
-    )
-    parser.add_argument(
-        "--vae_cache_preprocess",
-        action="store_true",
-        default=True,
-        help=(
-            "This option is deprecated and will be removed in a future release. Use --vae_cache_ondemand instead."
         ),
     )
     parser.add_argument(
@@ -977,7 +947,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=4,
+        default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument(
@@ -1145,27 +1115,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--use_8bit_adam",
-        action="store_true",
-        help="Deprecated in favour of --optimizer=optimi-adamw.",
-    )
-    parser.add_argument(
-        "--use_adafactor_optimizer",
-        action="store_true",
-        help="Deprecated in favour of --optimizer=stableadamw.",
-    )
-    parser.add_argument(
-        "--use_prodigy_optimizer",
-        action="store_true",
-        help="Deprecated and removed.",
-    )
-    parser.add_argument(
-        "--use_dadapt_optimizer",
-        action="store_true",
-        help="Deprecated and removed.",
-    )
-
-    parser.add_argument(
         "--adam_beta1",
         type=float,
         default=0.9,
@@ -1185,11 +1134,6 @@ def parse_args(input_args=None):
         type=float,
         default=1e-08,
         help="Epsilon value for the Adam optimizer",
-    )
-    parser.add_argument(
-        "--adam_bfloat16",
-        action="store_true",
-        help="Deprecated in favour of --optimizer=adamw_bf16.",
     )
     parser.add_argument(
         "--max_grad_norm",
@@ -1224,6 +1168,17 @@ def parse_args(input_args=None):
         default=None,
         help=(
             "Add a string to the top of your model card to provide users with some additional context."
+        ),
+    )
+    parser.add_argument(
+        "--model_card_safe_for_work",
+        action="store_true",
+        default=False,
+        help=(
+            "Hugging Face Hub requires a warning to be added to models that may generate NSFW content."
+            " This is done by default in SimpleTuner for safety purposes, but can be disabled with this option."
+            " Additionally, removing the not-for-all-audiences tag from the README.md in the repo will also disable this warning"
+            " on previously-uploaded models."
         ),
     )
     parser.add_argument(
@@ -1439,13 +1394,6 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
-        "--disable_compel",
-        action="store_true",
-        help=(
-            "This option does nothing. It is deprecated and will be removed in a future release."
-        ),
-    )
-    parser.add_argument(
         "--enable_watermark",
         default=False,
         action="store_true",
@@ -1508,7 +1456,7 @@ def parse_args(input_args=None):
         parser.add_argument(
             f"--text_encoder_{i}_precision",
             type=str,
-            default=None,
+            default="no_change",
             choices=quantised_precision_levels,
             help=(
                 f"When training a LoRA, you might want to quantise text encoder {i} to a lower precision to save more VRAM."
@@ -1822,7 +1770,7 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    if args.adam_bfloat16 and args.mixed_precision != "bf16":
+    if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
             logging.error(
                 "You cannot use --adam_bfloat16 without --mixed_precision=bf16."
@@ -1902,7 +1850,7 @@ def parse_args(input_args=None):
     )
     model_is_quantized = args.base_model_precision != "no_change"
     # check optimiser validity
-    chosen_optimizer = map_args_to_optimizer(args)
+    chosen_optimizer = args.optimizer
     is_optimizer_deprecated(chosen_optimizer)
     from helpers.training.optimizer_param import optimizer_parameters
 
@@ -1918,15 +1866,13 @@ def parse_args(input_args=None):
 
     if torch.backends.mps.is_available():
         if (
-            not args.flux
-            and not args.sd3
+            args.model_family.lower() not in ["sd3", "flux", "legacy"]
             and not args.unet_attention_slice
-            and not args.legacy
         ):
             warning_log(
                 "MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed."
             )
-        if not args.smoldit and args.train_batch_size > 16:
+        if args.model_family != "smoldit" and args.train_batch_size > 16:
             error_log(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
@@ -1942,7 +1888,7 @@ def parse_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and any([args.legacy, args.flux])
+        and args.model_family in ["legacy", "flux"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -1962,7 +1908,7 @@ def parse_args(input_args=None):
         )
         info_log(f"Default VAE Cache location: {args.cache_dir_vae}")
         info_log(f"Text Cache location: {args.cache_dir_text}")
-    if args.sd3:
+    if args.model_family == "sd3":
         warning_log(
             "MM-DiT requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
         )
@@ -2025,12 +1971,12 @@ def parse_args(input_args=None):
     else:
         args.validation_torch_compile = False
 
-    if args.sd3:
+    if args.model_family == "sd3":
         args.pretrained_vae_model_name_or_path = None
         args.disable_compel = True
 
     t5_max_length = 77
-    if args.sd3 and (
+    if args.model_family == "sd3" and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
     ):
@@ -2058,7 +2004,7 @@ def parse_args(input_args=None):
         flux_version = "schnell"
         model_max_seq_length = 256
 
-    if args.flux:
+    if args.model_family == "flux":
         if (
             args.tokenizer_max_length is None
             or int(args.tokenizer_max_length) > model_max_seq_length
@@ -2109,10 +2055,10 @@ def parse_args(input_args=None):
         sys.exit(1)
 
     if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3:
+        if args.model_family == "pixart_sigma" or args.model_family == "sd3":
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
-                    f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+                    f"{'PixArt Sigma' if args.model_family == 'pixart_sigma' else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
 
@@ -2130,11 +2076,111 @@ def parse_args(input_args=None):
             args.gradient_precision = "fp32"
 
     if args.use_ema:
-        if args.sd3:
+        if args.model_family == "sd3":
             raise ValueError(
                 "Using EMA is not currently supported for Stable Diffusion 3 training."
             )
         if "lora" in args.model_type:
             raise ValueError("Using EMA is not currently supported for LoRA training.")
+    args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
+    args.accelerator_project_config = ProjectConfiguration(
+        project_dir=args.output_dir, logging_dir=args.logging_dir
+    )
+    # Create the custom configuration
+    args.process_group_kwargs = InitProcessGroupKwargs(
+        timeout=timedelta(seconds=5400)
+    )  # 1.5 hours
+
+    # Enable TF32 for faster training on Ampere GPUs,
+    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
+    if args.allow_tf32 and torch.cuda.is_available():
+        logger.info(
+            "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
+        )
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+    elif torch.cuda.is_available():
+        logger.warning(
+            "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
+        )
+
+    args.is_quantized = (
+        False
+        if (args.base_model_precision == "no_change" or "lora" not in args.model_type)
+        else True
+    )
+    args.weight_dtype = (
+        torch.bfloat16
+        if (
+            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+            or (args.base_model_default_dtype == "bf16" and args.is_quantized)
+        )
+        else torch.float32
+    )
+    args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
+
+    if "lora" not in args.model_type:
+        args.base_model_precision = "no_change"
+    elif "lycoris" == args.lora_type.lower():
+        from lycoris import create_lycoris
+
+        if args.lycoris_config is None:
+            raise ValueError(
+                "--lora_type=lycoris requires you to add a JSON "
+                + "configuration file location with --lycoris_config"
+            )
+        # is it readable?
+        if not os.path.isfile(args.lycoris_config) or not os.access(
+            args.lycoris_config, os.R_OK
+        ):
+            raise ValueError(
+                f"Could not find the JSON configuration file at {args.lycoris_config}"
+            )
+        import json
+
+        with open(args.lycoris_config, "r") as f:
+            lycoris_config = json.load(f)
+        assert "algo" in lycoris_config, "lycoris_config JSON must contain algo key"
+        assert (
+            "multiplier" in lycoris_config
+        ), "lycoris_config JSON must contain multiplier key"
+        assert (
+            "linear_dim" in lycoris_config
+        ), "lycoris_config JSON must contain linear_dim key"
+        assert (
+            "linear_alpha" in lycoris_config
+        ), "lycoris_config JSON must contain linear_alpha key"
+
+    elif "standard" == args.lora_type.lower():
+        if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
+            if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
+                logger.error(
+                    "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
+                )
+            elif args.is_quantized and args.lora_init_type == "loftq":
+                logger.error(
+                    "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
+                )
+            else:
+                args.lora_initialisation_style = (
+                    args.lora_init_type if args.lora_init_type != "default" else True
+                )
+        if args.use_dora:
+            if "quanto" in args.base_model_precision:
+                logger.error(
+                    "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
+                )
+                args.use_dora = False
+            else:
+                logger.warning(
+                    "DoRA support is experimental and not very thoroughly tested."
+                )
+                args.lora_initialisation_style = "default"
+
+    # Check if we have a valid gradient accumulation steps.
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError(
+            f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
+        )
 
     return args

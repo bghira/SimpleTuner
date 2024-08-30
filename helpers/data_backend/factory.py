@@ -188,7 +188,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
-        and not args.smoldit
+        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -207,7 +207,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
-        and not args.smoldit
+        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -310,9 +310,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def configure_multi_databackend(
-    args: dict, accelerator, text_encoders, tokenizers, prompt_handler
-):
+def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -412,7 +410,7 @@ def configure_multi_databackend(
             tokenizers=tokenizers,
             accelerator=accelerator,
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
-            model_type=StateTracker.get_model_type(),
+            model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", 1),
         )
         with accelerator.main_process_first():

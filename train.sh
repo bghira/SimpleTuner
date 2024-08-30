@@ -366,6 +366,9 @@ if [ -n "$PUSH_TO_HUB" ] && [[ "$PUSH_TO_HUB" == "true" ]]; then
         export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --push_checkpoints_to_hub"
     fi
 fi
+if [ -n "$MODEL_CARD_SAFE_FOR_WORK" ] && [[ "$MODEL_CARD_SAFE_FOR_WORK" == "true" ]]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_card_safe_for_work"
+fi
 
 export ASPECT_BUCKET_ROUNDING_ARGS=""
 if [ -n "$ASPECT_BUCKET_ROUNDING" ]; then
@@ -382,6 +385,9 @@ if [ -n "$CONTROLNET" ] && [[ "$CONTROLNET" == "true" ]]; then
     export CONTROLNET_ARGS="--controlnet"
 fi
 
+if [ -n "$MODEL_FAMILY" ]; then
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=${MODEL_FAMILY}"
+fi
 
 # Run the training script.
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train.py \

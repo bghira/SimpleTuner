@@ -377,7 +377,6 @@ class Validation:
     def __init__(
         self,
         accelerator,
-        prompt_handler,
         unet,
         transformer,
         args,
@@ -400,7 +399,7 @@ class Validation:
         is_deepspeed: bool = False,
     ):
         self.accelerator = accelerator
-        self.prompt_handler = prompt_handler
+        self.prompt_handler = None
         self.unet = unet
         self.transformer = transformer
         self.controlnet = controlnet
@@ -444,8 +443,9 @@ class Validation:
         self.text_encoder_3 = text_encoder_3
         self.tokenizer_3 = tokenizer_3
         self.flow_matching = (
-            self.args.sd3 and self.args.flow_matching_loss != "diffusion"
-        ) or self.args.flux
+            self.args.model_family == "sd3"
+            and self.args.flow_matching_loss != "diffusion"
+        ) or self.args.model_family == "flux"
         self.deepspeed = is_deepspeed
         self.inference_device = (
             accelerator.device
@@ -524,7 +524,7 @@ class Validation:
             )
 
     def _pipeline_cls(self):
-        model_type = StateTracker.get_model_type()
+        model_type = StateTracker.get_model_family()
         if model_type == "sdxl":
             if self.args.controlnet:
                 from diffusers.pipelines import StableDiffusionXLControlNetPipeline
@@ -598,10 +598,10 @@ class Validation:
         prompt_embeds = {}
         current_validation_prompt_mask = None
         if (
-            StateTracker.get_model_type() == "sdxl"
-            or StateTracker.get_model_type() == "sd3"
-            or StateTracker.get_model_type() == "kolors"
-            or StateTracker.get_model_type() == "flux"
+            StateTracker.get_model_family() == "sdxl"
+            or StateTracker.get_model_family() == "sd3"
+            or StateTracker.get_model_family() == "kolors"
+            or StateTracker.get_model_family() == "flux"
         ):
             _embed = self.embed_cache.compute_embeddings_for_prompts(
                 [validation_prompt]
@@ -648,16 +648,16 @@ class Validation:
             # if current_validation_time_ids is not None:
             #     prompt_embeds["time_ids"] = current_validation_time_ids
         elif (
-            StateTracker.get_model_type() == "legacy"
-            or StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "smoldit"
+            StateTracker.get_model_family() == "legacy"
+            or StateTracker.get_model_family() == "pixart_sigma"
+            or StateTracker.get_model_family() == "smoldit"
         ):
             self.validation_negative_pooled_embeds = None
             current_validation_pooled_embeds = None
             current_validation_prompt_embeds = (
                 self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
             )
-            if any([self.args.pixart_sigma, self.args.smoldit]):
+            if StateTracker.get_model_family() in ["pixart_sigma", "smoldit"]:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
@@ -681,7 +681,7 @@ class Validation:
             # )
         else:
             raise NotImplementedError(
-                f"Model type {StateTracker.get_model_type()} not implemented for validation."
+                f"Model type {StateTracker.get_model_family()} not implemented for validation."
             )
 
         current_validation_prompt_embeds = current_validation_prompt_embeds.to(
@@ -699,10 +699,10 @@ class Validation:
         prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
         prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
         if (
-            StateTracker.get_model_type() == "pixart_sigma"
-            or StateTracker.get_model_type() == "smoldit"
+            StateTracker.get_model_family() == "pixart_sigma"
+            or StateTracker.get_model_family() == "smoldit"
             or (
-                StateTracker.get_model_type() == "flux"
+                StateTracker.get_model_family() == "flux"
                 and StateTracker.get_args().flux_attention_masked_training
             )
         ):
@@ -987,7 +987,7 @@ class Validation:
                     extra_pipeline_kwargs["text_encoder_2"] = None
                     extra_pipeline_kwargs["tokenizer_2"] = None
 
-            if self.args.smoldit:
+            if self.args.model_family == "smoldit":
                 extra_pipeline_kwargs["transformer"] = unwrap_model(
                     self.accelerator, self.transformer
                 )
@@ -1010,7 +1010,7 @@ class Validation:
                     self.accelerator, self.transformer
                 )
 
-            if self.args.sd3 and self.args.train_text_encoder:
+            if self.args.model_family == "sd3" and self.args.train_text_encoder:
                 if self.text_encoder_1 is not None:
                     extra_pipeline_kwargs["text_encoder"] = unwrap_model(
                         self.accelerator, self.text_encoder_1
@@ -1050,7 +1050,7 @@ class Validation:
             while attempt < 3:
                 attempt += 1
                 try:
-                    if self.args.smoldit:
+                    if self.args.model_family == "smoldit":
                         self.pipeline = pipeline_cls(
                             vae=self.vae,
                             transformer=unwrap_model(
@@ -1186,15 +1186,13 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
-            if not any(
-                [
-                    self.deepfloyd,
-                    self.args.pixart_sigma,
-                    self.flow_matching,
-                    self.args.kolors,
-                    self.args.flux,
-                ]
-            ):
+            if not self.flow_matching and self.args.model_family not in [
+                "deepfloyd",
+                "pixart_sigma",
+                "kolors",
+                "flux",
+                "sd3",
+            ]:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale
                 )
@@ -1244,7 +1242,7 @@ class Validation:
                     )
                 if (
                     isinstance(self.args.validation_no_cfg_until_timestep, int)
-                    and self.args.flux
+                    and self.args.model_family == "flux"
                 ):
                     pipeline_kwargs["no_cfg_until_timestep"] = (
                         self.args.validation_no_cfg_until_timestep
@@ -1260,12 +1258,12 @@ class Validation:
                 for key, value in self.pipeline.components.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                if StateTracker.get_model_type() == "flux":
+                if StateTracker.get_model_family() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
                 if (
-                    StateTracker.get_model_type() == "pixart_sigma"
-                    or StateTracker.get_model_type() == "smoldit"
+                    StateTracker.get_model_family() == "pixart_sigma"
+                    or StateTracker.get_model_family() == "smoldit"
                 ):
                     if pipeline_kwargs.get("negative_prompt") is not None:
                         del pipeline_kwargs["negative_prompt"]

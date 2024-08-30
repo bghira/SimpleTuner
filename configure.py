@@ -41,6 +41,16 @@ default_cfg = {
     "stable_diffusion_3": 5.0,
 }
 
+model_labels = {
+    "sd3": "Stable Diffusion 3",
+    "flux": "FLUX",
+    "pixart_sigma": "PixArt Sigma",
+    "kolors": "Kwai Kolors",
+    "terminus": "Terminus",
+    "sdxl": "Stable Diffusion XL",
+    "legacy": "Stable Diffusion",
+}
+
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
     1: "3e-4",
@@ -387,12 +397,12 @@ def configure_env():
             ).lower()
             == "y"
         )
-        env_contents["HUB_MODEL_NAME"] = prompt_user(
-            f"What do you want the name of your Hugging Face Hub model to be? This will be accessible as https://huggingface.co/{whoami['name']}/your-model-name-here",
-            f"simpletuner-{model_type}",
-        )
-        should_push_checkpoints = False
         if should_push_to_hub:
+            env_contents["HUB_MODEL_NAME"] = prompt_user(
+                f"What do you want the name of your Hugging Face Hub model to be? This will be accessible as https://huggingface.co/{whoami['name']}/your-model-name-here",
+                f"simpletuner-{model_type}",
+            )
+            should_push_checkpoints = False
             env_contents["PUSH_TO_HUB"] = "true"
             should_push_checkpoints = (
                 prompt_user(
@@ -403,6 +413,16 @@ def configure_env():
             )
             if should_push_checkpoints:
                 env_contents["PUSH_CHECKPOINTS"] = "true"
+            model_card_safe_for_work = (
+                prompt_user(
+                    "Is your target model considered safe-for-work? Answering yes here will remove the NSFW warning from the Hugging Face Hub model card. If you are unsure, please leave this as 'no'. (y/[n])",
+                    "n",
+                ).lower()
+                == "y"
+            )
+            env_contents["MODEL_CARD_SAFE_FOR_WORK"] = (
+                "true" if model_card_safe_for_work else "false"
+            )
     report_to_wandb = (
         prompt_user(
             "Would you like to report training statistics to Weights & Biases? ([y]/n)",
@@ -465,13 +485,9 @@ def configure_env():
             continue
     env_contents["MODEL_TYPE"] = model_type
     env_contents["MODEL_NAME"] = model_name
-    for cls in model_classes[model_type]:
-        if cls == "sdxl":
-            continue
-        env_contents[cls.upper()] = "false"
-    env_contents[model_class.upper()] = "true"
+    env_contents["MODEL_FAMILY"] = model_class.lower()
     # Flux-specific options
-    if "FLUX" in env_contents and env_contents["FLUX"] == "true":
+    if "FLUX" in env_contents and env_contents["MODEL_FAMILY"] == "flux":
         if env_contents["MODEL_TYPE"].lower() == "lora" and not use_lycoris:
             flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit"]
             flux_target_layers = None
@@ -688,6 +704,131 @@ def configure_env():
         print("\nConfiguration file created successfully!")
     else:
         print("\nConfiguration aborted. No changes were made.")
+        import sys
+
+        sys.exit(1)
+
+    # dataloader configuration
+    default_local_configuration = [
+        {
+            "id": "PLACEHOLDER-512",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": False,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 512,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-512",
+        },
+        {
+            "id": "PLACEHOLDER-1024",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": False,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 1024,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-1024",
+        },
+        {
+            "id": "PLACEHOLDER-512-crop",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": True,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 512,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-512-crop",
+        },
+        {
+            "id": "PLACEHOLDER-1024-crop",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": True,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 1024,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-1024-crop",
+        },
+        {
+            "id": "text-embed-cache",
+            "dataset_type": "text_embeds",
+            "default": True,
+            "type": "local",
+            "cache_dir": "text",
+        },
+    ]
+
+    # now we ask user the path to their data, the path to the cache (cache/), number of repeats, update the id placeholder based on users dataset name
+    # then we'll write the file to multidatabackend.json
+    should_configure_dataloader = (
+        prompt_user("Would you like to configure your dataloader? (y/n)", "y").lower()
+        == "y"
+    )
+    if not should_configure_dataloader:
+        print("Skipping dataloader configuration.")
+        return
+    dataset_id = prompt_user(
+        "Enter the name of your dataset. This will be used to generate the cache directory. It should be simple, and not contain spaces or special characters.",
+        "my-dataset",
+    )
+    dataset_path = prompt_user(
+        "Enter the path to your dataset. This should be a directory containing images and text files for their caption. For reliability, use an absolute (full) path, beginning with a '/'",
+        "/datasets/my-dataset",
+    )
+    dataset_repeats = prompt_user(
+        "How many times do you want to repeat each image in the dataset?", 10
+    )
+    dataset_cache_prefix = prompt_user(
+        "Where will your VAE and text encoder caches be written to? Subdirectories will be created inside for you automatically.",
+        "cache/",
+    )
+    has_very_large_images = (
+        prompt_user(
+            "Do you have very-large images in the dataset (eg. much larger than 1024x1024)? (y/n)",
+            "n",
+        ).lower()
+        == "y"
+    )
+
+    # Now we'll modify the default json and if has_very_large_images is true, we will add two keys to each image dataset, 'maximum_image_size' and 'target_downsample_size' equal to the dataset's resolution value
+    for dataset in default_local_configuration:
+        if dataset.get("dataset_type") == "text_embeds":
+            dataset["cache_dir"] = f"{dataset_cache_prefix}/{dataset['cache_dir']}"
+            continue
+        dataset["instance_data_dir"] = dataset_path
+        dataset["repeats"] = dataset_repeats
+        dataset["cache_dir_vae"] = f"{dataset_cache_prefix}/{dataset['cache_dir_vae']}"
+        if has_very_large_images:
+            dataset["maximum_image_size"] = dataset["resolution"]
+            dataset["target_downsample_size"] = dataset["resolution"]
+        dataset["id"] = dataset["id"].replace("PLACEHOLDER", dataset_id)
+
+    print("Dataloader configuration:")
+    print(default_local_configuration)
+    confirm = prompt_user("Does this look correct? (y/n)", "y").lower() == "y"
+    if confirm:
+        import json
+
+        with open("config/multidatabackend.json", "w") as f:
+            f.write(json.dumps(default_local_configuration, indent=4))
+        print("Dataloader configuration written successfully!")
 
 
 if __name__ == "__main__":

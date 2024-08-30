@@ -140,7 +140,7 @@ def _torch_device():
 
 
 def _negative_prompt(args, in_call: bool = False):
-    if args.flux:
+    if args.model_family.lower() == "flux":
         return ""
     if not in_call:
         return f"negative_prompt = '{args.validation_negative_prompt}'"
@@ -148,7 +148,7 @@ def _negative_prompt(args, in_call: bool = False):
 
 
 def _guidance_rescale(args):
-    if any([args.sd3, args.flux, args.pixart_sigma]):
+    if args.model_family.lower() in ["sd3", "flux", "pixart_sigma"]:
         return ""
     return f"\n    guidance_rescale={args.validation_guidance_rescale},"
 
@@ -181,7 +181,7 @@ prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut i
 {_negative_prompt(args)}
 pipeline.to({_torch_device()})
 image = pipeline(
-    prompt=prompt,{_negative_prompt(args, in_call=True) if not args.flux else ''}
+    prompt=prompt,{_negative_prompt(args, in_call=True) if args.model_family.lower() != 'flux' else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
     {_validation_resolution(args)}
@@ -289,14 +289,15 @@ def save_model_card(
             shortname_idx += 1
     args = StateTracker.get_args()
     yaml_content = f"""---
-license: {licenses[StateTracker.get_model_type()]}
+license: {licenses[StateTracker.get_model_family()]}
 base_model: "{base_model}"
 tags:
-  - {StateTracker.get_model_type()}
-  - {f'{StateTracker.get_model_type()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
+  - {StateTracker.get_model_family()}
+  - {f'{StateTracker.get_model_family()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
   - simpletuner
+  - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
   - {args.model_type}
 {'  - template:sd-lora' if 'lora' in args.model_type else ''}
 inference: true
@@ -308,7 +309,7 @@ inference: true
 
 This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.sd3 and args.flow_matching_loss == "diffusion" else ''}
+{'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.model_family == "sd3" and args.flow_matching_loss == "diffusion" else ''}
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
 {model_card_note(args)}
 {'```' if prompt else ''}
@@ -342,10 +343,10 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().sd3 or StateTracker.get_args().flux) else StateTracker.get_args().prediction_type}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
-- Precision: {'Pure BF16' if (StateTracker.get_args().adam_bfloat16 or torch.backends.mps.is_available()) else StateTracker.get_args().mixed_precision}
+- Precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Quantised: {f'Yes: {StateTracker.get_args().base_model_precision}' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
 - Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
 {lora_info(args=StateTracker.get_args())}

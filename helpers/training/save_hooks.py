@@ -132,16 +132,22 @@ class SaveHookManager:
             self.denoiser_class = UNet2DConditionModel
             self.denoiser_subdir = "unet"
             self.pipeline_class = StableDiffusionXLPipeline
-            if StateTracker.get_model_type() == "legacy":
+            if StateTracker.get_model_family() == "legacy":
                 self.pipeline_class = StableDiffusionPipeline
         elif self.transformer is not None:
-            if args.sd3:
+            if args.model_family == "sd3":
                 self.denoiser_class = SD3Transformer2DModel
                 self.pipeline_class = StableDiffusion3Pipeline
-            elif args.flux and not args.flux_attention_masked_training:
+            elif (
+                args.model_family.lower() == "flux"
+                and not args.flux_attention_masked_training
+            ):
                 self.denoiser_class = FluxTransformer2DModel
                 self.pipeline_class = FluxPipeline
-            elif args.flux and args.flux_attention_masked_training:
+            elif (
+                args.model_family.lower() == "flux"
+                and args.flux_attention_masked_training
+            ):
                 from helpers.models.flux.transformer import (
                     FluxTransformer2DModelWithMasking,
                 )
@@ -151,10 +157,10 @@ class SaveHookManager:
             elif hasattr(args, "hunyuan_dit") and args.hunyuan_dit:
                 self.denoiser_class = HunyuanDiT2DModel
                 self.pipeline_class = HunyuanDiTPipeline
-            elif args.pixart_sigma:
+            elif args.model_family == "pixart_sigma":
                 self.denoiser_class = PixArtTransformer2DModel
                 self.pipeline_class = PixArtSigmaPipeline
-            elif args.smoldit:
+            elif args.model_family == "smoldit":
                 self.denoiser_class = SmolDiT2DModel
                 self.pipeline_class = SmolDiTPipeline
             self.denoiser_subdir = "transformer"
@@ -172,9 +178,9 @@ class SaveHookManager:
             self.ema_model_cls = UNet2DConditionModel
         if transformer is not None:
             self.ema_model_subdir = "transformer_ema"
-            if self.args.sd3:
+            if self.args.model_family == "sd3":
                 self.ema_model_cls = SD3Transformer2DModel
-            elif self.args.pixart_sigma:
+            elif self.args.model_family == "pixart_sigma":
                 self.ema_model_cls = PixArtTransformer2DModel
 
     def _save_lora(self, models, weights, output_dir):
@@ -220,33 +226,35 @@ class SaveHookManager:
             if weights:
                 weights.pop()
 
-        if self.args.flux:
+        if self.args.model_family == "flux":
             self.pipeline_class.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
             )
-        elif self.args.sd3:
+        elif self.args.model_family == "sd3":
             self.pipeline_class.save_lora_weights(
                 output_dir,
                 transformer_lora_layers=transformer_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
                 text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
             )
-        elif self.args.legacy:
+        elif self.args.model_family == "legacy":
             self.pipeline_class.save_lora_weights(
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
                 transformer_lora_layers=transformer_lora_layers_to_save,
+            )
+        elif self.args.model_family == "sdxl" or self.args.model_family == "kolors":
+            self.pipeline_class.save_lora_weights(
+                output_dir,
+                unet_lora_layers=unet_lora_layers_to_save,
+                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
+                text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
             )
         else:
-            self.pipeline_class.save_lora_weights(
-                output_dir,
-                unet_lora_layers=unet_lora_layers_to_save,
-                text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
-                text_encoder_2_lora_layers=text_encoder_2_lora_layers_to_save,
-            )
+            raise ValueError(f"unexpected model family: {self.args.model_family}")
 
     def _save_lycoris(self, models, weights, output_dir):
         """
@@ -360,7 +368,7 @@ class SaveHookManager:
             else:
                 raise ValueError(f"unexpected save model: {model.__class__}")
 
-        if self.args.sd3 or self.args.flux:
+        if self.args.model_family in ["sd3", "flux", "pixart_sigma"]:
             key_to_replace = "transformer"
             lora_state_dict = self.pipeline_class.lora_state_dict(input_dir)
         else:
@@ -439,7 +447,10 @@ class SaveHookManager:
                     load_model = self.denoiser_class.from_pretrained(
                         input_dir, subfolder=self.denoiser_subdir
                     )
-                    if self.args.sd3 and not self.args.train_text_encoder:
+                    if (
+                        self.args.model_family == "sd3"
+                        and not self.args.train_text_encoder
+                    ):
                         logger.info(
                             "Unloading text encoders for full SD3 training without --train_text_encoder"
                         )

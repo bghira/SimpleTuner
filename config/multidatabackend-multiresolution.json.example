@@ -1,0 +1,57 @@
+[
+  {
+    "id": "dreambooth-512",
+    "type": "local",
+    "instance_data_dir": "/home/user/simpletuner/data/dreambooth",
+    "crop": false, "crop_style": "random",
+    "minimum_image_size": 128,
+    "resolution": 512,
+    "resolution_type": "pixel_area", "repeats": 10,
+    "metadata_backend": "discovery",
+    "caption_strategy": "textfile",
+    "cache_dir_vae": "cache/vae-512"
+  },
+  {
+    "id": "dreambooth-1024",
+    "type": "local",
+    "instance_data_dir": "/home/user/simpletuner/data/dreambooth",
+    "crop": false, "crop_style": "random",
+    "minimum_image_size": 128,
+    "resolution": 1024,
+    "resolution_type": "pixel_area", "repeats": 10,
+    "metadata_backend": "discovery",
+    "caption_strategy": "textfile",
+    "cache_dir_vae": "cache/vae-1024"
+  },
+  {
+    "id": "dreambooth-512-crop",
+    "type": "local",
+    "instance_data_dir": "/home/user/simpletuner/data/dreambooth",
+    "crop": true, "crop_style": "random",
+    "minimum_image_size": 128,
+    "resolution": 512,
+    "resolution_type": "pixel_area", "repeats": 10,
+    "metadata_backend": "discovery",
+    "caption_strategy": "textfile",
+    "cache_dir_vae": "cache/vae-512-crop"
+  },
+  {
+    "id": "dreambooth-1024-crop",
+    "type": "local",
+    "instance_data_dir": "/home/user/simpletuner/data/dreambooth",
+    "crop": true, "crop_style": "random",
+    "minimum_image_size": 128,
+    "resolution": 1024,
+    "resolution_type": "pixel_area", "repeats": 10,
+    "metadata_backend": "discovery",
+    "caption_strategy": "textfile",
+    "cache_dir_vae": "cache/vae-1024-crop"
+  },
+  {
+    "id": "text-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text"
+  }
+]
