@@ -107,7 +107,7 @@ There, you will need to modify the following variables:
 
 - `MODEL_TYPE` - Set this to `full`.
 - `USE_BITFIT` - Set this to `false`.
-- `PIXART_SIGMA` - Set this to `true`.
+- `MODEL_FAMILY` - Set this to `pixart_sigma`.
 - `MODEL_NAME` - Set this to `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS`.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As PixArt Sigma comes in a 1024px or 2048xp model format, you should carefully set this to `1024x1024` for this example.

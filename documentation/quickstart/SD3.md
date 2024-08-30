@@ -106,7 +106,7 @@ cp config/config.env.example config/config.env
 There, you will need to modify the following variables:
 
 - `MODEL_TYPE` - Set this to `lora`.
-- `STABLE_DIFFUSION_3` - Set this to `true`.
+- `MODEL_FAMILY` - Set this to `sd3`.
 - `MODEL_NAME` - Set this to `stabilityai/stable-diffusion-3-medium-diffusers`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As SD3 is a 1024px model, you can set this to `1024x1024`.

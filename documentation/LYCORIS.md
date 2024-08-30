@@ -19,11 +19,25 @@ The LyCORIS configuration file is in the format:
 
 ```json
 {
-  "algo": "lora",
-  "multiplier": 1.0,
-  "linear_dim": 12345,
-  "linear_alpha": 1,
-  "apply_preset": {}
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 10,
+    "apply_preset": {
+        "target_module": [
+            "Attention",
+            "FeedForward"
+        ],
+        "module_algo_map": {
+            "Attention": {
+                "factor": 10
+            },
+            "FeedForward": {
+                "factor": 4
+            }
+        }
+    }
 }
 ```
 

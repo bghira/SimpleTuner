@@ -118,7 +118,7 @@ cp config/config.env.example config/config.env
 There, you will need to modify the following variables:
 
 - `MODEL_TYPE` - Set this to `lora`.
-- `FLUX` - Set this to `true`.
+- `MODEL_FAMILY` - Set this to `flux`.
 - `MODEL_NAME` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will *probably* need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.

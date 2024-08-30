@@ -20,14 +20,6 @@ These steps can be followed to the best of your abilities here. If you face any 
   - Use `configure.py` instead if you would prefer an interactive configurator.
 4. Run the [train.sh](/train.sh) script.
 
-## Advanced users: Kohya config conversion
-
-If you are accustomed to training on Kohya, you can convert your Kohya config to a command-line string for SimpleTuner by using `kohya_config.py --config_path=/path/to/kohya/config.json`.
-
-This isn't as ideal as going through the parameters and setting them manually, but it can be a good starting point if you just want to dive right in.
-
-The script prints out many warnings and errors to help you get a better understanding of what you need to change.
-
 ## Hardware Requirements
 
 Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRAs on smaller models (eg. not Flux)
@@ -245,9 +237,7 @@ Here's a breakdown of what each environment variable does:
 
 #### General Settings
 
-- `STABLE_DIFFUSION_3`: This needs to be set to `true` if you are training a Stable Diffusion 3 model. It needs to be set to `false` or unset in order to train SDXL models.
-  - The correct value for `MODEL_NAME` is `stabilityai/stable-diffusion-3-medium-diffusers` ([link](https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers) to the weights)
-  - `XFORMERS` must be disabled for SD3.
+- `MODEL_FAMILY`: Set this to the model arch you are training; kolors, sdxl, pixart_sigma, flux, sd3, legacy
 - `DATALOADER_CONFIG`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
   - See [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
   - One or more datasets can be configured, but it's not necessary to use multiple.

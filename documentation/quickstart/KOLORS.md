@@ -109,7 +109,7 @@ There, you will need to modify the following variables:
 
 - `MODEL_TYPE` - Set this to `lora`.
 - `USE_DORA` - Set this to `true` if you wish to train DoRA.
-- `KOLORS` - Set this to `true`.
+- `MODEL_FAMILY` - Set this to `kolors`.
 - `MODEL_NAME` - Set this to `Kwai-Kolors/Kolors-diffusers`.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - Set this to `1024x1024` for this example.

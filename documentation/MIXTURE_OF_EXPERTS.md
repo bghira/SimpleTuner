@@ -30,6 +30,7 @@ export USE_BITFIT=false
 export USE_DORA=false
 # lora could be used here instead, but the concept hasn't been explored.
 export MODEL_TYPE="full"
+export MODEL_FAMILY="sdxl"
 export MODEL_NAME="segmind/SSD-1B"
 # The original Segmind model used a learning rate of 1e-5, which is
 # probably too high for whatever batch size most users can pull off.
