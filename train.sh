@@ -204,24 +204,24 @@ if [ -z "$METADATA_UPDATE_INTERVAL" ]; then
     export METADATA_UPDATE_INTERVAL=120
 fi
 if [ -n "$STABLE_DIFFUSION_3" ] && [[ "$STABLE_DIFFUSION_3" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --sd3"
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=sd3"
     echo "Disabling Xformers for Stable Diffusion 3 (https://github.com/huggingface/diffusers/issues/8535)"
     export XFORMERS_ARG=""
 fi
 if [ -n "$PIXART_SIGMA" ] && [[ "$PIXART_SIGMA" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --pixart_sigma"
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=pixart_sigma"
 fi
 if [ -n "$STABLE_DIFFUSION_LEGACY" ] && [[ "$STABLE_DIFFUSION_LEGACY" == "true" ]]; then
     export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --legacy"
 fi
 if [ -n "$KOLORS" ] && [[ "$KOLORS" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --kolors"
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=kolors"
 fi
 if [ -n "$SMOLDIT" ] && [[ "$SMOLDIT" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --smoldit"
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=smoldit"
 fi
 if [ -n "$FLUX" ] && [[ "$FLUX" == "true" ]]; then
-    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux"
+    export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --model_family=flux"
     # if --flux_guidance_value is in TRAINER_EXTRA_ARGS, we will not add it again.
     if [[ "${TRAINER_EXTRA_ARGS}" != *"--flux_guidance_value"* ]]; then
         export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_guidance_value=${FLUX_GUIDANCE_VALUE}"
