@@ -2168,7 +2168,7 @@ class Trainer:
                     wandb_logs = {
                         "train_loss": self.train_loss,
                         "optimization_loss": loss,
-                        "learning_rate": lr,
+                        "learning_rate": self.lr,
                         "epoch": epoch,
                     }
                     if self.config.model_family == "flux" and self.guidance_values_list:
@@ -2228,14 +2228,14 @@ class Trainer:
                     wandb_logs["train_luminance"] = avg_training_data_luminance
 
                     logger.debug(
-                        f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {loss.item()}, lr {lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {self.train_loss}"
+                        f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {loss.item()}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {self.train_loss}"
                     )
                     self.accelerator.log(
                         wandb_logs,
                         step=self.state["global_step"],
                     )
                     if self.webhook_handler is not None:
-                        webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
+                        webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
                     # Reset some values for the next go.
                     training_luminance_values = []
