@@ -187,6 +187,7 @@ class Trainer:
             self.config
         )
         self.config.flow_matching = _flow_matching
+        self.lr = 0.0
 
     def configure_webhook(self, send_startup_message: bool = True):
         self.webhook_handler = None
@@ -2157,10 +2158,10 @@ class Trainer:
                     try:
                         if self.config.is_schedulefree:
                             # hackjob method of retrieving LR from accelerated optims
-                            lr = StateTracker.get_last_lr()
+                            self.lr = StateTracker.get_last_lr()
                         else:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
-                            lr = self.lr_scheduler.get_last_lr()[0]
+                            self.lr = self.lr_scheduler.get_last_lr()[0]
                     except Exception as e:
                         logger.error(
                             f"Failed to get the last learning rate from the scheduler. Error: {e}"
