@@ -455,6 +455,11 @@ class MetadataBackend:
         """
         Remove buckets with fewer images than the batch size.
         """
+        if StateTracker.get_args().disable_bucket_pruning:
+            logger.warning(
+                "Not pruning small buckets, as --disable_bucket_pruning is provided."
+            )
+            return
         if (
             bucket in self.aspect_ratio_bucket_indices
             and (len(self.aspect_ratio_bucket_indices[bucket]) * (self.repeats + 1))

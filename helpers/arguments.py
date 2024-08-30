@@ -1711,6 +1711,15 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--disable_bucket_pruning",
+        action="store_true",
+        help=(
+            "When training on very small datasets, you might not care that the batch sizes will outpace your image count."
+            " Setting this option will prevent SimpleTuner from deleting your bucket lists that do not meet"
+            " the minimum image count requirements. Use at your own risk, it may end up throwing off your statistics or epoch tracking."
+        ),
+    )
+    parser.add_argument(
         "--offset_noise",
         action="store_true",
         default=False,
