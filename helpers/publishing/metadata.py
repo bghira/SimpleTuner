@@ -300,6 +300,7 @@ tags:
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
   - {args.model_type}
 {'  - template:sd-lora' if 'lora' in args.model_type else ''}
+{f'  - {args.lora_type}' if 'lora' in args.model_type else ''}
 inference: true
 {widget_str}
 ---
