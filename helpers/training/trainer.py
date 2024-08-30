@@ -2314,7 +2314,7 @@ class Trainer:
 
                 logs = {
                     "step_loss": loss.detach().item(),
-                    "lr": float(lr),
+                    "lr": float(self.lr),
                 }
                 if "mean_cfg" in wandb_logs:
                     logs["mean_cfg"] = wandb_logs["mean_cfg"]
