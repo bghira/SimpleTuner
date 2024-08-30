@@ -140,7 +140,7 @@ def parse_args(input_args=None):
             " a shift value of 3. The value for Flux is unknown. Higher values result in less noisy timesteps sampled,"
             " which results in a lower mean loss value, but not necessarily better results. Early reports indicate"
             " that modification of this value can change how the contrast is learnt by the model, and whether fine"
-            " details are ignored or accentuated."
+            " details are ignored or accentuated, removing fine details and making the outputs blurrier."
         ),
     )
     parser.add_argument(
