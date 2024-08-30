@@ -2171,7 +2171,7 @@ class Trainer:
                         "learning_rate": lr,
                         "epoch": epoch,
                     }
-                    if self.config.flux and self.guidance_values_list:
+                    if self.config.model_family == "flux" and self.guidance_values_list:
                         # avg the values
                         guidance_values = torch.tensor(self.guidance_values_list).mean()
                         wandb_logs["mean_cfg"] = guidance_values.item()
