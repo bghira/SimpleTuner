@@ -462,7 +462,9 @@ class MetadataBackend:
             return
         if (
             bucket in self.aspect_ratio_bucket_indices
-            and (len(self.aspect_ratio_bucket_indices[bucket]) * (self.repeats + 1))
+            and (
+                len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)
+            )
             < self.batch_size
         ):
             bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
