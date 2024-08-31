@@ -89,3 +89,20 @@ bash train.sh > /path/to/training-$(date +%s).log 2>&1
 ### Run unit tests
 
 To run unit tests to ensure that installation has completed successfully, execute the command `poetry run python -m unittest discover tests/`.
+
+## Advanced: Multiple configuration environments
+
+For users who train multiple models or need to quickly switch between different datasets or settings, two environment variables are inspected at startup.
+
+To use these variables:
+
+```bash
+env ENV=default CONFIG_BACKEND=env bash train.sh
+```
+
+- `ENV` will default to `default`, which points to the typical `SimpleTuner/config/` directory that this guide helped you configure
+  - Using `ENV=pixart ./train.sh` would use `SimpleTuner/config/pixart` directory to find `config.env`
+- `CONFIG_BACKEND` will default to `env`, which uses the typical `config.env` file this guide helped you configure
+  - Supported options: `env`, `json`, `toml`, or `cmd` if you rely on running `train.py` manually
+  - Using `CONFIG_BACKEND=json ./train.sh` would search for `SimpleTuner/config/config.json` instead of `config.env`
+  - Similarly, `CONFIG_BACKEND=toml` will use `config.env`
