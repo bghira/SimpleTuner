@@ -756,13 +756,21 @@ class Trainer:
             if self.unet is not None:
                 model_for_lycoris_wrap = self.unet
 
-            self.lycoris_wrapped_network = create_lycoris(
-                model_for_lycoris_wrap,
-                multiplier,
-                linear_dim,
-                linear_alpha,
-                **self.lycoris_config,
-            )
+            if self.config.init_lora is not None:
+                from lycoris import create_lycoris_from_weights
+                self.lycoris_wrapped_network = create_lycoris_from_weights(
+                    multiplier, self.config.init_lora, model_for_lycoris_wrap, weights_sd=None,
+                    **self.lycoris_config,
+                )[0]
+            else:
+                self.lycoris_wrapped_network = create_lycoris(
+                    model_for_lycoris_wrap,
+                    multiplier,
+                    linear_dim,
+                    linear_alpha,
+                    **self.lycoris_config,
+                )
+
             self.lycoris_wrapped_network.apply_to()
             setattr(
                 self.accelerator,
