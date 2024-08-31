@@ -571,7 +571,7 @@ class Trainer:
             self.text_encoder_3 = self.text_encoder_3.to("cpu")
         del self.text_encoder_1, self.text_encoder_2, self.text_encoder_3
         self.text_encoder_1, self.text_encoder_2, self.text_encoder_3 = None, None, None
-        text_encoders = []
+        self.text_encoders = []
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
