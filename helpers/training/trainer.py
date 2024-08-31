@@ -117,6 +117,7 @@ from helpers.models.flux import (
     pack_latents,
     unpack_latents,
     get_mobius_guidance,
+    apply_flux_schedule_shift,
 )
 
 is_optimi_available = False
@@ -1633,6 +1634,9 @@ class Trainer:
                                 self.config.flow_matching_sigmoid_scale
                                 * torch.randn((bsz,), device=self.accelerator.device)
                             )
+                            sigmas = apply_flux_schedule_shift(
+                                self.config, self.noise_scheduler, sigmas, noise
+                            )
                         else:
                             # fast schedule can only use these sigmas, and they can be sampled up to batch size times
                             available_sigmas = [
@@ -1652,13 +1656,6 @@ class Trainer:
                                 device=self.accelerator.device,
                             )
                         timesteps = sigmas * 1000.0
-                        if (
-                            self.config.flux_schedule_shift is not None
-                            and self.config.flux_schedule_shift > 0
-                        ):
-                            timesteps = (
-                                timesteps * self.config.flux_schedule_shift
-                            ) / (1 + (self.config.flux_schedule_shift - 1) * timesteps)
                         sigmas = sigmas.view(-1, 1, 1, 1)
                     else:
                         # Sample a random timestep for each image, potentially biased by the timestep weights.

@@ -253,6 +253,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flux_fast_schedule]
                 [--flux_schedule_shift FLUX_SCHEDULE_SHIFT]
+                [--flux_schedule_auto_shift]
                 [--flux_guidance_mode {constant,random-range,mobius}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
@@ -472,6 +473,16 @@ options:
                         that modification of this value can change how the
                         contrast is learnt by the model, and whether fine
                         details are ignored or accentuated.
+  --flux_schedule_auto_shift
+                        Shift the noise schedule depending on image
+                        resolution. The shift value calculation is taken from
+                        the official Flux inference code. Shift value is
+                        math.exp(1.15) = 3.1581 for a pixel count of 1024px *
+                        1024px. The shift value grows exponentially with
+                        higher pixel counts. It is a good idea to train on a
+                        mix of different resolutions when this option is
+                        enabled. You may need to lower your learning rate with
+                        this enabled.
   --flux_guidance_mode {constant,random-range,mobius}
                         Flux has a 'guidance' value used during training time
                         that reflects the CFG range of your training samples.
