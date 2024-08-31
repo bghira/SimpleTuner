@@ -14,6 +14,7 @@ filename_mapping = {
 
 
 class StateTracker:
+    config_path = None
     # Class variables
     model_type = ""
 
@@ -99,6 +100,14 @@ class StateTracker:
         cache_path = Path(cls.args.output_dir) / f"{cache_name}.json"
         with cache_path.open("w") as f:
             json.dump(data, f)
+
+    @classmethod
+    def set_config_path(cls, config_path: str):
+        cls.config_path = config_path
+
+    @classmethod
+    def get_config_path(cls):
+        return cls.config_path
 
     @classmethod
     def set_model_family(cls, model_type: str):

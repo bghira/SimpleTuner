@@ -17,7 +17,7 @@ import wandb
 # Quiet down, you.
 os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from helpers import log_format  # noqa
-from helpers.arguments import parse_args
+from helpers.configuration.loader import load_config
 from helpers.caching.memory import reclaim_memory
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
@@ -149,18 +149,27 @@ diffusers.utils.logging.set_verbosity_warning()
 
 
 class Trainer:
-    def __init__(self):
-        self.parse_arguments()
+    def __init__(self, config: dict = None):
+        self.parse_arguments(args=config)
         self._misc_init()
         self.controlnet = None
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
 
+    def _config_to_obj(self, config):
+        if not config:
+            return None
+        return type("Config", (object,), config)
+
     def parse_arguments(self, args=None):
-        self.config = args or parse_args()
+        self.config = load_config(args)
         self.accelerator = Accelerator(
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-            mixed_precision=self.config.mixed_precision,
+            mixed_precision=(
+                self.config.mixed_precision
+                if not torch.backends.mps.is_available()
+                else None
+            ),
             log_with=self.config.report_to,
             project_config=self.config.accelerator_project_config,
             kwargs_handlers=[self.config.process_group_kwargs],
@@ -1240,10 +1249,7 @@ class Trainer:
             return
 
         logger.info(f"Resuming from checkpoint {path}")
-        try:
-            self.accelerator.load_state(os.path.join(self.config.output_dir, path))
-        except Exception as e:
-            logger.error(f"Error during load_state: {e}")
+        self.accelerator.load_state(os.path.join(self.config.output_dir, path))
         try:
             if (
                 "constant" in self.config.lr_scheduler

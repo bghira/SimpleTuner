@@ -47,7 +47,7 @@ def error_log(message):
         logger.error(message)
 
 
-def parse_args(input_args=None):
+def parse_cmdline_args(input_args=None):
     parser = argparse.ArgumentParser(
         description="The following SimpleTuner command-line options are available:"
     )
@@ -649,7 +649,6 @@ def parse_args(input_args=None):
         "--data_backend_config",
         type=str,
         default=None,
-        required=True,
         help=(
             "The relative or fully-qualified path for your data backend config."
             " See multidatabackend.json.example for an example."
@@ -2196,6 +2195,16 @@ def parse_args(input_args=None):
                     "DoRA support is experimental and not very thoroughly tested."
                 )
                 args.lora_initialisation_style = "default"
+
+    if not args.data_backend_config:
+        from helpers.training.state_tracker import StateTracker
+
+        args.data_backend_config = os.path.join(
+            StateTracker.get_config_path(), "multidatabackend.json"
+        )
+        logger.warning(
+            f"No data backend config provided. Using default config at {args.data_backend_config}."
+        )
 
     # Check if we have a valid gradient accumulation steps.
     if args.gradient_accumulation_steps < 1:

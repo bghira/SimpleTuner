@@ -60,3 +60,5 @@ vendor/
 inference/
 webhooks.json
 untracked/
+config/*/
+config/*.toml
