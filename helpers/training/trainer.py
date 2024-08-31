@@ -117,9 +117,7 @@ from helpers.models.flux import (
     pack_latents,
     unpack_latents,
     get_mobius_guidance,
-)
-from diffusers.pipelines.flux.pipeline_flux import (
-    calculate_shift as calculate_shift_flux,
+    apply_flux_schedule_shift,
 )
 
 is_optimi_available = False
@@ -1628,32 +1626,9 @@ class Trainer:
                                 self.config.flow_matching_sigmoid_scale
                                 * torch.randn((bsz,), device=self.accelerator.device)
                             )
-                            # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
-                            flux_shift_value = None
-                            if (
-                                self.config.flux_schedule_shift is not None
-                                and self.config.flux_schedule_shift > 0
-                            ):
-                                # Static shift value for every resolution
-                                flux_shift_value = self.config.flux_schedule_shift
-                            elif self.config.flux_schedule_auto_shift:
-                                # Resolution-dependent shift value calculation used by official Flux inference implementation
-                                image_seq_len = (noise.shape[-1] * noise.shape[-2]) // 4
-                                mu = calculate_shift_flux(
-                                    (noise.shape[-1] * noise.shape[-2]) // 4,
-                                    self.noise_scheduler.config.base_image_seq_len,
-                                    self.noise_scheduler.config.max_image_seq_len,
-                                    self.noise_scheduler.config.base_shift,
-                                    self.noise_scheduler.config.max_shift,
-                                )
-                                training_logger.debug(
-                                    f"image_seq_len = {image_seq_len}, mu = {mu}, noise.shape = {noise.shape}"
-                                )
-                                flux_shift_value = math.exp(mu)
-                            if flux_shift_value is not None:
-                                sigmas = (sigmas * flux_shift_value) / (
-                                    1 + (flux_shift_value - 1) * sigmas
-                                )
+                            sigmas = apply_flux_schedule_shift(
+                                self.config, self.noise_scheduler, sigmas, noise
+                            )
                         else:
                             # fast schedule can only use these sigmas, and they can be sampled up to batch size times
                             available_sigmas = [
