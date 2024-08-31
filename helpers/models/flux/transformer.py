@@ -309,9 +309,7 @@ def expand_flux_attention_mask(
     mask_seq_len = attn_mask.shape[1]
 
     expanded_mask = torch.ones(bsz, residual_seq_len)
-
-    start_index = residual_seq_len - mask_seq_len
-    expanded_mask[:, start_index:] = attn_mask
+    expanded_mask[:, :mask_seq_len] = attn_mask
 
     return expanded_mask
 
@@ -459,7 +457,7 @@ class FluxTransformerBlock(nn.Module):
 
         if attention_mask is not None:
             attention_mask = expand_flux_attention_mask(
-                torch.cat([hidden_states, encoder_hidden_states], dim=1),
+                torch.cat([encoder_hidden_states, hidden_states], dim=1),
                 attention_mask,
             )
 
@@ -708,6 +706,8 @@ class FluxTransformer2DModelWithMasking(
                     attention_mask=attention_mask,
                 )
 
+        # Flux places the text tokens in front of the image tokens in the
+        # sequence.
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
         for index_block, block in enumerate(self.single_transformer_blocks):
