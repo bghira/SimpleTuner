@@ -792,8 +792,10 @@ def configure_env():
         "Enter the path to your dataset. This should be a directory containing images and text files for their caption. For reliability, use an absolute (full) path, beginning with a '/'",
         "/datasets/my-dataset",
     )
-    dataset_repeats = prompt_user(
-        "How many times do you want to repeat each image in the dataset?", 10
+    dataset_repeats = int(
+        prompt_user(
+            "How many times do you want to repeat each image in the dataset?", 10
+        )
     )
     dataset_cache_prefix = prompt_user(
         "Where will your VAE and text encoder caches be written to? Subdirectories will be created inside for you automatically.",
