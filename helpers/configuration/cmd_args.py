@@ -144,6 +144,17 @@ def parse_cmdline_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--flux_schedule_auto_shift",
+        action="store_true",
+        default=False,
+        help=(
+            "Shift the noise schedule depending on image resolution. The shift value calculation is taken from the official"
+            " Flux inference code. Shift value is math.exp(1.15) = 3.1581 for a pixel count of 1024px * 1024px. The shift"
+            " value grows exponentially with higher pixel counts. It is a good idea to train on a mix of different resolutions"
+            " when this option is enabled. You may need to lower your learning rate with this enabled."
+        ),
+    )
+    parser.add_argument(
         "--flux_guidance_mode",
         type=str,
         choices=["constant", "random-range", "mobius"],

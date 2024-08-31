@@ -117,6 +117,7 @@ from helpers.models.flux import (
     pack_latents,
     unpack_latents,
     get_mobius_guidance,
+    apply_flux_schedule_shift,
 )
 
 is_optimi_available = False
@@ -580,7 +581,7 @@ class Trainer:
             self.text_encoder_3 = self.text_encoder_3.to("cpu")
         del self.text_encoder_1, self.text_encoder_2, self.text_encoder_3
         self.text_encoder_1, self.text_encoder_2, self.text_encoder_3 = None, None, None
-        text_encoders = []
+        self.text_encoders = []
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
@@ -765,13 +766,21 @@ class Trainer:
             if self.unet is not None:
                 model_for_lycoris_wrap = self.unet
 
-            self.lycoris_wrapped_network = create_lycoris(
-                model_for_lycoris_wrap,
-                multiplier,
-                linear_dim,
-                linear_alpha,
-                **self.lycoris_config,
-            )
+            if self.config.init_lora is not None:
+                from lycoris import create_lycoris_from_weights
+                self.lycoris_wrapped_network = create_lycoris_from_weights(
+                    multiplier, self.config.init_lora, model_for_lycoris_wrap, weights_sd=None,
+                    **self.lycoris_config,
+                )[0]
+            else:
+                self.lycoris_wrapped_network = create_lycoris(
+                    model_for_lycoris_wrap,
+                    multiplier,
+                    linear_dim,
+                    linear_alpha,
+                    **self.lycoris_config,
+                )
+
             self.lycoris_wrapped_network.apply_to()
             setattr(
                 self.accelerator,
@@ -1631,6 +1640,9 @@ class Trainer:
                                 self.config.flow_matching_sigmoid_scale
                                 * torch.randn((bsz,), device=self.accelerator.device)
                             )
+                            sigmas = apply_flux_schedule_shift(
+                                self.config, self.noise_scheduler, sigmas, noise
+                            )
                         else:
                             # fast schedule can only use these sigmas, and they can be sampled up to batch size times
                             available_sigmas = [
@@ -1650,13 +1662,6 @@ class Trainer:
                                 device=self.accelerator.device,
                             )
                         timesteps = sigmas * 1000.0
-                        if (
-                            self.config.flux_schedule_shift is not None
-                            and self.config.flux_schedule_shift > 0
-                        ):
-                            timesteps = (
-                                timesteps * self.config.flux_schedule_shift
-                            ) / (1 + (self.config.flux_schedule_shift - 1) * timesteps)
                         sigmas = sigmas.view(-1, 1, 1, 1)
                     else:
                         # Sample a random timestep for each image, potentially biased by the timestep weights.
