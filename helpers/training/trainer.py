@@ -1289,6 +1289,10 @@ class Trainer:
         )
         if hasattr(self.lr_scheduler, "last_step"):
             self.lr_scheduler.last_step = self.state["global_resume_step"]
+        if "constant_with_warmup" == self.config.lr_scheduler:
+            if hasattr(self.lr_scheduler, "last_epoch"):
+                # epoch here represents batch steps, not actual epochs.
+                self.lr_scheduler.last_epoch = self.state["global_resume_step"]
         # print scheduler attr names
         print(self.lr_scheduler.__dict__.keys())
         logger.info(
