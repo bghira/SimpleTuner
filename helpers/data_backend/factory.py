@@ -84,11 +84,19 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             "vae_cache_clear_each_epoch"
         ]
     if "probability" in backend:
-        output["config"]["probability"] = backend["probability"]
+        output["config"]["probability"] = (
+            float(backend["probability"]) if backend["probability"] else 1.0
+        )
     if "ignore_epochs" in backend:
         output["config"]["ignore_epochs"] = backend["ignore_epochs"]
+        if backend["ignore_epochs"]:
+            logger.error(
+                "ignore_epochs is true. This is a deprecated configuration, and will result in unexpected behaviour. This option will be removed in a future release."
+            )
     if "repeats" in backend:
-        output["config"]["repeats"] = backend["repeats"]
+        output["config"]["repeats"] = (
+            int(backend["repeats"]) if backend["repeats"] else 0
+        )
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
     else:
