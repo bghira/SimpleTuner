@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-# Pull the default config.
-[ -f "config/config.env.example" ] && source config/config.env.example
 # Pull config from config.env
 [ -f "config/config.env" ] && source config/config.env
 
@@ -33,6 +31,7 @@ if [ -z "${ACCELERATE_EXTRA_ARGS}" ]; then
 fi
 
 if [ -z "${TRAINING_NUM_PROCESSES}" ]; then
+    echo "Set custom env vars permanently in config/config.env:"
     printf "TRAINING_NUM_PROCESSES not set, defaulting to 1.\n"
     TRAINING_NUM_PROCESSES=1
 fi
@@ -45,6 +44,33 @@ fi
 if [ -z "${MIXED_PRECISION}" ]; then
     printf "MIXED_PRECISION not set, defaulting to bf16.\n"
     MIXED_PRECISION=bf16
+fi
+
+if [ -z "${TRAINING_DYNAMO_BACKEND}" ]; then
+    printf "TRAINING_DYNAMO_BACKEND not set, defaulting to no.\n"
+    TRAINING_DYNAMO_BACKEND="no"
+fi
+
+if [ -z "${ENV}" ]; then
+    printf "ENV not set, defaulting to default.\n"
+    export ENV="default"
+    export ENV_PATH=""
+    if [[ "$ENV" != "default" ]]; then
+        export ENV_PATH = "${ENV}/"
+    fi
+fi
+
+if [ -z "${CONFIG_BACKEND}" ]; then
+    export CONFIG_BACKEND="env"
+    export CONFIG_PATH="config/${ENV_PATH}config"
+    if [ -f "${CONFIG_PATH}.env" ]; then
+        export CONFIG_BACKEND="env"
+    elif [ -f "${CONFIG_PATH}.json" ]; then
+        export CONFIG_BACKEND="json"
+    elif [ -f "${CONFIG_PATH}.toml" ]; then
+        export CONFIG_BACKEND="toml"
+    fi
+    echo "Using ${CONFIG_BACKEND} backend: ${CONFIG_PATH}.${CONFIG_BACKEND}"
 fi
 
 # Run the training script.
