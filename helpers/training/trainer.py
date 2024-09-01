@@ -1307,8 +1307,7 @@ class Trainer:
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
         if hasattr(self.lr_scheduler, "last_epoch"):
-            # epoch here represents batch steps, not actual epochs.
-            self.lr_scheduler.last_epoch = self.state["global_resume_step"]
+            self.lr_scheduler.last_epoch = self.state["current_epoch"]
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1:
             logger.info(
