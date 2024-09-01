@@ -1259,7 +1259,7 @@ class Trainer:
         self.accelerator.load_state(os.path.join(self.config.output_dir, path))
         try:
             if (
-                "constant" in self.config.lr_scheduler
+                "constant" == self.config.lr_scheduler
                 and not self.config.is_schedulefree
             ):
                 for g in self.optimizer.param_groups:
@@ -1289,15 +1289,7 @@ class Trainer:
         )
         if hasattr(self.lr_scheduler, "last_step"):
             self.lr_scheduler.last_step = self.state["global_resume_step"]
-        if "constant_with_warmup" == self.config.lr_scheduler:
-            if hasattr(self.lr_scheduler, "last_epoch"):
-                # epoch here represents batch steps, not actual epochs.
-                self.lr_scheduler.last_epoch = self.state["global_resume_step"]
-        # print scheduler attr names
-        print(self.lr_scheduler.__dict__.keys())
-        logger.info(
-            f"Resuming from global_step {self.state['global_resume_step']} (last_epoch={self.lr_scheduler.last_epoch}) (last_lr={self.lr_scheduler._last_lr})."
-        )
+        logger.info(f"Resuming from global_step {self.state['global_resume_step']}).")
 
         # Log the current state of each data backend.
         for _, backend in StateTracker.get_data_backends().items():
@@ -1314,6 +1306,9 @@ class Trainer:
             )
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
+        if hasattr(self.lr_scheduler, "last_epoch"):
+            # epoch here represents batch steps, not actual epochs.
+            self.lr_scheduler.last_epoch = self.state["global_resume_step"]
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1:
             logger.info(
