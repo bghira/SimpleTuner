@@ -248,6 +248,7 @@ def configure_env():
         "--aspect_bucket_rounding": 2,
         "--seed": 42,
         "--minimum_image_size": 0,
+        "--benchmark_base_model": True,
     }
     extra_args = []
 
@@ -579,8 +580,8 @@ def configure_env():
             prompt_user("Would you like to enable TF32 mode? ([y]/n)", "y").lower()
             == "y"
         )
-        if use_tf32:
-            env_contents["--allow_tf32"] = "true"
+        if not use_tf32:
+            env_contents["--disable_tf32"] = "true"
     mixed_precision_options = ["bf16", "no"]
     env_contents["--mixed_precision"] = None
     while (
