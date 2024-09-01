@@ -163,7 +163,9 @@ class Trainer:
 
     def parse_arguments(self, args=None):
         self.config = load_config(args)
-        report_to = None if self.config.report_to.lower() == "none" else self.config.report_to
+        report_to = (
+            None if self.config.report_to.lower() == "none" else self.config.report_to
+        )
         self.accelerator = Accelerator(
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
             mixed_precision=(
@@ -769,8 +771,12 @@ class Trainer:
 
             if self.config.init_lora is not None:
                 from lycoris import create_lycoris_from_weights
+
                 self.lycoris_wrapped_network = create_lycoris_from_weights(
-                    multiplier, self.config.init_lora, model_for_lycoris_wrap, weights_sd=None,
+                    multiplier,
+                    self.config.init_lora,
+                    model_for_lycoris_wrap,
+                    weights_sd=None,
                     **self.lycoris_config,
                 )[0]
             else:
@@ -1253,7 +1259,7 @@ class Trainer:
         self.accelerator.load_state(os.path.join(self.config.output_dir, path))
         try:
             if (
-                "constant" in self.config.lr_scheduler
+                "constant" == self.config.lr_scheduler
                 and not self.config.is_schedulefree
             ):
                 for g in self.optimizer.param_groups:
@@ -1283,7 +1289,7 @@ class Trainer:
         )
         if hasattr(self.lr_scheduler, "last_step"):
             self.lr_scheduler.last_step = self.state["global_resume_step"]
-        logger.info(f"Resuming from global_step {self.state['global_resume_step']}.")
+        logger.info(f"Resuming from global_step {self.state['global_resume_step']}).")
 
         # Log the current state of each data backend.
         for _, backend in StateTracker.get_data_backends().items():
@@ -1300,6 +1306,9 @@ class Trainer:
             )
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
+        if hasattr(self.lr_scheduler, "last_epoch"):
+            # epoch here represents batch steps, not actual epochs.
+            self.lr_scheduler.last_epoch = self.state["global_resume_step"]
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1:
             logger.info(
