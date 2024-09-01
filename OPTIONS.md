@@ -249,7 +249,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--model_family {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}]
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
                 [--legacy] [--kolors] [--flux]
-                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}]
+                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,tinier}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flux_fast_schedule]
                 [--flux_schedule_shift FLUX_SCHEDULE_SHIFT]
@@ -441,7 +441,7 @@ options:
                         model.
   --flux                This option must be provided when training a Flux
                         model.
-  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}
+  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,tinier}
                         Flux has single and joint attention blocks. By
                         default, all attention layers are trained, but not the
                         feed-forward layers If 'mmdit' is provided, the text
@@ -453,7 +453,11 @@ options:
                         in earlier SD versions. If 'all' is provided, all
                         layers will be trained, minus feed-forward. If
                         'all+ffs' is provided, all layers will be trained
-                        including feed-forward.
+                        including feed-forward. If 'ai-toolkit' is provided,
+                        all layers will be trained including feed-forward and
+                        norms (based on ostris/ai-toolkit). If 'tiny' is
+                        provided, only two layers will be trained. If 'tinier'
+                        is provided, only one layers will be trained.
   --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models..

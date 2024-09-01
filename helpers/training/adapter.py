@@ -77,6 +77,19 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "proj_mlp",
                 "proj_out",
             ]
+        elif args.flux_lora_target == "tiny":
+            # From TheLastBen
+            # https://www.reddit.com/r/StableDiffusion/comments/1f523bd/good_flux_loras_can_be_less_than_45mb_128_dim/
+            target_modules = [
+                "single_transformer_blocks.7.proj_out",
+                "single_transformer_blocks.20.proj_out",
+            ]
+        elif args.flux_lora_target == "nano":
+            # From TheLastBen
+            # https://www.reddit.com/r/StableDiffusion/comments/1f523bd/good_flux_loras_can_be_less_than_45mb_128_dim/
+            target_modules = [
+                "single_transformer_blocks.7.proj_out",
+            ]
 
         return target_modules
 
