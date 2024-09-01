@@ -163,7 +163,9 @@ class Trainer:
 
     def parse_arguments(self, args=None):
         self.config = load_config(args)
-        report_to = None if self.config.report_to.lower() == "none" else self.config.report_to
+        report_to = (
+            None if self.config.report_to.lower() == "none" else self.config.report_to
+        )
         self.accelerator = Accelerator(
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
             mixed_precision=(
@@ -769,8 +771,12 @@ class Trainer:
 
             if self.config.init_lora is not None:
                 from lycoris import create_lycoris_from_weights
+
                 self.lycoris_wrapped_network = create_lycoris_from_weights(
-                    multiplier, self.config.init_lora, model_for_lycoris_wrap, weights_sd=None,
+                    multiplier,
+                    self.config.init_lora,
+                    model_for_lycoris_wrap,
+                    weights_sd=None,
                     **self.lycoris_config,
                 )[0]
             else:
@@ -1283,7 +1289,11 @@ class Trainer:
         )
         if hasattr(self.lr_scheduler, "last_step"):
             self.lr_scheduler.last_step = self.state["global_resume_step"]
-        logger.info(f"Resuming from global_step {self.state['global_resume_step']}.")
+        # print scheduler attr names
+        print(self.lr_scheduler.__dict__.keys())
+        logger.info(
+            f"Resuming from global_step {self.state['global_resume_step']} (last_epoch={self.lr_scheduler.last_epoch}) (last_lr={self.lr_scheduler._last_lr})."
+        )
 
         # Log the current state of each data backend.
         for _, backend in StateTracker.get_data_backends().items():
