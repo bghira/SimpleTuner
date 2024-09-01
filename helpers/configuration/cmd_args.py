@@ -1280,7 +1280,8 @@ def parse_cmdline_args(input_args=None):
         default="wandb",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
-            ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
+            ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations,'
+            ' or `"none"` to disable logging.'
         ),
     )
     parser.add_argument(
