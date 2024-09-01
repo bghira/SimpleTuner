@@ -1,3 +1,5 @@
+import json
+
 env_to_args_map = {
     "RESUME_CHECKPOINT": "--resume_from_checkpoint",
     "DATALOADER_CONFIG": "--data_backend_config",
@@ -76,8 +78,6 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 def load_env():
     """
     Load environment variables from .env files based on the specified environment.
-
-    :param env: The environment name (e.g., 'dev', 'production'). Defaults to 'default'.
     """
     # Define the paths to the default and environment-specific .env files
     config_env_path = "config/config.env"
@@ -91,25 +91,49 @@ def load_env():
     # Load default environment variables if the file exists
     config_file_contents = {}
     if os.path.isfile(config_env_path):
-        # loop through, ignoring comments '#' and empty lines, while setting the env variables
+        # Loop through, ignoring comments '#' and empty lines, while setting the env variables
         with open(config_env_path, "r") as f:
             for line in f:
+                # Skip comments and empty lines
                 if line.startswith("#") or line.strip() == "":
                     continue
-                c = line.strip().split("=")
-                if len(c) == 2:
-                    key, value = c
-                    config_file_contents[key] = value
-                elif len(c) > 2:
-                    key = c[0]
-                    value = "=".join(c[1:])
-                    config_file_contents[key] = value
 
+                # Remove 'export' from the start
+                if line.startswith("export"):
+                    line = line[7:]
+
+                # Handle `+=` for appending values
+                if "+=" in line:
+                    key, value = line.strip().split("+=", 1)
+                    key, value = (
+                        key.strip(),
+                        value.strip('"').strip("'").strip().split(),
+                    )
+                    # Append each element to the existing key's list or create a new list
+                    if key in config_file_contents:
+                        config_file_contents[key].extend(value)
+                    else:
+                        config_file_contents[key] = value
                 else:
-                    print(c)
+                    # Regular `=` assignment
+                    c = line.strip().split("=", 1)
+                    if len(c) == 2:
+                        key, value = c
+                        config_file_contents[key.strip()] = (
+                            value.strip('"').strip("'").split()
+                        )
+
+        # Convert lists to single string values with spaces, if needed
+        for key, value in config_file_contents.items():
+            if isinstance(value, list):
+                if value and "${" in value[0]:
+                    continue
+                config_file_contents[key] = " ".join(value)
+
         print(f"[CONFIG.ENV] Loaded environment variables from {config_env_path}")
     else:
-        raise ValueError(f"Can not find config file: {config_env_path}")
+        raise ValueError(f"Cannot find config file: {config_env_path}")
+
     return config_file_contents
 
 
@@ -152,5 +176,17 @@ def load_env_config():
             else:
                 # Add the argument and its value to the list
                 mapped_args.append(f"{arg_name}={value}")
+    # handle TRAINER_EXTRA_ARGS, which is like `TRAINER_EXTRA_ARGS="--num_processes=1 --num_machines=1 --dynamo_backend=local"`
+    extra_args = config_file_contents.get("TRAINER_EXTRA_ARGS", None)
+    if extra_args:
+        print(f"Extra args: {extra_args}")
+        if type(extra_args) is list:
+            for value in extra_args:
+                if "${" in value:
+                    continue
+                mapped_args.extend(value.split())
+        else:
+            mapped_args.extend(extra_args.split())
 
+    logger.info(f"Loaded environment variables: {json.dumps(mapped_args, indent=4)}")
     return mapped_args
