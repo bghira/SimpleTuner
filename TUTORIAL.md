@@ -16,7 +16,7 @@ These steps can be followed to the best of your abilities here. If you face any 
 
 1. Install the required packages as per [INSTALL.md](/INSTALL.md).
 2. Follow the below section, [Training data](#training-data) to produce a set of valid training data, or to obtain example data.
-3. Copy the `config/config.env.example` file in the `SimpleTuner/` project root directory to `config/config.env` and fill it with your configuration options - use [DATALOADER](/documentation//DATALOADER.md) as a guide for this.
+3. Copy the `config/config.json.example` file in the `SimpleTuner/` project root directory to `config/config.json` and fill it with your configuration options - use [DATALOADER](/documentation//DATALOADER.md) as a guide for this.
   - Use `configure.py` instead if you would prefer an interactive configurator.
 4. Run the [train.sh](/train.sh) script.
 
@@ -123,11 +123,11 @@ For users who are more familiar with model training and wish to tweak settings e
 
 ## Publishing checkpoints to Hugging Face Hub
 
-Setting two values inside `config/config.env` will cause the trainer to automatically push your model up to the Hugging Face Hub upon training completion:
+Setting two values inside `config/config.json` will cause the trainer to automatically push your model up to the Hugging Face Hub upon training completion:
 
 ```bash
-export PUSH_TO_HUB="true"
-export HUB_MODEL_NAME="what-you-will-call-this"
+"push_to_hub": true,
+"hub_model_name": "what-you-will-call-this",
 ```
 
 Be sure to login before you begin training by executing:
@@ -138,10 +138,10 @@ huggingface-cli login
 
 A model card will be automatically generated containing a majority of the relevant training session parameters.
 
-By default, every checkpoint will be uploaded to the Hub. However, if you wish to disable this behaviour to conserve bandwidth or for privacy reasons, you can set the following value in `config/config.env`:
+By default, every checkpoint will be uploaded to the Hub. However, if you wish to disable this behaviour to conserve bandwidth or for privacy reasons, you can set the following value in `config/config.json`:
 
 ```bash
-export PUSH_CHECKPOINTS="false"
+"push_checkpoints_to_hub": false,
 ```
 
 ## Monitoring and Logging
@@ -160,7 +160,7 @@ SimpleTuner can submit messages to a Discord webhook:
 To configure a Discord webhook, add `--webhook_config=webhook.json` to your env file:
 
 ```bash
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --webhook_config=webhook.json"
+"webhook_config": "webhook.json",
 ```
 
 In the SimpleTuner root directory, create the file `webhook.json`:
@@ -214,7 +214,7 @@ For using the model in your own projects, refer to the [Diffusers project](https
 
 ## Debugging
 
-For extra information when running SimpleTuner you can add the following to your env file:
+For extra information when running SimpleTuner you can add the following to `config/config.env`:
 
 ```bash
 export SIMPLETUNER_LOG_LEVEL=INFO
@@ -237,22 +237,22 @@ Here's a breakdown of what each environment variable does:
 
 #### General Settings
 
-- `MODEL_FAMILY`: Set this to the model arch you are training; kolors, sdxl, pixart_sigma, flux, sd3, legacy
-- `DATALOADER_CONFIG`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
+- `model_family`: Set this to the model arch you are training; kolors, sdxl, pixart_sigma, flux, sd3, legacy
+- `data_backend_config`: This file is mandatory, and an example copy can be found in `multidatabackend.json.example` which contains an example for a multi-dataset configuration split between S3 and local data storage.
   - See [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
   - One or more datasets can be configured, but it's not necessary to use multiple.
   - Some config options that have an equivalent commandline option name can be omitted, in favour of the global option
   - Some config options are mandatory, but errors will emit for those on startup. Feel free to experiment.
   - Each dataset can have its own crop and resolution config.
-- `TRAINING_SEED`: You may set a numeric value here and it will make your training reproducible to that seed across all other given settings.
+- `seed`: You may set a numeric value here and it will make your training reproducible to that seed across all other given settings.
   - You may wish to set this to -1 so that your training is absolutely random, which prevents overfitting to a given seed.
-- `RESUME_CHECKPOINT`: Specifies which checkpoint to resume from. "latest" will pick the most recent one.
+- `resume_from_checkpoint`: Specifies which checkpoint to resume from. "latest" will pick the most recent one.
   - Do not set this value to a full pipeline. It will not work. To resume training a pipeline, use `MODEL_NAME` and provide an `/absolute/path`
-- `CHECKPOINTING_STEPS`: Frequency of checkpointing during training.
+- `checkpointing_steps`: Frequency of checkpointing during training.
   - Too many checkpoints created can slow down training. However, it might be necessary on providers that could unexpectedly shut down or restart your environment.
-- `CHECKPOINTING_LIMIT`: Maximum number of checkpoints to keep.
+- `checkpoints_total_limit`: Maximum number of checkpoints to keep.
   - Using a higher value here will make it safer to leave training running attended for longer, at the cost of higher disk consumption - MUCH higher, in the case of SDXL.
-- `LEARNING_RATE`: The initial learning rate for the model.
+- `learning_rate`: The initial learning rate for the model.
   - A value of `4e-7` may be considered the lowest effective learning rate when using EMA. A value of `1e-5` is much too high.
   - Somewhere in the range of `4e-7` to `4e-6` most likely lies your sweet spot.
   - You want the model to explore new territory (higher learning rate), but not so boldly that it explodes in catastrophic forgetting or worse.
@@ -260,13 +260,13 @@ Here's a breakdown of what each environment variable does:
 
 #### Model and Data Settings
 
-- `MODEL_NAME`: Specifies the pretrained model to use. Can be a HuggingFace Hub model or a local path. Either method requires a full Diffusers-style layout be available.
+- `pretrained_model_name_or_path`: Specifies the pretrained model to use. Can be a HuggingFace Hub model or a local path. Either method requires a full Diffusers-style layout be available.
   - You can find some [here](https://huggingface.co/stabilityai) from Stability AI.
-- `TRACKER_PROJECT_NAME` and `TRACKER_RUN_NAME`: Names for the tracking project on Weights and Biases. Currently, run names are non-functional.
-- `INSTANCE_PROMPT`: Optional prompt to append to each caption. This can be useful if you want to add a **trigger keyword** for your model's style to associate with.
+- `tracker_project_name` and `tracker_run_name`: Names for the tracking project on Weights and Biases. Currently, run names are non-functional.
+- `instance_prompt`: Optional prompt to append to each caption. This can be useful if you want to add a **trigger keyword** for your model's style to associate with.
   - Make sure the instance prompt you use is similar to your data, or you could actually end up doing harm to the model.
   - Each dataset entry in `multidatabackend.json` can have its own `instance_prompt` set in lieu of using this main variable.
-- `VALIDATION_PROMPT`: The prompt used for validation.
+- `validation_prompt`: The prompt used for validation.
 
   - Optionally, a user prompt library or the built-in prompt library may be used to generate more than 84 images on each checkpoint across a large number of concepts.
   - See `--user_prompt_library` for more information.
@@ -275,18 +275,18 @@ Here's a breakdown of what each environment variable does:
 
 #### Data Locations
 
-- `OUTPUT_DIR` - Where the model pipeline results are stored during training, and after it completes.
+- `output_dir` - Where the model pipeline results are stored during training, and after it completes.
 
 #### Training Parameters
 
-- `MAX_NUM_STEPS`, `NUM_EPOCHS`: Max number of steps or epochs for training.
-  - If you use `MAX_NUM_STEPS`, it's recommended to set `NUM_EPOCHS` to `0`.
-  - Similarly, if you use `NUM_EPOCHS`, it is recommended to set `MAX_NUM_STEPS` to `0`.
+- `max_train_steps`, `num_train_epochs`: Max number of steps or epochs for training.
+  - If you use `max_train_steps`, it's recommended to set `num_train_epochs` to `0`.
+  - Similarly, if you use `num_train_epochs`, it is recommended to set `max_train_steps` to `0`.
   - This simply signals to the trainer that you explicitly wish to use one or the other.
-  - Don't supply `NUM_EPOCHS` and `MAX_NUM_STEPS` values together, it won't let you begin training, to ensure there is no ambiguity about which you expect to take priority.
-- `LR_SCHEDULE`, `LR_WARMUP_STEPS`: Learning rate schedule and warmup steps.
-  - `LR_SCHEDULE` - stick to `constant`, as it is most likely to be stable and less chaotic. However, `polynomial` and `constant_with_warmup` have potential of moving the model's local minima before settling in and reducing the loss. Experimentation can pay off here, especially using the `cosine` and `sine` schedulers, which offer a unique approach to learning rate scheduling.
-- `TRAIN_BATCH_SIZE`: Batch size for training. You want this **as high as you can get it** without running out of VRAM or making your training unnecessarily **slow** (eg. 300-400% increase in training runtime - yikes! 💸)
+  - Don't supply `num_train_epochs` and `max_train_steps` values together, it won't let you begin training, to ensure there is no ambiguity about which you expect to take priority.
+- `lr_scheduler`, `lr_warmup_steps`: Learning rate schedule and warmup steps.
+  - `lr_scheduler` - stick to `constant`, as it is most likely to be stable and less chaotic. However, `polynomial` and `constant_with_warmup` have potential of moving the model's local minima before settling in and reducing the loss. Experimentation can pay off here, especially using the `cosine` and `sine` schedulers, which offer a unique approach to learning rate scheduling.
+- `train_batch_size`: Batch size for training. You want this **as high as you can get it** without running out of VRAM or making your training unnecessarily **slow** (eg. 300-400% increase in training runtime - yikes! 💸)
 
 ## Additional Notes
 
@@ -312,17 +312,19 @@ pip install optimum-quanto
 
 ```bash
 # Basically, any optimiser should work here.
-export OPTIMIZER="optimi-stableadamw"
+"optimizer": "optimi-stableadamw",
 
 # choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
 # int8-quanto was tested with a single subject dreambooth LoRA.
 # fp8-quanto does not work on Apple systems. you must use int levels.
 # int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
 # may the gods have mercy on your soul, should you push things Too Far.
-export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
+"base_model_precision": "int8-quanto",
 
 # Maybe you want the text encoders to remain full precision so your text embeds are cake.
 # We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change --text_encoder_3_precision=no_change"
+"--text_encoder_1_precision": "no_change",
+"--text_encoder_2_precision": "no_change",
+"--text_encoder_3_precision": "no_change",
 ```
