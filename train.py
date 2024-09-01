@@ -44,13 +44,7 @@ if __name__ == "__main__":
         trainer.init_validations()
         trainer.init_benchmark_base_model()
 
-        trainer.init_optimizer()
-        trainer.init_lr_scheduler()
-
-        trainer.init_hooks()
-        trainer.init_resume_checkpoint()
-        trainer.init_post_load_freeze()
-        trainer.init_prepare_models()
+        trainer.resume_and_prepare()
 
         trainer.init_trackers()
         trainer.train()

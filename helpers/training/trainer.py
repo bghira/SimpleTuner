@@ -155,6 +155,7 @@ class Trainer:
         self.controlnet = None
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
+        self.lr_scheduler = None
 
     def _config_to_obj(self, config):
         if not config:
@@ -831,7 +832,8 @@ class Trainer:
 
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.
-        self.config.overrode_max_train_steps = False
+        if not hasattr(self.config, "overrode_max_train_steps"):
+            self.config.overrode_max_train_steps = False
         self.config.total_num_batches = sum(
             [
                 len(
@@ -847,11 +849,6 @@ class Trainer:
             self.config.max_train_steps = (
                 self.config.num_train_epochs * self.config.num_update_steps_per_epoch
             )
-
-            if hasattr(self.lr_scheduler, "num_update_steps_per_epoch"):
-                self.lr_scheduler.num_update_steps_per_epoch = (
-                    self.config.num_update_steps_per_epoch
-                )
             # Afterwards we recalculate our number of training epochs
             self.config.num_train_epochs = math.ceil(
                 self.config.max_train_steps / self.config.num_update_steps_per_epoch
@@ -888,7 +885,12 @@ class Trainer:
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
             )
-
+        if self.lr_scheduler is not None and hasattr(
+            self.lr_scheduler, "num_update_steps_per_epoch"
+        ):
+            self.lr_scheduler.num_update_steps_per_epoch = (
+                self.config.num_update_steps_per_epoch
+            )
         self.config.total_batch_size = (
             self.config.train_batch_size
             * self.accelerator.num_processes
@@ -969,13 +971,13 @@ class Trainer:
                 f"Loading {self.config.lr_scheduler} learning rate scheduler with {self.config.lr_warmup_steps} warmup steps"
             )
         if is_lr_scheduler_disabled(self.config.optimizer):
-            # we don't use LR schedulers with schedulefree schedulers (lol)
-            self.lr_scheduler = None
+            # we don't use LR schedulers with schedulefree optimisers
+            lr_scheduler = None
         if not self.config.use_deepspeed_scheduler and not self.config.is_schedulefree:
             logger.info(
                 f"Loading {self.config.lr_scheduler} learning rate scheduler with {self.config.lr_warmup_steps} warmup steps"
             )
-            self.lr_scheduler = get_lr_scheduler(
+            lr_scheduler = get_lr_scheduler(
                 self.config,
                 self.optimizer,
                 self.accelerator,
@@ -985,20 +987,22 @@ class Trainer:
         else:
             logger.info(f"Using dummy learning rate scheduler")
             if torch.backends.mps.is_available():
-                self.lr_scheduler = None
+                lr_scheduler = None
             else:
-                self.lr_scheduler = accelerate.utils.DummyScheduler(
+                lr_scheduler = accelerate.utils.DummyScheduler(
                     self.optimizer,
                     total_num_steps=self.config.max_train_steps,
                     warmup_num_steps=self.config.lr_warmup_steps,
                 )
-        if self.lr_scheduler is not None:
-            if hasattr(self.lr_scheduler, "num_update_steps_per_epoch"):
-                self.lr_scheduler.num_update_steps_per_epoch = (
+        if lr_scheduler is not None:
+            if hasattr(lr_scheduler, "num_update_steps_per_epoch"):
+                lr_scheduler.num_update_steps_per_epoch = (
                     self.config.num_update_steps_per_epoch
                 )
-            if hasattr(self.lr_scheduler, "last_step"):
-                self.lr_scheduler.last_step = self.global_resume_step
+            if hasattr(lr_scheduler, "last_step"):
+                lr_scheduler.last_step = self.global_resume_step
+
+        return lr_scheduler
 
     def init_ema_model(self):
         # Create EMA for the unet.
@@ -1059,7 +1063,7 @@ class Trainer:
         self.accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
         self.accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
 
-    def init_prepare_models(self):
+    def init_prepare_models(self, lr_scheduler):
         # Prepare everything with our `accelerator`.
 
         # TODO: Is this still needed? Seems like a hack job from January 2024.
@@ -1086,7 +1090,7 @@ class Trainer:
         if self.config.controlnet:
             primary_model = self.controlnet
         results = self.accelerator.prepare(
-            primary_model, self.lr_scheduler, self.optimizer, self.train_dataloaders[0]
+            primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0]
         )
         if self.config.controlnet:
             self.controlnet = results[0]
@@ -1229,7 +1233,7 @@ class Trainer:
         if is_lr_scheduler_disabled(self.config.optimizer):
             self.optimizer.train()
 
-    def init_resume_checkpoint(self):
+    def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
         self.state["current_epoch"] = self.state["first_epoch"]
@@ -1265,7 +1269,7 @@ class Trainer:
                 for g in self.optimizer.param_groups:
                     if "lr" in g:
                         g["lr"] = torch.tensor(self.config.learning_rate)
-                for k, v in self.lr_scheduler.state_dict().items():
+                for k, v in lr_scheduler.state_dict().items():
                     if k in ("base_lrs", "_last_lr"):
                         v[0] = self.config.learning_rate
         except Exception as e:
@@ -1287,8 +1291,8 @@ class Trainer:
         logger.debug(
             f"Training state inside checkpoint: {StateTracker.get_training_state()}"
         )
-        if hasattr(self.lr_scheduler, "last_step"):
-            self.lr_scheduler.last_step = self.state["global_resume_step"]
+        if hasattr(lr_scheduler, "last_step"):
+            lr_scheduler.last_step = self.state["global_resume_step"]
         logger.info(f"Resuming from global_step {self.state['global_resume_step']}).")
 
         # Log the current state of each data backend.
@@ -1306,14 +1310,16 @@ class Trainer:
             )
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
-        # if hasattr(self.lr_scheduler, "last_epoch"):
-        #     self.lr_scheduler.last_epoch = self.state["current_epoch"]
+        # if hasattr(lr_scheduler, "last_epoch"):
+        #     lr_scheduler.last_epoch = self.state["current_epoch"]
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
         self.accelerator.wait_for_everyone()
+
+        return lr_scheduler
 
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
@@ -1347,6 +1353,14 @@ class Trainer:
                     }
                 },
             )
+
+    def resume_and_prepare(self):
+        self.init_optimizer()
+        lr_scheduler = self.init_lr_scheduler()
+        self.init_hooks()
+        lr_scheduler = self.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+        self.init_post_load_freeze()
+        self.init_prepare_models(lr_scheduler=lr_scheduler)
 
     def move_models(self, destination: str = "accelerator"):
         target_device = "cpu"
