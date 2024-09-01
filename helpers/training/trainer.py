@@ -1237,7 +1237,7 @@ class Trainer:
         )
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
-            return
+            return lr_scheduler
         if self.config.resume_from_checkpoint != "latest":
             path = os.path.basename(self.config.resume_from_checkpoint)
         else:
@@ -1252,7 +1252,7 @@ class Trainer:
                 f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
             self.config.resume_from_checkpoint = None
-            return
+            return lr_scheduler
 
         logger.info(f"Resuming from checkpoint {path}")
         self.accelerator.load_state(os.path.join(self.config.output_dir, path))
