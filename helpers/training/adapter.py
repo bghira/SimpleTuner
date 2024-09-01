@@ -84,7 +84,7 @@ def determine_adapter_target_modules(args, unet, transformer):
                 "single_transformer_blocks.7.proj_out",
                 "single_transformer_blocks.20.proj_out",
             ]
-        elif args.flux_lora_target == "tinier":
+        elif args.flux_lora_target == "nano":
             # From TheLastBen
             # https://www.reddit.com/r/StableDiffusion/comments/1f523bd/good_flux_loras_can_be_less_than_45mb_128_dim/
             target_modules = [
