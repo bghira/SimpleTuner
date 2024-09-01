@@ -35,10 +35,10 @@ def load_config(args: dict = None):
         ).lower()
         config_env = os.environ.get(
             "SIMPLETUNER_ENVIRONMENT",
-            os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", None)),
+            os.environ.get("SIMPLETUNER_ENV", os.environ.get("ENV", "default")),
         )
         config_backend_path = "config"
-        if config_env and config_env != "default":
+        if config_env and config_env != "default" and config_env is not None:
             config_backend_path = os.path.join("config", config_env)
         StateTracker.set_config_path(config_backend_path)
         logger.info("Using {} configuration backend.".format(config_backend))
