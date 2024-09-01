@@ -1,6 +1,8 @@
-import os, logging
+import os
+import logging
 from helpers.configuration import toml_file, json_file, env_file, cmd_args
 from helpers.training.state_tracker import StateTracker
+import sys
 
 logger = logging.getLogger("SimpleTuner")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -27,6 +29,10 @@ def attach_env_to_path_if_not_present(backend: str, env: str = None):
 
 
 def load_config(args: dict = None):
+    # Check if help is requested; bypass configuration loading if true
+    if "-h" in sys.argv or "--help" in sys.argv:
+        return helpers["cmd"]()
+
     mapped_config = args
     if mapped_config is None or not mapped_config:
         config_backend = os.environ.get(
@@ -46,7 +52,7 @@ def load_config(args: dict = None):
         if config_backend == "cmd":
             return mapped_config
 
-    # other configs need to be passed through parse_cmdline_args to be made whole and have complete defaults and safety checks applied.
+    # Other configs need to be passed through parse_cmdline_args to be made whole and have complete defaults and safety checks applied.
     configuration = helpers["cmd"](input_args=mapped_config)
 
     return configuration

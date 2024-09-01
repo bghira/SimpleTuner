@@ -1264,8 +1264,15 @@ def parse_cmdline_args(input_args=None):
         "--allow_tf32",
         action="store_true",
         help=(
-            "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
-            " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
+            "Deprecated option. TF32 is now enabled by default. Use --disable_tf32 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--disable_tf32",
+        action="store_true",
+        help=(
+            "Previous defaults were to disable TF32 on Ampere GPUs. This option is provided to explicitly disable TF32,"
+            " after default configuration was updated to enable TF32 on Ampere GPUs."
         ),
     )
     parser.add_argument(
@@ -2125,16 +2132,19 @@ def parse_cmdline_args(input_args=None):
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
-    if args.allow_tf32 and torch.cuda.is_available():
-        logger.info(
-            "Enabling tf32 precision boost for NVIDIA devices due to --allow_tf32."
-        )
+    if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    elif torch.cuda.is_available():
-        logger.warning(
-            "If using an Ada or Ampere NVIDIA device, --allow_tf32 could add a bit more performance."
-        )
+        if args.disable_tf32:
+            logger.warning(
+                "--disable_tf32 is provided, not enabling. Training will potentially be much slower."
+            )
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+        else:
+            logger.info(
+                "Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems."
+            )
 
     args.is_quantized = (
         False
