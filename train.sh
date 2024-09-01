@@ -19,7 +19,7 @@ if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
         export LD_LIBRARY_PATH="${NVJITLINK_PATH}:${LD_LIBRARY_PATH}"
     fi
 fi
-
+export TOKENIZERS_PARALLELISM=false
 export PLATFORM
 PLATFORM=$(uname -s)
 if [[ "$PLATFORM" == "Darwin" ]]; then
