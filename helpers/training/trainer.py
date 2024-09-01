@@ -966,11 +966,6 @@ class Trainer:
             logger.info(
                 "Using experimental AdamW ScheduleFree optimiser from Facebook. Experimental due to newly added Kahan summation."
             )
-        else:
-            logger.info(
-                f"Loading {self.config.lr_scheduler} learning rate scheduler with {self.config.lr_warmup_steps} warmup steps"
-            )
-        if is_lr_scheduler_disabled(self.config.optimizer):
             # we don't use LR schedulers with schedulefree optimisers
             lr_scheduler = None
         if not self.config.use_deepspeed_scheduler and not self.config.is_schedulefree:
@@ -1288,9 +1283,8 @@ class Trainer:
             StateTracker.get_global_step()
         )
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
-        logger.debug(
-            f"Training state inside checkpoint: {StateTracker.get_training_state()}"
-        )
+        training_state_in_ckpt = StateTracker.get_training_state()
+        logger.debug(f"Training state inside checkpoint: {training_state_in_ckpt}")
         if hasattr(lr_scheduler, "last_step"):
             lr_scheduler.last_step = self.state["global_resume_step"]
         logger.info(f"Resuming from global_step {self.state['global_resume_step']}).")
@@ -1310,8 +1304,11 @@ class Trainer:
             )
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
-        # if hasattr(lr_scheduler, "last_epoch"):
-        #     lr_scheduler.last_epoch = self.state["current_epoch"]
+        if hasattr(lr_scheduler, "last_epoch"):
+            lr_scheduler.last_epoch = training_state_in_ckpt.get(
+                "epoch_step", self.state.get("global_resume_step", 1)
+            )
+        print(f"State: {self.state}")
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1:
             logger.info(
