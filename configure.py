@@ -479,7 +479,7 @@ def configure_env():
     # Flux-specific options
     if "FLUX" in env_contents and env_contents["--model_family"] == "flux":
         if env_contents["--model_type"].lower() == "lora" and not use_lycoris:
-            flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit", "tiny", "tinier"]
+            flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit", "tiny", "nano"]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
                 if flux_target_layers:

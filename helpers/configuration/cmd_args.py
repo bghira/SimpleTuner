@@ -104,7 +104,7 @@ def parse_cmdline_args(input_args=None):
     parser.add_argument(
         "--flux_lora_target",
         type=str,
-        choices=["mmdit", "context", "context+ffs", "all", "all+ffs", "ai-toolkit", "tiny", "tinier"],
+        choices=["mmdit", "context", "context+ffs", "all", "all+ffs", "ai-toolkit", "tiny", "nano"],
         default="all",
         help=(
             "Flux has single and joint attention blocks."
@@ -116,7 +116,7 @@ def parse_cmdline_args(input_args=None):
             " If 'all+ffs' is provided, all layers will be trained including feed-forward."
             " If 'ai-toolkit' is provided, all layers will be trained including feed-forward and norms (based on ostris/ai-toolkit)."
             " If 'tiny' is provided, only two layers will be trained."
-            " If 'tinier' is provided, only one layers will be trained."
+            " If 'nano' is provided, only one layers will be trained."
         ),
     )
     parser.add_argument(
