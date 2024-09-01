@@ -134,6 +134,8 @@ def load_env_config():
         # strip 's from the outside of value
         if value is not None and value.startswith("'") and value.endswith("'"):
             value = value[1:-1]
+        if value is not None and value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
         is_numeric = (
             str(value).isnumeric()
             or str(value).isdigit()
