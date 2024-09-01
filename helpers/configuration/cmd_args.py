@@ -279,7 +279,7 @@ def parse_cmdline_args(input_args=None):
         "--init_lora",
         type=str,
         default=None,
-        help="Specify an existing LoRA safetensors file to initialize the LoRA and continue training or finetune an existing LoRA.",
+        help="Specify an existing LoRA or LyCORIS safetensors file to initialize the adapter and continue training, if a full checkpoint is not available.",
     )
     parser.add_argument(
         "--lora_rank",
