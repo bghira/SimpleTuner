@@ -36,30 +36,6 @@ Following the [tutorial](/TUTORIAL.md) is required before you can continue into 
 
 For DeepFloyd tuning, it's recommended to visit [this page](/documentation/DEEPFLOYD.md) for specific tips related to that model's setup.
 
-For Stable Diffusion 1.x/2.x/XL, here are recommended configuration values.
-
-Located in `config/config.env`:
-```bash
-TRAIN_BATCH_SIZE=1
-
-LEARNING_RATE=4e-6
-LEARNING_RATE_END=4e-7
-LR_SCHEDULE=cosine
-LR_WARMUP_STEPS=100
-
-OPTIMIZER=adamw_bf16
-
-MAX_NUM_STEPS=1000
-NUM_EPOCHS=0
-
-VALIDATION_STEPS=100
-VALIDATION_PROMPT="a photograph of subjectname"
-
-DATALOADER_CONFIG="config/multidatabackend-dreambooth.json"
-
-TRAINER_EXTRA_ARGS+=" --data_backend_sampling=uniform"    # dreambooth is best with uniform sampling.
-```
-
 ### Quantised model training
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements.
@@ -178,10 +154,10 @@ You'll need to update `cache_dir` in your dataloader configuration, `multidataba
 ]
 ```
 
-If you wish to target a specific aesthetic score with your data, you can add this to `config/config.env`:
+If you wish to target a specific aesthetic score with your data, you can add this to `config/config.json`:
 
 ```bash
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --data_aesthetic_score=5.6"
+"--data_aesthetic_score": 5.6,
 ```
 
 Update **5.6** to the score you would like to target. The default is **7.0**.

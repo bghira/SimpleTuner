@@ -97,10 +97,10 @@ python configure.py
 
 If you prefer to manually configure:
 
-Copy `config/config.env.example` to `config/config.env`:
+Copy `config/config.json.example` to `config/config.json`:
 
 ```bash
-cp config/config.env.example config/config.env
+cp config/config.json.example config/config.json
 ```
 
 There, you will need to modify the following variables:

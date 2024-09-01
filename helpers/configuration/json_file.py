@@ -17,7 +17,7 @@ def normalize_args(args_dict):
     normalized = []
     for key, value in args_dict.items():
         # Add -- prefix if not present
-        if type(value) is bool and value:
+        if (type(value) is bool and value) or value == "true":
             if not key.startswith("--"):
                 normalized_key = f"--{key}"
             else:

@@ -241,7 +241,7 @@ def configure_lycoris():
 
 def configure_env():
     print("Welcome to SimpleTuner!")
-    print("This script will guide you through setting up your config.env file.\n")
+    print("This script will guide you through setting up your config.json file.\n")
     env_contents = {
         "--resume_from_checkpoint": "latest",
         "--data_backend_config": "config/multidatabackend.json",

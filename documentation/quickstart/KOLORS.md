@@ -87,10 +87,10 @@ python configure.py
 
 If you prefer to manually configure:
 
-Copy `config/config.env.example` to `config/config.env`:
+Copy `config/config.json.example` to `config/config.json`:
 
 ```bash
-cp config/config.env.example config/config.env
+cp config/config.json.example config/config.json
 ```
 
 #### AMD ROCm follow-up steps

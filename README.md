@@ -122,10 +122,12 @@ Without EMA, more care must be taken not to drastically change the model leading
 
 ### Flux.1 [dev, schnell]
 
-- A100-40G (LoRA, rank-128 or lower)
-- A100-80G (LoRA, up to rank-256, Full tune with DeepSpeed)
+- A100-80G (Full tune with DeepSpeed)
+- A100-40G (LoRA, LoKr)
+- 3090 24G (LoRA, LoKr)
+- 3080 16G (int4, LoRA, LoKr)
 
-Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation.
+Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation of the transformer and text encoders.
 
 ### SDXL, 1024px
 
@@ -140,12 +142,6 @@ Flux prefers being trained with multiple large GPUs but a single 16G card should
 - A100-40, A40, A6000 or better (EMA, 1024px training)
 - NVIDIA RTX 4090 or better (24G, no EMA)
 - NVIDIA RTX 4080 or better (LoRA only)
-
-## Scripts
-
-- `ubuntu.sh` - This is a basic "installer" that makes it quick to deploy on a Vast.ai instance. It might not work for every single container image.
-- `train.sh` - The main training script for SDXL.
-- `config/config.env.example` - These are training parameters, you should copy to `config/config.env`
 
 ## Toolkit
 
