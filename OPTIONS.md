@@ -246,9 +246,9 @@ This is a basic overview meant to help you get started. For a complete list of o
 ```
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
-                [--model_family {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}]
+                --model_family
+                {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                [--legacy] [--kolors] [--flux]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flux_fast_schedule]
@@ -261,7 +261,6 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flux_attention_masked_training] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
-                [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
                 [--lora_type {standard,lycoris}]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
@@ -298,8 +297,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--revision REVISION] [--variant VARIANT]
                 [--preserve_data_backend_cache] [--use_dora]
                 [--override_dataset_config] [--cache_dir_text CACHE_DIR_TEXT]
-                [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
-                DATA_BACKEND_CONFIG
+                [--cache_dir_vae CACHE_DIR_VAE]
+                [--data_backend_config DATA_BACKEND_CONFIG]
                 [--data_backend_sampling {uniform,auto-weighting}]
                 [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
@@ -358,7 +357,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_seed_source {gpu,cpu}]
                 [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
-                [--allow_tf32] [--validation_using_datasets]
+                [--allow_tf32] [--disable_tf32] [--validation_using_datasets]
                 [--webhook_config WEBHOOK_CONFIG] [--report_to REPORT_TO]
                 [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
@@ -407,7 +406,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--sdxl_refiner_uses_full_range]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--delete_unwanted_images] [--delete_problematic_images]
-                [--offset_noise] [--input_perturbation INPUT_PERTURBATION]
+                [--disable_bucket_pruning] [--offset_noise]
+                [--input_perturbation INPUT_PERTURBATION]
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--i_know_what_i_am_doing]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
@@ -428,19 +428,11 @@ options:
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
   --model_family {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
-                        The model family to train. This option is required to
-                        specify the model family if one of the deprecated
-                        options such as --flux is not provided.
+                        The model family to train. This option is required.
   --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
-  --legacy              This option must be provided when training a Stable
-                        Diffusion 1.x or 2.x model.
-  --kolors              This option must be provided when training a Kolors
-                        model.
-  --flux                This option must be provided when training a Flux
-                        model.
   --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}
                         Flux has single and joint attention blocks. By
                         default, all attention layers are trained, but not the
@@ -476,7 +468,8 @@ options:
                         not necessarily better results. Early reports indicate
                         that modification of this value can change how the
                         contrast is learnt by the model, and whether fine
-                        details are ignored or accentuated.
+                        details are ignored or accentuated, removing fine
+                        details and making the outputs blurrier.
   --flux_schedule_auto_shift
                         Shift the noise schedule depending on image
                         resolution. The shift value calculation is taken from
@@ -527,9 +520,6 @@ options:
                         to be compatible with those. Additionally, 'diffusion'
                         is offered as an option to reparameterise a model to
                         v_prediction loss.
-  --pixart_sigma        This must be set when training a PixArt Sigma model.
-  --sd3                 This option must be provided when training a Stable
-                        Diffusion 3 model.
   --sd3_t5_mask_behaviour {do-nothing,mask}
                         StabilityAI did not correctly implement their
                         attention masking on T5 inputs for SD3 Medium. This
@@ -561,9 +551,9 @@ options:
                         result with worse quality at first, taking potentially
                         longer to converge than the other methods.
   --init_lora INIT_LORA
-                        Specify an existing LoRA safetensors file to
-                        initialize the LoRA and continue training or finetune
-                        an existing LoRA.
+                        Specify an existing LoRA or LyCORIS safetensors file
+                        to initialize the adapter and continue training, if a
+                        full checkpoint is not available.
   --lora_rank LORA_RANK
                         The dimension of the LoRA update matrices.
   --lora_alpha LORA_ALPHA
@@ -1106,10 +1096,12 @@ options:
                         PyTorch provides different modes for the Torch
                         Inductor when compiling graphs. max-autotune, the
                         default mode, provides the most benefit.
-  --allow_tf32          Whether or not to allow TF32 on Ampere GPUs. Can be
-                        used to speed up training. For more information, see h
-                        ttps://pytorch.org/docs/stable/notes/cuda.html#tensorf
-                        loat-32-tf32-on-ampere-devices
+  --allow_tf32          Deprecated option. TF32 is now enabled by default. Use
+                        --disable_tf32 to disable.
+  --disable_tf32        Previous defaults were to disable TF32 on Ampere GPUs.
+                        This option is provided to explicitly disable TF32,
+                        after default configuration was updated to enable TF32
+                        on Ampere GPUs.
   --validation_using_datasets
                         When set, validation will use images sampled randomly
                         from each dataset for validation. Be mindful of
@@ -1124,7 +1116,7 @@ options:
                         The integration to report the results and logs to.
                         Supported platforms are `"tensorboard"` (default),
                         `"wandb"` and `"comet_ml"`. Use `"all"` to report to
-                        all integrations.
+                        all integrations, or `"none"` to disable logging.
   --tracker_run_name TRACKER_RUN_NAME
                         The name of the run to track with the tracker.
   --tracker_project_name TRACKER_PROJECT_NAME
@@ -1388,6 +1380,14 @@ options:
                         removed from the underlying storage medium. This is
                         useful to prevent repeatedly attempting to cache bad
                         files on a cloud bucket.
+  --disable_bucket_pruning
+                        When training on very small datasets, you might not
+                        care that the batch sizes will outpace your image
+                        count. Setting this option will prevent SimpleTuner
+                        from deleting your bucket lists that do not meet the
+                        minimum image count requirements. Use at your own
+                        risk, it may end up throwing off your statistics or
+                        epoch tracking.
   --offset_noise        Fine-tuning against a modified noise See:
                         https://www.crosslabs.org//blog/diffusion-with-offset-
                         noise for more information.
