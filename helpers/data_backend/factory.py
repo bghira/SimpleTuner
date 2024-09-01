@@ -1219,10 +1219,14 @@ def get_backend_weight(backend_id, backend, step):
         # Adjust the probability by length factor
         adjusted_prob = prob * length_factor
 
-        disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
+        disable_step = backend_config.get("disable_after_epoch_step", None)
+        if disable_step:
+            disable_step = int(disable_step)
+        else:
+            disable_step = float("inf")
         adjusted_prob = (
             0
-            if int(step) > int(disable_step)
+            if int(step) > disable_step
             else max(0, adjusted_prob * (1 - step / disable_step))
         )
 
