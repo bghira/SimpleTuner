@@ -1308,7 +1308,6 @@ class Trainer:
             lr_scheduler.last_epoch = training_state_in_ckpt.get(
                 "epoch_step", self.state.get("global_resume_step", 1)
             )
-        print(f"State: {self.state}")
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1:
             logger.info(
