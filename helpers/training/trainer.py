@@ -163,6 +163,7 @@ class Trainer:
 
     def parse_arguments(self, args=None):
         self.config = load_config(args)
+        report_to = None if self.config.report_to.lower() == "none" else self.config.report_to
         self.accelerator = Accelerator(
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
             mixed_precision=(
@@ -170,7 +171,7 @@ class Trainer:
                 if not torch.backends.mps.is_available()
                 else None
             ),
-            log_with=self.config.report_to,
+            log_with=report_to,
             project_config=self.config.accelerator_project_config,
             kwargs_handlers=[self.config.process_group_kwargs],
         )
