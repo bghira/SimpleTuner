@@ -70,17 +70,30 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
 ```json
 [
     {
-        "id": "subjectname-data",
+        "id": "subjectname-data-512px",
         "type": "local",
         "instance_data_dir": "/training/datasets/subjectname",
         "caption_strategy": "instanceprompt",
         "instance_prompt": "subjectname",
         "cache_dir_vae": "/training/vae_cache/subjectname",
-        "repeats": 1,
+        "repeats": 100,
         "crop": false,
-        "resolution": 0.25,
-        "resolution_type": "area",
-        "minimum_image_size": 0.25
+        "resolution": 512,
+        "resolution_type": "pixel_area",
+        "minimum_image_size": 192
+    },
+    {
+        "id": "subjectname-data-1024px",
+        "type": "local",
+        "instance_data_dir": "/training/datasets/subjectname",
+        "caption_strategy": "instanceprompt",
+        "instance_prompt": "subjectname",
+        "cache_dir_vae": "/training/vae_cache/subjectname-1024px",
+        "repeats": 100,
+        "crop": false,
+        "resolution": 1024,
+        "resolution_type": "pixel_area",
+        "minimum_image_size": 768
     },
     {
         "id": "regularisation-data",
@@ -89,11 +102,22 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "caption_strategy": "instanceprompt",
         "instance_prompt": "a picture of a man",
         "cache_dir_vae": "/training/vae_cache/regularisation",
-        "repeats": 10,
-        "ignore_epochs": true,
-        "resolution": 0.25,
-        "resolution_type": "area",
-        "minimum_image_size": 0.25
+        "repeats": 0,
+        "resolution": 512,
+        "resolution_type": "pixel_area",
+        "minimum_image_size": 192
+    },
+    {
+        "id": "regularisation-data-1024px",
+        "type": "local",
+        "instance_data_dir": "/training/datasets/regularisation",
+        "caption_strategy": "instanceprompt",
+        "instance_prompt": "a picture of a man",
+        "cache_dir_vae": "/training/vae_cache/regularisation-1024px",
+        "repeats": 0,
+        "resolution": 1024,
+        "resolution_type": "pixel_area",
+        "minimum_image_size": 768
     },
     {
         "id": "textembeds",
@@ -107,17 +131,16 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
 
 Some key values have been tweaked to make training a single subject easier:
 
-- We now have two datasets configured. Regularisation data is optional, and training may work better without it. You can remove that dataset from the list if desired.
-- Resolution is set to `0.25` which will be approximately 512x512 training, which goes faster for SDXL models, and is the native resolution for 1.5 models.
-- Minimum image size is set to `0.25` which will allow us to upsample some smaller images, which might be needed for datasets with a few important but low resolution images.
+- We now have two datasets configured twice, for a total of four datasets. Regularisation data is optional, and training may work better without it. You can remove that dataset from the list if desired.
+- Resolution is set to 512px and 1024px mixed bucketing which can help improve training speed and convergence
+- Minimum image size is set to 192px or 768px which will allow us to upsample some smaller images, which might be needed for datasets with a few important but low resolution images.
 - `caption_strategy` is now `instanceprompt`, which means we will use `instance_prompt` value for every image in the dataset as its caption.
   - **Note:** Using the instance prompt is the traditional method of Dreambooth training, but short captions may work better. If you find the model fails to generalise, it may be worth attempting to use captions.
 
 For a regularisation dataset:
 
-- Set `ignore_epochs=true`, which will ensure this dataset does not count toward a "finished epoch"
-  - Also ensure you include `--data_backend_sampling=uniform` in your `TRAINER_EXTRA_ARGS`
-- Set `repeats` high enough that this dataset will never stop being sampled
+- Set `repeats` very high on your Dreambooth subject so that your image count in the Dreambooth data is multiplied `repeats` times to surpass the image count of your regularisation set
+  - If your Regularisation set has 1000 images, and you have 10 images in your training set, you'd want a repeats value of at least 100 to get fast results
 - `minimum_image_size` has been increased to ensure we don't introduce too many low-quality artifacts
 - Similarly, using more descriptive captions may help avoid forgetting. Switching from `instanceprompt` to `textfile` or other strategies will require creating `.txt` files for each image.
 

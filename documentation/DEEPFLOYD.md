@@ -1,6 +1,6 @@
 # DeepFloyd IF
 
-> ⚠️ Support for tuning DeepFloyd-IF is in its initial support stages. Not all SimpleTuner features are currently available for this model.
+> ⚠️ Support for tuning DeepFloyd-IF is deprecated, and may not work. Open an issue report if any problems are encountered.
 
 > 🤷🏽‍♂️ Training DeepFloyd requires at least 24G VRAM for a LoRA. This guide focuses on the 400M parameter base model, though the 4.3B XL flavour can be trained using the same guidelines.
 
