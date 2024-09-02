@@ -128,9 +128,7 @@ There, you will possibly need to modify the following variables:
 - `validation_guidance` - Use whatever you are used to selecting at inference time for Flux.
 - `validation_guidance_real` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
 - `validation_num_inference_steps` - Use somewhere around 20 to save time while still seeing decent quality. Flux isn't very diverse, and more steps might just waste time.
-
-Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
-
+- `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
 - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule=true` manually here as well.
 
 - `gradient_accumulation_steps` - Previous guidance was to avoid these with bf16 training since they would degrade the model. Further testing showed this is not necessarily the case for Flux.
@@ -140,7 +138,7 @@ Here, you can place `--lora_rank=4` if you wish to substantially reduce the size
 
 #### Validation prompts
 
-Inside `config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
+Inside `config/config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
 
 The example config file `config/user_prompt_library.json.example` contains the following format:
 
@@ -192,35 +190,22 @@ Inside your SimpleTuner venv:
 pip install optimum-quanto
 ```
 
-```bash
-# choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
-# int8-quanto was tested with a single subject dreambooth LoRA.
-# fp8-quanto does not work on Apple systems. you must use int levels.
-# int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
-#  - validations on int2 look pretty awful but the LoRA generally works on int8 / fp8 models at inference time.
-# may the gods have mercy on your soul, should you push things Too Far.
-"--base_model_precision": "int8-quanto"
-
-# Maybe you want the text encoders to remain full precision so your text embeds are cake.
-# We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
-# Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
-"--text_encoder_1_precision": "no_change",
-"--text_encoder_2_precision": "no_change",
-
-# LoRA sizing you can adjust.
-"--lora_rank": 16,
-
-# Limiting gradient norms might preserve the model for longer
-"--max_grad_norm": 1.0,
-# Keeping the base in bf16 still allows you to quantise the model, but it saves a lot of memory.
-"--base_model_default_dtype": "bf16",
-
+For `config.json` users:
+```json
+  "base_model_precision": "int8-quanto",
+  "text_encoder_1_precision": "no_change",
+  "text_encoder_2_precision": "no_change",
+  "lora_rank": 16,
+  "max_grad_norm": 1.0,
+  "base_model_default_dtype": "bf16"
+```
 
 #################################################
 #    Below guidance is for LoRA, not LyCORIS.   #
 #################################################
 
 
+```bash
 # When training 'mmdit', we find very stable training that makes the model take longer to learn.
 # When training 'all', we can easily shift the model distribution, but it is more prone to forgetting and benefits from high quality data.
 # When training 'all+ffs', all attention layers are trained in addition to the feed-forward which can help with adapting the model objective for the LoRA.
@@ -241,6 +226,8 @@ pip install optimum-quanto
 > ⚠️ Image quality for training is more important for Flux than for most other models, as it will absorb the artifacts in your images *first*, and then learn the concept/subject.
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `train_batch_size * gradient_accumulation_steps` as well as more than `vae_batch_size`. The dataset will not be useable if it is too small.
+
+> ℹ️ With few enough images, you might see a message **no images detected in dataset** - increasing the `repeats` value will overcome this limitation.
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
@@ -378,7 +365,9 @@ Inferencing the CFG-distilled LoRA is as easy as using a lower guidance_scale ar
 
 #### Problem
 The Dev model arrives guidance-distilled out of the box, which means it does a very straight shot trajectory to the teacher model outputs. This is done through a guidance vector that is fed into the model at training and inference time - the value of this vector greatly impacts what type of resulting LoRA you end up with:
-- A value of 1.0 will preserve the initial distillation done to the Dev model
+
+#### Solution
+- A value of 1.0 (**the default**) will preserve the initial distillation done to the Dev model
   - This is the most compatible mode
   - Inference is just as fast as the original model
   - Flow-matching distillation reduces the creativity and output variability of the model, as with the original Flux Dev model (everything keeps the same composition/look)
@@ -387,10 +376,7 @@ The Dev model arrives guidance-distilled out of the box, which means it does a v
   - Inference is 50% slower and 0% VRAM increase **or** about 20% slower and 20% VRAM increase due to batched CFG inference
   - However, this style of training improves creativity and model output variability, which might be required for certain training tasks
 
-It's not clear if we can reintroduce CFG to a de-distilled model by continuing tuning using a vector value of 1.0.
-
-#### Solution
-The solution for this is already enabled in the main branch; it is necessary to enable true CFG sampling at inference time when using LoRAs on Dev.
+We can partially reintroduce distillation to a de-distilled model by continuing tuning your model using a vector value of 1.0. It will never fully recover, but it'll at least be more useable.
 
 #### Caveats
 - This has the end impact of **either**:
@@ -411,7 +397,7 @@ The solution for this is already enabled in the main branch; it is necessary to 
   - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
 - When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
-- `int4` is weird and really only works on A100 and H100 cards.
+- `int4` is weird and really only works on A100 and H100 cards due to a reliance on custom bf16 kernels
 
 ### Crashing
 - If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.
@@ -438,7 +424,7 @@ The solution for this is already enabled in the main branch; it is necessary to 
 - Other diffusion transformer models like PixArt and SD3 majorly benefit from `--max_grad_norm` and SimpleTuner keeps a pretty high value for this by default on Flux.
   - A lower value would keep the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution. The model might get stuck and never improve.
 #### LoKr (--lora_type=lycoris)
-- Higher learning rates are better for LoKr
+- Higher learning rates are better for LoKr (`1e-3` with AdamW, `2e-4` with Lion)
 - Other algo need more exploration.
 
 ### Image artifacts
