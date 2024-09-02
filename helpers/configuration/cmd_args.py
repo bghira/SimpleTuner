@@ -1926,7 +1926,11 @@ def parse_cmdline_args(input_args=None):
             )
             sys.exit(1)
 
-    if args.max_train_steps is not None and args.num_train_epochs > 0:
+    if (
+        args.max_train_steps is not None
+        and args.max_train_steps > 0
+        and args.num_train_epochs > 0
+    ):
         error_log(
             "When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0."
         )
