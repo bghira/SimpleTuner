@@ -1,7 +1,38 @@
 import torch
 import random
+import math
 from helpers.models.flux.pipeline import FluxPipeline
 from helpers.training import steps_remaining_in_epoch
+from diffusers.pipelines.flux.pipeline_flux import (
+    calculate_shift as calculate_shift_flux,
+)
+
+
+def apply_flux_schedule_shift(args, noise_scheduler, sigmas, noise):
+    # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
+    shift = None
+    if (
+        args.flux_schedule_shift is not None
+        and args.flux_schedule_shift > 0
+    ):
+        # Static shift value for every resolution
+        shift = args.flux_schedule_shift
+    elif args.flux_schedule_auto_shift:
+        # Resolution-dependent shift value calculation used by official Flux inference implementation
+        image_seq_len = (noise.shape[-1] * noise.shape[-2]) // 4
+        mu = calculate_shift_flux(
+            (noise.shape[-1] * noise.shape[-2]) // 4,
+            noise_scheduler.config.base_image_seq_len,
+            noise_scheduler.config.max_image_seq_len,
+            noise_scheduler.config.base_shift,
+            noise_scheduler.config.max_shift,
+        )
+        shift = math.exp(mu)
+    if shift is not None:
+        sigmas = (sigmas * shift) / (
+            1 + (shift - 1) * sigmas
+        )
+    return sigmas
 
 
 def get_mobius_guidance(args, global_step, steps_per_epoch, batch_size, device):
@@ -33,7 +64,7 @@ def get_mobius_guidance(args, global_step, steps_per_epoch, batch_size, device):
 
 
 def update_flux_schedule_to_fast(args, noise_scheduler_to_copy):
-    if args.flux_fast_schedule and args.flux:
+    if args.flux_fast_schedule and args.model_family.lower() == "flux":
         # 4-step noise schedule [0.7, 0.1, 0.1, 0.1] from SD3-Turbo paper
         for i in range(0, 250):
             noise_scheduler_to_copy.sigmas[i] = 1.0

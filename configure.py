@@ -41,6 +41,16 @@ default_cfg = {
     "stable_diffusion_3": 5.0,
 }
 
+model_labels = {
+    "sd3": "Stable Diffusion 3",
+    "flux": "FLUX",
+    "pixart_sigma": "PixArt Sigma",
+    "kolors": "Kwai Kolors",
+    "terminus": "Terminus",
+    "sdxl": "Stable Diffusion XL",
+    "legacy": "Stable Diffusion",
+}
+
 lora_ranks = [1, 16, 64, 128, 256]
 learning_rates_by_rank = {
     1: "3e-4",
@@ -231,15 +241,14 @@ def configure_lycoris():
 
 def configure_env():
     print("Welcome to SimpleTuner!")
-    print("This script will guide you through setting up your config.env file.\n")
+    print("This script will guide you through setting up your config.json file.\n")
     env_contents = {
-        "RESUME_CHECKPOINT": "latest",
-        "DATALOADER_CONFIG": "config/multidatabackend.json",
-        "ASPECT_BUCKET_ROUNDING": 2,
-        "TRAINING_SEED": 42,
-        "USE_EMA": "false",
-        "USE_XFORMERS": "false",
-        "MINIMUM_RESOLUTION": 0,
+        "--resume_from_checkpoint": "latest",
+        "--data_backend_config": "config/multidatabackend.json",
+        "--aspect_bucket_rounding": 2,
+        "--seed": 42,
+        "--minimum_image_size": 0,
+        "--disable_benchmark": False,
     }
     extra_args = []
 
@@ -264,14 +273,12 @@ def configure_env():
                 "Enter the directory where you want to store your outputs",
                 "output/models",
             )
-    env_contents["OUTPUT_DIR"] = output_dir
+    env_contents["--output_dir"] = output_dir
 
     # Start with the basic options
     model_type = prompt_user(
         "What type of model are you training? (Options: [lora], full)", "lora"
     ).lower()
-    env_contents["USE_DORA"] = "false"
-    env_contents["USE_BITFIT"] = "false"
     use_lycoris = False
     use_lora = False
     if model_type == "lora":
@@ -281,9 +288,9 @@ def configure_env():
             == "y"
         )
         if use_lycoris:
-            env_contents["LORA_TYPE"] = "lycoris"
+            env_contents["--lora_type"] = "lycoris"
             lycoris_config = configure_lycoris()
-            env_contents["LYCORIS_CONFIG"] = "config/lycoris_config.json"
+            env_contents["--lycoris_config"] = "config/lycoris_config.json"
             # write json to file
             import json
 
@@ -292,12 +299,12 @@ def configure_env():
             with open("config/lycoris_config.json", "w") as f:
                 f.write(json.dumps(lycoris_config, indent=4))
         else:
-            env_contents["LORA_TYPE"] = "standard"
+            env_contents["--lora_type"] = "standard"
             use_dora = prompt_user(
                 "Would you like to train a DoRA model? (y/[n])", "n"
             ).lower()
             if use_dora == "y":
-                env_contents["USE_DORA"] = "true"
+                env_contents["--use_dora"] = "true"
             lora_rank = None
             while lora_rank not in lora_ranks:
                 if lora_rank is not None:
@@ -308,19 +315,13 @@ def configure_env():
                         "64",
                     )
                 )
-            env_contents["LORA_RANK"] = lora_rank
+            env_contents["--lora_rank"] = lora_rank
     elif model_type == "full":
-        use_bitfit = prompt_user(
-            "Would you like to train a BitFit model? (y/[n])", "n"
-        ).lower()
-        if use_bitfit == "y":
-            env_contents["USE_BITFIT"] = "true"
         use_ema = prompt_user(
             "Would you like to use EMA for training? (y/[n])", "n"
         ).lower()
-        env_contents["USE_EMA"] = "false"
         if use_ema == "y":
-            env_contents["USE_EMA"] = "true"
+            env_contents["--use_ema"] = "true"
 
     print("We'll try and login to Hugging Face Hub..")
     whoami = None
@@ -329,8 +330,6 @@ def configure_env():
     except:
         pass
     should_retry = True
-    env_contents["PUSH_TO_HUB"] = "false"
-    env_contents["PUSH_CHECKPOINTS"] = "false"
     while not whoami and should_retry:
         should_retry = (
             prompt_user(
@@ -356,28 +355,28 @@ def configure_env():
         ).lower()
     default_checkpointing_interval = 500
     if finishing_count_type == "steps":
-        env_contents["MAX_NUM_STEPS"] = int(
+        env_contents["--max_train_steps"] = int(
             prompt_user("Set the maximum number of steps", 10000)
         )
-        if env_contents["MAX_NUM_STEPS"] < default_checkpointing_interval:
+        if env_contents["--max_train_steps"] < default_checkpointing_interval:
             # reduce the default checkpointing interval offered to the user so that they get a reasonable value.
-            default_checkpointing_interval = env_contents["MAX_NUM_STEPS"] // 10
-        env_contents["NUM_EPOCHS"] = 0
+            default_checkpointing_interval = env_contents["--max_train_steps"] // 10
+        env_contents["--num_train_epochs"] = 0
     else:
-        env_contents["NUM_EPOCHS"] = prompt_user(
+        env_contents["--num_train_epochs"] = prompt_user(
             "Set the maximum number of epochs", 100
         )
-        env_contents["MAX_NUM_STEPS"] = 0
+        env_contents["--max_train_steps"] = 0
 
     checkpointing_interval = prompt_user(
         "Set the checkpointing interval (in steps)", default_checkpointing_interval
     )
-    env_contents["CHECKPOINTING_STEPS"] = int(checkpointing_interval)
+    env_contents["--checkpointing_steps"] = int(checkpointing_interval)
     checkpointing_limit = prompt_user(
         "How many checkpoints do you want to keep? LoRA are small, and you can keep more than a full finetune.",
         5,
     )
-    env_contents["CHECKPOINTING_LIMIT"] = int(checkpointing_limit)
+    env_contents["--checkpoints_total_limit"] = int(checkpointing_limit)
     if whoami is not None:
         print("Connected to Hugging Face Hub as:", whoami["name"])
         should_push_to_hub = (
@@ -387,13 +386,13 @@ def configure_env():
             ).lower()
             == "y"
         )
-        env_contents["HUB_MODEL_NAME"] = prompt_user(
-            f"What do you want the name of your Hugging Face Hub model to be? This will be accessible as https://huggingface.co/{whoami['name']}/your-model-name-here",
-            f"simpletuner-{model_type}",
-        )
-        should_push_checkpoints = False
         if should_push_to_hub:
-            env_contents["PUSH_TO_HUB"] = "true"
+            env_contents["--hub_model_id"] = prompt_user(
+                f"What do you want the name of your Hugging Face Hub model to be? This will be accessible as https://huggingface.co/{whoami['name']}/your-model-name-here",
+                f"simpletuner-{model_type}",
+            )
+            should_push_checkpoints = False
+            env_contents["--push_to_hub"] = "true"
             should_push_checkpoints = (
                 prompt_user(
                     "Do you want to push intermediary checkpoints to Hugging Face Hub? ([y]/n)",
@@ -402,7 +401,16 @@ def configure_env():
                 == "y"
             )
             if should_push_checkpoints:
-                env_contents["PUSH_CHECKPOINTS"] = "true"
+                env_contents["--push_checkpoints_to_hub"] = "true"
+            model_card_safe_for_work = (
+                prompt_user(
+                    "Is your target model considered safe-for-work? Answering yes here will remove the NSFW warning from the Hugging Face Hub model card. If you are unsure, please leave this as 'no'. (y/[n])",
+                    "n",
+                ).lower()
+                == "y"
+            )
+            if model_card_safe_for_work:
+                env_contents["--model_card_safe_for_work"] = "true"
     report_to_wandb = (
         prompt_user(
             "Would you like to report training statistics to Weights & Biases? ([y]/n)",
@@ -421,20 +429,23 @@ def configure_env():
         tracker_project_name = prompt_user(
             "Enter the name of your Weights & Biases project", f"{model_type}-training"
         )
-        env_contents["TRACKER_PROJECT_NAME"] = tracker_project_name
+        env_contents["--tracker_project_name"] = tracker_project_name
         tracker_run_name = prompt_user(
             "Enter the name of your Weights & Biases runs. This can use shell commands, which can be used to dynamically set the run name.",
             f"simpletuner-{model_type}",
         )
-        env_contents["TRACKER_RUN_NAME"] = tracker_run_name
-        report_to_str = "--report_to="
+        env_contents["--tracker_run_name"] = tracker_run_name
+        report_to_str = None
         if report_to_wandb:
-            report_to_str += "wandb"
+            report_to_str = "wandb"
         if report_to_tensorboard:
             if report_to_wandb:
                 report_to_str += ","
+            else:
+                report_to_str = ""
             report_to_str += "tensorboard"
-    env_contents["DEBUG_EXTRA_ARGS"] = report_to_str
+        if report_to_str:
+            env_contents["--report_to"] = report_to_str
 
     print_config(env_contents, extra_args)
 
@@ -463,17 +474,21 @@ def configure_env():
                 can_load_model = True
         except:
             continue
-    env_contents["MODEL_TYPE"] = model_type
-    env_contents["MODEL_NAME"] = model_name
-    for cls in model_classes[model_type]:
-        if cls == "sdxl":
-            continue
-        env_contents[cls.upper()] = "false"
-    env_contents[model_class.upper()] = "true"
+    env_contents["--model_type"] = model_type
+    env_contents["--pretrained_model_name_or_path"] = model_name
+    env_contents["--model_family"] = model_class.lower()
     # Flux-specific options
-    if "FLUX" in env_contents and env_contents["FLUX"] == "true":
-        if env_contents["MODEL_TYPE"].lower() == "lora" and not use_lycoris:
-            flux_targets = ["mmdit", "context", "all", "all+ffs", "ai-toolkit"]
+    if "FLUX" in env_contents and env_contents["--model_family"] == "flux":
+        if env_contents["--model_type"].lower() == "lora" and not use_lycoris:
+            flux_targets = [
+                "mmdit",
+                "context",
+                "all",
+                "all+ffs",
+                "ai-toolkit",
+                "tiny",
+                "nano",
+            ]
             flux_target_layers = None
             while flux_target_layers not in flux_targets:
                 if flux_target_layers:
@@ -482,115 +497,116 @@ def configure_env():
                     f"Set Flux target layers (Options: {'/'.join(flux_targets)})",
                     "all",
                 )
-            env_contents["FLUX_LORA_TARGET"] = flux_target_layers
+            env_contents["--flux_lora_target"] = flux_target_layers
 
     print_config(env_contents, extra_args)
 
     # Additional settings
-    env_contents["TRAIN_BATCH_SIZE"] = int(
+    env_contents["--train_batch_size"] = int(
         prompt_user(
             "Set the training batch size. Larger values will require larger datasets, more VRAM, and slow things down.",
             1,
         )
     )
-    env_contents["USE_GRADIENT_CHECKPOINTING"] = "true"
+    env_contents["--gradient_checkpointing"] = "true"
 
-    env_contents["CAPTION_DROPOUT_PROBABILITY"] = float(
+    env_contents["--caption_dropout_probability"] = float(
         prompt_user("Set the caption dropout rate, or use 0.0 to disable it.", "0.1")
     )
 
     resolution_types = ["pixel", "area", "pixel_area"]
-    env_contents["RESOLUTION_TYPE"] = None
-    while env_contents["RESOLUTION_TYPE"] not in resolution_types:
-        if env_contents["RESOLUTION_TYPE"]:
-            print(f"Invalid resolution type: {env_contents['RESOLUTION_TYPE']}")
-        env_contents["RESOLUTION_TYPE"] = prompt_user(
+    env_contents["--resolution_type"] = None
+    while env_contents["--resolution_type"] not in resolution_types:
+        if env_contents["--resolution_type"]:
+            print(f"Invalid resolution type: {env_contents['--resolution_type']}")
+        env_contents["--resolution_type"] = prompt_user(
             "How do you want to measure dataset resolutions? 'pixel' will size images with the shorter edge, 'area' will measure in megapixels, and is great for aspect-bucketing. 'pixel_area' is a combination of these two ideas, which lets you set your area using pixels instead of megapixels.",
             "pixel_area",
         ).lower()
     if (
-        env_contents["RESOLUTION_TYPE"] == "pixel"
-        or env_contents["RESOLUTION_TYPE"] == "pixel_area"
+        env_contents["--resolution_type"] == "pixel"
+        or env_contents["--resolution_type"] == "pixel_area"
     ):
         default_resolution = 1024
         resolution_unit = "pixel"
     else:
         default_resolution = 1.0
         resolution_unit = "megapixel"
-    env_contents["RESOLUTION"] = prompt_user(
-        f"What would you like the default resolution of your datasets to be? The default for is {env_contents['RESOLUTION_TYPE']} is {default_resolution} {resolution_unit}s.",
+    env_contents["--resolution"] = prompt_user(
+        f"What would you like the default resolution of your datasets to be? The default for is {env_contents['--resolution_type']} is {default_resolution} {resolution_unit}s.",
         default_resolution,
     )
 
     # remove spaces from validation resolution, ensure it's a single WxH or a comma-separated list of WxH
-    env_contents["VALIDATION_SEED"] = prompt_user("Set the seed for validation", 42)
-    env_contents["VALIDATION_STEPS"] = prompt_user(
+    env_contents["--validation_seed"] = prompt_user("Set the seed for validation", 42)
+    env_contents["--validation_steps"] = prompt_user(
         "How many steps in between validation outputs?",
-        env_contents["CHECKPOINTING_STEPS"],
+        env_contents["--checkpointing_steps"],
     )
-    env_contents["VALIDATION_RESOLUTION"] = None
+    env_contents["--validation_resolution"] = None
     while (
-        env_contents["VALIDATION_RESOLUTION"] is None
-        or "x" not in env_contents["VALIDATION_RESOLUTION"]
+        env_contents["--validation_resolution"] is None
+        or "x" not in env_contents["--validation_resolution"]
     ):
-        if env_contents["VALIDATION_RESOLUTION"] is not None:
+        if env_contents["--validation_resolution"] is not None:
             print(
                 "Invalid resolution format. Please enter a single resolution, or a comma-separated list. Example: 1024x1024,1280x768"
             )
-        env_contents["VALIDATION_RESOLUTION"] = prompt_user(
+        env_contents["--validation_resolution"] = prompt_user(
             "Set the validation resolution. Format could be a single resolution, or comma-separated.",
             "1024x1024",
         )
-        env_contents["VALIDATION_RESOLUTION"] = ",".join(
-            [x.strip() for x in env_contents["VALIDATION_RESOLUTION"].split(",")]
+        env_contents["--validation_resolution"] = ",".join(
+            [x.strip() for x in env_contents["--validation_resolution"].split(",")]
         )
-    env_contents["VALIDATION_GUIDANCE"] = prompt_user(
+    env_contents["--validation_guidance"] = prompt_user(
         "Set the guidance scale for validation", default_cfg.get(model_class, 3.0)
     )
-    env_contents["VALIDATION_GUIDANCE_RESCALE"] = prompt_user(
+    env_contents["--validation_guidance_rescale"] = prompt_user(
         "Set the guidance re-scale for validation - this is called dynamic thresholding and is used mostly for zero-terminal SNR models.",
         "0.0",
     )
-    env_contents["VALIDATION_NUM_INFERENCE_STEPS"] = prompt_user(
+    env_contents["--validation_num_inference_steps"] = prompt_user(
         "Set the number of inference steps for validation", "20"
     )
-    env_contents["VALIDATION_PROMPT"] = prompt_user(
+    env_contents["--validation_prompt"] = prompt_user(
         "Set the validation prompt", "A photo-realistic image of a cat"
     )
     print_config(env_contents, extra_args)
 
     # Advanced options
-    env_contents["ALLOW_TF32"] = "false"
     if torch.cuda.is_available():
         use_tf32 = (
             prompt_user("Would you like to enable TF32 mode? ([y]/n)", "y").lower()
             == "y"
         )
-        if use_tf32:
-            env_contents["ALLOW_TF32"] = "true"
+        if not use_tf32:
+            env_contents["--disable_tf32"] = "true"
     mixed_precision_options = ["bf16", "no"]
-    env_contents["MIXED_PRECISION"] = None
+    env_contents["--mixed_precision"] = None
     while (
-        not env_contents["MIXED_PRECISION"]
-        or env_contents["MIXED_PRECISION"] not in mixed_precision_options
+        not env_contents["--mixed_precision"]
+        or env_contents["--mixed_precision"] not in mixed_precision_options
     ):
-        if env_contents["MIXED_PRECISION"]:
-            print(f"Invalid mixed precision option: {env_contents['MIXED_PRECISION']}")
-        env_contents["MIXED_PRECISION"] = prompt_user(
+        if env_contents["--mixed_precision"]:
+            print(
+                f"Invalid mixed precision option: {env_contents['--mixed_precision']}"
+            )
+        env_contents["--mixed_precision"] = prompt_user(
             "Set mixed precision mode (Options: bf16, no (fp32))", "bf16"
         )
-    if env_contents["MIXED_PRECISION"] == "bf16":
+    if env_contents["--mixed_precision"] == "bf16":
         compatible_optims = bf16_only_optims + any_precision_optims
     else:
         compatible_optims = any_precision_optims
-    env_contents["OPTIMIZER"] = None
+    env_contents["--optimizer"] = None
     while (
-        not env_contents["OPTIMIZER"]
-        or env_contents["OPTIMIZER"] not in compatible_optims
+        not env_contents["--optimizer"]
+        or env_contents["--optimizer"] not in compatible_optims
     ):
-        if env_contents["OPTIMIZER"]:
-            print(f"Invalid optimizer: {env_contents['OPTIMIZER']}")
-        env_contents["OPTIMIZER"] = prompt_user(
+        if env_contents["--optimizer"]:
+            print(f"Invalid optimizer: {env_contents['--optimizer']}")
+        env_contents["--optimizer"] = prompt_user(
             f"Choose an optimizer (Options: {'/'.join(compatible_optims)})",
             compatible_optims[0],
         )
@@ -609,18 +625,18 @@ def configure_env():
         (
             learning_rates_by_rank[lora_rank]
             if model_type == "lora"
-            else 1.0 if env_contents["OPTIMIZER"] == "prodigy" else "1e-6"
+            else 1.0 if env_contents["--optimizer"] == "prodigy" else "1e-6"
         ),
     )
     lr_warmup_steps = prompt_user(
         "Set the number of warmup steps before the learning rate reaches its peak. This is set to 10 percent of the total runtime by default, or 100 steps, whichever is higher.",
-        min(100, int(env_contents["MAX_NUM_STEPS"]) // 10),
+        min(100, int(env_contents["--max_train_steps"]) // 10),
     )
-    env_contents["LEARNING_RATE"] = learning_rate
-    env_contents["LR_SCHEDULE"] = lr_scheduler
+    env_contents["--learning_rate"] = learning_rate
+    env_contents["--lr_scheduler"] = lr_scheduler
     if lr_scheduler == "polynomial":
         extra_args.append("--lr_end=1e-8")
-    env_contents["LR_WARMUP_STEPS"] = lr_warmup_steps
+    env_contents["--lr_warmup_steps"] = lr_warmup_steps
 
     quantization = (
         prompt_user(
@@ -630,9 +646,9 @@ def configure_env():
         == "y"
     )
     if quantization:
-        if env_contents["USE_DORA"] == "true":
+        if env_contents["--use_dora"] == "true":
             print("DoRA will be disabled for quantisation.")
-            env_contents["USE_DORA"] = "false"
+            del env_contents["--use_dora"]
         quantization_type = None
         while (
             not quantization_type or quantization_type not in quantised_precision_levels
@@ -643,7 +659,7 @@ def configure_env():
                 f"Choose quantization type (Options: {'/'.join(quantised_precision_levels)})",
                 "int8-quanto",
             )
-        env_contents["BASE_MODEL_PRECISION"] = quantization_type
+        env_contents["--base_model_precision"] = quantization_type
     print_config(env_contents, extra_args)
     compress_disk_cache = (
         prompt_user("Would you like to compress the disk cache? (y/n)", "y").lower()
@@ -652,26 +668,16 @@ def configure_env():
     if compress_disk_cache:
         extra_args.append("--compress_disk_cache")
 
-    # multi-gpu training
-    env_contents["ACCELERATE_EXTRA_ARGS"] = ""
-    env_contents["TRAINING_NUM_PROCESSES"] = prompt_user(
-        "How many GPUs will you be training on?", 1
-    )
-    if int(env_contents["TRAINING_NUM_PROCESSES"]) > 1:
-        env_contents["ACCELERATE_EXTRA_ARGS"] = "--multi_gpu"
-    env_contents["TRAINING_NUM_MACHINES"] = 1
-
     # torch compile
     torch_compile = (
-        prompt_user("Would you like to use torch compile? (y/n)", "n").lower() == "y"
+        prompt_user(
+            "Would you like to use torch compile during validations? (y/n)", "n"
+        ).lower()
+        == "y"
     )
-    env_contents["VALIDATION_TORCH_COMPILE"] = "false"
-    env_contents["TRAINER_DYNAMO_BACKEND"] = "no"
+    env_contents["--validation_torch_compile"] = "false"
     if torch_compile:
-        env_contents["VALIDATION_TORCH_COMPILE"] = "true"
-        env_contents["TRAINER_DYNAMO_BACKEND"] = (
-            "inductor" if torch.cuda.is_available() else "aot_eager"
-        )
+        env_contents["--validation_torch_compile"] = "true"
 
     # Summary and confirmation
     print_config(env_contents, extra_args)
@@ -679,15 +685,141 @@ def configure_env():
 
     if confirm:
         # Write to .env file
-        trainer_extra_args_str = " ".join(extra_args)
-        env_contents["TRAINER_EXTRA_ARGS"] = trainer_extra_args_str
-        with open("config/config.env", "w") as env_file:
-            for key, value in env_contents.items():
-                env_file.write(f"{key}='{value}'\n")
+        with open("config/config.json", "w") as env_file:
+            import json
+
+            env_file.write(json.dumps(env_contents, indent=4))
 
         print("\nConfiguration file created successfully!")
     else:
         print("\nConfiguration aborted. No changes were made.")
+        import sys
+
+        sys.exit(1)
+
+    # dataloader configuration
+    default_local_configuration = [
+        {
+            "id": "PLACEHOLDER-512",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": False,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 512,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-512",
+        },
+        {
+            "id": "PLACEHOLDER-1024",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": False,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 1024,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-1024",
+        },
+        {
+            "id": "PLACEHOLDER-512-crop",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": True,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 512,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-512-crop",
+        },
+        {
+            "id": "PLACEHOLDER-1024-crop",
+            "type": "local",
+            "instance_data_dir": None,
+            "crop": True,
+            "crop_style": "random",
+            "minimum_image_size": 128,
+            "resolution": 1024,
+            "resolution_type": "pixel_area",
+            "repeats": 10,
+            "metadata_backend": "discovery",
+            "caption_strategy": "filename",
+            "cache_dir_vae": "vae-1024-crop",
+        },
+        {
+            "id": "text-embed-cache",
+            "dataset_type": "text_embeds",
+            "default": True,
+            "type": "local",
+            "cache_dir": "text",
+        },
+    ]
+
+    # now we ask user the path to their data, the path to the cache (cache/), number of repeats, update the id placeholder based on users dataset name
+    # then we'll write the file to multidatabackend.json
+    should_configure_dataloader = (
+        prompt_user("Would you like to configure your dataloader? (y/n)", "y").lower()
+        == "y"
+    )
+    if not should_configure_dataloader:
+        print("Skipping dataloader configuration.")
+        return
+    dataset_id = prompt_user(
+        "Enter the name of your dataset. This will be used to generate the cache directory. It should be simple, and not contain spaces or special characters.",
+        "my-dataset",
+    )
+    dataset_path = prompt_user(
+        "Enter the path to your dataset. This should be a directory containing images and text files for their caption. For reliability, use an absolute (full) path, beginning with a '/'",
+        "/datasets/my-dataset",
+    )
+    dataset_repeats = int(
+        prompt_user(
+            "How many times do you want to repeat each image in the dataset?", 10
+        )
+    )
+    dataset_cache_prefix = prompt_user(
+        "Where will your VAE and text encoder caches be written to? Subdirectories will be created inside for you automatically.",
+        "cache/",
+    )
+    has_very_large_images = (
+        prompt_user(
+            "Do you have very-large images in the dataset (eg. much larger than 1024x1024)? (y/n)",
+            "n",
+        ).lower()
+        == "y"
+    )
+
+    # Now we'll modify the default json and if has_very_large_images is true, we will add two keys to each image dataset, 'maximum_image_size' and 'target_downsample_size' equal to the dataset's resolution value
+    for dataset in default_local_configuration:
+        if dataset.get("dataset_type") == "text_embeds":
+            dataset["cache_dir"] = f"{dataset_cache_prefix}/{dataset['cache_dir']}"
+            continue
+        dataset["instance_data_dir"] = dataset_path
+        dataset["repeats"] = dataset_repeats
+        dataset["cache_dir_vae"] = f"{dataset_cache_prefix}/{dataset['cache_dir_vae']}"
+        if has_very_large_images:
+            dataset["maximum_image_size"] = dataset["resolution"]
+            dataset["target_downsample_size"] = dataset["resolution"]
+        dataset["id"] = dataset["id"].replace("PLACEHOLDER", dataset_id)
+
+    print("Dataloader configuration:")
+    print(default_local_configuration)
+    confirm = prompt_user("Does this look correct? (y/n)", "y").lower() == "y"
+    if confirm:
+        import json
+
+        with open("config/multidatabackend.json", "w") as f:
+            f.write(json.dumps(default_local_configuration, indent=4))
+        print("Dataloader configuration written successfully!")
 
 
 if __name__ == "__main__":

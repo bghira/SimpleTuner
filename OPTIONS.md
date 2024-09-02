@@ -13,20 +13,10 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Choices: lora, full, deepfloyd, deepfloyd-lora, deepfloyd-stage2, deepfloyd-stage2-lora. Default: lora
 - **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
 
-## `--flux`
+## `--model_family`
 
-- **What**: Enable Flux training style.
-- **Why**: Flux is an enormous model and uses flow-matching. We must take careful considerations when handling its text embeds and validations.
-
-### `--sd3`
-
-- **What**: Enable Stable Diffusion 3 training quirks/overrides.
-- **Why**: SD3 has three text encoders, it's pretty hefty and needs specific validation-time options considered. The equivalent option for this in the `config/config.env` environment file is `STABLE_DIFFUSION_3`.
-
-### `--pixart_sigma`
-
-- **What**: Enable PixArt Sigma training quirks/overrides.
-- **Why**: PixArt is similar to SD3 and DeepFloyd in one way or another, and needs special treatment at validation, training, and inference time. Use this option to enable PixArt training support. PixArt does not support ControlNet, LoRA, or `--validation_using_datasets`
+- **What**: Determines which model architecture is being trained.
+- **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
 ### `--pretrained_model_name_or_path`
 
@@ -71,9 +61,9 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: When using multiple data backends, sampling can be done using different strategies.
 - **Options**:
   - `uniform` - the previous behaviour from v0.9.8.1 and earlier where dataset length was not considered, only manual probability weightings.
-    - This is useful for DreamBooth training where you have a set of regularisation images and a set of subject images. You must set `ignore_epochs=True` on your regularisation dataset, and use this mode.
   - `auto-weighting` - the default behaviour where dataset length is used to equally sample all datasets, maintaining a uniform sampling of the entire data distribution.
     - This is required if you have differently-sized datasets that you want the model to learn equally.
+    - But adjusting `repeats` manually is **required** to properly sample Dreambooth images against your regularisation set
 
 ### `--vae_cache_scan_behaviour`
 
@@ -256,19 +246,21 @@ This is a basic overview meant to help you get started. For a complete list of o
 ```
 usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
+                --model_family
+                {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
                 [--model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}]
-                [--legacy] [--kolors] [--flux]
-                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}]
+                [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}]
                 [--flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE]
                 [--flux_fast_schedule]
-                [--flux_guidance_mode {constant,random-range}]
+                [--flux_schedule_shift FLUX_SCHEDULE_SHIFT]
+                [--flux_schedule_auto_shift]
+                [--flux_guidance_mode {constant,random-range,mobius}]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
                 [--flux_guidance_max FLUX_GUIDANCE_MAX]
                 [--flux_attention_masked_training] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
-                [--pixart_sigma] [--sd3]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
                 [--lora_type {standard,lycoris}]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
@@ -299,15 +291,14 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--vae_dtype {default,fp16,fp32,bf16}]
                 [--vae_batch_size VAE_BATCH_SIZE]
                 [--vae_cache_scan_behaviour {recreate,sync}]
-                [--vae_cache_preprocess] [--vae_cache_ondemand]
-                [--compress_disk_cache] [--aspect_bucket_disable_rebuild]
-                [--keep_vae_loaded]
+                [--vae_cache_ondemand] [--compress_disk_cache]
+                [--aspect_bucket_disable_rebuild] [--keep_vae_loaded]
                 [--skip_file_discovery SKIP_FILE_DISCOVERY]
                 [--revision REVISION] [--variant VARIANT]
                 [--preserve_data_backend_cache] [--use_dora]
                 [--override_dataset_config] [--cache_dir_text CACHE_DIR_TEXT]
-                [--cache_dir_vae CACHE_DIR_VAE] --data_backend_config
-                DATA_BACKEND_CONFIG
+                [--cache_dir_vae CACHE_DIR_VAE]
+                [--data_backend_config DATA_BACKEND_CONFIG]
                 [--data_backend_sampling {uniform,auto-weighting}]
                 [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
@@ -354,23 +345,23 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--optimizer_config OPTIMIZER_CONFIG]
                 [--optimizer_beta1 OPTIMIZER_BETA1]
                 [--optimizer_beta2 OPTIMIZER_BETA2]
-                [--optimizer_release_gradients] [--use_8bit_adam]
-                [--use_adafactor_optimizer] [--use_prodigy_optimizer]
-                [--use_dadapt_optimizer] [--adam_beta1 ADAM_BETA1]
+                [--optimizer_release_gradients] [--adam_beta1 ADAM_BETA1]
                 [--adam_beta2 ADAM_BETA2]
                 [--adam_weight_decay ADAM_WEIGHT_DECAY]
-                [--adam_epsilon ADAM_EPSILON] [--adam_bfloat16]
-                [--max_grad_norm MAX_GRAD_NORM] [--push_to_hub]
-                [--push_checkpoints_to_hub] [--hub_model_id HUB_MODEL_ID]
+                [--adam_epsilon ADAM_EPSILON] [--max_grad_norm MAX_GRAD_NORM]
+                [--push_to_hub] [--push_checkpoints_to_hub]
+                [--hub_model_id HUB_MODEL_ID]
                 [--model_card_note MODEL_CARD_NOTE]
-                [--logging_dir LOGGING_DIR] [--benchmark_base_model]
+                [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
+                [--benchmark_base_model] [--disable_benchmark]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
-                [--allow_tf32] [--validation_using_datasets]
+                [--allow_tf32] [--disable_tf32] [--validation_using_datasets]
                 [--webhook_config WEBHOOK_CONFIG] [--report_to REPORT_TO]
                 [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
+                [--tracker_image_layout {gallery,table}]
                 [--validation_prompt VALIDATION_PROMPT]
                 [--validation_prompt_library]
                 [--user_prompt_library USER_PROMPT_LIBRARY]
@@ -382,8 +373,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_num_inference_steps VALIDATION_NUM_INFERENCE_STEPS]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc}]
-                [--validation_disable_unconditional] [--disable_compel]
-                [--enable_watermark] [--mixed_precision {bf16,no}]
+                [--validation_disable_unconditional] [--enable_watermark]
+                [--mixed_precision {bf16,no}]
                 [--gradient_precision {unmodified,fp32}]
                 [--base_model_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
                 [--base_model_default_dtype {bf16,fp32}]
@@ -415,7 +406,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--sdxl_refiner_uses_full_range]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--delete_unwanted_images] [--delete_problematic_images]
-                [--offset_noise] [--input_perturbation INPUT_PERTURBATION]
+                [--disable_bucket_pruning] [--offset_noise]
+                [--input_perturbation INPUT_PERTURBATION]
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--i_know_what_i_am_doing]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
@@ -435,17 +427,13 @@ options:
                         The standard deviation of the data used in the soft
                         min weighting method. This is required when using the
                         soft min SNR calculation method.
+  --model_family {pixart_sigma,kolors,sd3,flux,smoldit,sdxl,legacy}
+                        The model family to train. This option is required.
   --model_type {full,lora,deepfloyd-full,deepfloyd-lora,deepfloyd-stage2,deepfloyd-stage2-lora}
                         The training type to use. 'full' will train the full
                         model, while 'lora' will train the LoRA model. LoRA is
                         a smaller model that can be used for faster training.
-  --legacy              This option must be provided when training a Stable
-                        Diffusion 1.x or 2.x model.
-  --kolors              This option must be provided when training a Kolors
-                        model.
-  --flux                This option must be provided when training a Flux
-                        model.
-  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit}
+  --flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano}
                         Flux has single and joint attention blocks. By
                         default, all attention layers are trained, but not the
                         feed-forward layers If 'mmdit' is provided, the text
@@ -457,7 +445,11 @@ options:
                         in earlier SD versions. If 'all' is provided, all
                         layers will be trained, minus feed-forward. If
                         'all+ffs' is provided, all layers will be trained
-                        including feed-forward.
+                        including feed-forward. If 'ai-toolkit' is provided,
+                        all layers will be trained including feed-forward and
+                        norms (based on ostris/ai-toolkit). If 'tiny' is
+                        provided, only two layers will be trained. If 'nano'
+                        is provided, only one layers will be trained.
   --flow_matching_sigmoid_scale FLOW_MATCHING_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models..
@@ -465,14 +457,47 @@ options:
                         schedule closer to what it was trained with, which has
                         improved results in short experiments. Thanks to
                         @mhirki for the contribution.
-  --flux_guidance_mode {constant,random-range}
+  --flux_schedule_shift FLUX_SCHEDULE_SHIFT
+                        Shift the noise schedule. This is a value between 0
+                        and ~4.0, where 0 disables the timestep-dependent
+                        shift, and anything greater than 0 will shift the
+                        timestep sampling accordingly. The SD3 model was
+                        trained with a shift value of 3. The value for Flux is
+                        unknown. Higher values result in less noisy timesteps
+                        sampled, which results in a lower mean loss value, but
+                        not necessarily better results. Early reports indicate
+                        that modification of this value can change how the
+                        contrast is learnt by the model, and whether fine
+                        details are ignored or accentuated, removing fine
+                        details and making the outputs blurrier.
+  --flux_schedule_auto_shift
+                        Shift the noise schedule depending on image
+                        resolution. The shift value calculation is taken from
+                        the official Flux inference code. Shift value is
+                        math.exp(1.15) = 3.1581 for a pixel count of 1024px *
+                        1024px. The shift value grows exponentially with
+                        higher pixel counts. It is a good idea to train on a
+                        mix of different resolutions when this option is
+                        enabled. You may need to lower your learning rate with
+                        this enabled.
+  --flux_guidance_mode {constant,random-range,mobius}
                         Flux has a 'guidance' value used during training time
                         that reflects the CFG range of your training samples.
                         The default mode 'constant' will use a single value
                         for every sample. The mode 'random-range' will
                         randomly select a value from the range of the CFG for
-                        each sample. Set the range using --flux_guidance_min
-                        and --flux_guidance_max.
+                        each sample. The mode 'mobius' will use a value that
+                        is a function of the remaining steps in the epoch,
+                        constructively deconstructing the constructed
+                        deconstructions to then Mobius them back into the
+                        constructed reconstructions, possibly resulting in the
+                        exploration of what is known as the Mobius space, a
+                        new continuous realm of possibility brought about by
+                        destroying the model so that you can make it whole
+                        once more. Or so according to DataVoid, anyway. This
+                        is just a Flux-specific implementation of Mobius. Set
+                        the range using --flux_guidance_min and
+                        --flux_guidance_max.
   --flux_guidance_value FLUX_GUIDANCE_VALUE
                         When using --flux_guidance_mode=constant, this value
                         will be used for every input sample. Using a value of
@@ -495,9 +520,6 @@ options:
                         to be compatible with those. Additionally, 'diffusion'
                         is offered as an option to reparameterise a model to
                         v_prediction loss.
-  --pixart_sigma        This must be set when training a PixArt Sigma model.
-  --sd3                 This option must be provided when training a Stable
-                        Diffusion 3 model.
   --sd3_t5_mask_behaviour {do-nothing,mask}
                         StabilityAI did not correctly implement their
                         attention masking on T5 inputs for SD3 Medium. This
@@ -529,9 +551,9 @@ options:
                         result with worse quality at first, taking potentially
                         longer to converge than the other methods.
   --init_lora INIT_LORA
-                        Specify an existing LoRA safetensors file to
-                        initialize the LoRA and continue training or finetune
-                        an existing LoRA.
+                        Specify an existing LoRA or LyCORIS safetensors file
+                        to initialize the adapter and continue training, if a
+                        full checkpoint is not available.
   --lora_rank LORA_RANK
                         The dimension of the LoRA update matrices.
   --lora_alpha LORA_ALPHA
@@ -681,9 +703,6 @@ options:
                         matches its latent size. The recommended behaviour is
                         to use the default value and allow the cache to be
                         recreated.
-  --vae_cache_preprocess
-                        This option is deprecated and will be removed in a
-                        future release. Use --vae_cache_ondemand instead.
   --vae_cache_ondemand  By default, will batch-encode images before training.
                         For some situations, ondemand may be desired, but it
                         greatly slows training and increases memory pressure.
@@ -759,9 +778,7 @@ options:
                         The default value is 'auto-weighting', which will
                         automatically adjust the sampling weights based on the
                         number of images in each backend. 'uniform' will
-                        sample from each backend equally, which may be more
-                        desirable for DreamBooth training with eg.
-                        ignore_epochs=True on your regularisation dataset.
+                        sample from each backend equally.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -1014,13 +1031,6 @@ options:
                         the gradients after the optimizer step. This can save
                         memory, but may slow down training. With Quanto, there
                         may be no benefit.
-  --use_8bit_adam       Deprecated in favour of --optimizer=optimi-adamw.
-  --use_adafactor_optimizer
-                        Deprecated in favour of --optimizer=stableadamw.
-  --use_prodigy_optimizer
-                        Deprecated and removed.
-  --use_dadapt_optimizer
-                        Deprecated and removed.
   --adam_beta1 ADAM_BETA1
                         The beta1 parameter for the Adam and other optimizers.
   --adam_beta2 ADAM_BETA2
@@ -1029,7 +1039,6 @@ options:
                         Weight decay to use.
   --adam_epsilon ADAM_EPSILON
                         Epsilon value for the Adam optimizer
-  --adam_bfloat16       Deprecated in favour of --optimizer=adamw_bf16.
   --max_grad_norm MAX_GRAD_NORM
                         Clipping the max gradient norm can help prevent
                         exploding gradients, but may also harm training by
@@ -1046,16 +1055,24 @@ options:
   --model_card_note MODEL_CARD_NOTE
                         Add a string to the top of your model card to provide
                         users with some additional context.
+  --model_card_safe_for_work
+                        Hugging Face Hub requires a warning to be added to
+                        models that may generate NSFW content. This is done by
+                        default in SimpleTuner for safety purposes, but can be
+                        disabled with this option. Additionally, removing the
+                        not-for-all-audiences tag from the README.md in the
+                        repo will also disable this warning on previously-
+                        uploaded models.
   --logging_dir LOGGING_DIR
                         [TensorBoard](https://www.tensorflow.org/tensorboard)
                         log directory. Will default to
                         *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***.
   --benchmark_base_model
-                        If set, before training, the base model images will be
-                        sampled via the same prompts and saved to the output
-                        directory. These samples will be stitched to each
-                        validation output. Note that currently this cannot be
-                        enabled after training begins.
+                        Deprecated option, benchmarks are now enabled by
+                        default. Use --disable_benchmark to disable.
+  --disable_benchmark   By default, the model will be benchmarked on the first
+                        batch of the first epoch. This can be disabled with
+                        this option.
   --validation_on_startup
                         When training begins, the starting model will have
                         validation prompts run through it, for later
@@ -1078,10 +1095,12 @@ options:
                         PyTorch provides different modes for the Torch
                         Inductor when compiling graphs. max-autotune, the
                         default mode, provides the most benefit.
-  --allow_tf32          Whether or not to allow TF32 on Ampere GPUs. Can be
-                        used to speed up training. For more information, see h
-                        ttps://pytorch.org/docs/stable/notes/cuda.html#tensorf
-                        loat-32-tf32-on-ampere-devices
+  --allow_tf32          Deprecated option. TF32 is now enabled by default. Use
+                        --disable_tf32 to disable.
+  --disable_tf32        Previous defaults were to disable TF32 on Ampere GPUs.
+                        This option is provided to explicitly disable TF32,
+                        after default configuration was updated to enable TF32
+                        on Ampere GPUs.
   --validation_using_datasets
                         When set, validation will use images sampled randomly
                         from each dataset for validation. Be mindful of
@@ -1096,11 +1115,16 @@ options:
                         The integration to report the results and logs to.
                         Supported platforms are `"tensorboard"` (default),
                         `"wandb"` and `"comet_ml"`. Use `"all"` to report to
-                        all integrations.
+                        all integrations, or `"none"` to disable logging.
   --tracker_run_name TRACKER_RUN_NAME
                         The name of the run to track with the tracker.
   --tracker_project_name TRACKER_PROJECT_NAME
                         The name of the project for WandB or Tensorboard.
+  --tracker_image_layout {gallery,table}
+                        When running validations with multiple images, you may
+                        want them all placed together in a table, row-wise.
+                        Gallery mode, the default, will allow use of a slider
+                        to view the historical images easily.
   --validation_prompt VALIDATION_PROMPT
                         A prompt that is used during validation to verify that
                         the model is learning.
@@ -1156,8 +1180,6 @@ options:
                         validations with a single prompt on slower systems, or
                         if you are not interested in unconditional space
                         generations.
-  --disable_compel      This option does nothing. It is deprecated and will be
-                        removed in a future release.
   --enable_watermark    The SDXL 0.9 and 1.0 licenses both require a watermark
                         be used to identify any images created to be shared.
                         Since the images created during validation typically
@@ -1357,6 +1379,14 @@ options:
                         removed from the underlying storage medium. This is
                         useful to prevent repeatedly attempting to cache bad
                         files on a cloud bucket.
+  --disable_bucket_pruning
+                        When training on very small datasets, you might not
+                        care that the batch sizes will outpace your image
+                        count. Setting this option will prevent SimpleTuner
+                        from deleting your bucket lists that do not meet the
+                        minimum image count requirements. Use at your own
+                        risk, it may end up throwing off your statistics or
+                        epoch tracking.
   --offset_noise        Fine-tuning against a modified noise See:
                         https://www.crosslabs.org//blog/diffusion-with-offset-
                         noise for more information.

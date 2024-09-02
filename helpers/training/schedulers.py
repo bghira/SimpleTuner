@@ -7,9 +7,12 @@ logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", 
 target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
 logger.setLevel(target_level)
 
+
 def load_scheduler_from_args(args):
     flow_matching = False
-    if (args.sd3 and args.flow_matching_loss != "diffusion") or args.flux:
+    if (
+        args.model_family == "sd3" and args.flow_matching_loss != "diffusion"
+    ) or args.model_family == "flux":
         # Stable Diffusion 3 uses rectified flow.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
@@ -17,10 +20,10 @@ def load_scheduler_from_args(args):
         noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="scheduler",
-            shift=1 if args.flux else 3,
+            shift=1 if args.model_family == "sd3" else 3,
         )
     else:
-        if args.legacy:
+        if args.model_family == "legacy":
             args.rescale_betas_zero_snr = True
             args.training_scheduler_timestep_spacing = "trailing"
 

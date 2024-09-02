@@ -108,15 +108,14 @@ This will take about 30 seconds for a small dataset of fewer than 100 images.
 
 Just setting up the dataloader configuration won't be enough to start training ControlNet models.
 
-Inside `config/config.env`, you will have to set the following values:
+Inside `config/config.json`, you will have to set the following values:
 
 ```bash
-export MODEL_TYPE='full'
-export CONTROLNET=true
-export USE_BITFIT=false
+"model_type": 'full',
+"controlnet": true,
 
 # You may have to reduce TRAIN_BATCH_SIZE more than usual
-export TRAIN_BATCH_SIZE=1
+"train_batch_size": 1
 ```
 
 ## Inference on resulting ControlNet models

@@ -109,35 +109,38 @@ python configure.py
 
 If you prefer to manually configure:
 
-Copy `config/config.env.example` to `config/config.env`:
+Copy `config/config.json.example` to `config/config.json`:
 
 ```bash
-cp config/config.env.example config/config.env
+cp config/config.json.example config/config.json
 ```
 
-There, you will need to modify the following variables:
+There, you will possibly need to modify the following variables:
 
-- `MODEL_TYPE` - Set this to `lora`.
-- `FLUX` - Set this to `true`.
-- `MODEL_NAME` - Set this to `black-forest-labs/FLUX.1-dev`.
+- `model_type` - Set this to `lora`.
+- `model_family` - Set this to `flux`.
+- `pretrained_model_name_or_path` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will *probably* need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
-- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
-- `TRAIN_BATCH_SIZE` - this should be kept at 1, especially if you have a very small dataset.
-- `VALIDATION_RESOLUTION` - As Flux is a 1024px model, you can set this to `1024x1024`.
+- `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
+- `train_batch_size` - this should be kept at 1, especially if you have a very small dataset.
+- `validation_resolution` - As Flux is a 1024px model, you can set this to `1024x1024`.
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
-- `VALIDATION_GUIDANCE` - Use whatever you are used to selecting at inference time for Flux.
-- `VALIDATION_GUIDANCE_REAL` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
-- `VALIDATION_NUM_INFERENCE_STEPS` - Use somewhere around 20 to save time while still seeing decent quality. Flux isn't very diverse, and more steps might just waste time.
-- `VALIDATION_NO_CFG_UNTIL_TIMESTEP` - When using `VALIDATION_GUIDANCE_REAL` with Flux, skip doing CFG until this timestep. Default 2.
-- `TRAINER_EXTRA_ARGS` - Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
-  - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule` manually here as well.
-- `GRADIENT_ACCUMULATION_STEPS` - Don't set it. Don't use it.
-- `OPTIMIZER` - Beginners are recommended to stick with adamw_bf16, though Lion and StableAdamW are also good choices.
-- `MIXED_PRECISION` - Beginners should keep this in `bf16` with `PURE_BF16=true` along with the adamw_bf16 optimiser.
+- `validation_guidance` - Use whatever you are used to selecting at inference time for Flux.
+- `validation_guidance_real` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
+- `validation_num_inference_steps` - Use somewhere around 20 to save time while still seeing decent quality. Flux isn't very diverse, and more steps might just waste time.
+
+Here, you can place `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
+
+- If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule=true` manually here as well.
+
+- `gradient_accumulation_steps` - Previous guidance was to avoid these with bf16 training since they would degrade the model. Further testing showed this is not necessarily the case for Flux.
+  - This option causes update steps to be accumulated over several steps. This will increase the training runtime linearly, such that a value of 2 will make your training run half as quickly, and take twice as long.
+- `optimizer` - Beginners are recommended to stick with adamw_bf16, though optimi-lion and optimi-stableadamw are also good choices.
+- `mixed_precision` - Beginners should keep this in `bf16`
 
 #### Validation prompts
 
-Inside `config.env` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
+Inside `config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
 
 The example config file `config/user_prompt_library.json.example` contains the following format:
 
@@ -150,9 +153,9 @@ The example config file `config/user_prompt_library.json.example` contains the f
 
 The nicknames are the filename for the validation, so keep them short and compatible with your filesystem.
 
-To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.env`:
-```bash
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --user_prompt_library=config/user_prompt_library.json"
+To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.json`:
+```json
+  "--user_prompt_library": "config/user_prompt_library.json",
 ```
 
 A set of diverse prompt will help determine whether the model is collapsing as it trains. In this example, the word `<token>` should be replaced with your subject name (instance_prompt).
@@ -196,20 +199,27 @@ pip install optimum-quanto
 # int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
 #  - validations on int2 look pretty awful but the LoRA generally works on int8 / fp8 models at inference time.
 # may the gods have mercy on your soul, should you push things Too Far.
-export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
+"--base_model_precision": "int8-quanto"
 
 # Maybe you want the text encoders to remain full precision so your text embeds are cake.
 # We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
 # Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
+"--text_encoder_1_precision": "no_change",
+"--text_encoder_2_precision": "no_change",
 
 # LoRA sizing you can adjust.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
+"--lora_rank": 16,
 
 # Limiting gradient norms might preserve the model for longer
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0"
+"--max_grad_norm": 1.0,
 # Keeping the base in bf16 still allows you to quantise the model, but it saves a lot of memory.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16"
+"--base_model_default_dtype": "bf16",
+
+
+#################################################
+#    Below guidance is for LoRA, not LyCORIS.   #
+#################################################
+
 
 # When training 'mmdit', we find very stable training that makes the model take longer to learn.
 # When training 'all', we can easily shift the model distribution, but it is more prone to forgetting and benefits from high quality data.
@@ -217,20 +227,12 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16
 # - This mode has been reported to lack portability, and platforms such as ComfyUI might not be able to load the LoRA.
 # The option to train only the 'context' blocks is offered as well, but its impact is unknown, and is offered as an experimental choice.
 # - An extension to this mode, 'context+ffs' is also available, which is useful for pretraining new tokens into a LoRA before continuing finetuning it via `--init_lora`.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --flux_lora_target=all"
+"--flux_lora_target": "all",
 
 # If you want to use LoftQ initialisation, you can't use Quanto to quantise the base model.
 # This possibly offers better/faster convergence, but only works on NVIDIA devices and requires Bits n Bytes and is incompatible with Quanto.
 # Other options are 'default', 'gaussian' (difficult), and untested options: 'olora' and 'pissa'.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_init_type=loftq"
-
-# When you're quantising the model, --base_model_default_dtype is set to bf16 by default. This setup requires adamw_bf16, but saves the most memory.
-# Quantising the model has been found to result in negligible-to-quality loss for training.
-# option one (recommended) - adamw_bf16; this optimiser setup is fairly forgiving
-export OPTIMIZER="adamw_bf16"
-# option two - FP32 training supports any optimiser BUT adamw_bf16
-#export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=fp32"
-#export OPTIMIZER="optimi-ranger" # or maybe optimi-lion
+"--lora_init_type": "loftq",
 ```
 
 
@@ -238,11 +240,11 @@ export OPTIMIZER="adamw_bf16"
 
 > ⚠️ Image quality for training is more important for Flux than for most other models, as it will absorb the artifacts in your images *first*, and then learn the concept/subject.
 
-It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS` as well as more than `VAE_BATCH_SIZE`. The dataset will not be useable if it is too small.
+It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `train_batch_size * gradient_accumulation_steps` as well as more than `vae_batch_size`. The dataset will not be useable if it is too small.
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
+Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
 
 ```json
 [
@@ -259,7 +261,6 @@ create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
     "resolution_type": "pixel_area",
     "cache_dir_vae": "cache/vae/flux/pseudo-camera-10k",
     "instance_data_dir": "datasets/pseudo-camera-10k",
-    "ignore_epochs": true,
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
@@ -281,28 +282,40 @@ create a `DATALOADER_CONFIG` (config/multidatabackend.json) with this:
     "metadata_backend": "discovery"
   },
   {
+    "id": "dreambooth-subject-512",
+    "type": "local",
+    "crop": false,
+    "resolution": 512,
+    "minimum_image_size": 512,
+    "maximum_image_size": 512,
+    "target_downsample_size": 512,
+    "resolution_type": "pixel_area",
+    "cache_dir_vae": "cache/vae/flux/dreambooth-subject-512",
+    "instance_data_dir": "datasets/dreambooth-subject",
+    "caption_strategy": "instanceprompt",
+    "instance_prompt": "the name of your subject goes here",
+    "metadata_backend": "discovery"
+  },
+  {
     "id": "text-embeds",
     "type": "local",
     "dataset_type": "text_embeds",
     "default": true,
-    "cache_dir": "cache/text/flux/pseudo-camera-10k",
+    "cache_dir": "cache/text/flux",
     "disabled": false,
     "write_batch_size": 128
   }
 ]
 ```
 
-> ⚠️ 512-pixel training is recommended for Flux; it is more reliable than high-resolution training, which tends to diverge.
-
 > ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Flux.
 
 Then, create a `datasets` directory:
 
 ```bash
-apt -y install git-lfs
 mkdir -p datasets
 pushd datasets
-    git clone https://huggingface.co/datasets/ptx0/pseudo-camera-10k
+    huggingface-cli download --repo_type=dataset bghira/pseudo-camera-10k --local-dir=pseudo-camera-10k
     mkdir dreambooth-subject
     # place your images into dreambooth-subject/ now
 popd
@@ -314,7 +327,7 @@ Your Dreambooth images should go into the `datasets/dreambooth-subject` director
 
 #### Login to WandB and Huggingface Hub
 
-You'll want to login to WandB and HF Hub before beginning training, especially if you're using `PUSH_TO_HUB=true` and `--report_to=wandb`.
+You'll want to login to WandB and HF Hub before beginning training, especially if you're using `--push_to_hub` and `--report_to=wandb`.
 
 If you're going to be pushing items to a Git LFS repository manually, you should also run `git config --global credential.helper store`
 
@@ -337,7 +350,7 @@ Follow the instructions to log in to both services.
 From the SimpleTuner directory, one simply has to run:
 
 ```bash
-bash train.sh
+./train.sh
 ```
 
 This will begin the text embed and VAE output caching to disk.
@@ -398,6 +411,7 @@ The solution for this is already enabled in the main branch; it is necessary to 
   - fp16 training similarly is bad for Flux; this model wants the range of bf16
   - `e5m2` level precision is better at fp8 but haven't looked into how to enable it yet. Sorry, H100 owners. We weep for you.
 - When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
+- `int4` is weird and really only works on A100 and H100 cards.
 
 ### Crashing
 - If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.
@@ -413,6 +427,8 @@ The solution for this is already enabled in the main branch; it is necessary to 
 > ℹ️ When merging Schnell with Dev in any way, the license of Dev takes over and it becomes non-commercial. This shouldn't really matter for most users, but it's worth noting.
 
 ### Learning rates
+
+#### LoRA (--lora_type=standard)
 - It's been reported that Flux trains similarly to SD 1.5 LoRAs
 - However, a model as large as 12B has empirically performed better with **lower learning rates.**
   - LoRA at 1e-3 might totally roast the thing. LoRA at 1e-5 does nearly nothing.
@@ -421,6 +437,9 @@ The solution for this is already enabled in the main branch; it is necessary to 
   - If you're finding that it's excessively difficult to train your concept into the model, you might need a higher rank and more regularisation data.
 - Other diffusion transformer models like PixArt and SD3 majorly benefit from `--max_grad_norm` and SimpleTuner keeps a pretty high value for this by default on Flux.
   - A lower value would keep the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution. The model might get stuck and never improve.
+#### LoKr (--lora_type=lycoris)
+- Higher learning rates are better for LoKr
+- Other algo need more exploration.
 
 ### Image artifacts
 Flux will immediately absorb bad image artifacts. It's just how it is - a final training run on just high quality data may be required to fix it at the end.
@@ -428,56 +447,16 @@ Flux will immediately absorb bad image artifacts. It's just how it is - a final 
 When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
 - Overtrain with low quality data
 - Use too high of a learning rate
-- Select a bad optimiser
 - Overtraining (in general), a low-capacity network with too many images
 - Undertraining (also), a high-capacity network with too few images
 - Using weird aspect ratios or training data sizes
-- Using gradient accumulation steps with pure bf16 training and `--gradient_precision=unmodified`
-
-### Gradient accumulation steps
-
-They really slow training down and might not be worth it unless you have several datasets configured in your dataloader backend.
-
-The AdamWBF16 optimiser requires fp32 gradients for precise accumulation, but the Optimi selections such as Lion and StableAdamW claim to handle this more reliably. YMMV.
-
-It's usually recommended to just avoid these.
 
 ### Aspect bucketing
-- Training for too long on square crops probably won't damage this model. Go nuts, it's great and reliable.
+- Training for too long on square crops probably won't damage this model too much. Go nuts, it's great and reliable.
 - On the other hand, using the natural aspect buckets of your dataset might overly bias these shapes during inference time.
   - This could be a desirable quality, as it keeps aspect-dependent styles like cinematic stuff from bleeding into other resolutions too much.
   - However, if you're looking to improve results equally across many aspect buckets, you might have to experiment with `crop_aspect=random` which comes with its own downsides.
-
-### Reproducing the results of X-Flux trainer / realism LoRA
-
-To "match" the behaviour of the X-Flux trainer and reproduce their Realism LoRA:
-
-- Retrieve the two datasets of ~1M Midjourney/Nijijourney images that the X-flux Realism LoRA was trained on. **This will use more than 2tb of local disk space**, but this is how many images X-flux used.
-  - https://huggingface.co/datasets/terminusresearch/midjourney-v6-520k-raw
-    - SimpleTuner dataset preset [here](/documentation/data_presets/preset_midjourney.md)
-  - https://huggingface.co/datasets/terminusresearch/nijijourney-v6-520k-raw
-    - SimpleTuner dataset preset [here](/documentation/data_presets/preset_nijijourney.md)
-- Configure DeepSpeed ZeRO 2 using `accelerate config` - see [DEEPSPEED.md](/documentation/DEEPSPEED.md) for more information on this
-- Use the following settings inside `config.env`:
-
-```bash
-TRAIN_BATCH_SIZE=1
-GRADIENT_ACCUMULATION_STEPS=2
-LEARNING_RATE=1e-5
-LR_SCHEDULER="constant"
-LR_WARMUP_STEPS=10
-# this is kinda crazy, but at 512px it trains rather quickly anyway.
-CHECKPOINTING_STEPS=2500
-# because of DeepSpeed, you can use the below flags to enable mixed-precision bf16 training:
-OPTIMIZER="optimi-adamw" # unfortunately this is your only option with DeepSpeed, but x-flux does the same.
-MIXED_PRECISION="bf16"
-PURE_BF16=false
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --i_know_what_i_am_doing"
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --lora_rank=16"
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --max_grad_norm=1.0 --gradient_precision=fp32"
-# x-flux only trains the mmdit blocks but you can change lora_target to all or context to experiment.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --base_model_default_dtype=bf16 --lora_init_type=default --flux_lora_target=mmdit"
-```
+- Mixing dataset configurations by defining your image directory dataset multiple times has produced really good results and a nicely generalised model.
 
 ## Credits
 

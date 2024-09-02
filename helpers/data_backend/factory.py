@@ -84,11 +84,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             "vae_cache_clear_each_epoch"
         ]
     if "probability" in backend:
-        output["config"]["probability"] = backend["probability"]
+        output["config"]["probability"] = (
+            float(backend["probability"]) if backend["probability"] else 1.0
+        )
     if "ignore_epochs" in backend:
-        output["config"]["ignore_epochs"] = backend["ignore_epochs"]
+        logger.error(
+            "ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration."
+        )
     if "repeats" in backend:
-        output["config"]["repeats"] = backend["repeats"]
+        output["config"]["repeats"] = (
+            int(backend["repeats"]) if backend["repeats"] else 0
+        )
     if "crop" in backend:
         output["config"]["crop"] = backend["crop"]
     else:
@@ -188,7 +194,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and maximum_image_size < 512
         and "deepfloyd" not in args.model_type
-        and not args.smoldit
+        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `maximum_image_size` must be at least 512 pixels. You may have accidentally entered {maximum_image_size} megapixels, instead of pixels."
@@ -207,7 +213,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         and output["config"]["resolution_type"] == "pixel"
         and target_downsample_size < 512
         and "deepfloyd" not in args.model_type
-        and not args.smoldit
+        and args.model_family != "smoldit"
     ):
         raise ValueError(
             f"When a data backend is configured to use `'resolution_type':pixel`, `target_downsample_size` must be at least 512 pixels. You may have accidentally entered {target_downsample_size} megapixels, instead of pixels."
@@ -310,9 +316,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
     )
 
 
-def configure_multi_databackend(
-    args: dict, accelerator, text_encoders, tokenizers, prompt_handler
-):
+def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenizers):
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
@@ -412,7 +416,7 @@ def configure_multi_databackend(
             tokenizers=tokenizers,
             accelerator=accelerator,
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
-            model_type=StateTracker.get_model_type(),
+            model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", 1),
         )
         with accelerator.main_process_first():
@@ -1221,10 +1225,14 @@ def get_backend_weight(backend_id, backend, step):
         # Adjust the probability by length factor
         adjusted_prob = prob * length_factor
 
-        disable_step = backend_config.get("disable_after_epoch_step", float("inf"))
+        disable_step = backend_config.get("disable_after_epoch_step", None)
+        if disable_step:
+            disable_step = int(disable_step)
+        else:
+            disable_step = float("inf")
         adjusted_prob = (
             0
-            if step > disable_step
+            if int(step) > disable_step
             else max(0, adjusted_prob * (1 - step / disable_step))
         )
 
@@ -1282,14 +1290,7 @@ def random_dataloader_iterator(step, backends: dict):
             StateTracker.backend_exhausted(chosen_backend_id)
             StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
         finally:
-            if not backends or all(
-                [
-                    StateTracker.get_data_backend_config(backend_id).get(
-                        "ignore_epochs", False
-                    )
-                    for backend_id in backends
-                ]
-            ):
+            if not backends:
                 logger.debug(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )

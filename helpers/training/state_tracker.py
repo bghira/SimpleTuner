@@ -14,6 +14,7 @@ filename_mapping = {
 
 
 class StateTracker:
+    config_path = None
     # Class variables
     model_type = ""
 
@@ -101,7 +102,15 @@ class StateTracker:
             json.dump(data, f)
 
     @classmethod
-    def set_model_type(cls, model_type: str):
+    def set_config_path(cls, config_path: str):
+        cls.config_path = config_path
+
+    @classmethod
+    def get_config_path(cls):
+        return cls.config_path
+
+    @classmethod
+    def set_model_family(cls, model_type: str):
         if model_type not in [
             "legacy",
             "sdxl",
@@ -115,7 +124,7 @@ class StateTracker:
         cls.model_type = model_type
 
     @classmethod
-    def get_model_type(cls):
+    def get_model_family(cls):
         return cls.model_type
 
     @classmethod

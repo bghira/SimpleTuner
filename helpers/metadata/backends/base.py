@@ -52,8 +52,8 @@ class MetadataBackend:
             )
         self.accelerator = accelerator
         self.data_backend = data_backend
-        self.batch_size = batch_size
-        self.repeats = repeats
+        self.batch_size = int(batch_size)
+        self.repeats = int(repeats)
         self.instance_data_dir = instance_data_dir
         if cache_file_suffix is not None:
             cache_file = f"{cache_file}_{cache_file_suffix}"
@@ -65,12 +65,14 @@ class MetadataBackend:
         self.seen_images = {}
         self.config = {}
         self.reload_cache()
-        self.resolution = resolution
+        self.resolution = float(resolution)
         self.resolution_type = resolution_type
         self.delete_problematic_images = delete_problematic_images
         self.delete_unwanted_images = delete_unwanted_images
         self.metadata_update_interval = metadata_update_interval
-        self.minimum_image_size = minimum_image_size
+        self.minimum_image_size = (
+            float(minimum_image_size) if minimum_image_size else None
+        )
         self.image_metadata_loaded = False
         self.vae_output_scaling_factor = 8
         self.metadata_semaphor = Semaphore()
@@ -455,9 +457,16 @@ class MetadataBackend:
         """
         Remove buckets with fewer images than the batch size.
         """
+        if StateTracker.get_args().disable_bucket_pruning:
+            logger.warning(
+                "Not pruning small buckets, as --disable_bucket_pruning is provided."
+            )
+            return
         if (
             bucket in self.aspect_ratio_bucket_indices
-            and (len(self.aspect_ratio_bucket_indices[bucket]) * (self.repeats + 1))
+            and (
+                len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)
+            )
             < self.batch_size
         ):
             bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
@@ -618,7 +627,7 @@ class MetadataBackend:
 
         bucket = list(self.aspect_ratio_bucket_indices.keys())[0]
         if (
-            len(self.aspect_ratio_bucket_indices[bucket]) * (self.repeats + 1)
+            len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)
         ) < self.batch_size:
             return True
 

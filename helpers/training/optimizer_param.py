@@ -265,16 +265,6 @@ def is_optimizer_deprecated(optimizer: str) -> bool:
         raise ValueError(deprecated_optimizers.get(optimizer))
 
 
-def map_args_to_optimizer(args) -> str:
-    for key in args_to_optimizer_mapping:
-        if hasattr(args, key) and getattr(args, key):
-            print(
-                "[ERROR] The use of --use_adafactor_optimizer, --use_prodigy_optimizer, --use_dadaptation_optimizer, --adam_bfloat16, and --use_8bit_adam is deprecated. Please use --optimizer instead."
-            )
-            return args_to_optimizer_mapping.get(key)
-    return getattr(args, "optimizer")
-
-
 def map_deprecated_optimizer_parameter(optimizer: str) -> str:
     return args_to_optimizer_mapping.get(optimizer, None)
 
@@ -354,7 +344,7 @@ def determine_params_to_optimize(
                 filter(lambda p: p.requires_grad, transformer.parameters())
             )
         if args.train_text_encoder:
-            if args.sd3 or args.pixart_sigma:
+            if args.model_family in ["sd3", "pixart_sigma"]:
                 raise ValueError(
                     f"{model_type_label} does not support finetuning the text encoders, as T5 does not benefit from it."
                 )
@@ -364,7 +354,7 @@ def determine_params_to_optimize(
                     filter(lambda p: p.requires_grad, text_encoder_1.parameters())
                 )
                 # if text_encoder_2 is not None, add its parameters
-                if text_encoder_2 is None and not args.flux:
+                if text_encoder_2 is None and args.model_family not in ["flux"]:
                     # but not flux. it has t5 as enc 2.
                     params_to_optimize = params_to_optimize + list(
                         filter(lambda p: p.requires_grad, text_encoder_2.parameters())

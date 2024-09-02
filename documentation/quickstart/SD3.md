@@ -97,26 +97,39 @@ python configure.py
 
 If you prefer to manually configure:
 
-Copy `config/config.env.example` to `config/config.env`:
+Copy `config/config.json.example` to `config/config.json`:
 
 ```bash
-cp config/config.env.example config/config.env
+cp config/config.json.example config/config.json
 ```
 
 There, you will need to modify the following variables:
 
+```json
+{
+  "model_type": "lora",
+  "model_family": "sd3",
+  "pretrained_model_name_or_path": "stabilityai/stable-diffusion-3-medium-diffusers",
+  "output_dir": "/home/user/outputs/models",
+  "validation_resolution": "1024x1024,1280x768",
+  "validation_guidance": 3.0,
+  "validation_prompt": "your main test prompt here",
+  "user_prompt_library": "config/user_prompt_library.json"
+}
+```
+
+
+- `pretrained_model_name_or_path` - Set this to `stabilityai/stable-diffusion-3-medium-diffusers`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
 - `MODEL_TYPE` - Set this to `lora`.
-- `STABLE_DIFFUSION_3` - Set this to `true`.
-- `MODEL_NAME` - Set this to `stabilityai/stable-diffusion-3-medium-diffusers`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
-- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `MODEL_FAMILY` - Set this to `sd3`.
+- `OUTPUT_DIR` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As SD3 is a 1024px model, you can set this to `1024x1024`.
   - Additionally, SD3 was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - SD3 benefits from a very-low value. Set this to `3.0`.
 
 There are a few more if using a Mac M-series machine:
 
-- `MIXED_PRECISION` should be set to `no`.
-- `USE_XFORMERS` should be set to `false`.
+- `mixed_precision` should be set to `no`.
 
 #### Quantised model training
 
@@ -127,6 +140,20 @@ Inside your SimpleTuner venv:
 ```bash
 pip install optimum-quanto
 ```
+
+> ⚠️ If using a JSON config file, be sure to use this format in `config.json` instead of `config.env`:
+
+```json
+{
+  "base_model_precision": "int8-quanto",
+  "text_encoder_1_precision": "no_change",
+  "text_encoder_2_precision": "no_change",
+  "text_encoder_3_precision": "no_change",
+  "optimizer": "adamw_bf16"
+}
+```
+
+For `config.env` users (deprecated):
 
 ```bash
 # choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
@@ -152,7 +179,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-In your `OUTPUT_DIR` directory, create a multidatabackend.json:
+In your `/home/user/simpletuner/config` directory, create a multidatabackend.json:
 
 ```json
 [
@@ -168,7 +195,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/sd3/pseudo-camera-10k",
-    "instance_data_dir": "datasets/pseudo-camera-10k",
+    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
@@ -186,13 +213,12 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 ]
 ```
 
-Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
+Then, create a `datasets` directory:
 
 ```bash
-apt -y install git-lfs
 mkdir -p datasets
 pushd datasets
-    git clone https://huggingface.co/datasets/ptx0/pseudo-camera-10k
+    huggingface-cli download --repo-type=dataset bghira/pseudo-camera-10k --local-dir=pseudo-camera-10k
 popd
 ```
 
@@ -200,7 +226,7 @@ This will download about 10k photograph samples to your `datasets/pseudo-camera-
 
 #### Login to WandB and Huggingface Hub
 
-You'll want to login to WandB and HF Hub before beginning training, especially if you're using `PUSH_TO_HUB=true` and `--report_to=wandb`.
+You'll want to login to WandB and HF Hub before beginning training, especially if you're using `push_to_hub: true` and `--report_to=wandb`.
 
 If you're going to be pushing items to a Git LFS repository manually, you should also run `git config --global credential.helper store`
 

@@ -21,7 +21,7 @@ def load_diffusion_model(args, weight_dtype):
     unet = None
     transformer = None
 
-    if args.sd3:
+    if args.model_family == "sd3":
         # Stable Diffusion 3 uses a Diffusion transformer.
         logger.info("Loading Stable Diffusion 3 diffusion transformer..")
         try:
@@ -36,7 +36,9 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
-    elif args.flux and not args.flux_attention_masked_training:
+    elif (
+        args.model_family.lower() == "flux" and not args.flux_attention_masked_training
+    ):
         from diffusers.models import FluxTransformer2DModel
 
         transformer = FluxTransformer2DModel.from_pretrained(
@@ -46,7 +48,7 @@ def load_diffusion_model(args, weight_dtype):
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
-    elif args.flux and args.flux_attention_masked_training:
+    elif args.model_family.lower() == "flux" and args.flux_attention_masked_training:
         from helpers.models.flux.transformer import (
             FluxTransformer2DModelWithMasking,
         )
@@ -57,7 +59,7 @@ def load_diffusion_model(args, weight_dtype):
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
-    elif args.pixart_sigma:
+    elif args.model_family == "pixart_sigma":
         from diffusers.models import PixArtTransformer2DModel
 
         transformer = PixArtTransformer2DModel.from_pretrained(
@@ -67,7 +69,7 @@ def load_diffusion_model(args, weight_dtype):
             torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
-    elif args.smoldit:
+    elif args.model_family == "smoldit":
         logger.info("Loading SmolDiT model..")
         if args.validation_noise_scheduler is None:
             args.validation_noise_scheduler = "ddpm"
@@ -88,7 +90,7 @@ def load_diffusion_model(args, weight_dtype):
         logger.info("Loading U-net..")
         unet_variant = args.variant
         if (
-            args.kolors
+            args.model_family == "kolors"
             and args.pretrained_model_name_or_path.lower()
             == "kwai-kolors/kolors-diffusers"
         ):

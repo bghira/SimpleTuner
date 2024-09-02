@@ -2,51 +2,35 @@
 
 For users that wish to make use of Docker or another container orchestration platform, see [this document](/documentation/DOCKER.md) first.
 
-1. Clone the repository and install the dependencies:
+### Installation
+
+Clone the SimpleTuner repository and set up the python venv:
 
 ```bash
-git clone https://github.com/bghira/SimpleTuner --branch release
-python -m venv .venv
-pip3 install -U poetry pip
+git clone --branch=release https://github.com/bghira/SimpleTuner.git
+
+cd SimpleTuner
+
+# if python --version shows 3.11 you can just also use the 'python' command here.
+python3.11 -m venv .venv
+
+source .venv/bin/activate
+
+pip install -U poetry pip
 ```
 
-> ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config.env` file.
+**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
 
-### MacOS (Apple Silicon)
-
-The experience of training a model may be disappointing on Apple hardware due to the lack of memory-efficient attention - things require more VRAM here.
-
-You will require a minimum of 24G of total memory for an SDXL LoRA at a batch size of 1.
-
-To install the Apple-specific requirements:
+Depending on your system, you will run one of 3 commands:
 
 ```bash
+# MacOS
 poetry install -C install/apple
-```
 
-### Linux + Nvidia/CUDA
-
-The first command you'll run will install most of the dependencies:
-
-```bash
+# Linux
 poetry install
-```
 
-You may need to install LibGL for OpenCV2 to load images:
-
-_(Ubuntu)_
-```bash
-apt -y install libgl1-mesa-dri
-```
-
-
-### Linux + AMD / ROCm
-
-Due to `xformers` not supporting the ROCm platform, memory requirements for training will likely be higher than otherwise stated.
-
-To install the ROCm-specific requirements:
-
-```bash
+# Linux with ROCM
 poetry install -C install/rocm
 ```
 
@@ -64,9 +48,21 @@ popd
 
 ### All platforms
 
-2. Copy `config/config.env.example` to `config/config.env` and then fill in the details.
+2a. **Option One**: Run `configure.py`
+2b. **Option Two**: Copy `config/config.json.example` to `config/config.json` and then fill in the details.
 
-For both training scripts, any missing values from your user config will fallback to the defaults.
+#### Multiple GPU training
+
+**Note**: For MultiGPU setup, you will have to set all of these variables in `config/config.env`
+
+```bash
+TRAINING_NUM_PROCESSES=1
+TRAINING_NUM_MACHINES=1
+TRAINING_DYNAMO_BACKEND='no'
+CONFIG_BACKEND='json'
+```
+
+Any missing values from your user config will fallback to the defaults.
 
 3. If you are using `--report_to='wandb'` (the default), the following will help you report your statistics:
 
@@ -78,14 +74,40 @@ Follow the instructions that are printed, to locate your API key and configure i
 
 Once that is done, any of your training sessions and validation data will be available on Weights & Biases.
 
-4. Launch the `train.sh` script, probably by redirecting the output to a log file:
+4. Launch the `train.sh` script; logs will be written to `debug.log`
 
 ```bash
-bash train.sh > /path/to/training-$(date +%s).log 2>&1
+./train.sh
 ```
 
-> ⚠️ At this point, the commands will work, but further configuration is required. See [the tutorial](/TUTORIAL.md) for more information.
+> ⚠️ At this point, if you used `configure.py`, you are done! If not - these commands will work, but further configuration is required. See [the tutorial](/TUTORIAL.md) for more information.
 
 ### Run unit tests
 
 To run unit tests to ensure that installation has completed successfully, execute the command `poetry run python -m unittest discover tests/`.
+
+## Advanced: Multiple configuration environments
+
+For users who train multiple models or need to quickly switch between different datasets or settings, two environment variables are inspected at startup.
+
+To use them:
+
+```bash
+env ENV=default CONFIG_BACKEND=env bash train.sh
+```
+
+- `ENV` will default to `default`, which points to the typical `SimpleTuner/config/` directory that this guide helped you configure
+  - Using `ENV=pixart ./train.sh` would use `SimpleTuner/config/pixart` directory to find `config.env`
+- `CONFIG_BACKEND` will default to `env`, which uses the typical `config.env` file this guide helped you configure
+  - Supported options: `env`, `json`, `toml`, or `cmd` if you rely on running `train.py` manually
+  - Using `CONFIG_BACKEND=json ./train.sh` would search for `SimpleTuner/config/config.json` instead of `config.env`
+  - Similarly, `CONFIG_BACKEND=toml` will use `config.env`
+
+You can create `config/config.env` that contains one or both of these values:
+
+```bash
+ENV=default
+CONFIG_BACKEND=json
+```
+
+They will be remembered upon subsequent runs. Note that these can be added in addition to the multiGPU options described [above](#multiple-gpu-training).
