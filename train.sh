@@ -61,14 +61,21 @@ if [ -z "${ENV}" ]; then
 fi
 
 if [ -z "${CONFIG_BACKEND}" ]; then
+    if [ -n "${CONFIG_TYPE}" ]; then
+        export CONFIG_BACKEND="${CONFIG_TYPE}"
+    fi
+fi
+
+if [ -z "${CONFIG_BACKEND}" ]; then
     export CONFIG_BACKEND="env"
     export CONFIG_PATH="config/${ENV_PATH}config"
-    if [ -f "${CONFIG_PATH}.env" ]; then
-        export CONFIG_BACKEND="env"
     elif [ -f "${CONFIG_PATH}.json" ]; then
+    if [ -f "${CONFIG_PATH}.json" ]; then
         export CONFIG_BACKEND="json"
     elif [ -f "${CONFIG_PATH}.toml" ]; then
         export CONFIG_BACKEND="toml"
+    elif [ -f "${CONFIG_PATH}.env" ]; then
+        export CONFIG_BACKEND="env"
     fi
     echo "Using ${CONFIG_BACKEND} backend: ${CONFIG_PATH}.${CONFIG_BACKEND}"
 fi
