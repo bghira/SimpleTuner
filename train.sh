@@ -69,7 +69,6 @@ fi
 if [ -z "${CONFIG_BACKEND}" ]; then
     export CONFIG_BACKEND="env"
     export CONFIG_PATH="config/${ENV_PATH}config"
-    elif [ -f "${CONFIG_PATH}.json" ]; then
     if [ -f "${CONFIG_PATH}.json" ]; then
         export CONFIG_BACKEND="json"
     elif [ -f "${CONFIG_PATH}.toml" ]; then
