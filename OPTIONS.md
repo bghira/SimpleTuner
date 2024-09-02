@@ -61,9 +61,9 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: When using multiple data backends, sampling can be done using different strategies.
 - **Options**:
   - `uniform` - the previous behaviour from v0.9.8.1 and earlier where dataset length was not considered, only manual probability weightings.
-    - This is useful for DreamBooth training where you have a set of regularisation images and a set of subject images. You must set `ignore_epochs=True` on your regularisation dataset, and use this mode.
   - `auto-weighting` - the default behaviour where dataset length is used to equally sample all datasets, maintaining a uniform sampling of the entire data distribution.
     - This is required if you have differently-sized datasets that you want the model to learn equally.
+    - But adjusting `repeats` manually is **required** to properly sample Dreambooth images against your regularisation set
 
 ### `--vae_cache_scan_behaviour`
 
@@ -353,8 +353,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--hub_model_id HUB_MODEL_ID]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
-                [--benchmark_base_model] [--validation_on_startup]
-                [--validation_seed_source {gpu,cpu}]
+                [--benchmark_base_model] [--disable_benchmark]
+                [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_torch_compile VALIDATION_TORCH_COMPILE]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
                 [--allow_tf32] [--disable_tf32] [--validation_using_datasets]
@@ -778,9 +778,7 @@ options:
                         The default value is 'auto-weighting', which will
                         automatically adjust the sampling weights based on the
                         number of images in each backend. 'uniform' will
-                        sample from each backend equally, which may be more
-                        desirable for DreamBooth training with eg.
-                        ignore_epochs=True on your regularisation dataset.
+                        sample from each backend equally.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -1070,10 +1068,11 @@ options:
                         log directory. Will default to
                         *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***.
   --benchmark_base_model
-                        If set, before training, the base model images will be
-                        sampled via the same prompts and saved to the output
-                        directory. These samples will be stitched to each
-                        validation output.
+                        Deprecated option, benchmarks are now enabled by
+                        default. Use --disable_benchmark to disable.
+  --disable_benchmark   By default, the model will be benchmarked on the first
+                        batch of the first epoch. This can be disabled with
+                        this option.
   --validation_on_startup
                         When training begins, the starting model will have
                         validation prompts run through it, for later
