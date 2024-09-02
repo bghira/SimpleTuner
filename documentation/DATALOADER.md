@@ -185,12 +185,14 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 ### `repeats`
 
 - Specifies the number of times all samples in the dataset are seen during an epoch. Useful for giving more impact to smaller datasets or maximizing the usage of VAE cache objects.
+- If you have a dataset of 1000 images vs one with 100 images, you would likely want to give the lesser dataset a repeats of `9` **or greater** to bring it to 1000 total images sampled.
 
-> ℹ️ This value behaves differently to the same option in Kohya's scripts, where a value of 1 means no repeats. **For SimpleTuner, a value of 0 means no repeats**. Subtract one from your Kohya config value to obtain the equivalent for SimpleTuner.
+> ℹ️ This value behaves differently to the same option in Kohya's scripts, where a value of 1 means no repeats. **For SimpleTuner, a value of 0 means no repeats**. Subtract one from your Kohya config value to obtain the equivalent for SimpleTuner, hence a value of **9** resulting from the calculation `(dataset_length + repeats * dataset_length)` .
 
 ### `vae_cache_clear_each_epoch`
 
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
+- In fact, this option is **enabled by default** when using random bucketing or crops.
 
 ### `skip_file_discovery`
 
