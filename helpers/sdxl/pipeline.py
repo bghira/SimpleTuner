@@ -1218,7 +1218,7 @@ class StableDiffusionXLPipeline(
         else:
             batch_size = prompt_embeds.shape[0]
 
-        device = self._execution_device
+        device = self.unet.device
 
         # 3. Encode input prompt
         lora_scale = (
