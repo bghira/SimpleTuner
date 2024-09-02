@@ -105,6 +105,18 @@ cp config/config.json.example config/config.json
 
 There, you will need to modify the following variables:
 
+```json
+{
+  "model_type": "full",
+  "use_bitfit": false,
+  "model_name": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
+  "model_family": "pixart_sigma",
+  "output_dir": "/home/user/output/models",
+  "validation_resolution": "1024x1024,1280x768",
+  "validation_guidance": 3.5
+}
+```
+
 - `MODEL_TYPE` - Set this to `full`.
 - `USE_BITFIT` - Set this to `false`.
 - `MODEL_FAMILY` - Set this to `pixart_sigma`.
@@ -116,8 +128,7 @@ There, you will need to modify the following variables:
 
 There are a few more if using a Mac M-series machine:
 
-- `MIXED_PRECISION` should be set to `no`.
-- `USE_XFORMERS` should be set to `false`.
+- `mixed_precision` should be set to `no`.
 
 #### Dataset considerations
 
@@ -125,7 +136,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
 
-In your `OUTPUT_DIR` directory, create a multidatabackend.json:
+In your `/home/user/simpletuner/config` directory, create a multidatabackend.json:
 
 ```json
 [
@@ -141,7 +152,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/pixart/pseudo-camera-10k",
-    "instance_data_dir": "datasets/pseudo-camera-10k",
+    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
@@ -159,13 +170,12 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 ]
 ```
 
-Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
+Then, create a `datasets` directory:
 
 ```bash
-apt -y install git-lfs
 mkdir -p datasets
 pushd datasets
-    git clone https://huggingface.co/datasets/ptx0/pseudo-camera-10k
+    huggingface-cli download --repo-type=dataset bghira/pseudo-camera-10k --local-dir=pseudo-camera-10k
 popd
 ```
 
@@ -173,7 +183,7 @@ This will download about 10k photograph samples to your `datasets/pseudo-camera-
 
 #### Login to WandB and Huggingface Hub
 
-You'll want to login to WandB and HF Hub before beginning training, especially if you're using `PUSH_TO_HUB=true` and `--report_to=wandb`.
+You'll want to login to WandB and HF Hub before beginning training, especially if you're using `push_to_hub: true` and `--report_to=wandb`.
 
 If you're going to be pushing items to a Git LFS repository manually, you should also run `git config --global credential.helper store`
 
