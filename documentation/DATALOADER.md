@@ -192,10 +192,6 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
 
-### `ignore_epochs`
-
-- This should only be used for subject training, eg. [Dreambooth](/documentation/DREAMBOOTH.md). When enabled, this dataset will not hold up the rest of the datasets from completing an epoch. This will inherently make the value for the current epoch inaccurate, as it reflects only the number of times any datasets _without_ this flag have completed all of their repeats. The state of the ignored dataset isn't reset upon the next epoch, it is simply ignored. It will eventually run out of samples as a dataset typically does. At that time it will be removed from consideration until the next natural epoch completes.
-
 ### `skip_file_discovery`
 
 - You probably don't want to ever set this - it is useful only for very large datasets.
