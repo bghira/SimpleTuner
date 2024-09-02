@@ -121,7 +121,7 @@ There, you will possibly need to modify the following variables:
 - `model_family` - Set this to `flux`.
 - `pretrained_model_name_or_path` - Set this to `black-forest-labs/FLUX.1-dev`.
   - Note that you will *probably* need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
-- `output_dir` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - this should be kept at 1, especially if you have a very small dataset.
 - `validation_resolution` - As Flux is a 1024px model, you can set this to `1024x1024`.
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`

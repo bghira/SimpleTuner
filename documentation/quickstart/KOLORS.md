@@ -107,11 +107,24 @@ popd
 
 There, you will need to modify the following variables:
 
+```json
+{
+  "model_type": "lora",
+  "model_family": "kolora",
+  "pretrained_model_name_or_path": "Kwai-Kolors/Kolors-diffusers",
+  "output_dir": "/home/user/output/models",
+  "validation_resolution": "1024x1024,1280x768",
+  "validation_guidance": 3.4,
+  "use_gradient_checkpointing": true,
+  "learning_rate": 1e-4
+}
+```
+
+- `pretrained_model_name_or_path` - Set this to `Kwai-Kolors/Kolors-diffusers`.
 - `MODEL_TYPE` - Set this to `lora`.
 - `USE_DORA` - Set this to `true` if you wish to train DoRA.
 - `MODEL_FAMILY` - Set this to `kolors`.
-- `MODEL_NAME` - Set this to `Kwai-Kolors/Kolors-diffusers`.
-- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `OUTPUT_DIR` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - Set this to `1024x1024` for this example.
   - Additionally, Kolors was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - Use whatever value you are comfortable with for testing at inference time. Set this between `4.2` to `6.4`.
@@ -120,7 +133,7 @@ There, you will need to modify the following variables:
 
 There are a few more if using a Mac M-series machine:
 
-- `MIXED_PRECISION` should be set to `no`.
+- `mixed_precision` should be set to `no`.
 - `USE_XFORMERS` should be set to `false`.
 
 #### Quantised model training
@@ -132,6 +145,18 @@ Inside your SimpleTuner venv:
 ```bash
 pip install optimum-quanto
 ```
+
+For `config.json`:
+
+```json
+{
+  "base_model_precision": "int8-quanto",
+  "text_encoder_1_precision": "no_change",
+  "optimizer": "adamw_bf16"
+}
+```
+
+For `config.env` users (deprecated):
 
 ```bash
 # choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
@@ -173,7 +198,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/kolors/pseudo-camera-10k",
-    "instance_data_dir": "datasets/pseudo-camera-10k",
+    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",
@@ -191,7 +216,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 ]
 ```
 
-Then, navigate to the `OUTPUT_DIR` directory and create a `datasets` directory:
+Then, create a `datasets` directory:
 
 ```bash
 mkdir -p datasets
@@ -202,7 +227,7 @@ This will download about 10k photograph samples to your `datasets/pseudo-camera-
 
 #### Login to WandB and Huggingface Hub
 
-You'll want to login to WandB and HF Hub before beginning training, especially if you're using `PUSH_TO_HUB=true` and `--report_to=wandb`.
+You'll want to login to WandB and HF Hub before beginning training, especially if you're using `push_to_hub: true` and `--report_to=wandb`.
 
 If you're going to be pushing items to a Git LFS repository manually, you should also run `git config --global credential.helper store`
 

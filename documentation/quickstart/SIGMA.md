@@ -109,7 +109,7 @@ There, you will need to modify the following variables:
 {
   "model_type": "full",
   "use_bitfit": false,
-  "model_name": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
+  "pretrained_model_name_or_path": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
   "model_family": "pixart_sigma",
   "output_dir": "/home/user/output/models",
   "validation_resolution": "1024x1024,1280x768",
@@ -117,11 +117,11 @@ There, you will need to modify the following variables:
 }
 ```
 
+- `pretrained_model_name_or_path` - Set this to `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS`.
 - `MODEL_TYPE` - Set this to `full`.
 - `USE_BITFIT` - Set this to `false`.
 - `MODEL_FAMILY` - Set this to `pixart_sigma`.
-- `MODEL_NAME` - Set this to `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS`.
-- `OUTPUT_DIR` - Set this to the directory where you want to store your outputs and datasets. It's recommended to use a full path here.
+- `OUTPUT_DIR` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `VALIDATION_RESOLUTION` - As PixArt Sigma comes in a 1024px or 2048xp model format, you should carefully set this to `1024x1024` for this example.
   - Additionally, PixArt was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768`
 - `VALIDATION_GUIDANCE` - PixArt benefits from a very-low value. Set this between `3.6` to `4.4`.

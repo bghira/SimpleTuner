@@ -157,7 +157,7 @@ SimpleTuner can submit messages to a Discord webhook:
 - Validations images, as they generate, grouped by prompt (ten at a time)
 - Most fatal errors
 
-To configure a Discord webhook, add `--webhook_config=webhook.json` to your env file:
+To configure a Discord webhook, add `--webhook_config=webhook.json` to your config file:
 
 ```bash
 "webhook_config": "webhook.json",
@@ -247,7 +247,7 @@ Here's a breakdown of what each environment variable does:
 - `seed`: You may set a numeric value here and it will make your training reproducible to that seed across all other given settings.
   - You may wish to set this to -1 so that your training is absolutely random, which prevents overfitting to a given seed.
 - `resume_from_checkpoint`: Specifies which checkpoint to resume from. "latest" will pick the most recent one.
-  - Do not set this value to a full pipeline. It will not work. To resume training a pipeline, use `MODEL_NAME` and provide an `/absolute/path`
+  - Do not set this value to a full pipeline. It will not work. To resume training a pipeline, use `pretrained_model_name_or_path` and provide an `/absolute/path`
 - `checkpointing_steps`: Frequency of checkpointing during training.
   - Too many checkpoints created can slow down training. However, it might be necessary on providers that could unexpectedly shut down or restart your environment.
 - `checkpoints_total_limit`: Maximum number of checkpoints to keep.
