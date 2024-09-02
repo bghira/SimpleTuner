@@ -674,8 +674,7 @@ def parse_cmdline_args(input_args=None):
         help=(
             "When using multiple data backends, the sampling weighting can be set to 'uniform' or 'auto-weighting'."
             " The default value is 'auto-weighting', which will automatically adjust the sampling weights based on the"
-            " number of images in each backend. 'uniform' will sample from each backend equally, which may be"
-            " more desirable for DreamBooth training with eg. ignore_epochs=True on your regularisation dataset."
+            " number of images in each backend. 'uniform' will sample from each backend equally."
         ),
     )
     parser.add_argument(
