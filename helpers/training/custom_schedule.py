@@ -527,7 +527,7 @@ def get_lr_scheduler(
 
         lr_scheduler = CosineAnnealingHardRestarts(
             optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps),
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_step=-1,
@@ -540,7 +540,7 @@ def get_lr_scheduler(
 
         lr_scheduler = Sine(
             optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps),
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_step=-1,
@@ -553,7 +553,7 @@ def get_lr_scheduler(
 
         lr_scheduler = Cosine(
             optimizer=optimizer,
-            T_0=int(args.lr_warmup_steps),
+            T_0=int(args.lr_warmup_steps * accelerator.num_processes),
             T_mult=int(1),
             eta_min=float(args.lr_end),
             last_step=-1,
@@ -566,8 +566,8 @@ def get_lr_scheduler(
         )
         lr_scheduler = get_polynomial_decay_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps,
-            num_training_steps=args.max_train_steps,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
             lr_end=args.lr_end,
             power=args.lr_power,
             last_epoch=StateTracker.get_global_step() - 1,
@@ -577,8 +577,8 @@ def get_lr_scheduler(
         lr_scheduler = get_scheduler(
             name=args.lr_scheduler,
             optimizer=optimizer,
-            num_warmup_steps=args.lr_warmup_steps,
-            num_training_steps=args.max_train_steps,
+            num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+            num_training_steps=args.max_train_steps * accelerator.num_processes,
             num_cycles=args.lr_num_cycles,
             power=args.lr_power,
         )
