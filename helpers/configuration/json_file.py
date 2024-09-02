@@ -22,7 +22,7 @@ def normalize_args(args_dict):
                 normalized_key = f"--{key}"
             else:
                 normalized_key = key
-        elif type(value) is bool and not value:
+        elif type(value) is bool and not value or value == "false":
             logger.warning(f"Skipping false argument: {key}")
             continue
         else:
