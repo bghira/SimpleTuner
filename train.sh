@@ -60,11 +60,11 @@ if [ -z "${ENV}" ]; then
     fi
 fi
 
-# if [ -z "${CONFIG_BACKEND}" ]; then
-#     if [ -n "${CONFIG_TYPE}" ]; then
-#         export CONFIG_BACKEND="${CONFIG_TYPE}"
-#     fi
-# fi
+if [ -z "${CONFIG_BACKEND}" ]; then
+    if [ -n "${CONFIG_TYPE}" ]; then
+        export CONFIG_BACKEND="${CONFIG_TYPE}"
+    fi
+fi
 
 if [ -z "${CONFIG_BACKEND}" ]; then
     export CONFIG_BACKEND="env"
