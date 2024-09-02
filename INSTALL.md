@@ -19,6 +19,8 @@ source .venv/bin/activate
 pip install -U poetry pip
 ```
 
+> ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config.env` file.
+
 **Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
 
 Depending on your system, you will run one of 3 commands:
