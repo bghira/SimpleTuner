@@ -646,7 +646,7 @@ def configure_env():
         == "y"
     )
     if quantization:
-        if env_contents["--use_dora"] == "true":
+        if env_contents.get("--use_dora") == "true":
             print("DoRA will be disabled for quantisation.")
             del env_contents["--use_dora"]
         quantization_type = None
