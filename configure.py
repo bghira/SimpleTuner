@@ -248,7 +248,7 @@ def configure_env():
         "--aspect_bucket_rounding": 2,
         "--seed": 42,
         "--minimum_image_size": 0,
-        "--benchmark_base_model": True,
+        "--disable_benchmark": False,
     }
     extra_args = []
 

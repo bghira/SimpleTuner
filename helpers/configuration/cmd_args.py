@@ -1217,8 +1217,16 @@ def parse_cmdline_args(input_args=None):
         action="store_true",
         default=False,
         help=(
-            "If set, before training, the base model images will be sampled via the same prompts and saved to the output directory."
-            " These samples will be stitched to each validation output."
+            "Deprecated option, benchmarks are now enabled by default. Use --disable_benchmark to disable."
+        ),
+    )
+    parser.add_argument(
+        "--disable_benchmark",
+        action="store_true",
+        default=False,
+        help=(
+            "By default, the model will be benchmarked on the first batch of the first epoch."
+            " This can be disabled with this option."
         ),
     )
     parser.add_argument(

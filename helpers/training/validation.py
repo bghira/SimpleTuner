@@ -1281,7 +1281,7 @@ class Validation:
                     validation_image_results = self.stitch_conditioning_images(
                         validation_image_results, extra_validation_kwargs["image"]
                     )
-                elif self.args.benchmark_base_model and self.benchmark_exists(
+                elif not self.args.disable_benchmark and self.benchmark_exists(
                     "base_model"
                 ):
                     benchmark_image = self._benchmark_image(

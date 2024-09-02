@@ -65,6 +65,7 @@ env_to_args_map = {
     "AWS_MAX_POOL_CONNECTIONS": "--aws_max_pool_connections",
     "TORCH_NUM_THREADS": "--torch_num_threads",
     "IMAGE_PROCESSING_BATCH_SIZE": "--image_processing_batch_size",
+    "DISABLE_BENCHMARK": "--disable_benchmark",
 }
 
 import os

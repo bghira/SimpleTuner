@@ -38,5 +38,5 @@
     "--lr_scheduler": "polynomial",
     "--lr_warmup_steps": 100,
     "--validation_torch_compile": "false",
-    "--benchmark_base_model": "true"
+    "--disable_benchmark": "false"
 }

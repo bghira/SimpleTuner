@@ -1191,7 +1191,7 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_benchmark_base_model(self):
-        if not self.config.benchmark_base_model or self.validation.benchmark_exists(
+        if self.config.disable_benchmark or self.validation.benchmark_exists(
             "base_model"
         ):
             # if we've disabled it or the benchmark exists, we will not do it again.
