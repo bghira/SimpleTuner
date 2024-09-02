@@ -88,11 +88,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             float(backend["probability"]) if backend["probability"] else 1.0
         )
     if "ignore_epochs" in backend:
-        output["config"]["ignore_epochs"] = backend["ignore_epochs"]
-        if backend["ignore_epochs"]:
-            logger.error(
-                "ignore_epochs is true. This is a deprecated configuration, and will result in unexpected behaviour. This option will be removed in a future release."
-            )
+        logger.error(
+            "ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration."
+        )
     if "repeats" in backend:
         output["config"]["repeats"] = (
             int(backend["repeats"]) if backend["repeats"] else 0
@@ -1292,14 +1290,7 @@ def random_dataloader_iterator(step, backends: dict):
             StateTracker.backend_exhausted(chosen_backend_id)
             StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
         finally:
-            if not backends or all(
-                [
-                    StateTracker.get_data_backend_config(backend_id).get(
-                        "ignore_epochs", False
-                    )
-                    for backend_id in backends
-                ]
-            ):
+            if not backends:
                 logger.debug(
                     "All dataloaders exhausted. Moving to next epoch in main training loop."
                 )
