@@ -2,7 +2,7 @@
 
 > ⚠️ **Warning**: The scripts in this repository have the potential to damage your training data. Always maintain backups before proceeding.
 
-**SimpleTuner** is a repository dedicated to a set of experimental scripts designed for training optimization. The project is geared towards simplicity, with a focus on making the code easy to read and understand. This codebase serves as a shared academic exercise, and contributions are welcome.
+**SimpleTuner** is geared towards simplicity, with a focus on making the code easily understood. This codebase serves as a shared academic exercise, and contributions are welcome.
 
 ## Table of Contents
 
@@ -58,37 +58,27 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 
 ### Flux.1
 
-Preliminary training support for Flux.1 is included:
+Full training support for Flux.1 is included:
 
-- Low loss training using optimised approach
-  - Preserve the dev model's distillation qualities
-  - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed.
-- LoRA or full tuning via DeepSpeed ZeRO
-- ControlNet training is not yet supported
-- Train either Schnell or Dev models
+- Classifier-free guidance training
+  - Leave it disabled and preserve the dev model's distillation qualities
+  - Or, reintroduce CFG to the model and improve its creativity at the cost of inference speed and training time.
+- (optional) T5 attention masked training for superior fine details and generalisation capabilities
+- LoRA or full tuning via DeepSpeed ZeRO on a single GPU
 - Quantise the base model using `--base_model_precision` to `int8-quanto` or `fp8-quanto` for major memory savings
 
 See [hardware requirements](#flux1-dev-schnell) or the [quickstart guide](/documentation/quickstart/FLUX.md).
 
 ### PixArt Sigma
 
-SimpleTuner has extensive training integration with PixArt Sigma - both the 600M & 900M models load without any fuss.
+SimpleTuner has extensive training integration with PixArt Sigma - both the 600M & 900M models load without modification.
 
 - Text encoder training is not supported, as T5 is enormous.
-- LoRA and full tuning both work as expected
+- LyCORIS and full tuning both work as expected
 - ControlNet training is not yet supported
 - [Two-stage PixArt](https://huggingface.co/ptx0/pixart-900m-1024-ft-v0.7-stage1) training support (see: [MIXTURE_OF_EXPERTS](/documentation/MIXTURE_OF_EXPERTS.md))
 
 See the [PixArt Quickstart](/documentation/quickstart/SIGMA.md) guide to start training.
-
-### Stable Diffusion 2.0 & 2.1
-
-Stable Diffusion 2.1 is known for difficulty during fine-tuning, but this doesn't have to be the case. Related features in SimpleTuner include:
-
-- Training only the text encoder's later layers
-- Enforced zero SNR on the terminal timestep instead of offset noise for clearer images.
-- The use of EMA (exponential moving average) during training to ensure we do not "fry" the model.
-- The ability to train on multiple datasets with different base resolutions in each, eg. 512px and 768px images simultaneously
 
 ### Stable Diffusion 3
 
@@ -105,20 +95,29 @@ An SDXL-based model with ChatGLM (General Language Model) 6B as its text encoder
 
 Kolors support is almost as deep as SDXL, minus ControlNet training support.
 
+### Legacy Stable Diffusion models
+
+RunwayML's SD 1.5 and StabilityAI's SD 2.x are both trainable under the `legacy` designation.
+
 ---
 
 ## Hardware Requirements
 
-EMA (exponential moving average) weights are a memory-heavy affair, but provide fantastic results at the end of training. Options like `--ema_cpu_only` can improve this situation by loading EMA weights onto the CPU and then keeping them there.
+### NVIDIA
 
-Without EMA, more care must be taken not to drastically change the model leading to "catastrophic forgetting" through the use of regularisation data.
+Pretty much anything 3090 and up is a safe bet. YMMV.
 
-### GPU vendors
+### AMD
 
-- NVIDIA - pretty much anything 3090 and up is a safe bet. YMMV.
-- AMD - SDXL LoRA and UNet are verified working on a 7900 XTX 24GB. Lacking `xformers`, it will likely use more memory than Nvidia equivalents
-- Apple - LoRA and full u-net tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
+LoRA and full-rank tuning are verified working on a 7900 XTX 24GB and MI300X.
+
+Lacking `xformers`, it will use more memory than Nvidia equivalent hardware.
+
+### Apple
+
+LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taking about **12G** of "Wired" memory and **4G** of system memory for SDXL.
   - You likely need a 24G or greater machine for machine learning with M-series hardware due to the lack of memory-efficient attention.
+  - Subscribing to Pytorch issues for MPS is probably a good idea, as random bugs will make training stop working.
 
 ### Flux.1 [dev, schnell]
 
@@ -139,9 +138,8 @@ Flux prefers being trained with multiple large GPUs but a single 16G card should
 
 ### Stable Diffusion 2.x, 768px
 
-- A100-40, A40, A6000 or better (EMA, 1024px training)
-- NVIDIA RTX 4090 or better (24G, no EMA)
-- NVIDIA RTX 4080 or better (LoRA only)
+- 16G or better
+
 
 ## Toolkit
 
@@ -153,9 +151,9 @@ Detailed setup information is available in the [installation documentation](/INS
 
 ## Troubleshooting
 
-Enable debug logs for a more detailed insight by adding `export SIMPLETUNER_LOG_LEVEL=DEBUG` to your environment file.
+Enable debug logs for a more detailed insight by adding `export SIMPLETUNER_LOG_LEVEL=DEBUG` to your environment (`config/config.env`) file.
 
-For performance analysis of the training loop, setting `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` will have timestamps that hilight any issues in your configuration.
+For performance analysis of the training loop, setting `SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL=DEBUG` will have timestamps that highlight any issues in your configuration.
 
 For a comprehensive list of options available, consult [this documentation](/OPTIONS.md).
 

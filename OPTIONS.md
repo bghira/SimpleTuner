@@ -4,14 +4,24 @@
 
 This guide provides a user-friendly breakdown of the command-line options available in SimpleTuner's `train.py` script. These options offer a high degree of customization, allowing you to train your model to suit your specific requirements.
 
+### JSON Configuration file format
+
+The JSON filename expected is `config.json` and the key names are the same as the below `--arguments`. The leading `--` is not required for the JSON file, but it can be left in as well.
+
+### Easy configure script (***RECOMMENDED***)
+
+The script `configure.py` in the project root can be used via `python configure.py` to set up a `config.json` file with mostly-ideal default settings.
+
 ---
 
 ## 🌟 Core Model Configuration
 
 ### `--model_type`
 
-- **What**: Choices: lora, full, deepfloyd, deepfloyd-lora, deepfloyd-stage2, deepfloyd-stage2-lora. Default: lora
-- **Why**: Select whether a LoRA or full fine-tune are created. LoRA only supported for SDXL.
+- **What**: Select whether a LoRA or full fine-tune are created.
+- **Choices**: lora, full.
+- **Default**: lora
+  - If lora is used, `--lora_type` dictates whether PEFT or LyCORIS are in use. Some models (PixArt) work only with LyCORIS adapters.
 
 ## `--model_family`
 
@@ -20,12 +30,12 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 ### `--pretrained_model_name_or_path`
 
-- **What**: Path to the pretrained model or its identifier from huggingface.co/models.
+- **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
 - **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository.
 
 ### `--pretrained_t5_model_name_or_path`
 
-- **What**: Path to the pretrained T5 model or its identifier from huggingface.co/models.
+- **What**: Path to the pretrained T5 model or its identifier from https://huggingface.co/models.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
 ### `--hub_model_id`
@@ -42,6 +52,10 @@ This guide provides a user-friendly breakdown of the command-line options availa
 ### `--refiner_training`
 
 - **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+
+### `--disable_benchmark`
+
+- **What**: Disable the startup validation/benchmark that occurs at step 0 on the base model. These outputs are stitchd to the left side of your trained model validation images.
 
 ## 📂 Data Storage and Management
 
@@ -75,6 +89,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 - **What**: Retrieve batches ahead-of-time.
 - **Why**: Especially when using large batch sizes, training will "pause" while samples are retrieved from disk (even NVMe), impacting GPU utilisation metrics. Enabling dataloader prefetch will keep a buffer full of entire batches, so that they can be loaded instantly.
 
+> ⚠️ This is really only relevant for H100 or better at a low resolution where I/O becomes the bottleneck. For most other use cases, it is an unnecessary complexity.
+
 ### `--dataloader_prefetch_qlen`
 
 - **What**: Increase or reduce the number of batches held in memory.
@@ -97,14 +113,19 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 - **What**: This tells SimpleTuner whether to use `area` size calculations or `pixel` edge calculations. A hybrid approach of `pixel_area` is also supported, which allows using pixel instead of megapixel for `area` measurements.
 - **Options**: 
-  - `resolution_type=pixel` - All images in the dataset will have their smaller edge resized to this resolution for training, which could result in a lot of VRAM use due to the size of the resulting images.
-  - `resolution_type=area` - It is recommended use a value of 1.0 if also using `--resolution_type=area`.
-  - `resolution_type=pixel_area` - A `resolution` value of 1024 will be internally mapped to an accurate area measurement for efficient aspect bucketing.
+  - `resolution_type=pixel_area`
+    - A `resolution` value of 1024 will be internally mapped to an accurate area measurement for efficient aspect bucketing.
+    - Example resulting sizes for `1024`: 1024x1024, 1216x832, 832x1216
+  - `resolution_type=pixel`
+    - All images in the dataset will have their smaller edge resized to this resolution for training, which could result in a lot of VRAM use due to the size of the resulting images.
+    - Example resulting sizes for `1024`: 1024x1024, 1766x1024, 1024x1766
+  - `resolution_type=area`
+    - An internal option that isn't user-friendly. Use `pixel_area` instead.
 
 ### `--resolution`
 
-- **What**: Input image resolution. Can be expressed as pixels, or megapixels, depending on what your selected value for `resolution_type` is.
-- **Default**: Using `resolution_type=pixel_area` with `resolution=1024`. When `resolution_type=area` instead, you will have to supply a megapixel value, such as `1.05`.
+- **What**: Input image resolution expressed in pixel edge length
+- **Default**: 1024
 
 ### `--validation_resolution`
 

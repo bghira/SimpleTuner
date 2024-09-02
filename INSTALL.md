@@ -19,7 +19,7 @@ source .venv/bin/activate
 pip install -U poetry pip
 ```
 
-> ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config.env` file.
+> ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config/config.env` file.
 
 **Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
 
@@ -43,15 +43,15 @@ The following must be executed for an AMD MI300X to be useable:
 ```bash
 apt install amd-smi-lib
 pushd /opt/rocm/share/amd_smi
-python3 -m pip install --upgrade pip
-python3 -m pip install .
+  python3 -m pip install --upgrade pip
+  python3 -m pip install .
 popd
 ```
 
 ### All platforms
 
-2a. **Option One**: Run `configure.py`
-2b. **Option Two**: Copy `config/config.json.example` to `config/config.json` and then fill in the details.
+- 2a. **Option One (Recommended)**: Run `configure.py`
+- 2b. **Option Two**: Copy `config/config.json.example` to `config/config.json` and then fill in the details.
 
 #### Multiple GPU training
 
@@ -61,6 +61,7 @@ popd
 TRAINING_NUM_PROCESSES=1
 TRAINING_NUM_MACHINES=1
 TRAINING_DYNAMO_BACKEND='no'
+# this is auto-detected, and not necessary. but can be set explicitly.
 CONFIG_BACKEND='json'
 ```
 
@@ -76,6 +77,9 @@ Follow the instructions that are printed, to locate your API key and configure i
 
 Once that is done, any of your training sessions and validation data will be available on Weights & Biases.
 
+> ℹ️ If you would like to disable Weights & Biases or Tensorboard reporting entirely, use `--report-to=none`
+
+
 4. Launch the `train.sh` script; logs will be written to `debug.log`
 
 ```bash
@@ -86,7 +90,11 @@ Once that is done, any of your training sessions and validation data will be ava
 
 ### Run unit tests
 
-To run unit tests to ensure that installation has completed successfully, execute the command `poetry run python -m unittest discover tests/`.
+To run unit tests to ensure that installation has completed successfully:
+
+```bash
+poetry run python -m unittest discover tests/
+```
 
 ## Advanced: Multiple configuration environments
 

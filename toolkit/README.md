@@ -12,6 +12,7 @@ A variety of caption options are provided:
 * `caption_with_cogvlm.py` - If you want CogVLM captioning, use this - though there's some potentially erratic results from Cog where it might repeat words.
 * `caption_with_gemini.py` - Set `GEMINI_API_KEY` in your environment from one obtained via [Google AI](https://ai.google.dev) and you can caption images for free using Gemini Pro Vision.
 * `caption_with_llava.py` - Use Llava 1.5 or 1.6 and run pretty much the same way the CogVLM script does, albeit in a different style.
+* `caption_with_internvl.py` - Uses InternVL2 by default to caption images direclty into parquet tables for use by SimpleTuner.
 
 
 #### Datasets
