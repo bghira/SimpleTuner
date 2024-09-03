@@ -995,7 +995,7 @@ class Trainer:
                     self.config.num_update_steps_per_epoch
                 )
             if hasattr(lr_scheduler, "last_step"):
-                lr_scheduler.last_step = self.global_resume_step
+                lr_scheduler.last_step = self.state.get("global_resume_step", 0)
 
         return lr_scheduler
 
@@ -1029,7 +1029,7 @@ class Trainer:
                 self.config,
                 self.accelerator,
                 parameters=(
-                    self.self.unet.parameters()
+                    self.unet.parameters()
                     if self.unet is not None
                     else self.transformer.parameters()
                 ),
@@ -1207,21 +1207,6 @@ class Trainer:
         )
         if is_lr_scheduler_disabled(self.config.optimizer):
             self.optimizer.eval()
-        if not self.config.is_quantized:
-            if self.unet is not None and self.unet.device != self.accelerator.device:
-                logger.info(f"Moving Unet to GPU. (dtype={self.unet.dtype})")
-                self.unet.to(self.accelerator.device)
-            if (
-                self.transformer is not None
-                and self.transformer.device != self.accelerator.device
-            ):
-                self.transformer.to(self.accelerator.device)
-        if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
-            self.accelerator._lycoris_wrapped_network = (
-                self.accelerator._lycoris_wrapped_network.to(
-                    self.accelerator.device, dtype=self.config.weight_dtype
-                )
-            )
         # we'll run validation on base model if it hasn't already.
         self.validation.run_validations(validation_type="base_model", step=0)
         self.validation.save_benchmark("base_model")
@@ -1501,7 +1486,6 @@ class Trainer:
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
     def train(self):
-        self.move_models(destination="accelerator")
         self.init_trackers()
         self._train_initial_msg()
 

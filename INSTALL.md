@@ -53,6 +53,8 @@ popd
 - 2a. **Option One (Recommended)**: Run `configure.py`
 - 2b. **Option Two**: Copy `config/config.json.example` to `config/config.json` and then fill in the details.
 
+> ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
 #### Multiple GPU training
 
 **Note**: For MultiGPU setup, you will have to set all of these variables in `config/config.env`

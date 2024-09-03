@@ -107,6 +107,9 @@ To run it:
 python configure.py
 ```
 
+> ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
+
 If you prefer to manually configure:
 
 Copy `config/config.json.example` to `config/config.json`:

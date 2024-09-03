@@ -20,6 +20,9 @@ These steps can be followed to the best of your abilities here. If you face any 
   - Use `configure.py` instead if you would prefer an interactive configurator.
 4. Run the [train.sh](/train.sh) script.
 
+> ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
+
 ## Hardware Requirements
 
 Ensure your hardware meets the requirements for the resolution and batch size you plan to use. High-end GPUs with more than 24G VRAM are generally recommended. For LoRA, 24G is more than enough - you can get by with a 12G or 16G GPU. More is better, but there's a threshold of diminishing returns around 24G for LoRAs on smaller models (eg. not Flux)

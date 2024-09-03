@@ -79,6 +79,15 @@ if [ -z "${CONFIG_BACKEND}" ]; then
     echo "Using ${CONFIG_BACKEND} backend: ${CONFIG_PATH}.${CONFIG_BACKEND}"
 fi
 
+# Update dependencies
+if [ -z "${DISABLE_UPDATES}" ]; then
+    echo 'Updating dependencies. Set DISABLE_UPDATES to prevent this.'
+    if [ -f "pyproject.toml" ] && [ -f "poetry.lock" ]; then
+        nvidia-smi 2> /dev/null && poetry install
+        uname -s | grep -q Darwin && poetry install -C install/apple
+        rocm-smi 2> /dev/null && poetry install -C install/rocm
+    fi
+fi
 # Run the training script.
 accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}" --num_processes="${TRAINING_NUM_PROCESSES}" --num_machines="${TRAINING_NUM_MACHINES}" --dynamo_backend="${TRAINING_DYNAMO_BACKEND}" train.py
 
