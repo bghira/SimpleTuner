@@ -640,8 +640,8 @@ def configure_env():
 
     quantization = (
         prompt_user(
-            f"Would you like to enable model quantization? {'NOTE: Currently, a bug prevents multi-GPU training with LoRA' if use_lora else ''}. (y/n)",
-            "n",
+            f"Would you like to enable model quantization? {'NOTE: Currently, a bug prevents multi-GPU training with LoRA' if use_lora else ''}. ([y]/n)",
+            "y",
         ).lower()
         == "y"
     )
@@ -656,7 +656,7 @@ def configure_env():
             if quantization_type:
                 print(f"Invalid quantization type: {quantization_type}")
             quantization_type = prompt_user(
-                f"Choose quantization type (Options: {'/'.join(quantised_precision_levels)})",
+                f"Choose quantization type. int4 may only work on A100, H100, or Apple systems. (Options: {'/'.join(quantised_precision_levels)})",
                 "int8-quanto",
             )
         env_contents["--base_model_precision"] = quantization_type

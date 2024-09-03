@@ -124,7 +124,7 @@ LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taki
 - A100-80G (Full tune with DeepSpeed)
 - A100-40G (LoRA, LoKr)
 - 3090 24G (LoRA, LoKr)
-- 3080 16G (int4, LoRA, LoKr)
+- 4060 Ti, 3080 16G (int8, LoRA, LoKr)
 
 Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation of the transformer and text encoders.
 

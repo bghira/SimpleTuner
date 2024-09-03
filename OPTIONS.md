@@ -12,6 +12,8 @@ The JSON filename expected is `config.json` and the key names are the same as th
 
 The script `configure.py` in the project root can be used via `python configure.py` to set up a `config.json` file with mostly-ideal default settings.
 
+> ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
 ---
 
 ## 🌟 Core Model Configuration
