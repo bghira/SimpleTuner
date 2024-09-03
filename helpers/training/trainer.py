@@ -240,6 +240,9 @@ class Trainer:
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
         StateTracker.set_global_step(self.state["global_step"])
+        self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = (
+            prepare_model_for_deepspeed(self.accelerator, self.config)
+        )
 
     def set_model_family(self, model_family: str = None):
         model_family = getattr(self.config, "model_family", model_family)
@@ -900,9 +903,6 @@ class Trainer:
     def init_optimizer(self):
         logger.info(f"Learning rate: {self.config.learning_rate}")
         extra_optimizer_args = {"lr": self.config.learning_rate}
-        self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = (
-            prepare_model_for_deepspeed(self.accelerator, self.config)
-        )
         # Initialize the optimizer
         optimizer_args_from_config, optimizer_class = (
             determine_optimizer_class_with_config(
