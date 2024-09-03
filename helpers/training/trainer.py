@@ -995,7 +995,7 @@ class Trainer:
                     self.config.num_update_steps_per_epoch
                 )
             if hasattr(lr_scheduler, "last_step"):
-                lr_scheduler.last_step = self.global_resume_step
+                lr_scheduler.last_step = self.state.get("global_resume_step", 0)
 
         return lr_scheduler
 
