@@ -1203,7 +1203,7 @@ class Trainer:
             # on deepspeed, every process has to enter. otherwise, only the main process does.
             return
         logger.info(
-            f"Benchmarking base model for comparison. Set DISABLE_BENCHMARK=true to disable this behaviour."
+            f"Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour."
         )
         if is_lr_scheduler_disabled(self.config.optimizer):
             self.optimizer.eval()
