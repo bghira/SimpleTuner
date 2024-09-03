@@ -41,6 +41,7 @@ if __name__ == "__main__":
         trainer.init_trainable_peft_adapter()
         trainer.init_ema_model()
 
+        trainer.move_models(destination="accelerator")
         trainer.init_validations()
         trainer.init_benchmark_base_model()
 
