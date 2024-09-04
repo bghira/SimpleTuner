@@ -210,6 +210,15 @@ def parse_cmdline_args(input_args=None):
         help="Use attention masking while training flux.",
     )
     parser.add_argument(
+        "--t5_padding",
+        choices=["zero", "unmodified"],
+        default="unmodified",
+        help=(
+            "The padding behaviour for Flux. The default is 'zero', which will pad the input with zeros."
+            " The alternative is 'unmodified', which will not pad the input."
+        ),
+    )
+    parser.add_argument(
         "--smoldit",
         action="store_true",
         default=False,

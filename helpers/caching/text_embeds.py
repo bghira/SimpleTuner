@@ -28,7 +28,7 @@ def _encode_sd3_prompt_with_t5(
     prompt=None,
     num_images_per_prompt=1,
     device=None,
-    return_masked_embed: bool = True,
+    zero_padding_tokens: bool = True,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
     batch_size = len(prompt)
@@ -54,7 +54,7 @@ def _encode_sd3_prompt_with_t5(
     prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
     attention_mask = text_inputs.attention_mask.to(device)
 
-    if return_masked_embed:
+    if zero_padding_tokens:
         # for some reason, SAI's reference code doesn't bother to mask the prompt embeddings.
         # this can lead to a problem where the model fails to represent short and long prompts equally well.
         # additionally, the model learns the bias of the prompt embeds' noise.
@@ -255,7 +255,7 @@ class TextEmbeddingCache:
         tokenizers,
         prompt: str,
         is_validation: bool = False,
-        return_masked_embed: bool = True,
+        zero_padding_tokens: bool = True,
     ):
         """
         Encode a prompt for a Flux model.
@@ -288,6 +288,11 @@ class TextEmbeddingCache:
             device=self.accelerator.device,
             max_sequence_length=StateTracker.get_args().tokenizer_max_length,
         )
+        if zero_padding_tokens:
+            # we can zero the padding tokens if we're just going to mask them later anyway.
+            prompt_embeds = prompt_embeds * masks.unsqueeze(-1).expand(
+                prompt_embeds.shape
+            )
 
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
@@ -298,7 +303,7 @@ class TextEmbeddingCache:
         tokenizers,
         prompt: str,
         is_validation: bool = False,
-        return_masked_embed: bool = True,
+        zero_padding_tokens: bool = True,
     ):
         """
         Encode a prompt for an SD3 model.
@@ -341,7 +346,7 @@ class TextEmbeddingCache:
             prompt=prompt,
             num_images_per_prompt=num_images_per_prompt,
             device=self.accelerator.device,
-            return_masked_embed=return_masked_embed,
+            zero_padding_tokens=zero_padding_tokens,
         )
 
         clip_prompt_embeds = torch.nn.functional.pad(
@@ -494,7 +499,7 @@ class TextEmbeddingCache:
                 self.tokenizers,
                 prompt,
                 is_validation,
-                return_masked_embed=(
+                zero_padding_tokens=(
                     True
                     if StateTracker.get_args().sd3_t5_mask_behaviour == "mask"
                     else False
@@ -1021,6 +1026,8 @@ class TextEmbeddingCache:
                             self.tokenizers,
                             [prompt],
                             is_validation,
+                            zero_padding_tokens=StateTracker.get_args().t5_padding
+                            == "zero",
                         )
                     )
                     logger.debug(
