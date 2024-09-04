@@ -290,9 +290,9 @@ class TextEmbeddingCache:
         )
         if zero_padding_tokens:
             # we can zero the padding tokens if we're just going to mask them later anyway.
-            prompt_embeds = prompt_embeds * masks.unsqueeze(-1).expand(
-                prompt_embeds.shape
-            )
+            prompt_embeds = prompt_embeds * masks.to(
+                device=prompt_embeds.device
+            ).unsqueeze(-1).expand(prompt_embeds.shape)
 
         return prompt_embeds, pooled_prompt_embeds, time_ids, masks
 
