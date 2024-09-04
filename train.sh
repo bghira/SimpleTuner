@@ -58,7 +58,7 @@ if [ -z "${ENV}" ]; then
 fi
 export ENV_PATH=""
 if [[ "$ENV" != "default" ]]; then
-    export ENV_PATH = "${ENV}/"
+    export ENV_PATH="${ENV}/"
 fi
 
 if [ -z "${CONFIG_BACKEND}" ]; then
