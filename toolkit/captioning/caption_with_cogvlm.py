@@ -120,11 +120,11 @@ def load_filter_list(filter_list_path):
 
 
 def eval_image(
-        image: Image.Image,
-        model,
-        tokenizer,
-        torch_dtype,
-        query: str,
+    image: Image.Image,
+    model,
+    tokenizer,
+    torch_dtype,
+    query: str,
 ):
     inputs = model.build_conversation_input_ids(
         tokenizer, query=query, history=[], images=[image]
@@ -183,18 +183,18 @@ def content_to_filename(content, filter_terms, disable_filename_cleaning: bool =
 
 
 def process_directory(
-        args,
-        image_dir,
-        output_dir,
-        model,
-        tokenizer,
-        processed_files,
-        caption_strategy,
-        save_interval,
-        progress_file,
-        filter_terms,
-        torch_dtype,
-        query_str: str,
+    args,
+    image_dir,
+    output_dir,
+    model,
+    tokenizer,
+    processed_files,
+    caption_strategy,
+    save_interval,
+    progress_file,
+    filter_terms,
+    torch_dtype,
+    query_str: str,
 ):
     processed_file_counter = 0
     bucket_name = None
@@ -234,12 +234,12 @@ def process_directory(
         )
 
     for filename in tqdm(
-            os.listdir(image_dir),
-            desc=f"Processing directory {image_dir}",
-            unit="images",
-            leave=True,
-            position=0,
-            mininterval=0.5,
+        os.listdir(image_dir),
+        desc=f"Processing directory {image_dir}",
+        unit="images",
+        leave=True,
+        position=0,
+        mininterval=0.5,
     ):
         full_filepath = os.path.join(image_dir, filename)
         if os.path.isdir(full_filepath):
@@ -353,10 +353,10 @@ def main():
         )
     elif "cogvlm2" in args.model_path:
         import sysconfig
-        print(sysconfig.get_paths()['include'])
+
+        print(sysconfig.get_paths()["include"])
         tokenizer = AutoTokenizer.from_pretrained(
-            args.model_path,
-            trust_remote_code=True
+            args.model_path, trust_remote_code=True
         )
     else:
         tokenizer = LlamaTokenizer.from_pretrained("lmsys/vicuna-7b-v1.5")
