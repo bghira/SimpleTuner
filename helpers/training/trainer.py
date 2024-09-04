@@ -54,7 +54,9 @@ from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.smoldit import get_resize_crop_region_for_grid
 
-logger = get_logger(__name__, log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger = get_logger(
+    "SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+)
 
 filelock_logger = get_logger("filelock")
 connection_logger = get_logger("urllib3.connectionpool")
@@ -1045,7 +1047,7 @@ class Trainer:
     def init_hooks(self):
         from helpers.training.save_hooks import SaveHookManager
 
-        model_hooks = SaveHookManager(
+        self.model_hooks = SaveHookManager(
             args=self.config,
             unet=self.unet,
             transformer=self.transformer,
@@ -1055,11 +1057,12 @@ class Trainer:
             text_encoder_2=self.text_encoder_2,
             use_deepspeed_optimizer=self.config.use_deepspeed_optimizer,
         )
-        self.accelerator.register_save_state_pre_hook(model_hooks.save_model_hook)
-        self.accelerator.register_load_state_pre_hook(model_hooks.load_model_hook)
+        self.accelerator.register_save_state_pre_hook(self.model_hooks.save_model_hook)
+        self.accelerator.register_load_state_pre_hook(self.model_hooks.load_model_hook)
 
     def init_prepare_models(self, lr_scheduler):
         # Prepare everything with our `accelerator`.
+        logger.info("Preparing models..")
 
         # TODO: Is this still needed? Seems like a hack job from January 2024.
         self.train_dataloaders = []
@@ -1342,9 +1345,9 @@ class Trainer:
         self.init_optimizer()
         lr_scheduler = self.init_lr_scheduler()
         self.init_hooks()
+        self.init_prepare_models(lr_scheduler=lr_scheduler)
         lr_scheduler = self.init_resume_checkpoint(lr_scheduler=lr_scheduler)
         self.init_post_load_freeze()
-        self.init_prepare_models(lr_scheduler=lr_scheduler)
 
     def move_models(self, destination: str = "accelerator"):
         target_device = "cpu"

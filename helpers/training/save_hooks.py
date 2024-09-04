@@ -476,7 +476,6 @@ class SaveHookManager:
             logger.warning(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"
             )
-
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":

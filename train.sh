@@ -19,6 +19,7 @@ if [ -z "${DISABLE_LD_OVERRIDE}" ]; then
         export LD_LIBRARY_PATH="${NVJITLINK_PATH}:${LD_LIBRARY_PATH}"
     fi
 fi
+
 export TOKENIZERS_PARALLELISM=false
 export PLATFORM
 PLATFORM=$(uname -s)
@@ -54,10 +55,10 @@ fi
 if [ -z "${ENV}" ]; then
     printf "ENV not set, defaulting to default.\n"
     export ENV="default"
-    export ENV_PATH=""
-    if [[ "$ENV" != "default" ]]; then
-        export ENV_PATH = "${ENV}/"
-    fi
+fi
+export ENV_PATH=""
+if [[ "$ENV" != "default" ]]; then
+    export ENV_PATH="${ENV}/"
 fi
 
 if [ -z "${CONFIG_BACKEND}" ]; then
