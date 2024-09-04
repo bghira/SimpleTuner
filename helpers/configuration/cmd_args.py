@@ -1917,7 +1917,6 @@ def parse_cmdline_args(input_args=None):
         raise ValueError(
             f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
-    print(f"optimizer: {optimizer_details}")
 
     if torch.backends.mps.is_available():
         if (
