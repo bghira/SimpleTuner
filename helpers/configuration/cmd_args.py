@@ -210,6 +210,15 @@ def parse_cmdline_args(input_args=None):
         help="Use attention masking while training flux.",
     )
     parser.add_argument(
+        "--t5_padding",
+        choices=["zero", "unmodified"],
+        default="unmodified",
+        help=(
+            "The padding behaviour for Flux. The default is 'zero', which will pad the input with zeros."
+            " The alternative is 'unmodified', which will not pad the input."
+        ),
+    )
+    parser.add_argument(
         "--smoldit",
         action="store_true",
         default=False,
@@ -1908,7 +1917,6 @@ def parse_cmdline_args(input_args=None):
         raise ValueError(
             f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
-    print(f"optimizer: {optimizer_details}")
 
     if torch.backends.mps.is_available():
         if (

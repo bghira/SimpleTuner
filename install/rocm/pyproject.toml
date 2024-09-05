@@ -9,12 +9,12 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = {version = "^2.3", source = "pytorch-rocm"}
+torch = "^2.4.1"
 torchaudio = {version = "*", source = "pytorch-rocm"}
 torchmetrics = {version = "^1", source = "pytorch-rocm"}
 torchvision = {version = "*", source = "pytorch-rocm"}
 pytorch-triton-rocm = {version = "*", source = "pytorch-rocm"}
-accelerate = "^0.33.0"
+accelerate = "^0.34.0"
 boto3 = "^1"
 botocore = "^1"
 clip-interrogator = "^0.6"
@@ -35,11 +35,11 @@ prodigyopt = "^1"
 requests = "^2"
 safetensors = "^0.4"
 scipy = "^1"
-tensorboard = "^2"
+tensorboard = "^2.17.1"
 torchsde = "^0.2"
 transformers = "^4"
 urllib3 = "<1.27"
-wandb = "^0.16"
+wandb = "^0.17.8"
 sentencepiece = "^0.2.0"
 optimum-quanto = {git = "https://github.com/bghira/optimum-quanto-simpletuner", rev = "simpletuner/lora-resume"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}

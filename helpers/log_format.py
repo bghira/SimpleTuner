@@ -32,7 +32,7 @@ console_handler.setLevel(
     logging.INFO
 )  # Change to ERROR if you want to suppress INFO messages too
 console_handler.setFormatter(
-    ColorizedFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s")
+    ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s")
 )
 
 # blank out the existing debug.log, if exists

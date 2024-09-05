@@ -304,10 +304,10 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             removed_text = self.tokenizer.batch_decode(
                 untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
             )
-            logger.warning(
-                "The following part of your input was truncated because CLIP can only handle sequences up to"
-                f" {self.tokenizer_max_length} tokens: {removed_text}"
-            )
+            # logger.warning(
+            #     "The following part of your input was truncated because CLIP can only handle sequences up to"
+            #     f" {self.tokenizer_max_length} tokens: {removed_text}"
+            # )
         prompt_embeds = self.text_encoder(
             text_input_ids.to(device), output_hidden_states=False
         )
