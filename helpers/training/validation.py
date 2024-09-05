@@ -1333,7 +1333,15 @@ class Validation:
 
     def _log_validations_to_trackers(self, validation_images):
         for tracker in self.accelerator.trackers:
-            if tracker.name == "wandb":
+            if tracker.name == "comet_ml":
+                experiment = self.accelerator.get_tracker("comet_ml").tracker
+                for shortname, image_list in validation_images.items():
+                    for idx, image in enumerate(image_list):
+                        experiment.log_image(
+                            image,
+                            name=f"{shortname} - {self.validation_resolutions[idx]}",
+                        )
+            elif tracker.name == "wandb":
                 resolution_list = [
                     f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
                 ]
