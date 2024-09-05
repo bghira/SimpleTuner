@@ -3,8 +3,13 @@ import json
 import logging
 
 # Set up logging
+from helpers.training.multi_process import _get_rank
+
 logger = logging.getLogger("SimpleTuner")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if _get_rank() > 0:
+    logger.setLevel(logging.WARNING)
+else:
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def normalize_args(args_dict):
