@@ -50,6 +50,7 @@ from helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
+from helpers.training.peft_init import init_lokr_network_with_perturbed_standard
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.smoldit import get_resize_crop_region_for_grid
@@ -794,6 +795,12 @@ class Trainer:
                     **self.lycoris_config,
                 )
 
+                if self.config.init_lycoris_lokr_perturbed_normal is not None:
+                    init_lokr_network_with_perturbed_standard(
+                        self.lycoris_wrapped_network,
+                        scale=self.config.init_lokr_norm,
+                    )
+
             self.lycoris_wrapped_network.apply_to()
             setattr(
                 self.accelerator,
@@ -1319,6 +1326,7 @@ class Trainer:
             delattr(public_args, "process_group_kwargs")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
+            delattr(public_args, "vae_kwargs")
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
             public_args_hash = hashlib.md5(
