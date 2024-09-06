@@ -798,7 +798,7 @@ class Trainer:
                 if self.config.init_lycoris_lokr_perturbed_normal is not None:
                     init_lokr_network_with_perturbed_standard(
                         self.lycoris_wrapped_network,
-                        scale=self.config.init_lycoris_lokr_perturbed_normal,
+                        scale=self.config.init_lokr_norm,
                     )
 
             self.lycoris_wrapped_network.apply_to()

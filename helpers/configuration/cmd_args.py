@@ -320,7 +320,7 @@ def parse_cmdline_args(input_args=None):
         help=("The location for the JSON file of the Lycoris configuration."),
     )
     parser.add_argument(
-        "--init_lycoris_lokr_perturbed_normal",
+        "--init_lokr_norm",
         type=float,
         required=False,
         default=None,
