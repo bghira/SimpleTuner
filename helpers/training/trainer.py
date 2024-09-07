@@ -199,6 +199,35 @@ class Trainer:
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
 
+    def run(self):
+        self.configure_webhook()
+        self.init_noise_schedule()
+        self.init_seed()
+
+        # self.init_huggingface_hub()
+
+        self.init_preprocessing_models()
+        self.init_data_backend()
+        self.init_validation_prompts()
+        self.init_unload_text_encoder()
+        self.init_unload_vae()
+
+        self.init_load_base_model()
+        self.init_precision()
+        self.init_controlnet_model()
+        self.init_freeze_models()
+        self.init_trainable_peft_adapter()
+        self.init_ema_model()
+
+        self.move_models(destination="accelerator")
+        self.init_validations()
+        self.init_benchmark_base_model()
+
+        self.resume_and_prepare()
+
+        self.init_trackers()
+        self.train()
+
     def init_noise_schedule(self):
         self.config, _flow_matching, self.noise_scheduler = load_scheduler_from_args(
             self.config
@@ -219,10 +248,16 @@ class Trainer:
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
         if send_startup_message:
-            self.webhook_handler.send(
+            self._send_webhook_msg(
                 message="SimpleTuner has launched. Hold onto your butts!",
                 store_response=True,
             )
+        self._send_webhook_raw(
+            structured_data={
+                "message": "Training job has started, configuration has begun."
+            },
+            message_type="configure_webhook",
+        )
 
     def _misc_init(self):
         """things that do not really need an order."""
@@ -334,13 +369,13 @@ class Trainer:
             determine_te_path_subfolder(self.config)
         )
 
-    def init_preprocessing_models(self):
+    def init_preprocessing_models(self, move_to_accelerator: bool = True):
         # image embeddings
-        self.init_vae()
+        self.init_vae(move_to_accelerator=move_to_accelerator)
         # text embeds
-        self.init_text_encoder()
+        self.init_text_encoder(move_to_accelerator=move_to_accelerator)
 
-    def init_vae(self):
+    def init_vae(self, move_to_accelerator: bool = True):
         logger.info(f"Load VAE: {self.config.vae_path}")
         self.config.vae_kwargs = {
             "pretrained_model_name_or_path": self.config.vae_path,
@@ -357,6 +392,9 @@ class Trainer:
             )
             self.config.vae_kwargs["subfolder"] = None
             self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+        if not move_to_accelerator:
+            logger.debug("Not moving VAE to accelerator.")
+            return
         if self.vae is not None:
             # The VAE is in bfloat16 to avoid NaN losses.
             _vae_dtype = torch.bfloat16
@@ -389,7 +427,7 @@ class Trainer:
         )
         self.tokenizers = [self.tokenizer_1, self.tokenizer_2, self.tokenizer_3]
 
-    def init_text_encoder(self):
+    def init_text_encoder(self, move_to_accelerator: bool = True):
         self.init_text_tokenizer()
         self.text_encoder_1, self.text_encoder_2, self.text_encoder_3 = None, None, None
         self.text_encoder_cls_1, self.text_encoder_cls_2, self.text_encoder_cls_3 = (
@@ -438,6 +476,9 @@ class Trainer:
                 text_encoder_path=self.config.text_encoder_path,
                 text_encoder_subfolder=self.config.text_encoder_subfolder,
             )
+        if not move_to_accelerator:
+            logger.debug("Not moving text encoders to accelerator.")
+            return
         self.text_encoders = []
         self.tokenizers = []
         if self.tokenizer_1 is not None:
@@ -480,37 +521,56 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_load_base_model(self):
-        if self.webhook_handler is not None:
-            self.webhook_handler.send(
-                message=f"Loading model: `{self.config.pretrained_model_name_or_path}`..."
-            )
+        webhook_msg = f"Loading model: `{self.config.pretrained_model_name_or_path}`..."
+        self._send_webhook_msg(message=webhook_msg)
+        self._send_webhook_raw(
+            structured_data={"message": webhook_msg},
+            message_type="init_load_base_model_begin",
+        )
         self.unet, self.transformer = load_diffusion_model(
             self.config, self.config.weight_dtype
         )
         self.accelerator.wait_for_everyone()
+        self._send_webhook_raw(
+            structured_data={"message": "Base model has loaded."},
+            message_type="init_load_base_model_completed",
+        )
 
     def init_data_backend(self):
         try:
             self.init_clear_backend_cache()
-            if self.webhook_handler is not None:
-                self.webhook_handler.send(
-                    message="Configuring data backends... (this may take a while!)"
-                )
+            self._send_webhook_msg(
+                message="Configuring data backends... (this may take a while!)"
+            )
+            self._send_webhook_raw(
+                structured_data={"message": "Configuring data backends."},
+                message_type="init_data_backend_begin",
+            )
             configure_multi_databackend(
                 self.config,
                 accelerator=self.accelerator,
                 text_encoders=self.text_encoders,
                 tokenizers=self.tokenizers,
             )
+            self._send_webhook_raw(
+                structured_data={"message": "Completed configuring data backends."},
+                message_type="init_data_backend_completed",
+            )
         except Exception as e:
             import traceback
 
             logger.error(f"{e}, traceback: {traceback.format_exc()}")
-            if self.webhook_handler is not None:
-                self.webhook_handler.send(
-                    message=f"Failed to load data backends: {e}",
-                    message_level="critical",
-                )
+            self._send_webhook_msg(
+                message=f"Failed to load data backends: {e}",
+                message_level="critical",
+            )
+            self._send_webhook_raw(
+                structured_data={
+                    "message": f"Failed to load data backends: {e}",
+                    "status": "error",
+                },
+                message_type="fatal_error",
+            )
 
             return False
         self.init_validation_prompts()
@@ -527,10 +587,15 @@ class Trainer:
         logger.info(
             f"Collected the following data backends: {collected_data_backend_str}"
         )
-        if self.webhook_handler is not None:
-            self.webhook_handler.send(
-                message=f"Collected the following data backends: {collected_data_backend_str}"
-            )
+        self._send_webhook_msg(
+            message=f"Collected the following data backends: {collected_data_backend_str}"
+        )
+        self._send_webhook_raw(
+            structured_data={
+                "message": f"Collected the following data backends: {collected_data_backend_str}"
+            },
+            message_type="init_data_backend",
+        )
         self.accelerator.wait_for_everyone()
 
     def init_validation_prompts(self):
@@ -691,9 +756,9 @@ class Trainer:
         if self.config.controlnet:
             raise ValueError("Cannot train LoRA with ControlNet.")
         if "standard" == self.config.lora_type.lower():
-            logger.info(f"Using LoRA training mode (rank={self.config.lora_rank})")
-            if self.webhook_handler is not None:
-                self.webhook_handler.send(message="Using LoRA training mode.")
+            lora_info_msg = f"Using LoRA training mode (rank={self.config.lora_rank})"
+            logger.info(lora_info_msg)
+            self._send_webhook_msg(message=lora_info_msg)
             target_modules = determine_adapter_target_modules(
                 self.config, self.unet, self.transformer
             )
@@ -766,9 +831,8 @@ class Trainer:
             del self.lycoris_config["linear_dim"]
             del self.lycoris_config["linear_alpha"]
 
-            logger.info(f"Using lycoris training mode")
-            if self.webhook_handler is not None:
-                self.webhook_handler.send(message="Using lycoris training mode.")
+            logger.info("Using lycoris training mode")
+            self._send_webhook_msg(message="Using lycoris training mode.")
 
             model_for_lycoris_wrap = None
             if self.transformer is not None:
@@ -1089,8 +1153,11 @@ class Trainer:
         logger.info("Loading our accelerator...")
         if torch.backends.mps.is_available():
             self.accelerator.native_amp = False
-        if self.webhook_handler is not None:
-            self.webhook_handler.send(message="Moving weights to GPU...")
+        self._send_webhook_msg(message="Moving weights to GPU...")
+        self._send_webhook_raw(
+            structured_data={"message": "Moving weights to GPU"},
+            message_type="init_prepare_models_begin",
+        )
         primary_model = self.unet if self.unet is not None else self.transformer
         if self.config.controlnet:
             primary_model = self.controlnet
@@ -1134,6 +1201,10 @@ class Trainer:
                 try:
                     self.ema_model.pin_memory()
                 except Exception as e:
+                    self._send_webhook_raw(
+                        structured_data={"message": f"Failed to pin EMA to CPU: {e}"},
+                        message_type="error",
+                    )
                     logger.error(f"Failed to pin EMA model to CPU: {e}")
 
         idx_count = 0
@@ -1154,6 +1225,10 @@ class Trainer:
             )
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
+        self._send_webhook_raw(
+            structured_data={"message": "Completed moving weights to GPU"},
+            message_type="init_prepare_models_completed",
+        )
 
     def init_unload_vae(self):
         if self.config.keep_vae_loaded or self.config.vae_cache_ondemand:
@@ -1213,7 +1288,11 @@ class Trainer:
             # on deepspeed, every process has to enter. otherwise, only the main process does.
             return
         logger.info(
-            f"Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour."
+            "Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour."
+        )
+        self._send_webhook_raw(
+            structured_data={"message": "Base model benchmark begins"},
+            message_type="init_benchmark_base_model_begin",
         )
         if is_lr_scheduler_disabled(self.config.optimizer):
             self.optimizer.eval()
@@ -1222,6 +1301,10 @@ class Trainer:
         self.validation.save_benchmark("base_model")
         if is_lr_scheduler_disabled(self.config.optimizer):
             self.optimizer.train()
+        self._send_webhook_raw(
+            structured_data={"message": "Base model benchmark completed"},
+            message_type="init_benchmark_base_model_completed",
+        )
 
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
@@ -1246,6 +1329,13 @@ class Trainer:
             logger.info(
                 f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
+            self._send_webhook_raw(
+                structured_data={
+                    "message": "No model to resume. Beginning fresh training run."
+                },
+                message_type="init_resume_checkpoint",
+            )
+
             self.config.resume_from_checkpoint = None
             return lr_scheduler
 
@@ -1263,10 +1353,20 @@ class Trainer:
                     if k in ("base_lrs", "_last_lr"):
                         v[0] = self.config.learning_rate
         except Exception as e:
+            self._send_webhook_raw(
+                structured_data={
+                    "message": "Could not update learning rate scheduler LR value."
+                },
+                message_type="warning",
+            )
             logger.error(
                 f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
             )
 
+        self._send_webhook_raw(
+            structured_data={"message": f"Resuming model: {path}"},
+            message_type="init_resume_checkpoint",
+        )
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
                 backend["sampler"].load_states(
@@ -1279,6 +1379,10 @@ class Trainer:
         )
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
+        self._send_webhook_raw(
+            structured_data=training_state_in_ckpt,
+            message_type="init_resume_checkpoint_details",
+        )
         logger.debug(f"Training state inside checkpoint: {training_state_in_ckpt}")
         if hasattr(lr_scheduler, "last_step"):
             lr_scheduler.last_step = self.state["global_resume_step"]
@@ -1347,6 +1451,10 @@ class Trainer:
                         "allow_val_change": True,
                     }
                 },
+            )
+            self._send_webhook_raw(
+                structured_data=public_args,
+                message_type="training_config",
             )
 
     def resume_and_prepare(self):
@@ -1433,6 +1541,39 @@ class Trainer:
             # we typically have to call eval() on the optim for schedulefree before saving or running validations.
             self.optimizer.eval()
 
+    def _send_webhook_msg(
+        self, message: str, message_level: str = "info", store_response: bool = False
+    ):
+        if type(message) is not str:
+            logger.error(
+                f"_send_webhook_msg received {type(message)} type message instead of str."
+            )
+            return False
+        if self.webhook_handler is None or not self.webhook_handler:
+            return
+        self.webhook_handler.send(
+            message=message, message_level=message_level, store_response=store_response
+        )
+
+    def _send_webhook_raw(
+        self,
+        structured_data: dict,
+        message_type: str,
+        message_level: str = "info",
+    ):
+        if type(structured_data) is not dict:
+            logger.error(
+                f"_send_webhook_msg received {type(structured_data)} type message instead of dict."
+            )
+            return False
+        if not self.webhook_handler:
+            return
+        self.webhook_handler.send_raw(
+            structured_data=structured_data,
+            message_type=message_type,
+            message_level=message_level,
+        )
+
     def _train_initial_msg(self):
         initial_msg = "\n***** Running training *****"
         initial_msg += f"\n-  Num batches = {self.config.total_num_batches}"
@@ -1446,8 +1587,20 @@ class Trainer:
             initial_msg += f"\n  - Steps completed: {self.state['global_step']}"
         initial_msg += f"\n-  Total optimization steps remaining = {max(0, self.config.total_steps_remaining_at_start)}"
         logger.info(initial_msg)
-        if self.webhook_handler is not None:
-            self.webhook_handler.send(message=initial_msg)
+        self._send_webhook_msg(message=initial_msg)
+        structured_data = {
+            "total_num_batches": self.config.total_num_batches,
+            "total_num_epochs": self.config.num_train_epochs,
+            "total_num_steps": self.config.max_train_steps,
+            "current_epoch": self.state["first_epoch"],
+            "total_batch_size": self.config.total_batch_size,
+            "micro_batch_size": self.config.train_batch_size,
+            "current_step": self.state["global_step"],
+            "remaining_num_steps": max(0, self.config.total_steps_remaining_at_start),
+        }
+        self._send_webhook_raw(
+            structured_data=structured_data, message_type="_train_initial_msg"
+        )
 
     def _epoch_rollover(self, epoch):
         if self.state["first_epoch"] == epoch:
@@ -1495,6 +1648,14 @@ class Trainer:
         StateTracker.set_epoch(epoch)
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
+
+    def abort(self):
+        logger.info("Aborting training run.")
+        if self.bf is not None:
+            self.bf.stop_fetching()
+        if self.accelerator.is_main_process:
+            self.accelerator.abort()
+        sys.exit(0)
 
     def train(self):
         self.init_trackers()
@@ -2263,19 +2424,33 @@ class Trainer:
                         wandb_logs,
                         step=self.state["global_step"],
                     )
-                    if self.webhook_handler is not None:
-                        webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
+                    webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
                     # Reset some values for the next go.
                     training_luminance_values = []
                     self.train_loss = 0.0
 
+                    if (
+                        self.config.webhook_reporting_interval is not None
+                        and self.state["global_step"]
+                        % self.config.webhook_reporting_interval
+                        == 0
+                    ):
+                        structured_data = {
+                            "state": self.state,
+                            "loss": round(self.train_loss, 4),
+                            "learning_rate": self.lr,
+                            "epoch": epoch,
+                            "final_epoch": self.config.num_train_epochs,
+                        }
+                        self._send_webhook_raw(
+                            structured_data=structured_data, message_type="train"
+                        )
                     if self.state["global_step"] % self.config.checkpointing_steps == 0:
-                        if self.webhook_handler is not None:
-                            self.webhook_handler.send(
-                                message=f"Checkpoint: `{webhook_pending_msg}`",
-                                message_level="info",
-                            )
+                        self._send_webhook_msg(
+                            message=f"Checkpoint: `{webhook_pending_msg}`",
+                            message_level="info",
+                        )
                         if self.accelerator.is_main_process:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             if self.config.checkpoints_total_limit is not None:

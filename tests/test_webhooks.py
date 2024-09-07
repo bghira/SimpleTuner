@@ -11,6 +11,7 @@ class TestWebhookHandler(unittest.TestCase):
         # Create a mock for the WebhookConfig
         mock_config_instance = MagicMock(spec=WebhookConfig)
         mock_config_instance.webhook_url = "http://example.com/webhook"
+        mock_config_instance.webhook_type = "discord"
         mock_config_instance.log_level = "info"
         mock_config_instance.message_prefix = "TestPrefix"
 

@@ -1,9 +1,11 @@
 from helpers.webhooks.config import WebhookConfig
 import requests
 import os
+import json
 import logging
 from io import BytesIO
 
+# Define log levels
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
 
 logger = logging.getLogger(__name__)
@@ -19,11 +21,11 @@ class WebhookHandler:
         mock_webhook_config: WebhookConfig = None,
     ):
         self.accelerator = accelerator
-        if mock_webhook_config is not None:
-            self.config = mock_webhook_config
-        else:
-            self.config = WebhookConfig(config_path)
+        self.config = mock_webhook_config or WebhookConfig(config_path)
         self.webhook_url = self.config.webhook_url
+        self.webhook_type = (
+            self.config.webhook_type
+        )  # Use webhook_type to differentiate behavior
         self.message_prefix = (
             f"`({self.config.message_prefix})` "
             if self.config.message_prefix is not None
@@ -35,17 +37,51 @@ class WebhookHandler:
         self.stored_response = None
 
     def _check_level(self, level: str) -> bool:
+        """Check if the message level meets the configured log level."""
         return log_levels.get(level, "info") <= self.log_level
 
     def _send_request(
         self, message: str, images: list = None, store_response: bool = False
     ):
-        # Prepare the request data
-        data = {"content": f"{self.message_prefix}{message}"}
-        files = {}
+        """Send the webhook request based on the webhook type."""
+        if self.webhook_type == "discord":
+            # Prepare Discord-style payload
+            data = {"content": f"{self.message_prefix}{message}"}
+            files = self._prepare_images(images)
+        elif self.webhook_type == "raw":
+            # Prepare raw data payload for direct POST
+            data = {
+                "message": message,
+                "images": (
+                    [self._convert_image_to_base64(img) for img in images]
+                    if images
+                    else []
+                ),
+            }
+            files = None
+        else:
+            logger.error(f"Unsupported webhook type: {self.webhook_type}")
+            return
 
+        # Send request
+        try:
+            post_result = requests.post(
+                self.webhook_url,
+                json=data,
+                files=files if self.webhook_type == "discord" else None,
+            )
+            post_result.raise_for_status()
+        except Exception as e:
+            logger.error(f"Could not send webhook request: {e}")
+            return
+
+        if store_response:
+            self.stored_response = post_result.headers
+
+    def _prepare_images(self, images: list):
+        """Convert images to file objects for Discord uploads."""
+        files = {}
         if images:
-            # Convert PIL images to BytesIO and add to files dictionary
             for index, img in enumerate(images):
                 img_byte_array = BytesIO()
                 img.save(img_byte_array, format="PNG")
@@ -55,15 +91,16 @@ class WebhookHandler:
                     img_byte_array,
                     "image/png",
                 )
+        return files
 
-        # Send request to webhook URL with images if present
-        try:
-            post_result = requests.post(self.webhook_url, data=data, files=files)
-        except Exception as e:
-            logger.error(f"Could not send webhook request: {e}")
-            return
-        if store_response:
-            self.stored_response = post_result.headers
+    def _convert_image_to_base64(self, image):
+        """Convert PIL image to a base64 string (for 'raw' webhook type)."""
+        import base64
+
+        img_byte_array = BytesIO()
+        image.save(img_byte_array, format="PNG")
+        img_byte_array.seek(0)
+        return base64.b64encode(img_byte_array.read()).decode("utf-8")
 
     def send(
         self,
@@ -72,19 +109,36 @@ class WebhookHandler:
         message_level: str = "info",
         store_response: bool = False,
     ):
+        """Send a message through the webhook with optional images."""
         if not self.accelerator.is_main_process:
             return
         if not self._check_level(message_level):
             return
         if images is not None and not isinstance(images, list):
             images = [images]
-        # Send webhook message
-        if images and len(images) <= 10:
-            self._send_request(message, images, store_response=store_response)
-        elif images and len(images) > 10:
+
+        # Split the images into smaller chunks if there are too many (Discord limitation)
+        if images and len(images) > 10:
             for i in range(0, len(images), 9):
                 self._send_request(
                     message, images[i : i + 9], store_response=store_response
                 )
         else:
-            self._send_request(message, store_response=store_response)
+            self._send_request(message, images, store_response=store_response)
+
+    def send_raw(
+        self, structured_data: dict, message_type: str, message_level: str = "info"
+    ):
+        """
+        for sending structured dict to the callback for eg. training step progress updates
+        """
+        if (
+            "raw" != self.webhook_type
+            or not self.accelerator.is_main_process
+            or not self._check_level(message_level)
+        ):
+            return
+        structured_data["message_type"] = message_type
+        self._send_request(
+            message=json.dumps(structured_data), images=None, store_response=False
+        )

@@ -47,7 +47,7 @@ def error_log(message):
         logger.error(message)
 
 
-def parse_cmdline_args(input_args=None):
+def get_argument_parser():
     parser = argparse.ArgumentParser(
         description="The following SimpleTuner command-line options are available:"
     )
@@ -324,7 +324,9 @@ def parse_cmdline_args(input_args=None):
         type=float,
         required=False,
         default=None,
-        help=("Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."),
+        help=(
+            "Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."
+        ),
     )
     parser.add_argument(
         "--controlnet",
@@ -1317,6 +1319,15 @@ def parse_cmdline_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--webhook_reporting_interval",
+        type=int,
+        default=None,
+        help=(
+            "When using 'raw' webhooks that receive structured data, you can specify a reporting interval here for"
+            " training progress updates to be sent at. This does not impact 'discord' webhook types."
+        ),
+    )
+    parser.add_argument(
         "--report_to",
         type=str,
         default="wandb",
@@ -1827,6 +1838,21 @@ def parse_cmdline_args(input_args=None):
         ),
     )
 
+    return parser
+
+
+def get_default_config():
+    parser = get_argument_parser()
+    default_config = {}
+    for action in parser.__dict__["_actions"]:
+        if action.dest:
+            default_config[action.dest] = action.default
+
+    return default_config
+
+
+def parse_cmdline_args(input_args=None):
+    parser = get_argument_parser()
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:

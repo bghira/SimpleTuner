@@ -5,10 +5,23 @@ supported_webhooks = ["discord"]
 
 def check_discord_webhook_config(config: dict) -> bool:
     if "webhook_type" not in config or config["webhook_type"] != "discord":
-        return
+        return False
     if "webhook_url" not in config:
         raise ValueError("Discord webhook config is missing 'webhook_url' value.")
     return True
+
+
+def check_raw_webhook_config(config: dict) -> bool:
+    if config.get("webhook_type") != "raw":
+        return False
+    missing_fields = []
+    required_fields = ["callback_url"]
+    for config_field in required_fields:
+        if not config.get(config_field):
+            missing_fields.append(config_field)
+    if missing_fields:
+        raise ValueError(f"Missing fields on webhook config: {missing_fields}")
+    return False
 
 
 class WebhookConfig:
@@ -22,7 +35,10 @@ class WebhookConfig:
             raise ValueError(
                 f"Invalid webhook type specified in config. Supported values: {supported_webhooks}"
             )
-        check_discord_webhook_config(self.values)
+        if check_discord_webhook_config(self.values):
+            self.webhook_type = "discord"
+        elif check_raw_webhook_config(self.values):
+            self.webhook_type = "raw"
 
     def load_config(self):
         with open(self.config_path, "r") as f:

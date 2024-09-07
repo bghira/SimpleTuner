@@ -44,6 +44,7 @@ sentencepiece = "^0.2.0"
 optimum-quanto = {git = "https://github.com/bghira/optimum-quanto-simpletuner", rev = "simpletuner/lora-resume"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
+fastapi = "^0.112.4"
 
 
 [build-system]
