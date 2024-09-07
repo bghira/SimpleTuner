@@ -3,7 +3,7 @@ name = "simpletuner"
 version = "0.1.0"
 description = "Stable Diffusion 2.x and XL tuner."
 authors = ["bghira"]
-license = "SUL"
+license = "AGPLv3"
 package-mode = false
 readme = "README.md"
 
