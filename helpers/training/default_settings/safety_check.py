@@ -14,7 +14,7 @@ def safety_check(args, accelerator):
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
             if "quanto" in args.base_model_precision:
-                logger.error(
+                print(
                     "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
                 )
                 sys.exit(1)
@@ -40,7 +40,7 @@ def safety_check(args, accelerator):
 
     if "lora" in args.model_type and args.train_text_encoder:
         if args.lora_type.lower() == "lycoris":
-            logger.error(
+            print(
                 "LyCORIS training is not meant to be combined with --train_text_encoder. It is powerful enough on its own!"
             )
             sys.exit(1)

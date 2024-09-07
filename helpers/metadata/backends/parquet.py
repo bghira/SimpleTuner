@@ -366,6 +366,9 @@ class ParquetMetadataBackend(MetadataBackend):
             if str(file) not in existing_files_set:
                 logger.debug(f"Processing file {file}.")
                 metadata_updates = {}
+                if self.should_abort:
+                    logger.info("Aborting aspect bucket update.")
+                    return
                 aspect_ratio_bucket_updates = self._process_for_bucket(
                     file,
                     aspect_ratio_bucket_updates,

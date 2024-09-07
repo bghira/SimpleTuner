@@ -50,7 +50,6 @@ from helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
-from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.smoldit import get_resize_crop_region_for_grid
@@ -159,6 +158,7 @@ class Trainer:
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
+        self.should_abort = False
 
     def _config_to_obj(self, config):
         if not config:
@@ -200,33 +200,64 @@ class Trainer:
         self.init_noise_schedule()
 
     def run(self):
-        self.configure_webhook()
-        self.init_noise_schedule()
-        self.init_seed()
+        try:
+            # Initialize essential configurations and schedules
+            self.configure_webhook()
+            self.init_noise_schedule()
+            self.init_seed()
 
-        # self.init_huggingface_hub()
+            # Uncomment if Hugging Face Hub initialization is needed
+            # self.init_huggingface_hub()
 
-        self.init_preprocessing_models()
-        self.init_data_backend()
-        self.init_validation_prompts()
-        self.init_unload_text_encoder()
-        self.init_unload_vae()
+            # Core initialization steps with signal checks after each step
+            self._initialize_components_with_signal_check(
+                [
+                    self.init_preprocessing_models,
+                    self.init_data_backend,
+                    self.init_validation_prompts,
+                    self.init_unload_text_encoder,
+                    self.init_unload_vae,
+                    self.init_load_base_model,
+                    self.init_precision,
+                    self.init_controlnet_model,
+                    self.init_freeze_models,
+                    self.init_trainable_peft_adapter,
+                    self.init_ema_model,
+                ]
+            )
 
-        self.init_load_base_model()
-        self.init_precision()
-        self.init_controlnet_model()
-        self.init_freeze_models()
-        self.init_trainable_peft_adapter()
-        self.init_ema_model()
+            # Model movement and validation setup
+            self.move_models(destination="accelerator")
+            self._exit_on_signal()
+            self.init_validations()
+            self._exit_on_signal()
+            self.init_benchmark_base_model()
+            self._exit_on_signal()
+            self.resume_and_prepare()
+            self._exit_on_signal()
+            self.init_trackers()
 
-        self.move_models(destination="accelerator")
-        self.init_validations()
-        self.init_benchmark_base_model()
+            # Start the training process
+            self.train()
 
-        self.resume_and_prepare()
+        except Exception as e:
+            import traceback
 
-        self.init_trackers()
-        self.train()
+            logger.error(
+                f"Failed to run training: {e}, traceback: {traceback.format_exc()}"
+            )
+            raise e
+
+    def _initialize_components_with_signal_check(self, initializers):
+        """
+        Runs a list of initializer functions with signal checks after each.
+
+        Args:
+            initializers (list): A list of initializer functions to run sequentially.
+        """
+        for initializer in initializers:
+            initializer()
+            self._exit_on_signal()
 
     def init_noise_schedule(self):
         self.config, _flow_matching, self.noise_scheduler = load_scheduler_from_args(
@@ -859,12 +890,6 @@ class Trainer:
                     **self.lycoris_config,
                 )
 
-                if self.config.init_lokr_norm is not None:
-                    init_lokr_network_with_perturbed_normal(
-                        self.lycoris_wrapped_network,
-                        scale=self.config.init_lokr_norm,
-                    )
-
             self.lycoris_wrapped_network.apply_to()
             setattr(
                 self.accelerator,
@@ -1430,7 +1455,6 @@ class Trainer:
             delattr(public_args, "process_group_kwargs")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
-            delattr(public_args, "vae_kwargs")
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
             public_args_hash = hashlib.md5(
@@ -1649,13 +1673,30 @@ class Trainer:
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
+    def _exit_on_signal(self):
+        if self.should_abort:
+            raise StopIteration("Training run received abort signal.")
+
     def abort(self):
         logger.info("Aborting training run.")
         if self.bf is not None:
             self.bf.stop_fetching()
-        if self.accelerator.is_main_process:
-            self.accelerator.abort()
-        sys.exit(0)
+        # we should set should_abort = True on each data backend's vae cache, metadata, and text backend
+        for _, backend in StateTracker.get_data_backends().items():
+            print(backend.keys())
+            if "vaecache" in backend:
+                logger.info(f"Aborting VAE cache for backend {backend}")
+                backend["vaecache"].should_abort = True
+            if "metadata_backend" in backend:
+                logger.info(f"Aborting metadata backend for backend {backend}")
+                backend["metadata_backend"].should_abort = True
+            if "text_backend" in backend:
+                logger.info(f"Aborting text backend for backend {backend}")
+                backend["text_backend"].should_abort = True
+            if "sampler" in backend:
+                logger.info(f"Aborting sampler for backend {backend}")
+                backend["sampler"].should_abort = True
+        self.should_abort = True
 
     def train(self):
         self.init_trackers()
@@ -1753,6 +1794,7 @@ class Trainer:
                 iterator_fn = self.bf.next_response
 
             while True:
+                self._exit_on_signal()
                 step += 1
                 batch = iterator_fn(step, *iterator_args)
                 training_logger.debug(f"Iterator: {iterator_fn}")

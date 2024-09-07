@@ -120,6 +120,7 @@ class TextEmbeddingCache:
             raise ValueError(
                 f"TextEmbeddingCache received incorrect data_backend: {data_backend}"
             )
+        self.should_abort = False
         self.data_backend = data_backend
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers

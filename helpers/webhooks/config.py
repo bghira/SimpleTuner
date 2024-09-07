@@ -1,6 +1,6 @@
 from json import load
 
-supported_webhooks = ["discord"]
+supported_webhooks = ["discord", "raw"]
 
 
 def check_discord_webhook_config(config: dict) -> bool:

@@ -320,15 +320,6 @@ def get_argument_parser():
         help=("The location for the JSON file of the Lycoris configuration."),
     )
     parser.add_argument(
-        "--init_lokr_norm",
-        type=float,
-        required=False,
-        default=None,
-        help=(
-            "Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."
-        ),
-    )
-    parser.add_argument(
         "--controlnet",
         action="store_true",
         default=False,

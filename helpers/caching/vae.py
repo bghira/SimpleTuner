@@ -75,6 +75,7 @@ class VAECache:
         hash_filenames: bool = False,
     ):
         self.id = id
+        self.should_abort = False
         if image_data_backend.id != id:
             raise ValueError(
                 f"VAECache received incorrect image_data_backend: {image_data_backend}"

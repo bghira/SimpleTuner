@@ -151,7 +151,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     )
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
-            f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().multidatabackend_config}."
+            f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
