@@ -205,9 +205,7 @@ class Trainer:
             self.configure_webhook()
             self.init_noise_schedule()
             self.init_seed()
-
-            # Uncomment if Hugging Face Hub initialization is needed
-            # self.init_huggingface_hub()
+            self.init_huggingface_hub()
 
             # Core initialization steps with signal checks after each step
             self._initialize_components_with_signal_check(
@@ -1477,7 +1475,7 @@ class Trainer:
                 },
             )
             self._send_webhook_raw(
-                structured_data=public_args,
+                structured_data=public_args.__dict__,
                 message_type="training_config",
             )
 
@@ -1675,6 +1673,10 @@ class Trainer:
 
     def _exit_on_signal(self):
         if self.should_abort:
+            self._send_webhook_raw(
+                structured_data={"message": "Aborting training run."},
+                message_type="exit",
+            )
             raise StopIteration("Training run received abort signal.")
 
     def abort(self):
@@ -1683,18 +1685,17 @@ class Trainer:
             self.bf.stop_fetching()
         # we should set should_abort = True on each data backend's vae cache, metadata, and text backend
         for _, backend in StateTracker.get_data_backends().items():
-            print(backend.keys())
             if "vaecache" in backend:
-                logger.info(f"Aborting VAE cache for backend {backend}")
+                logger.debug(f"Aborting VAE cache")
                 backend["vaecache"].should_abort = True
             if "metadata_backend" in backend:
-                logger.info(f"Aborting metadata backend for backend {backend}")
+                logger.debug(f"Aborting metadata backend")
                 backend["metadata_backend"].should_abort = True
             if "text_backend" in backend:
-                logger.info(f"Aborting text backend for backend {backend}")
+                logger.debug(f"Aborting text backend")
                 backend["text_backend"].should_abort = True
             if "sampler" in backend:
-                logger.info(f"Aborting sampler for backend {backend}")
+                logger.debug(f"Aborting sampler")
                 backend["sampler"].should_abort = True
         self.should_abort = True
 

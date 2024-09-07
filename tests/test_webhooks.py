@@ -14,6 +14,12 @@ class TestWebhookHandler(unittest.TestCase):
         mock_config_instance.webhook_type = "discord"
         mock_config_instance.log_level = "info"
         mock_config_instance.message_prefix = "TestPrefix"
+        mock_config_instance.values = {
+            "webhook_url": "http://example.com/webhook",
+            "webhook_type": "discord",
+            "log_level": "info",
+            "message_prefix": "TestPrefix",
+        }
 
         # Mock the accelerator object
         self.mock_accelerator = MagicMock()

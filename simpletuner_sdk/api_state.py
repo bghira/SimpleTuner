@@ -10,7 +10,7 @@ import json
 import logging
 
 logger = logging.getLogger("SimpleTunerSDK")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 
 class APIState:

@@ -10,14 +10,32 @@ lock = threading.Lock()  # For thread-safe operations on the registry
 
 def submit_job(job_id: str, func, *args, **kwargs):
     with lock:
-        if job_id in thread_registry:
-            raise Exception(f"Job with ID {job_id} is already running.")
+        if (
+            job_id in thread_registry
+            and get_thread_status(job_id, with_lock=False).lower() == "running"
+        ):
+            raise Exception(f"Job with ID {job_id} is already running or pending.")
+        # Remove the completed or cancelled future from the registry
+        thread_registry.pop(job_id, None)
+        # Submit the new job
         future = executor.submit(func, *args, **kwargs)
         thread_registry[job_id] = future
 
 
-def get_thread_status(job_id: str) -> str:
-    with lock:
+def get_thread_status(job_id: str, with_lock: bool = True) -> str:
+    if with_lock:
+        with lock:
+            future = thread_registry.get(job_id)
+            if not future:
+                return "No such job."
+            if future.running():
+                return "Running"
+            elif future.done():
+                if future.exception():
+                    return f"Failed: {future.exception()}"
+                return "Completed"
+            return "Pending"
+    else:
         future = thread_registry.get(job_id)
         if not future:
             return "No such job."
@@ -32,11 +50,11 @@ def get_thread_status(job_id: str) -> str:
 
 def terminate_thread(job_id: str) -> bool:
     with lock:
-        executor.shutdown(wait=False)
         future = thread_registry.get(job_id)
         if not future:
-            print(f"thread {job_id} not found")
-            return None
+            print(f"Thread {job_id} not found")
+            return False
+        # Attempt to cancel the future if it hasn't started running
         cancelled = future.cancel()
         if cancelled:
             del thread_registry[job_id]
@@ -44,7 +62,5 @@ def terminate_thread(job_id: str) -> bool:
 
 
 def list_threads():
-    output_data = {}
-    for item in thread_registry:
-        output_data[item] = get_thread_status(item)
-    return output_data
+    with lock:
+        return {job_id: get_thread_status(job_id) for job_id in thread_registry}

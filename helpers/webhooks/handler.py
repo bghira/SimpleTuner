@@ -22,7 +22,9 @@ class WebhookHandler:
     ):
         self.accelerator = accelerator
         self.config = mock_webhook_config or WebhookConfig(config_path)
-        self.webhook_url = self.config.webhook_url
+        self.webhook_url = self.config.values.get(
+            "webhook_url", self.config.values.get("callback_url", None)
+        )
         self.webhook_type = (
             self.config.webhook_type
         )  # Use webhook_type to differentiate behavior
@@ -41,7 +43,11 @@ class WebhookHandler:
         return log_levels.get(level, "info") <= self.log_level
 
     def _send_request(
-        self, message: str, images: list = None, store_response: bool = False
+        self,
+        message: str,
+        images: list = None,
+        store_response: bool = False,
+        raw_request: bool = False,
     ):
         """Send the webhook request based on the webhook type."""
         if self.webhook_type == "discord":
@@ -50,14 +56,18 @@ class WebhookHandler:
             files = self._prepare_images(images)
         elif self.webhook_type == "raw":
             # Prepare raw data payload for direct POST
-            data = {
-                "message": message,
-                "images": (
-                    [self._convert_image_to_base64(img) for img in images]
-                    if images
-                    else []
-                ),
-            }
+            if raw_request:
+                data = message
+                files = None
+            else:
+                data = {
+                    "message": message,
+                    "images": (
+                        [self._convert_image_to_base64(img) for img in images]
+                        if images
+                        else []
+                    ),
+                }
             files = None
         else:
             logger.error(f"Unsupported webhook type: {self.webhook_type}")
@@ -110,7 +120,7 @@ class WebhookHandler:
         store_response: bool = False,
     ):
         """Send a message through the webhook with optional images."""
-        if not self.accelerator.is_main_process:
+        if not self.accelerator.is_main_process or "discord" != self.webhook_type:
             return
         if not self._check_level(message_level):
             return
@@ -140,5 +150,5 @@ class WebhookHandler:
             return
         structured_data["message_type"] = message_type
         self._send_request(
-            message=json.dumps(structured_data), images=None, store_response=False
+            message=structured_data, images=None, store_response=False, raw_request=True
         )

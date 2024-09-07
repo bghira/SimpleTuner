@@ -66,9 +66,12 @@ class Configuration:
             trainer = Trainer(config=normalize_args(job_config.trainer_config))
             return {
                 "status": True,
-                "result": f"Configuration loaded successfully. Accelerator: {trainer.accelerator}",
+                "result": f"Configuration validated successfully",
             }
         except Exception as e:
+            import traceback
+
+            print(traceback.format_exc())
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Could not validate configuration: {str(e)}",
@@ -108,7 +111,7 @@ class Configuration:
         if current_job_status.lower() in ["running", "pending"]:
             return {
                 "status": "error",
-                "result": "A training job with that id is already running.",
+                "result": f"The training job '{job_config.job_id}' is already {current_job_status}.",
             }
         try:
             # Submit the job to the thread manager

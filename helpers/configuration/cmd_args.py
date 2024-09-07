@@ -49,7 +49,8 @@ def error_log(message):
 
 def get_argument_parser():
     parser = argparse.ArgumentParser(
-        description="The following SimpleTuner command-line options are available:"
+        description="The following SimpleTuner command-line options are available:",
+        exit_on_error=False,
     )
     parser.add_argument(
         "--snr_gamma",
@@ -1845,7 +1846,15 @@ def get_default_config():
 def parse_cmdline_args(input_args=None):
     parser = get_argument_parser()
     if input_args is not None:
-        args = parser.parse_args(input_args)
+        for key_val in input_args:
+            print(f"{key_val}")
+        try:
+            args = parser.parse_args(input_args)
+        except:
+            logger.error(f"Could not parse input: {input_args}")
+            import traceback
+
+            logger.error(traceback.format_exc())
     else:
         args = parser.parse_args()
 
@@ -2012,7 +2021,7 @@ def parse_cmdline_args(input_args=None):
         args.resolution_type = "pixel"
 
     validation_resolution_is_float = False
-    if "." in args.validation_resolution:
+    if "." in str(args.validation_resolution):
         try:
             # this makes handling for int() conversion easier later.
             args.validation_resolution = float(args.validation_resolution)
