@@ -358,7 +358,7 @@ class VAECache:
 
     def discover_unprocessed_files(self, directory: str = None):
         """Identify files that haven't been processed yet."""
-        all_image_files = StateTracker.get_image_files(data_backend_id=self.id)
+        all_image_files = set(StateTracker.get_image_files(data_backend_id=self.id))
         existing_cache_files = set(
             StateTracker.get_vae_cache_files(data_backend_id=self.id)
         )
@@ -368,7 +368,6 @@ class VAECache:
             try:
                 n = self._image_filename_from_vaecache_filename(cache_file)
                 already_cached_images.append(n)
-                # print(f"Mapping: {n} -> {cache_file}")
             except Exception as e:
                 logger.error(
                     f"Could not find image path for cache file {cache_file}: {e}"
@@ -376,9 +375,9 @@ class VAECache:
                 continue
 
         # Identify unprocessed files
-        self.local_unprocessed_files = [
-            file for file in all_image_files if file not in already_cached_images
-        ]
+        self.local_unprocessed_files = list(
+            set(all_image_files) - set(already_cached_images)
+        )
 
         return self.local_unprocessed_files
 
