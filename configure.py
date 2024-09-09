@@ -511,7 +511,10 @@ def configure_env():
     env_contents["--gradient_checkpointing"] = "true"
 
     env_contents["--caption_dropout_probability"] = float(
-        prompt_user("Set the caption dropout rate, or use 0.0 to disable it.", "0.1")
+        prompt_user(
+            "Set the caption dropout rate, or use 0.0 to disable it. Dropout is not recommended for LoRA/LyCORIS training unless you are training for style transfer.",
+            "0.0" if any([use_lora, use_lycoris]) else "0.1",
+        )
     )
 
     resolution_types = ["pixel", "area", "pixel_area"]
