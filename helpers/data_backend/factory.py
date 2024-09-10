@@ -1299,10 +1299,11 @@ def random_dataloader_iterator(step, backends: dict):
 
 
 class BatchFetcher:
-    def __init__(self, max_size=10, datasets={}):
+    def __init__(self, step, max_size=10, datasets={}):
         self.queue = queue.Queue(max_size)
         self.datasets = datasets
         self.keep_running = True
+        self.step = step
 
     def start_fetching(self):
         thread = threading.Thread(target=self.fetch_responses)
@@ -1310,14 +1311,13 @@ class BatchFetcher:
         return thread
 
     def fetch_responses(self):
-        global step
         prefetch_log_debug("Launching retrieval thread.")
         while self.keep_running:
             if self.queue.qsize() < self.queue.maxsize:
                 prefetch_log_debug(
                     f"Queue size: {self.queue.qsize()}. Fetching more data."
                 )
-                self.queue.put(random_dataloader_iterator(self.datasets))
+                self.queue.put(random_dataloader_iterator(self.step, self.datasets))
                 if self.queue.qsize() >= self.queue.maxsize:
                     prefetch_log_debug("Completed fetching data. Queue is full.")
                     continue
@@ -1325,7 +1325,8 @@ class BatchFetcher:
                 time.sleep(0.5)
         prefetch_log_debug("Exiting retrieval thread.")
 
-    def next_response(self):
+    def next_response(self, step: int):
+        self.step = step
         if self.queue.empty():
             prefetch_log_debug("Queue is empty. Waiting for data.")
         while self.queue.empty():

@@ -601,7 +601,8 @@ class Trainer:
                 message_type="fatal_error",
             )
 
-            return False
+            raise e
+
         self.init_validation_prompts()
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
         # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
@@ -1788,6 +1789,7 @@ class Trainer:
                 self.bf = BatchFetcher(
                     datasets=train_backends,
                     max_size=self.config.dataloader_prefetch_qlen,
+                    step=step,
                 )
                 if fetch_thread is not None:
                     fetch_thread.join()
