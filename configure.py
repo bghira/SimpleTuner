@@ -16,10 +16,10 @@ model_classes = {
         "sdxl",
         "pixart_sigma",
         "kolors",
-        "stable_diffusion_3",
+        "sd3",
         "stable_diffusion_legacy",
     ],
-    "lora": ["flux", "sdxl", "kolors", "stable_diffusion_3", "stable_diffusion_legacy"],
+    "lora": ["flux", "sdxl", "kolors", "sd3", "stable_diffusion_legacy"],
     "controlnet": ["sdxl", "stable_diffusion_legacy"],
 }
 
@@ -29,7 +29,7 @@ default_models = {
     "pixart_sigma": "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
     "kolors": "kwai-kolors/kolors-diffusers",
     "terminus": "ptx0/terminus-xl-velocity-v2",
-    "stable_diffusion_3": "stabilityai/stable-diffusion-3-medium-diffusers",
+    "sd3": "stabilityai/stable-diffusion-3-medium-diffusers",
 }
 
 default_cfg = {
@@ -38,7 +38,7 @@ default_cfg = {
     "pixart_sigma": 3.4,
     "kolors": 5.0,
     "terminus": 8.0,
-    "stable_diffusion_3": 5.0,
+    "sd3": 5.0,
 }
 
 model_labels = {
