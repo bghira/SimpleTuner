@@ -1023,7 +1023,7 @@ class Trainer:
         )
 
         if self.config.use_deepspeed_optimizer:
-            optimizer = optimizer_class(self.params_to_optimize)
+            self.optimizer = optimizer_class(self.params_to_optimize)
         else:
             logger.info(
                 f"Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
