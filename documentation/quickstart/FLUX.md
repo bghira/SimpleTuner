@@ -305,7 +305,7 @@ Then, create a `datasets` directory:
 ```bash
 mkdir -p datasets
 pushd datasets
-    huggingface-cli download --repo_type=dataset bghira/pseudo-camera-10k --local-dir=pseudo-camera-10k
+    huggingface-cli download --repo-type=dataset bghira/pseudo-camera-10k --local-dir=pseudo-camera-10k
     mkdir dreambooth-subject
     # place your images into dreambooth-subject/ now
 popd
