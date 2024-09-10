@@ -512,7 +512,8 @@ class Trainer:
                     message_level="critical",
                 )
 
-            return False
+            raise e
+
         self.init_validation_prompts()
         # We calculate the number of steps per epoch by dividing the number of images by the effective batch divisor.
         # Gradient accumulation steps mean that we only update the model weights every /n/ steps.
@@ -935,7 +936,7 @@ class Trainer:
         )
 
         if self.config.use_deepspeed_optimizer:
-            optimizer = optimizer_class(self.params_to_optimize)
+            self.optimizer = optimizer_class(self.params_to_optimize)
         else:
             logger.info(
                 f"Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
@@ -1585,6 +1586,7 @@ class Trainer:
                 self.bf = BatchFetcher(
                     datasets=train_backends,
                     max_size=self.config.dataloader_prefetch_qlen,
+                    step=step,
                 )
                 if fetch_thread is not None:
                     fetch_thread.join()
