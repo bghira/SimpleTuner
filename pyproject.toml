@@ -48,7 +48,7 @@ optimum-quanto = {git = "https://github.com/bghira/optimum-quanto-simpletuner", 
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 toml = "^0.10.2"
-fastapi = "^0.112.4"
+fastapi = {extras = ["standard"], version = "^0.114.0"}
 
 
 [build-system]
