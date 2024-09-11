@@ -62,5 +62,4 @@ def terminate_thread(job_id: str) -> bool:
 
 
 def list_threads():
-    with lock:
-        return {job_id: get_thread_status(job_id) for job_id in thread_registry}
+    return {job_id: get_thread_status(job_id) for job_id in thread_registry}

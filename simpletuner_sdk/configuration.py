@@ -17,6 +17,8 @@ class ConfigModel(BaseModel):
     dataloader_config: list
     # what we will write as config/webhooks.json
     webhooks_config: dict
+    # optional lycoris_config
+    lycoris_config: dict = None
 
 
 class Configuration:
@@ -50,6 +52,12 @@ class Configuration:
         with open("config/webhooks.json", mode="w") as file_handler:
             json.dump(job_config.webhooks_config, file_handler, indent=4)
             job_config.trainer_config["webhook_config"] = "config/webhooks.json"
+
+        if hasattr(job_config, "lycoris_config"):
+            print(f"LyCORIS config present: {job_config.lycoris_config}")
+            with open("config/lycoris_config.json", "w") as f:
+                f.write(json.dumps(job_config.lycoris_config, indent=4))
+                job_config.trainer_config["lycoris_config"] = "config/lycoris_config.json"
 
     async def check(self, job_config: ConfigModel):
         """
@@ -87,6 +95,7 @@ class Configuration:
         """
         Run the training job in a separate thread.
         """
+        print("Received call")
         trainer = APIState.get_trainer()
         current_job_id = APIState.get_state("current_job_id")
         job_id = job_config.job_id
@@ -115,6 +124,7 @@ class Configuration:
             }
         try:
             # Submit the job to the thread manager
+            print("Submitting job to thread..")
             submit_job(job_id, trainer.run)
             APIState.set_state("status", "Running")
             return {
