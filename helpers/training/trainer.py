@@ -244,7 +244,19 @@ class Trainer:
             logger.error(
                 f"Failed to run training: {e}, traceback: {traceback.format_exc()}"
             )
+            self._send_webhook_msg(
+                message=f"Failed to run training: {e}",
+            )
+            self._send_webhook_raw(
+                structured_data={
+                    "message": f"Failed to run training: {e}",
+                    "status": "error",
+                },
+                message_type="fatal_error",
+            )
+
             raise e
+
 
     def _initialize_components_with_signal_check(self, initializers):
         """
