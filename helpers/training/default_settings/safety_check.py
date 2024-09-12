@@ -1,4 +1,4 @@
-import logging, sys
+import logging, sys, os
 from os import environ
 from diffusers.utils import is_wandb_available
 from helpers.training.state_tracker import StateTracker
@@ -44,3 +44,7 @@ def safety_check(args, accelerator):
                 "LyCORIS training is not meant to be combined with --train_text_encoder. It is powerful enough on its own!"
             )
             sys.exit(1)
+    if args.user_prompt_library and not os.path.exists(args.user_prompt_library):
+        raise FileNotFoundError(
+            f"User prompt library not found at {args.user_prompt_library}. Please check the path and try again."
+        )

@@ -64,7 +64,7 @@ class VAECache:
         maximum_image_size: float = None,
         target_downsample_size: float = None,
         delete_problematic_images: bool = False,
-        write_batch_size: int = 25,
+        write_batch_size: int = 128,
         read_batch_size: int = 25,
         process_queue_size: int = 16,
         vae_batch_size: int = 4,

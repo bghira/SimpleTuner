@@ -699,7 +699,7 @@ def get_argument_parser():
     parser.add_argument(
         "--write_batch_size",
         type=int,
-        default=64,
+        default=128,
         help=(
             "When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching."
             " In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written."
