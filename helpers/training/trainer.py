@@ -1035,10 +1035,13 @@ class Trainer:
         )
 
         if self.config.use_deepspeed_optimizer:
+            logger.info(
+                f"DeepSpeed Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
+            )
             self.optimizer = optimizer_class(self.params_to_optimize)
         else:
             logger.info(
-                f"Optimizer arguments, weight_decay={self.config.adam_weight_decay} eps={self.config.adam_epsilon}, extra_arguments={extra_optimizer_args}"
+                f"Optimizer arguments={extra_optimizer_args}"
             )
             if self.config.train_text_encoder and self.config.text_encoder_lr:
                 # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
