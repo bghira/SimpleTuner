@@ -168,8 +168,8 @@ class SaveHookManager:
         if args.controlnet:
             self.denoiser_class = ControlNetModel
             self.denoiser_subdir = "controlnet"
-        logger.info(f"Denoiser class set to: {self.denoiser_class.__name__}.")
-        logger.info(f"Pipeline class set to: {self.pipeline_class.__name__}.")
+        logger.debug(f"Denoiser class set to: {self.denoiser_class.__name__}.")
+        logger.debug(f"Pipeline class set to: {self.pipeline_class.__name__}.")
 
         self.ema_model_cls = None
         self.ema_model_subdir = None
