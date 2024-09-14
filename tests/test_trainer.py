@@ -129,6 +129,7 @@ class TestTrainer(unittest.TestCase):
             timestep_bias_portion=0,
             metadata_update_interval=100,
             gradient_accumulation_steps=1,
+            mixed_precision="bf16",
             report_to="none",
             output_dir="output_dir",
         ),
