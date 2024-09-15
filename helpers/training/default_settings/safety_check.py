@@ -9,7 +9,7 @@ from helpers.training.error_handling import validate_deepspeed_compat_from_args
 
 
 def safety_check(args, accelerator):
-    if accelerator.num_processes > 1:
+    if accelerator is not None and accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
@@ -24,7 +24,7 @@ def safety_check(args, accelerator):
                 "Make sure to install wandb if you want to use it for logging during training."
             )
         import wandb
-    if (
+    if accelerator is not None and (
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):

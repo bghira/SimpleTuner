@@ -151,8 +151,9 @@ diffusers.utils.logging.set_verbosity_warning()
 
 
 class Trainer:
-    def __init__(self, config: dict = None):
-        self.parse_arguments(args=config)
+    def __init__(self, config: dict = None, disable_accelerator: bool = False):
+        self.accelerator = None
+        self.parse_arguments(args=config, disable_accelerator=disable_accelerator)
         self._misc_init()
         self.controlnet = None
         self.lycoris_wrapped_network = None
@@ -166,22 +167,23 @@ class Trainer:
             return None
         return type("Config", (object,), config)
 
-    def parse_arguments(self, args=None):
+    def parse_arguments(self, args=None, disable_accelerator: bool = False):
         self.config = load_config(args)
         report_to = (
             None if self.config.report_to.lower() == "none" else self.config.report_to
         )
-        self.accelerator = Accelerator(
-            gradient_accumulation_steps=self.config.gradient_accumulation_steps,
-            mixed_precision=(
-                self.config.mixed_precision
-                if not torch.backends.mps.is_available()
-                else None
-            ),
-            log_with=report_to,
-            project_config=self.config.accelerator_project_config,
-            kwargs_handlers=[self.config.process_group_kwargs],
-        )
+        if not disable_accelerator:
+            self.accelerator = Accelerator(
+                gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                mixed_precision=(
+                    self.config.mixed_precision
+                    if not torch.backends.mps.is_available()
+                    else None
+                ),
+                log_with=report_to,
+                project_config=self.config.accelerator_project_config,
+                kwargs_handlers=[self.config.process_group_kwargs],
+            )
         safety_check(args=self.config, accelerator=self.accelerator)
         if self.config.lr_scale:
             logger.info(
@@ -191,7 +193,7 @@ class Trainer:
                 self.config.learning_rate
                 * self.config.gradient_accumulation_steps
                 * self.config.train_batch_size
-                * self.accelerator.num_processes
+                * getattr(self.accelerator, 'num_processes', 1)
             )
         StateTracker.set_accelerator(self.accelerator)
         StateTracker.set_args(self.config)
@@ -363,7 +365,7 @@ class Trainer:
                 )
         elif model_family not in model_classes["full"]:
             raise ValueError(f"Invalid model family specified: {model_family}")
-        print(f"Model family: {model_family}")
+
         self._set_model_paths()
         StateTracker.set_model_family(model_family)
         self.config.model_type_label = model_labels[model_family.lower()]
