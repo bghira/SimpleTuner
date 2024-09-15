@@ -8,8 +8,6 @@ logger = logging.getLogger("SimpleTuner")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 if __name__ == "__main__":
-    global bf
-    bf = None
     trainer = None
     try:
         import multiprocessing
@@ -64,4 +62,4 @@ if __name__ == "__main__":
         print(e)
         print(traceback.format_exc())
     if trainer is not None and trainer.bf is not None:
-        bf.stop_fetching()
+        trainer.bf.stop_fetching()

@@ -261,7 +261,13 @@ class MetadataBackend:
             if self.should_abort:
                 logger.info("Aborting aspect bucket update.")
                 return
-            while any(worker.is_alive() for worker in workers):
+            while (
+                any(worker.is_alive() for worker in workers)
+                or not tqdm_queue.empty()
+                or not aspect_ratio_bucket_indices_queue.empty()
+                or not metadata_updates_queue.empty()
+                or not written_files_queue.empty()
+            ):
                 current_time = time.time()
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
