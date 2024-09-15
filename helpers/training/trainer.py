@@ -158,6 +158,7 @@ class Trainer:
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
+        self.webhook_handler = None
         self.should_abort = False
 
     def _config_to_obj(self, config):
@@ -256,7 +257,6 @@ class Trainer:
             )
 
             raise e
-
 
     def _initialize_components_with_signal_check(self, initializers):
         """
@@ -921,26 +921,40 @@ class Trainer:
 
             if self.unet is not None:
                 logger.info("Applying BitFit freezing strategy to the U-net.")
-                self.unet = apply_bitfit_freezing(self.unet, self.config)
+                self.unet = apply_bitfit_freezing(
+                    unwrap_model(self.accelerator, self.unet), self.config
+                )
             if self.transformer is not None:
                 logger.warning(
                     "Training DiT models with BitFit is not yet tested, and unexpected results may occur."
                 )
-                self.transformer = apply_bitfit_freezing(self.transformer, self.config)
+                self.transformer = apply_bitfit_freezing(
+                    unwrap_model(self.accelerator, self.transformer), self.config
+                )
 
         if self.config.gradient_checkpointing:
             if self.unet is not None:
-                self.unet.enable_gradient_checkpointing()
+                unwrap_model(
+                    self.accelerator, self.unet
+                ).enable_gradient_checkpointing()
             if self.transformer is not None and self.config.model_family != "smoldit":
-                self.transformer.enable_gradient_checkpointing()
+                unwrap_model(
+                    self.accelerator, self.transformer
+                ).enable_gradient_checkpointing()
             if self.config.controlnet:
-                self.controlnet.enable_gradient_checkpointing()
+                unwrap_model(
+                    self.accelerator, self.controlnet
+                ).enable_gradient_checkpointing()
             if (
                 hasattr(self.config, "train_text_encoder")
                 and self.config.train_text_encoder
             ):
-                self.text_encoder_1.gradient_checkpointing_enable()
-                self.text_encoder_2.gradient_checkpointing_enable()
+                unwrap_model(
+                    self.accelerator, self.text_encoder_1
+                ).gradient_checkpointing_enable()
+                unwrap_model(
+                    self.accelerator, self.text_encoder_2
+                ).gradient_checkpointing_enable()
 
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.

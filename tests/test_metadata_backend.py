@@ -22,7 +22,7 @@ class TestMetadataBackend(unittest.TestCase):
         self.image_path_str = "test_image.jpg"
 
         self.instance_data_dir = "/some/fake/path"
-        self.cache_file = "/some/fake/cache.json"
+        self.cache_file = "/some/fake/cache"
         self.metadata_file = "/some/fake/metadata.json"
         StateTracker.set_args(MagicMock())
         # Overload cache file with json:

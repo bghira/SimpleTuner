@@ -122,11 +122,11 @@ class DiscoveryMetadataBackend(MetadataBackend):
             dict: The cache data.
         """
         # Query our DataBackend to see whether the cache file exists.
-        logger.info(f"Checking for cache file: {self.cache_file}")
+        logger.debug(f"Checking for cache file: {self.cache_file}")
         if self.data_backend.exists(self.cache_file):
             try:
                 # Use our DataBackend to actually read the cache file.
-                logger.info("Pulling cache file from storage")
+                logger.debug("Pulling cache file from storage")
                 cache_data_raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(cache_data_raw)
             except Exception as e:
