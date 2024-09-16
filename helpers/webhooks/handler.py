@@ -3,6 +3,7 @@ import requests
 import os
 import json
 import logging
+import time
 from io import BytesIO
 
 # Define log levels
@@ -150,6 +151,7 @@ class WebhookHandler:
             return
         structured_data["message_type"] = message_type
         structured_data["job_id"] = job_id
+        structured_data["timestamp"] = int(time.time())
         self._send_request(
             message=structured_data, images=None, store_response=False, raw_request=True
         )
