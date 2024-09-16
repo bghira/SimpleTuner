@@ -2,10 +2,12 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Dict
 import threading
 
-# Global executor for managing threads
-executor = ThreadPoolExecutor(max_workers=1)  # Adjust max_workers based on your needs
-thread_registry: Dict[str, Future] = {}  # A dictionary to store threads with their IDs
-lock = threading.Lock()  # For thread-safe operations on the registry
+# We can only really have one thread going at a time anyway.
+executor = ThreadPoolExecutor(max_workers=1)
+# But, we've designed this for a future where multiple background threads might be managed.
+thread_registry: Dict[str, Future] = {}
+# So we don't zig while we zag.
+lock = threading.Lock()
 
 
 def submit_job(job_id: str, func, *args, **kwargs):
