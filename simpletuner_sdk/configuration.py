@@ -1,4 +1,6 @@
-import json
+import json, logging, os
+logger = logging.getLogger(__name__)
+logger.setLevel(os.environ.get('SIMPLETUNER_LOG_LEVEL', 'INFO'))
 from fastapi import APIRouter, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel
 from helpers.training.trainer import Trainer
@@ -19,6 +21,8 @@ class ConfigModel(BaseModel):
     webhooks_config: dict
     # optional lycoris_config
     lycoris_config: dict = None
+    # optional user_prompt_library
+    user_prompt_library: dict = None
 
 
 class Configuration:
@@ -58,6 +62,14 @@ class Configuration:
             with open("config/lycoris_config.json", "w") as f:
                 f.write(json.dumps(job_config.lycoris_config, indent=4))
                 job_config.trainer_config["lycoris_config"] = "config/lycoris_config.json"
+
+        user_prompt_library_path = job_config.trainer_config.get('--user_prompt_library', None)
+        print(f"User prompt library path: {user_prompt_library_path}")
+        if user_prompt_library_path and hasattr(job_config, "user_prompt_library"):
+            print(f"User prompt library present: {job_config.user_prompt_library}")
+            with open(user_prompt_library_path, "w") as f:
+                f.write(json.dumps(job_config.user_prompt_library, indent=4))
+                job_config.trainer_config["user_prompt_library"] = "config/user_prompt_library.json"
 
     async def check(self, job_config: ConfigModel):
         """
@@ -106,7 +118,14 @@ class Configuration:
                 "result": f"Could not run job, '{current_job_id}' is already running.",
             }
         self._config_save(job_config)
-        trainer = Trainer(config=normalize_args(job_config.trainer_config))
+        try:
+            logger.info("Creating new Trainer instance..")
+            trainer = Trainer(config=normalize_args(job_config.trainer_config), job_id=job_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error loading configuration: {str(e)}",
+            )
 
         APIState.set_trainer(trainer)
         APIState.set_job(job_config.job_id, job_config.__dict__)
