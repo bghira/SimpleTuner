@@ -423,6 +423,23 @@ class VAECache:
         # )
         return relevant_files
 
+    def _kill_by_memory(self, exception: Exception):
+        """
+        Example error: 
+        torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB. GPU 0 has a total capacity of 23.43 GiB of which 11.62 MiB is free. Process 1580746 has 13.55 GiB memory in use. Including non-PyTorch memory, this process has 9.86 GiB memory in use. Of the allocated memory 9.45 GiB is allocated by PyTorch, and 32.29 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+        Goal:
+        Find the PIDs and kill all by os command.
+        """
+        # Is "Process {number} has" in the exception?
+        if "Process" in str(exception):
+            # Find the PID
+            pid = str(exception).split("Process ")[1].split(" has")[0]
+            # Kill the PID
+            os.system(f"kill -9 {pid}")
+            # Log the action
+            logger.error(f"Killed process {pid} due to CUDA out of memory.")
+
     def encode_images(self, images, filepaths, load_from_cache=True):
         """
         Encode a batch of input images. Images must be the same dimension.
@@ -513,9 +530,13 @@ class VAECache:
         ):
             # Process images not found in cache
             with torch.no_grad():
-                processed_images = torch.stack(uncached_images).to(
-                    self.accelerator.device, dtype=StateTracker.get_vae_dtype()
-                )
+                try:
+                    processed_images = torch.stack(uncached_images).to(
+                        self.accelerator.device, dtype=StateTracker.get_vae_dtype()
+                    )
+                except Exception as e:
+                    self._kill_by_memory(e)
+                    os._exit(1)
                 latents_uncached = self.vae.encode(
                     processed_images
                 ).latent_dist.sample()
