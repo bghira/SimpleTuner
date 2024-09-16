@@ -151,16 +151,24 @@ diffusers.utils.logging.set_verbosity_warning()
 
 
 class Trainer:
-    def __init__(self, config: dict = None, disable_accelerator: bool = False):
+    def __init__(self, config: dict = None, disable_accelerator: bool = False, job_id: str = None):
         self.accelerator = None
+        self.job_id = job_id
         self.parse_arguments(args=config, disable_accelerator=disable_accelerator)
         self._misc_init()
-        self.controlnet = None
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
         self.webhook_handler = None
         self.should_abort = False
+        self.unet = None
+        self.transformer = None
+        self.vae = None
+        self.text_encoder_1 = None
+        self.text_encoder_2 = None
+        self.text_encoder_3 = None
+        self.controlnet = None
+        self.validation = None
 
     def _config_to_obj(self, config):
         if not config:
@@ -1626,6 +1634,7 @@ class Trainer:
             structured_data=structured_data,
             message_type=message_type,
             message_level=message_level,
+            job_id=self.job_id
         )
 
     def _train_initial_msg(self):
