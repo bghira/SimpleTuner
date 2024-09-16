@@ -46,6 +46,12 @@ class Configuration:
 
         return {"status": "successfully downloaded models"}
 
+    def _config_clear(self):
+        # clear prev configs from disk first
+        for file in ["config/multidatabackend.json", "config/webhooks.json", "config/lycoris_config.json", "config/user_prompt_library.json"]:
+            if os.path.exists(file):
+                os.remove(file)
+
     def _config_save(self, job_config: ConfigModel):
         with open("config/multidatabackend.json", mode="w") as file_handler:
             json.dump(job_config.dataloader_config, file_handler, indent=4)
@@ -82,6 +88,7 @@ class Configuration:
                     "status": False,
                     "result": "Could not test configuration, a previous configuration was already loaded.",
                 }
+            self._config_clear()
             self._config_save(job_config)
             trainer = Trainer(config=normalize_args(job_config.trainer_config))
             return {
@@ -117,6 +124,7 @@ class Configuration:
                 "status": False,
                 "result": f"Could not run job, '{current_job_id}' is already running.",
             }
+        self._config_clear()
         self._config_save(job_config)
         try:
             logger.info("Creating new Trainer instance..")
