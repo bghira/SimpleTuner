@@ -1,7 +1,7 @@
 from helpers.webhooks.handler import WebhookHandler
 
 class WebhookMixin:
-    ebhook_handler: WebhookHandler = None
+    webhook_handler: WebhookHandler = None
 
     def set_webhook_handler(self, webhook_handler: WebhookHandler):
         self.webhook_handler = webhook_handler
