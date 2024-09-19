@@ -991,6 +991,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
+            init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
             if not args.vae_cache_ondemand:
                 info_log(f"(id={init_backend['id']}) Discovering cache objects..")

@@ -19,6 +19,7 @@ from queue import Queue
 from concurrent.futures import as_completed
 from hashlib import sha256
 from helpers.training import image_file_extensions
+from helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -49,7 +50,7 @@ def prepare_sample(
     )
 
 
-class VAECache:
+class VAECache(WebhookMixin):
     def __init__(
         self,
         id: str,
@@ -58,6 +59,7 @@ class VAECache:
         metadata_backend: MetadataBackend,
         instance_data_dir: str,
         image_data_backend: BaseDataBackend,
+        webhook_progress_interval: int = 1_000,
         cache_data_backend: BaseDataBackend = None,
         cache_dir="vae_cache",
         resolution: float = 1024,
@@ -96,6 +98,7 @@ class VAECache:
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
+        self.webhook_progress_interval = webhook_progress_interval
         self.cache_data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
@@ -994,6 +997,13 @@ class VAECache:
                             )
                             futures.append(future_to_process)
 
+                            if self.webhook_handler is not None and (len(relevant_files) % self.webhook_progress_interval) == 0:
+                                self.send_progress_update(
+                                    type="vaecache",
+                                    progress=int(statistics["cached"] / len(relevant_files) * 100),
+                                    total=len(relevant_files),
+                                )
+
                         # If we have accumulated enough write objects, we can write them to disk at once.
                         if self.write_queue.qsize() >= self.write_batch_size:
                             future_to_write = executor.submit(
@@ -1050,6 +1060,13 @@ class VAECache:
                     )
                     logger.debug(log_msg)
                     tqdm.write(log_msg)
+                    if self.webhook_handler is not None:
+                        self.send_progress_update(
+                            type="init_cache_vae_processing_complete",
+                            progress=100,
+                            total=statistics['total'],
+                            current=statistics['total']
+                        )
                     self.debug_log(
                         "Completed process_buckets, all futures have been returned."
                     )
