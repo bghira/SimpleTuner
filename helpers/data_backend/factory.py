@@ -635,7 +635,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
-            init_backend["instance_data_dir"] = backend["aws_data_prefix"]
+            init_backend["instance_data_dir"] = backend.get("aws_data_prefix", "")
         elif backend["type"] == "csv":
             check_csv_config(backend=backend, args=args)
             init_backend["data_backend"] = get_csv_backend(
