@@ -395,7 +395,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
-            init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+            init_backend["cache_dir"] = backend.get(
+                "aws_data_prefix", backend.get("cache_dir", args.cache_dir_text)
+            )
         elif backend["type"] == "csv":
             raise ValueError("Cannot use CSV backend for text embed storage.")
         else:
@@ -991,7 +993,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
             )
-            init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
+            init_backend["vaecache"].set_webhook_handler(
+                StateTracker.get_webhook_handler()
+            )
 
             if not args.vae_cache_ondemand:
                 info_log(f"(id={init_backend['id']}) Discovering cache objects..")
