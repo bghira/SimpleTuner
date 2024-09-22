@@ -78,10 +78,11 @@ class VAECache(WebhookMixin):
     ):
         self.id = id
         self.should_abort = False
-        if image_data_backend.id != id:
-            raise ValueError(
-                f"VAECache received incorrect image_data_backend: {image_data_backend}"
-            )
+        if accelerator:
+            if image_data_backend.id != id:
+                raise ValueError(
+                    f"VAECache received incorrect image_data_backend: {image_data_backend}"
+                )
         self.image_data_backend = image_data_backend
         self.cache_data_backend = (
             cache_data_backend if cache_data_backend is not None else image_data_backend
@@ -90,7 +91,7 @@ class VAECache(WebhookMixin):
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
-        if self.cache_data_backend.type == "local":
+        if getattr(self.cache_data_backend, "type", "local") == "local":
             self.cache_dir = os.path.abspath(self.cache_dir)
         if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
             # Remove trailing slash
@@ -99,7 +100,8 @@ class VAECache(WebhookMixin):
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
         self.webhook_progress_interval = webhook_progress_interval
-        self.cache_data_backend.create_directory(self.cache_dir)
+        if cache_data_backend:
+            self.cache_data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
@@ -109,7 +111,7 @@ class VAECache(WebhookMixin):
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
-        if not self.metadata_backend.image_metadata_loaded:
+        if accelerator and not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
         self.vae_cache_ondemand = vae_cache_ondemand
@@ -133,9 +135,9 @@ class VAECache(WebhookMixin):
         logger.debug(f"{self.rank_info}{msg}")
 
     def generate_vae_cache_filename(self, filepath: str) -> tuple:
-        """Get the cache filename for a given image filepath and its base name."""
+        """Get the cache filename for a given image filepath."""
         if filepath.endswith(".pt"):
-            return filepath, os.path.basename(filepath)
+            return filepath
         # Extract the base name from the filepath and replace the image extension with .pt
         base_filename = os.path.splitext(os.path.basename(filepath))[0]
         if self.hash_filenames:
@@ -145,21 +147,28 @@ class VAECache(WebhookMixin):
         subfolders = ""
         if self.instance_data_dir is not None:
             subfolders = os.path.dirname(filepath).replace(self.instance_data_dir, "")
-        if len(subfolders) > 0 and subfolders[0] == "/" and self.cache_dir[0] != "/":
+        if len(subfolders) > 1 and subfolders[0] == "/":
+            if self.cache_dir in subfolders:
+                print(
+                    "For some reason, the subfolder contains the cache path: ",
+                    subfolders,
+                )
+            print(f"Subfolder detected: {subfolders}")
             subfolders = subfolders[1:]
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
-            # logger.debug(
-            #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
-            # )
+            print(
+                f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
+            )
         else:
+            print(f"No subfolders detected")
             full_filename = os.path.join(self.cache_dir, base_filename)
-            # logger.debug(
-            #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {base_filename})"
-            # )
-        return full_filename, base_filename
+            print(
+                f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {base_filename})"
+            )
+        return full_filename
 
     def _image_filename_from_vaecache_filename(self, filepath: str) -> tuple[str, str]:
-        test_filepath, _ = self.generate_vae_cache_filename(filepath)
+        test_filepath = self.generate_vae_cache_filename(filepath)
         result = self.vae_path_to_image_path.get(test_filepath, None)
         if result is None:
             raise ValueError(
@@ -173,7 +182,7 @@ class VAECache(WebhookMixin):
         self.image_path_to_vae_path = {}
         self.vae_path_to_image_path = {}
         for image_file in all_image_files:
-            cache_filename, _ = self.generate_vae_cache_filename(image_file)
+            cache_filename = self.generate_vae_cache_filename(image_file)
             if self.cache_data_backend.type == "local":
                 cache_filename = os.path.abspath(cache_filename)
             self.image_path_to_vae_path[image_file] = cache_filename
@@ -399,7 +408,7 @@ class VAECache(WebhookMixin):
         skipped_files = 0
         for full_image_path in aspect_bucket_cache[bucket]:
             total_files += 1
-            comparison_path = self.generate_vae_cache_filename(full_image_path)[0]
+            comparison_path = self.generate_vae_cache_filename(full_image_path)
             if os.path.splitext(comparison_path)[0] in processed_images:
                 # processed_images contains basename *cache* paths:
                 skipped_files += 1
@@ -428,7 +437,7 @@ class VAECache(WebhookMixin):
 
     def _kill_by_memory(self, exception: Exception):
         """
-        Example error: 
+        Example error:
         torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 20.00 MiB. GPU 0 has a total capacity of 23.43 GiB of which 11.62 MiB is free. Process 1580746 has 13.55 GiB memory in use. Including non-PyTorch memory, this process has 9.86 GiB memory in use. Of the allocated memory 9.45 GiB is allocated by PyTorch, and 32.29 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
 
         Goal:
@@ -455,7 +464,7 @@ class VAECache(WebhookMixin):
             raise ValueError("Mismatch between number of images and filepaths.")
 
         full_filenames = [
-            self.generate_vae_cache_filename(filepath)[0] for filepath in filepaths
+            self.generate_vae_cache_filename(filepath) for filepath in filepaths
         ]
 
         # Check cache for each image and filter out already cached ones
@@ -778,7 +787,7 @@ class VAECache(WebhookMixin):
                     vae_input_images.append(pixel_values)
                     vae_input_filepaths.append(filepath)
                     vae_output_filepaths.append(
-                        self.generate_vae_cache_filename(filepath)[0]
+                        self.generate_vae_cache_filename(filepath)
                     )
                     if is_final_sample:
                         # When we have fewer samples in a bucket than our VAE batch size might indicate,
@@ -997,10 +1006,18 @@ class VAECache(WebhookMixin):
                             )
                             futures.append(future_to_process)
 
-                            if self.webhook_handler is not None and (len(relevant_files) % self.webhook_progress_interval) == 0:
+                            if (
+                                self.webhook_handler is not None
+                                and (
+                                    len(relevant_files) % self.webhook_progress_interval
+                                )
+                                == 0
+                            ):
                                 self.send_progress_update(
                                     type="vaecache",
-                                    progress=int(statistics["cached"] / len(relevant_files) * 100),
+                                    progress=int(
+                                        statistics["cached"] / len(relevant_files) * 100
+                                    ),
                                     total=len(relevant_files),
                                 )
 
@@ -1064,8 +1081,8 @@ class VAECache(WebhookMixin):
                         self.send_progress_update(
                             type="init_cache_vae_processing_complete",
                             progress=100,
-                            total=statistics['total'],
-                            current=statistics['total']
+                            total=statistics["total"],
+                            current=statistics["total"],
                         )
                     self.debug_log(
                         "Completed process_buckets, all futures have been returned."
