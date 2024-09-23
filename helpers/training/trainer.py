@@ -736,25 +736,19 @@ class Trainer:
             elif self.config.base_model_default_dtype == "bf16":
                 self.config.base_weight_dtype = torch.bfloat16
                 self.config.enable_adamw_bf16 = True
-            if (
-                self.unet is not None
-                and self.unet.dtype != self.config.base_weight_dtype
-            ):
+            if self.unet is not None:
                 logger.info(
                     f"Moving U-net from {self.unet.dtype} to {self.config.base_weight_dtype} precision via {quantization_device}"
                 )
                 self.unet.to(quantization_device, dtype=self.config.base_weight_dtype)
-            elif (
-                self.transformer is not None
-                and self.transformer.dtype != self.config.base_weight_dtype
-            ):
+            elif self.transformer is not None:
                 logger.info(
                     f"Moving transformer from {self.transformer.dtype} to {self.config.base_weight_dtype} precision via {quantization_device}"
                 )
                 self.transformer.to(quantization_device, dtype=self.config.base_weight_dtype)
             else:
                 logger.info(
-                    f"Keeping some base model weights in {self.config.base_weight_dtype}."
+                    f"Keeping some base model weights in {self.config.base_weight_dtype} on {quantization_device}."
                 )
         if (
             "quanto" in self.config.base_model_precision
