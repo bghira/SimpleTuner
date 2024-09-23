@@ -133,7 +133,7 @@ def load_env():
 
         print(f"[CONFIG.ENV] Loaded environment variables from {config_env_path}")
     else:
-        raise ValueError(f"Cannot find config file: {config_env_path}")
+        logger.error(f"Cannot find config file: {config_env_path}")
 
     return config_file_contents
 

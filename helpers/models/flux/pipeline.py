@@ -843,7 +843,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 )[0]
 
                 # TODO optionally use batch prediction to speed this up.
-                if guidance_scale_real > 1.0 and t >= no_cfg_until_timestep:
+                if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(
                             device=self.transformer.device, dtype=self.transformer.dtype
