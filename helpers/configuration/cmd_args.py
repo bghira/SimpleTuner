@@ -2211,13 +2211,13 @@ def parse_cmdline_args(input_args=None):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         if args.disable_tf32:
-            logger.warning(
+            warning_log(
                 "--disable_tf32 is provided, not enabling. Training will potentially be much slower."
             )
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
         else:
-            logger.info(
+            info_log(
                 "Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems."
             )
 
