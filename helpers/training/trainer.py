@@ -741,7 +741,7 @@ class Trainer:
                 and self.unet.dtype != self.config.base_weight_dtype
             ):
                 logger.info(
-                    f"Moving U-net from {self.unet.dtype} to {self.config.base_weight_dtype} precision"
+                    f"Moving U-net from {self.unet.dtype} to {self.config.base_weight_dtype} precision via {quantization_device}"
                 )
                 self.unet.to(quantization_device, dtype=self.config.base_weight_dtype)
             elif (
@@ -749,7 +749,7 @@ class Trainer:
                 and self.transformer.dtype != self.config.base_weight_dtype
             ):
                 logger.info(
-                    f"Moving transformer from {self.transformer.dtype} to {self.config.base_weight_dtype} precision"
+                    f"Moving transformer from {self.transformer.dtype} to {self.config.base_weight_dtype} precision via {quantization_device}"
                 )
                 self.transformer.to(quantization_device, dtype=self.config.base_weight_dtype)
             else:
