@@ -1049,8 +1049,9 @@ class VAECache(WebhookMixin):
                     log_msg = (
                         f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
                     )
-                    logger.debug(log_msg)
-                    tqdm.write(log_msg)
+                    if get_rank() == 0:
+                        logger.debug(log_msg)
+                        tqdm.write(log_msg)
                     if self.webhook_handler is not None:
                         self.send_progress_update(
                             type="init_cache_vae_processing_complete",
