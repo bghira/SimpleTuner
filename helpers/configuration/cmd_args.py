@@ -31,6 +31,9 @@ logger.setLevel(
 if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
 
+def print_on_main_thread(message):
+    if is_primary_process:
+        print(message)
 
 def info_log(message):
     if is_primary_process:
@@ -1867,7 +1870,7 @@ def parse_cmdline_args(input_args=None):
     parser = get_argument_parser()
     if input_args is not None:
         for key_val in input_args:
-            print(f"{key_val}")
+            print_on_main_thread(f"{key_val}")
         try:
             args = parser.parse_args(input_args)
         except:
@@ -1944,7 +1947,7 @@ def parse_cmdline_args(input_args=None):
         )
 
     if "int4" in args.base_model_precision and torch.cuda.is_available():
-        print(
+        print_on_main_thread(
             "WARNING: int4 precision is ONLY supported on A100 and H100 or newer devices. Waiting 10 seconds to continue.."
         )
         time.sleep(10)
