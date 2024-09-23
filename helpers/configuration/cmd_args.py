@@ -1493,6 +1493,17 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--quantize_via",
+        type=str,
+        choices=["cpu", "accelerator"],
+        default="accelerator",
+        help=(
+            "When quantising the model, the quantisation process can be done on the CPU or the accelerator."
+            " When done on the accelerator (default), slightly more VRAM is required, but the process completes in milliseconds."
+            " When done on the CPU, the process may take upwards of 60 seconds, but can complete without OOM on 16G cards."
+        )
+    )
+    parser.add_argument(
         "--base_model_precision",
         type=str,
         default="no_change",

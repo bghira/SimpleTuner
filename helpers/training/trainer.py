@@ -727,6 +727,7 @@ class Trainer:
         )
         self.config.base_weight_dtype = self.config.weight_dtype
         self.config.is_quanto = False
+        quantization_device = "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
         if not self.config.disable_accelerator and self.config.is_quantized:
             if self.config.base_model_default_dtype == "fp32":
                 self.config.base_weight_dtype = torch.float32
@@ -741,7 +742,7 @@ class Trainer:
                 logger.info(
                     f"Moving U-net from {self.unet.dtype} to {self.config.base_weight_dtype} precision"
                 )
-                self.unet.to("cpu", dtype=self.config.base_weight_dtype)
+                self.unet.to(quantization_device, dtype=self.config.base_weight_dtype)
             elif (
                 self.transformer is not None
                 and self.transformer.dtype != self.config.base_weight_dtype
@@ -749,7 +750,7 @@ class Trainer:
                 logger.info(
                     f"Moving transformer from {self.transformer.dtype} to {self.config.base_weight_dtype} precision"
                 )
-                self.transformer.to("cpu", dtype=self.config.base_weight_dtype)
+                self.transformer.to(quantization_device, dtype=self.config.base_weight_dtype)
             else:
                 logger.info(
                     f"Keeping some base model weights in {self.config.base_weight_dtype}."
