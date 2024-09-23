@@ -421,6 +421,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", 1),
         )
+        init_backend["text_embed_cache"].set_webhook_handler(
+            StateTracker.get_webhook_handler()
+        )
         with accelerator.main_process_first():
             init_backend["text_embed_cache"].discover_all_files()
         accelerator.wait_for_everyone()

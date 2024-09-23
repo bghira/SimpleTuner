@@ -17,6 +17,8 @@ class StateTracker:
     config_path = None
     # Class variables
     model_type = ""
+    # Job ID for FastAPI. None if local.
+    job_id = None
 
     ## Training state
     global_step = 0
@@ -440,6 +442,14 @@ class StateTracker:
     @classmethod
     def set_webhook_handler(cls, webhook_handler):
         cls.webhook_handler = webhook_handler
+
+    @classmethod
+    def set_job_id(cls, job_id: str):
+        cls.job_id = job_id
+
+    @classmethod
+    def get_job_id(cls):
+        return cls.job_id
 
     @classmethod
     def set_vae(cls, vae):

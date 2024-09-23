@@ -154,6 +154,7 @@ class Trainer:
     def __init__(self, config: dict = None, disable_accelerator: bool = False, job_id: str = None):
         self.accelerator = None
         self.job_id = job_id
+        StateTracker.set_job_id(job_id)
         self.parse_arguments(args=config, disable_accelerator=disable_accelerator)
         self._misc_init()
         self.lycoris_wrapped_network = None
