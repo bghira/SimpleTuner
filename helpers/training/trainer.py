@@ -738,18 +738,14 @@ class Trainer:
                 self.config.enable_adamw_bf16 = True
             if self.unet is not None:
                 logger.info(
-                    f"Moving U-net from {self.unet.dtype} to {self.config.base_weight_dtype} precision via {quantization_device}"
+                    f"Moving U-net to dtype={self.config.base_weight_dtype}, device={quantization_device}"
                 )
                 self.unet.to(quantization_device, dtype=self.config.base_weight_dtype)
             elif self.transformer is not None:
                 logger.info(
-                    f"Moving transformer from {self.transformer.dtype} to {self.config.base_weight_dtype} precision via {quantization_device}"
+                    f"Moving transformer to dtype={self.config.base_weight_dtype}, device={quantization_device}"
                 )
                 self.transformer.to(quantization_device, dtype=self.config.base_weight_dtype)
-            else:
-                logger.info(
-                    f"Keeping some base model weights in {self.config.base_weight_dtype} on {quantization_device}."
-                )
         if (
             "quanto" in self.config.base_model_precision
             and "lora" in self.config.model_type
