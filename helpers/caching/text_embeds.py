@@ -14,6 +14,7 @@ import queue
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from helpers.training.multi_process import _get_rank as get_rank, should_log
+from helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("TextEmbeddingCache")
 if should_log():
@@ -96,7 +97,7 @@ def _encode_sd3_prompt_with_clip(
     return prompt_embeds, pooled_prompt_embeds
 
 
-class TextEmbeddingCache:
+class TextEmbeddingCache(WebhookMixin):
     prompts = {}
 
     def __init__(
@@ -106,6 +107,7 @@ class TextEmbeddingCache:
         text_encoders,
         tokenizers,
         accelerator,
+        webhook_progress_interval: int = 100,
         cache_dir: str = "cache",
         model_type: str = "sdxl",
         prompt_handler: PromptHandler = None,
@@ -120,6 +122,7 @@ class TextEmbeddingCache:
             raise ValueError(
                 f"TextEmbeddingCache received incorrect data_backend: {data_backend}"
             )
+        self.should_abort = False
         self.data_backend = data_backend
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers
@@ -158,6 +161,7 @@ class TextEmbeddingCache:
             daemon=True,
         )
         self.batch_write_thread.start()
+        self.webhook_progress_interval = webhook_progress_interval
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
@@ -686,6 +690,14 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
         # )
+        if self.webhook_handler is not None:
+            last_reported_index = 0
+            self.send_progress_update(
+                type="init_cache_text_embeds_started",
+                progress=int(0 // len(local_caption_split)),
+                total=len(local_caption_split),
+                current=0,
+            )
         self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
@@ -695,10 +707,12 @@ class TextEmbeddingCache:
             position=get_rank(),
         )
         with torch.no_grad():
+            last_reported_index = 0
             for prompt in tqdm(
                 local_caption_split,
                 desc="Processing prompts",
                 disable=return_concat,
+                miniters=50,
                 leave=False,
                 ncols=125,
                 position=get_rank() + self.accelerator.num_processes + 1,
@@ -752,6 +766,16 @@ class TextEmbeddingCache:
 
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
+
+                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
+                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                        self.send_progress_update(
+                            type="init_cache_text_embeds_status_update",
+                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            total=len(local_caption_split),
+                            current=0,
+                        )
+
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
                         add_text_embeds = add_text_embeds.to(self.accelerator.device)
@@ -771,6 +795,14 @@ class TextEmbeddingCache:
             logger.debug(
                 f"Exiting text cache write busy-loop, {self.write_queue.qsize()} items remaining."
             )
+
+            if self.webhook_handler is not None:
+                self.send_progress_update(
+                    type="init_cache_text_embeds_status_complete",
+                    progress=100,
+                    total=len(local_caption_split),
+                    current=len(local_caption_split),
+                )
 
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
@@ -817,6 +849,15 @@ class TextEmbeddingCache:
         else:
             local_caption_split = prompts or self.prompts
 
+        if self.webhook_handler is not None:
+            last_reported_index = 0
+            self.send_progress_update(
+                type="init_cache_text_embeds_started",
+                progress=int(0 // len(local_caption_split)),
+                total=len(local_caption_split),
+                current=0,
+            )
+
         self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
@@ -828,6 +869,7 @@ class TextEmbeddingCache:
         with torch.no_grad():
             attention_mask = None
             attention_masks_all = []
+            last_reported_index = 0
             for prompt in tqdm(
                 local_caption_split,
                 desc="Processing prompts",
@@ -905,6 +947,15 @@ class TextEmbeddingCache:
 
                     self.save_to_cache(filename, prompt_embeds)
 
+                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
+                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                        self.send_progress_update(
+                            type="init_cache_text_embeds_status_update",
+                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            total=len(local_caption_split),
+                            current=0,
+                        )
+
                 if not return_concat:
                     del prompt_embeds
                     prompt_embeds = None
@@ -920,6 +971,14 @@ class TextEmbeddingCache:
             logger.debug(
                 f"Exiting text cache write busy-loop, {self.write_queue.qsize()} items remaining."
             )
+
+            if self.webhook_handler is not None:
+                self.send_progress_update(
+                    type="init_cache_text_embeds_status_complete",
+                    progress=100,
+                    total=len(local_caption_split),
+                    current=len(local_caption_split),
+                )
 
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
@@ -962,6 +1021,15 @@ class TextEmbeddingCache:
             # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
             load_from_cache = False
             should_encode = True
+
+        if self.webhook_handler is not None:
+            last_reported_index = 0
+            self.send_progress_update(
+                type="init_cache_text_embeds_started",
+                progress=int(0 // len(local_caption_split)),
+                total=len(local_caption_split),
+                current=0,
+            )
         self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
@@ -971,10 +1039,12 @@ class TextEmbeddingCache:
             position=get_rank(),
         )
         with torch.no_grad():
+            last_reported_index = 0
             for prompt in tqdm(
                 local_caption_split,
                 desc="Processing prompts",
                 disable=return_concat,
+                miniters=50,
                 leave=False,
                 ncols=125,
                 position=get_rank() + self.accelerator.num_processes + 1,
@@ -1048,6 +1118,15 @@ class TextEmbeddingCache:
                     self.save_to_cache(
                         filename, (prompt_embeds, add_text_embeds, time_ids, masks)
                     )
+                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
+                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                        self.send_progress_update(
+                            type="init_cache_text_embeds_status_update",
+                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            total=len(local_caption_split),
+                            current=0,
+                        )
+                    
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
                         add_text_embeds = add_text_embeds.to(self.accelerator.device)
@@ -1068,6 +1147,14 @@ class TextEmbeddingCache:
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            if self.webhook_handler is not None:
+                self.send_progress_update(
+                    type="init_cache_text_embeds_status_complete",
+                    progress=100,
+                    total=len(local_caption_split),
+                    current=len(local_caption_split),
+                )
 
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()
@@ -1117,6 +1204,16 @@ class TextEmbeddingCache:
         # self.debug_log(
         #     f"compute_embeddings_for_sdxl_prompts received list of prompts: {list(prompts)[:5]}"
         # )
+
+        if self.webhook_handler is not None:
+            last_reported_index = 0
+            self.send_progress_update(
+                type="init_cache_text_embeds_started",
+                progress=int(0 // len(local_caption_split)),
+                total=len(local_caption_split),
+                current=0,
+            )
+
         self.write_thread_bar = tqdm(
             desc="Write embeds to disk",
             leave=False,
@@ -1126,10 +1223,12 @@ class TextEmbeddingCache:
             position=get_rank(),
         )
         with torch.no_grad():
+            last_reported_index = 0
             for prompt in tqdm(
                 local_caption_split,
                 desc="Processing prompts",
                 disable=return_concat,
+                miniters=50,
                 leave=False,
                 ncols=125,
                 position=get_rank() + self.accelerator.num_processes + 1,
@@ -1192,6 +1291,16 @@ class TextEmbeddingCache:
 
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
+
+                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
+                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                        self.send_progress_update(
+                            type="init_cache_text_embeds_status_update",
+                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            total=len(local_caption_split),
+                            current=0,
+                        )
+
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
                         add_text_embeds = add_text_embeds.to(self.accelerator.device)
@@ -1207,6 +1316,14 @@ class TextEmbeddingCache:
 
             while self.write_queue.qsize() > 0:
                 time.sleep(0.1)  # Sleep briefly to avoid busy-waiting
+
+            if self.webhook_handler is not None:
+                self.send_progress_update(
+                    type="init_cache_text_embeds_status_complete",
+                    progress=100,
+                    total=len(local_caption_split),
+                    current=len(local_caption_split),
+                )
 
             # Close the tqdm progress bar after the loop
             self.write_thread_bar.close()

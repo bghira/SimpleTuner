@@ -1,4 +1,4 @@
-import logging, sys
+import logging, sys, os
 from os import environ
 from diffusers.utils import is_wandb_available
 from helpers.training.state_tracker import StateTracker
@@ -9,12 +9,12 @@ from helpers.training.error_handling import validate_deepspeed_compat_from_args
 
 
 def safety_check(args, accelerator):
-    if accelerator.num_processes > 1:
+    if accelerator is not None and accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
             if "quanto" in args.base_model_precision:
-                logger.error(
+                print(
                     "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
                 )
                 sys.exit(1)
@@ -24,7 +24,7 @@ def safety_check(args, accelerator):
                 "Make sure to install wandb if you want to use it for logging during training."
             )
         import wandb
-    if (
+    if accelerator is not None and (
         hasattr(accelerator.state, "deepspeed_plugin")
         and accelerator.state.deepspeed_plugin is not None
     ):
@@ -40,7 +40,11 @@ def safety_check(args, accelerator):
 
     if "lora" in args.model_type and args.train_text_encoder:
         if args.lora_type.lower() == "lycoris":
-            logger.error(
+            print(
                 "LyCORIS training is not meant to be combined with --train_text_encoder. It is powerful enough on its own!"
             )
             sys.exit(1)
+    if args.user_prompt_library and not os.path.exists(args.user_prompt_library):
+        raise FileNotFoundError(
+            f"User prompt library not found at {args.user_prompt_library}. Please check the path and try again."
+        )

@@ -31,6 +31,9 @@ logger.setLevel(
 if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
 
+def print_on_main_thread(message):
+    if is_primary_process:
+        print(message)
 
 def info_log(message):
     if is_primary_process:
@@ -47,9 +50,10 @@ def error_log(message):
         logger.error(message)
 
 
-def parse_cmdline_args(input_args=None):
+def get_argument_parser():
     parser = argparse.ArgumentParser(
-        description="The following SimpleTuner command-line options are available:"
+        description="The following SimpleTuner command-line options are available:",
+        exit_on_error=False,
     )
     parser.add_argument(
         "--snr_gamma",
@@ -324,7 +328,9 @@ def parse_cmdline_args(input_args=None):
         type=float,
         required=False,
         default=None,
-        help=("Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."),
+        help=(
+            "Setting this turns on perturbed normal initialization of the LyCORIS LoKr PEFT layers. A good value is between 1e-4 and 1e-2."
+        ),
     )
     parser.add_argument(
         "--controlnet",
@@ -696,7 +702,7 @@ def parse_cmdline_args(input_args=None):
     parser.add_argument(
         "--write_batch_size",
         type=int,
-        default=64,
+        default=128,
         help=(
             "When using certain storage backends, it is better to batch smaller writes rather than continuous dispatching."
             " In SimpleTuner, write batching is currently applied during VAE caching, when many small objects are written."
@@ -1317,6 +1323,15 @@ def parse_cmdline_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--webhook_reporting_interval",
+        type=int,
+        default=None,
+        help=(
+            "When using 'raw' webhooks that receive structured data, you can specify a reporting interval here for"
+            " training progress updates to be sent at. This does not impact 'discord' webhook types."
+        ),
+    )
+    parser.add_argument(
         "--report_to",
         type=str,
         default="wandb",
@@ -1479,6 +1494,17 @@ def parse_cmdline_args(input_args=None):
             " gradients in bf16 precision. The default behaviour when gradient accumulation steps are enabled"
             " is now to use fp32 gradients, which is slower, but provides more accurate updates."
         ),
+    )
+    parser.add_argument(
+        "--quantize_via",
+        type=str,
+        choices=["cpu", "accelerator"],
+        default="accelerator",
+        help=(
+            "When quantising the model, the quantisation process can be done on the CPU or the accelerator."
+            " When done on the accelerator (default), slightly more VRAM is required, but the process completes in milliseconds."
+            " When done on the CPU, the process may take upwards of 60 seconds, but can complete without OOM on 16G cards."
+        )
     )
     parser.add_argument(
         "--base_model_precision",
@@ -1827,8 +1853,31 @@ def parse_cmdline_args(input_args=None):
         ),
     )
 
+    return parser
+
+
+def get_default_config():
+    parser = get_argument_parser()
+    default_config = {}
+    for action in parser.__dict__["_actions"]:
+        if action.dest:
+            default_config[action.dest] = action.default
+
+    return default_config
+
+
+def parse_cmdline_args(input_args=None):
+    parser = get_argument_parser()
     if input_args is not None:
-        args = parser.parse_args(input_args)
+        for key_val in input_args:
+            print_on_main_thread(f"{key_val}")
+        try:
+            args = parser.parse_args(input_args)
+        except:
+            logger.error(f"Could not parse input: {input_args}")
+            import traceback
+
+            logger.error(traceback.format_exc())
     else:
         args = parser.parse_args()
 
@@ -1898,7 +1947,7 @@ def parse_cmdline_args(input_args=None):
         )
 
     if "int4" in args.base_model_precision and torch.cuda.is_available():
-        print(
+        print_on_main_thread(
             "WARNING: int4 precision is ONLY supported on A100 and H100 or newer devices. Waiting 10 seconds to continue.."
         )
         time.sleep(10)
@@ -1995,7 +2044,7 @@ def parse_cmdline_args(input_args=None):
         args.resolution_type = "pixel"
 
     validation_resolution_is_float = False
-    if "." in args.validation_resolution:
+    if "." in str(args.validation_resolution):
         try:
             # this makes handling for int() conversion easier later.
             args.validation_resolution = float(args.validation_resolution)
@@ -2162,13 +2211,13 @@ def parse_cmdline_args(input_args=None):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         if args.disable_tf32:
-            logger.warning(
+            warning_log(
                 "--disable_tf32 is provided, not enabling. Training will potentially be much slower."
             )
             torch.backends.cuda.matmul.allow_tf32 = False
             torch.backends.cudnn.allow_tf32 = False
         else:
-            logger.info(
+            info_log(
                 "Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems."
             )
 

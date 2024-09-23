@@ -388,8 +388,8 @@ def collate_fn(batch):
     for example in examples:
         data_backend_id = example["data_backend_id"]
         if (
-            dropout_probability > 0
-            and dropout_probability is not None
+            dropout_probability is not None
+            and dropout_probability > 0
             and np.random.rand() < dropout_probability
         ):
             example["instance_prompt_text"] = ""  # Drop caption

@@ -19,6 +19,7 @@ from queue import Queue
 from concurrent.futures import as_completed
 from hashlib import sha256
 from helpers.training import image_file_extensions
+from helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("VAECache")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -49,7 +50,7 @@ def prepare_sample(
     )
 
 
-class VAECache:
+class VAECache(WebhookMixin):
     def __init__(
         self,
         id: str,
@@ -58,6 +59,7 @@ class VAECache:
         metadata_backend: MetadataBackend,
         instance_data_dir: str,
         image_data_backend: BaseDataBackend,
+        webhook_progress_interval: int = 100,
         cache_data_backend: BaseDataBackend = None,
         cache_dir="vae_cache",
         resolution: float = 1024,
@@ -75,7 +77,7 @@ class VAECache:
         hash_filenames: bool = False,
     ):
         self.id = id
-        if image_data_backend.id != id:
+        if image_data_backend and image_data_backend.id != id:
             raise ValueError(
                 f"VAECache received incorrect image_data_backend: {image_data_backend}"
             )
@@ -87,15 +89,16 @@ class VAECache:
         self.vae = vae
         self.accelerator = accelerator
         self.cache_dir = cache_dir
-        if self.cache_data_backend.type == "local":
-            self.cache_dir = os.path.abspath(self.cache_dir)
         if len(self.cache_dir) > 0 and self.cache_dir[-1] == "/":
             # Remove trailing slash
             self.cache_dir = self.cache_dir[:-1]
+        if self.cache_data_backend and self.cache_data_backend.type == "local":
+            self.cache_dir = os.path.abspath(self.cache_dir)
+            self.cache_data_backend.create_directory(self.cache_dir)
         self.resolution = resolution
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
-        self.cache_data_backend.create_directory(self.cache_dir)
+        self.webhook_progress_interval = webhook_progress_interval
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
@@ -105,7 +108,7 @@ class VAECache:
         self.transform = MultiaspectImage.get_image_transforms()
         self.rank_info = rank_info()
         self.metadata_backend = metadata_backend
-        if not self.metadata_backend.image_metadata_loaded:
+        if self.metadata_backend and not self.metadata_backend.image_metadata_loaded:
             self.metadata_backend.load_image_metadata()
 
         self.vae_cache_ondemand = vae_cache_ondemand
@@ -914,6 +917,15 @@ class VAECache:
             shuffled_keys = list(aspect_bucket_cache.keys())
             shuffle(shuffled_keys)
 
+        if self.webhook_handler is not None:
+            total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
+            self.send_progress_update(
+                type="init_cache_vae_processing_started",
+                progress=int(len(processed_images) / total_count * 100),
+                total=total_count,
+                current=len(processed_images)
+            )
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             for bucket in shuffled_keys:
                 relevant_files = self._reduce_bucket(
@@ -927,6 +939,8 @@ class VAECache:
                     "cached": 0,
                     "total": 0,
                 }
+                last_reported_index = 0
+    
                 for raw_filepath in tqdm(
                     relevant_files,
                     desc=f"Processing bucket {bucket}",
@@ -971,6 +985,14 @@ class VAECache:
                                 self._encode_images_in_batch
                             )
                             futures.append(future_to_process)
+                            if self.webhook_handler is not None and int(statistics["total"] // self.webhook_progress_interval) > last_reported_index:
+                                last_reported_index = statistics["total"] // self.webhook_progress_interval
+                                self.send_progress_update(
+                                    type="vaecache",
+                                    progress=int(statistics["total"] / len(relevant_files) * 100),
+                                    total=len(relevant_files),
+                                    current=statistics["total"]
+                                )
 
                         # If we have accumulated enough write objects, we can write them to disk at once.
                         if self.write_queue.qsize() >= self.write_batch_size:
@@ -1026,8 +1048,16 @@ class VAECache:
                     log_msg = (
                         f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
                     )
-                    logger.debug(log_msg)
-                    tqdm.write(log_msg)
+                    if get_rank() == 0:
+                        logger.debug(log_msg)
+                        tqdm.write(log_msg)
+                    if self.webhook_handler is not None:
+                        self.send_progress_update(
+                            type="init_cache_vae_processing_complete",
+                            progress=100,
+                            total=statistics['total'],
+                            current=statistics['total']
+                        )
                     self.debug_log(
                         "Completed process_buckets, all futures have been returned."
                     )

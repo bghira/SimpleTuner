@@ -51,6 +51,7 @@ class MetadataBackend:
                 f"BucketManager ID ({self.id}) must match the DataBackend ID ({data_backend.id})."
             )
         self.accelerator = accelerator
+        self.should_abort = False
         self.data_backend = data_backend
         self.batch_size = int(batch_size)
         self.repeats = int(repeats)
@@ -257,11 +258,16 @@ class MetadataBackend:
             ncols=100,
             miniters=int(len(new_files) / 100),
         ) as pbar:
-            while any(worker.is_alive() for worker in workers) or \
-                    not tqdm_queue.empty() or \
-                    not aspect_ratio_bucket_indices_queue.empty() or \
-                    not metadata_updates_queue.empty() or \
-                    not written_files_queue.empty():
+            if self.should_abort:
+                logger.info("Aborting aspect bucket update.")
+                return
+            while (
+                any(worker.is_alive() for worker in workers)
+                or not tqdm_queue.empty()
+                or not aspect_ratio_bucket_indices_queue.empty()
+                or not metadata_updates_queue.empty()
+                or not written_files_queue.empty()
+            ):
                 current_time = time.time()
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())

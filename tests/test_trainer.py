@@ -117,6 +117,8 @@ class TestTrainer(unittest.TestCase):
     @patch("helpers.training.state_tracker.StateTracker.set_weight_dtype")
     @patch("helpers.training.trainer.Trainer.set_model_family")
     @patch("helpers.training.trainer.Trainer.init_noise_schedule")
+    @patch("accelerate.accelerator.Accelerator", return_value=Mock())
+    @patch("accelerate.state.AcceleratorState", Mock())
     @patch(
         "argparse.ArgumentParser.parse_args",
         return_value=MagicMock(
@@ -137,6 +139,8 @@ class TestTrainer(unittest.TestCase):
     def test_misc_init(
         self,
         mock_argparse,
+        # mock_accelerator_state,
+        mock_accelerator,
         mock_init_noise_schedule,
         mock_set_model_family,
         mock_set_weight_dtype,
@@ -144,7 +148,7 @@ class TestTrainer(unittest.TestCase):
         mock_set_global_step,
         mock_set_num_threads,
     ):
-        trainer = Trainer()
+        trainer = Trainer(disable_accelerator=True)
         trainer._misc_init()
         mock_set_num_threads.assert_called_with(2)
         self.assertEqual(
