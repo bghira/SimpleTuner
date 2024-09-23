@@ -99,7 +99,6 @@ class VAECache(WebhookMixin):
         self.resolution_type = resolution_type
         self.minimum_image_size = minimum_image_size
         self.webhook_progress_interval = webhook_progress_interval
-        self.cache_data_backend.create_directory(self.cache_dir)
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
