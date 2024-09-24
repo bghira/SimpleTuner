@@ -2001,6 +2001,12 @@ def parse_cmdline_args(input_args=None):
             )
             sys.exit(1)
 
+        if args.quantize_via == "accelerator":
+            error_log(
+                "MPS does not benefit from models being quantized on the accelerator device. Overriding --quantize_via to 'cpu'."
+            )
+            args.quantize_via = "cpu"
+
     if (
         args.max_train_steps is not None
         and args.max_train_steps > 0
@@ -2247,9 +2253,7 @@ def parse_cmdline_args(input_args=None):
     )
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
-    if "lora" not in args.model_type:
-        args.base_model_precision = "no_change"
-    elif "lycoris" == args.lora_type.lower():
+    if "lycoris" == args.lora_type.lower():
         from lycoris import create_lycoris
 
         if args.lycoris_config is None:
