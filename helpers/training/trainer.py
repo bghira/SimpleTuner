@@ -753,47 +753,46 @@ class Trainer:
                 self.transformer.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
-        if "lora" in self.config.model_type:
-            if "quanto" in self.config.base_model_precision:
-                self.config.is_quanto = True
-            elif "torchao" in self.config.base_model_precision:
-                self.config.is_torchao = True
+        if "quanto" in self.config.base_model_precision:
+            self.config.is_quanto = True
+        elif "torchao" in self.config.base_model_precision:
+            self.config.is_torchao = True
 
-            if self.config.is_quanto:
-                from helpers.training.quantisation import quantoise
+        if self.config.is_quanto:
+            from helpers.training.quantisation import quantoise
 
-                self.quantoise = quantoise
-                with self.accelerator.local_main_process_first():
-                    quantoise(
-                        unet=self.unet,
-                        transformer=self.transformer,
-                        text_encoder_1=self.text_encoder_1,
-                        text_encoder_2=self.text_encoder_2,
-                        text_encoder_3=self.text_encoder_3,
-                        controlnet=None,
-                        args=self.config,
-                    )
-            elif self.config.is_torchao:
-                from helpers.training.quantisation import quantoise
+            self.quantoise = quantoise
+            with self.accelerator.local_main_process_first():
+                quantoise(
+                    unet=self.unet,
+                    transformer=self.transformer,
+                    text_encoder_1=self.text_encoder_1,
+                    text_encoder_2=self.text_encoder_2,
+                    text_encoder_3=self.text_encoder_3,
+                    controlnet=None,
+                    args=self.config,
+                )
+        elif self.config.is_torchao:
+            from helpers.training.quantisation import quantoise
 
-                self.quantoise = quantoise
-                with self.accelerator.local_main_process_first():
-                    (
-                        self.unet,
-                        self.transformer,
-                        self.text_encoder_1,
-                        self.text_encoder_2,
-                        self.text_encoder_3,
-                        self.controlnet,
-                    ) = quantoise(
-                        unet=self.unet,
-                        transformer=self.transformer,
-                        text_encoder_1=self.text_encoder_1,
-                        text_encoder_2=self.text_encoder_2,
-                        text_encoder_3=self.text_encoder_3,
-                        controlnet=None,
-                        args=self.config,
-                    )
+            self.quantoise = quantoise
+            with self.accelerator.local_main_process_first():
+                (
+                    self.unet,
+                    self.transformer,
+                    self.text_encoder_1,
+                    self.text_encoder_2,
+                    self.text_encoder_3,
+                    self.controlnet,
+                ) = quantoise(
+                    unet=self.unet,
+                    transformer=self.transformer,
+                    text_encoder_1=self.text_encoder_1,
+                    text_encoder_2=self.text_encoder_2,
+                    text_encoder_3=self.text_encoder_3,
+                    controlnet=None,
+                    args=self.config,
+                )
 
     def init_controlnet_model(self):
         if not self.config.controlnet:
