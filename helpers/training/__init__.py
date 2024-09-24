@@ -7,6 +7,7 @@ quantised_precision_levels = [
     "int4-quanto",
     "int2-quanto",
     "fp8-torchao",
+    "int8-torchao",
     "auto-torchao",
 ]
 
