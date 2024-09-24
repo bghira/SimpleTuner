@@ -439,8 +439,9 @@ class MetadataBackend:
         )
         existing_files = StateTracker.get_image_files(data_backend_id=self.id)
 
-        # Update bucket indices to remove entries that no longer exist
-        self.update_buckets_with_existing_files(existing_files)
+        if not StateTracker.get_args().ignore_missing_files:
+            # Update bucket indices to remove entries that no longer exist
+            self.update_buckets_with_existing_files(existing_files)
         return
 
     def _enforce_min_bucket_size(self):

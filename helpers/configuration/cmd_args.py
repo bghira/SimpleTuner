@@ -31,9 +31,11 @@ logger.setLevel(
 if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
 
+
 def print_on_main_thread(message):
     if is_primary_process:
         print(message)
+
 
 def info_log(message):
     if is_primary_process:
@@ -697,6 +699,15 @@ def get_argument_parser():
             "When using multiple data backends, the sampling weighting can be set to 'uniform' or 'auto-weighting'."
             " The default value is 'auto-weighting', which will automatically adjust the sampling weights based on the"
             " number of images in each backend. 'uniform' will sample from each backend equally."
+        ),
+    )
+    parser.add_argument(
+        "--ignore_missing_files",
+        action="store_true",
+        help=(
+            "This option will disable the check for files that have been deleted or removed from your data directory."
+            " This would allow training on large datasets without keeping the associated images on disk, though it's"
+            " not recommended and is not a supported feature. Use with caution, as it mostly exists for experimentation."
         ),
     )
     parser.add_argument(
@@ -1504,7 +1515,7 @@ def get_argument_parser():
             "When quantising the model, the quantisation process can be done on the CPU or the accelerator."
             " When done on the accelerator (default), slightly more VRAM is required, but the process completes in milliseconds."
             " When done on the CPU, the process may take upwards of 60 seconds, but can complete without OOM on 16G cards."
-        )
+        ),
     )
     parser.add_argument(
         "--base_model_precision",
