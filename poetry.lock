@@ -3317,6 +3317,28 @@ docs = ["black (>=24.2.0)", "mkdocs-caption (>=1.0.0)", "mkdocs-material (>=9.4.
 test = ["numpy (>=1.23)", "pytest (>=8.1.1)", "pytest-md (>=0.2.0)", "ruff (>=0.3.2)"]
 
 [[package]]
+name = "torchao"
+version = "0.5.0+cu124"
+description = "Package for applying ao techniques to GPU models"
+optional = false
+python-versions = "*"
+files = [
+    {file = "torchao-0.5.0+cu124-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6228f96a3f6ecf26faa5694b86263bdc82df64cfcd4892cd3b62155706d733ae"},
+    {file = "torchao-0.5.0+cu124-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ef9557f8ab51967e94e06b59d71147116621fcee5602f2a0c88ffb8dce02aaad"},
+    {file = "torchao-0.5.0+cu124-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f8400ac2770cb5d63f5b84347258995baecbdc6d35116016ecd90fa3f4eacc70"},
+    {file = "torchao-0.5.0+cu124-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0f18b7cd527b09172093deb22f04143c514f01fdbc7f17bc9d7860d11292fcae"},
+    {file = "torchao-0.5.0+cu124-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fec93047847214fe351cda7032f237770c00d4e4b5f519c817e8532033915410"},
+]
+
+[package.extras]
+dev = ["bitsandbytes", "expecttest", "fire", "hypothesis", "matplotlib", "ninja", "packaging", "pandas", "parameterized", "pre-commit", "pytest (==7.4.0)", "ruff", "sentencepiece", "tabulate", "transformers", "unittest-xml-reporting"]
+
+[package.source]
+type = "legacy"
+url = "https://download.pytorch.org/whl/cu124"
+reference = "pytorch"
+
+[[package]]
 name = "torchaudio"
 version = "2.4.1+cu124"
 description = "An audio package for PyTorch"
@@ -3531,6 +3553,11 @@ files = [
     {file = "triton-3.0.0-1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:34e509deb77f1c067d8640725ef00c5cbfcb2052a1a3cb6a6d343841f92624eb"},
     {file = "triton-3.0.0-1-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:bcbf3b1c48af6a28011a5c40a5b3b9b5330530c3827716b5fbf6d7adcc1e53e9"},
     {file = "triton-3.0.0-1-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6e5727202f7078c56f91ff13ad0c1abab14a0e7f2c87e91b12b6f64f3e8ae609"},
+    {file = "triton-3.0.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:39b052da883351fdf6be3d93cedae6db3b8e3988d3b09ed221bccecfa9612230"},
+    {file = "triton-3.0.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cd34f19a8582af96e6291d4afce25dac08cb2a5d218c599163761e8e0827208e"},
+    {file = "triton-3.0.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0d5e10de8c011adeb7c878c6ce0dd6073b14367749e34467f1cff2bde1b78253"},
+    {file = "triton-3.0.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e8903767951bf86ec960b4fe4e21bc970055afc65e9d57e916d79ae3c93665e3"},
+    {file = "triton-3.0.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:41004fb1ae9a53fcb3e970745feb87f0e3c94c6ce1ba86e95fa3b8537894bef7"},
 ]
 
 [package.dependencies]
@@ -4206,4 +4233,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "7eecae72d52af37ed5e20ed69eb52297943932d6df0c3cc23a73ef6c02514e2e"
+content-hash = "e1648b05a77ccbee3b5e0ada5f41f38fef4fb98c303caf6ed361723af37033dd"

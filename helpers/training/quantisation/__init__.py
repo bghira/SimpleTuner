@@ -8,22 +8,30 @@ if should_log():
 else:
     logger.setLevel(logging.ERROR)
 
-try:
-    from optimum.quanto import freeze, quantize, qfloat8, qint8, qint4, qint2, QTensor
-except ImportError as e:
-    raise ImportError(
-        f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
-    )
-
 
 def _quanto_model(model, model_precision, base_model_precision=None):
+    try:
+        from optimum.quanto import (
+            freeze,
+            quantize,
+            qfloat8,
+            qint8,
+            qint4,
+            qint2,
+            QTensor,
+        )
+    except ImportError as e:
+        raise ImportError(
+            f"To use Quanto, please install the optimum library: `pip install optimum-quanto`: {e}"
+        )
+
     if model_precision is None:
         model_precision = base_model_precision
     if model is None:
-        return
+        return model
     if model_precision == "no_change" or model_precision is None:
         logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
-        return
+        return model
 
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     if model_precision == "int2-quanto":
@@ -45,7 +53,7 @@ def _quanto_model(model, model_precision, base_model_precision=None):
                 "MPS doesn't support dtype float8_e4m3n, you must select another precision level such as bf16, int2, int8, or int8."
             )
 
-            return
+            return model
         weight_quant = qfloat8
     else:
         raise ValueError(f"Invalid quantisation level: {base_model_precision}")
@@ -53,27 +61,85 @@ def _quanto_model(model, model_precision, base_model_precision=None):
     logger.info("Freezing model.")
     freeze(model)
 
+    return model
+
+
+def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
+    # don't convert the output module
+    if fqn == "proj_out":
+        return False
+    # don't convert linear modules with weight dimensions not divisible by 16
+    if isinstance(mod, torch.nn.Linear):
+        if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+            return False
+    return True
+
+
+def _torchao_model(model, model_precision, base_model_precision=None):
+    if model_precision is None:
+        model_precision = base_model_precision
+    if model is None:
+        return model
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+
+    if not torch.cuda.is_available():
+        raise ValueError(
+            "torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
+        )
+    try:
+        from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+        import torchao
+    except ImportError as e:
+        raise ImportError(
+            f"To use torchao, please install the torchao library: `pip install torchao`: {e}"
+        )
+    logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
+
+    if model_precision == "auto-torchao":
+        logger.info("Auto-tuning model via torch.compile with max-autotune.")
+        return torchao.autoquant(torch.compile(model, mode="max-autotune"))
+    elif model_precision == "fp8-torchao":
+
+        convert_to_float8_training(
+            model,
+            module_filter_fn=_torchao_filter_fn,
+            config=Float8LinearConfig(pad_inner_dim=True),
+        )
+
+    else:
+        raise ValueError(f"Invalid quantisation level: {base_model_precision}")
+
+    return model
+
 
 def quantoise(
     unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet, args
 ):
     logger.info("Loading Quanto for LoRA training. This may take a few minutes.")
+    if "quanto" in args.base_model_precision.lower():
+        quant_fn = _quanto_model
+    elif "torchao" in args.base_model_precision.lower():
+        quant_fn = _torchao_model
     if transformer is not None:
-        _quanto_model(transformer, args.base_model_precision)
+        transformer = quant_fn(transformer, args.base_model_precision)
     if unet is not None:
-        _quanto_model(unet, args.base_model_precision)
+        unet = quant_fn(unet, args.base_model_precision)
     if controlnet is not None:
-        _quanto_model(controlnet, args.base_model_precision)
+        controlnet = quant_fn(controlnet, args.base_model_precision)
 
     if text_encoder_1 is not None:
-        _quanto_model(
+        text_encoder_1 = quant_fn(
             text_encoder_1, args.text_encoder_1_precision, args.base_model_precision
         )
     if text_encoder_2 is not None:
-        _quanto_model(
+        text_encoder_2 = quant_fn(
             text_encoder_2, args.text_encoder_2_precision, args.base_model_precision
         )
     if text_encoder_3 is not None:
-        _quanto_model(
+        text_encoder_3 = quant_fn(
             text_encoder_3, args.text_encoder_3_precision, args.base_model_precision
         )
+
+    return unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet

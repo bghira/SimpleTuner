@@ -349,24 +349,34 @@ class SaveHookManager:
         while len(models) > 0:
             model = models.pop()
 
-            if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
+            if isinstance(
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.unet)),
+            ):
                 unet_ = model
                 denoiser = unet_
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.transformer))
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.transformer)),
             ):
                 transformer_ = model
                 denoiser = transformer_
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.text_encoder_1))
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.text_encoder_1)),
             ):
                 text_encoder_one_ = model
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.text_encoder_2))
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.text_encoder_2)),
             ):
                 text_encoder_two_ = model
             else:
-                raise ValueError(f"unexpected save model: {model.__class__}")
+                raise ValueError(
+                    f"unexpected save model: {model.__class__}"
+                    f"\nunwrapped: {unwrap_model(self.accelerator, model).__class__}"
+                    f"\nunet: {unwrap_model(self.accelerator, self.unet).__class__}"
+                )
 
         if self.args.model_family in ["sd3", "flux", "pixart_sigma"]:
             key_to_replace = "transformer"

@@ -730,6 +730,7 @@ class Trainer:
         )
         self.config.base_weight_dtype = self.config.weight_dtype
         self.config.is_quanto = False
+        self.config.is_torchao = False
         quantization_device = (
             "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
         )
@@ -752,19 +753,39 @@ class Trainer:
                 self.transformer.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
-        if (
-            "quanto" in self.config.base_model_precision
-            and "lora" in self.config.model_type
-        ):
-            self.config.is_quanto = True
-            from helpers.training.quantisation import quantoise
+        if "lora" in self.config.model_type:
+            if "quanto" in self.config.base_model_precision:
+                self.config.is_quanto = True
+            elif "torchao" in self.config.base_model_precision:
+                self.config.is_torchao = True
 
-            self.quantoise = quantoise
+            if self.config.is_quanto:
+                from helpers.training.quantisation import quantoise
 
-            # we'll quantise pretty much everything but the adapter, if we execute this here.
-            if not self.config.controlnet:
+                self.quantoise = quantoise
                 with self.accelerator.local_main_process_first():
                     quantoise(
+                        unet=self.unet,
+                        transformer=self.transformer,
+                        text_encoder_1=self.text_encoder_1,
+                        text_encoder_2=self.text_encoder_2,
+                        text_encoder_3=self.text_encoder_3,
+                        controlnet=None,
+                        args=self.config,
+                    )
+            elif self.config.is_torchao:
+                from helpers.training.quantisation import quantoise
+
+                self.quantoise = quantoise
+                with self.accelerator.local_main_process_first():
+                    (
+                        self.unet,
+                        self.transformer,
+                        self.text_encoder_1,
+                        self.text_encoder_2,
+                        self.text_encoder_3,
+                        self.controlnet,
+                    ) = quantoise(
                         unet=self.unet,
                         transformer=self.transformer,
                         text_encoder_1=self.text_encoder_1,
