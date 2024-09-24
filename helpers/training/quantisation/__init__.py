@@ -84,13 +84,13 @@ def _torchao_model(model, model_precision, base_model_precision=None):
         logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
         return model
 
-    if not torch.cuda.is_available():
-        raise ValueError(
-            "torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
-        )
     try:
         from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+        from torchao.prototype.quantized_training import (
+            int8_weight_only_quantized_training,
+        )
         import torchao
+        from torchao.quantization import quantize_
     except ImportError as e:
         raise ImportError(
             f"To use torchao, please install the torchao library: `pip install torchao`: {e}"
@@ -100,8 +100,15 @@ def _torchao_model(model, model_precision, base_model_precision=None):
     if model_precision == "auto-torchao":
         logger.info("Auto-tuning model via torch.compile with max-autotune.")
         return torchao.autoquant(torch.compile(model, mode="max-autotune"))
+    elif model_precision == "int8-torchao":
+        quantize_(
+            model, int8_weight_only_quantized_training()
+        )  # , filter_fn=_torchao_filter_fn)
     elif model_precision == "fp8-torchao":
-
+        if not torch.cuda.is_available():
+            raise ValueError(
+                "torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
+            )
         convert_to_float8_training(
             model,
             module_filter_fn=_torchao_filter_fn,
