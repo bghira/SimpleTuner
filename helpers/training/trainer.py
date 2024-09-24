@@ -151,7 +151,9 @@ diffusers.utils.logging.set_verbosity_warning()
 
 
 class Trainer:
-    def __init__(self, config: dict = None, disable_accelerator: bool = False, job_id: str = None):
+    def __init__(
+        self, config: dict = None, disable_accelerator: bool = False, job_id: str = None
+    ):
         self.accelerator = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
@@ -202,7 +204,7 @@ class Trainer:
                 self.config.learning_rate
                 * self.config.gradient_accumulation_steps
                 * self.config.train_batch_size
-                * getattr(self.accelerator, 'num_processes', 1)
+                * getattr(self.accelerator, "num_processes", 1)
             )
         StateTracker.set_accelerator(self.accelerator)
         StateTracker.set_args(self.config)
@@ -728,7 +730,9 @@ class Trainer:
         )
         self.config.base_weight_dtype = self.config.weight_dtype
         self.config.is_quanto = False
-        quantization_device = "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
+        quantization_device = (
+            "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
+        )
         if not self.config.disable_accelerator and self.config.is_quantized:
             if self.config.base_model_default_dtype == "fp32":
                 self.config.base_weight_dtype = torch.float32
@@ -745,7 +749,9 @@ class Trainer:
                 logger.info(
                     f"Moving transformer to dtype={self.config.base_weight_dtype}, device={quantization_device}"
                 )
-                self.transformer.to(quantization_device, dtype=self.config.base_weight_dtype)
+                self.transformer.to(
+                    quantization_device, dtype=self.config.base_weight_dtype
+                )
         if (
             "quanto" in self.config.base_model_precision
             and "lora" in self.config.model_type
@@ -1056,9 +1062,7 @@ class Trainer:
             )
             self.optimizer = optimizer_class(self.params_to_optimize)
         else:
-            logger.info(
-                f"Optimizer arguments={extra_optimizer_args}"
-            )
+            logger.info(f"Optimizer arguments={extra_optimizer_args}")
             if self.config.train_text_encoder and self.config.text_encoder_lr:
                 # changes the learning rate of text_encoder_parameters_one and text_encoder_parameters_two to be
                 # --learning_rate
@@ -1403,7 +1407,7 @@ class Trainer:
             ):
                 for g in self.optimizer.param_groups:
                     if "lr" in g:
-                        g["lr"] = torch.tensor(self.config.learning_rate)
+                        g["lr"] = self.config.learning_rate
                 for k, v in lr_scheduler.state_dict().items():
                     if k in ("base_lrs", "_last_lr"):
                         v[0] = self.config.learning_rate
@@ -1626,7 +1630,7 @@ class Trainer:
             structured_data=structured_data,
             message_type=message_type,
             message_level=message_level,
-            job_id=self.job_id
+            job_id=self.job_id,
         )
 
     def _train_initial_msg(self):
