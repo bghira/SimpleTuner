@@ -320,6 +320,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
+    StateTracker.clear_data_backends()
     logger.setLevel(
         os.environ.get(
             "SIMPLETUNER_LOG_LEVEL", "INFO" if accelerator.is_main_process else "ERROR"
