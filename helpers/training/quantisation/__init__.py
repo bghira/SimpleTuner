@@ -109,7 +109,7 @@ def _torchao_model(model, model_precision, base_model_precision=None):
             raise ValueError(
                 "torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
             )
-        convert_to_float8_training(
+        model = convert_to_float8_training(
             model,
             module_filter_fn=_torchao_filter_fn,
             config=Float8LinearConfig(pad_inner_dim=True),
