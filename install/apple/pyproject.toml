@@ -37,8 +37,7 @@ peft = "^0.12.0"
 tensorboard = "^2.17.1"
 regex = "^2023.12.25"
 huggingface-hub = "^0.23.3"
-optimum = "^1.21.2"
-optimum-quanto = {git = "https://github.com/bghira/optimum-quanto-simpletuner", rev = "simpletuner/lora-resume"}
+optimum-quanto = {git = "https://github.com/huggingface/optimum-quanto"}
 torch-optimi = "^0.2.1"
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 fastapi = {extras = ["standard"], version = "^0.115.0"}
