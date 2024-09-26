@@ -156,6 +156,7 @@ def get_polynomial_decay_schedule_with_warmup(
 
     """
 
+    print(f"Optimizer: {optimizer}")
     lr_init = optimizer.defaults["lr"]
     if not (float(lr_init) > float(lr_end)):
         raise ValueError(

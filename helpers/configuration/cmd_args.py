@@ -1149,6 +1149,39 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--optimizer_cpu_offload_method",
+        choices=["none", "torchao"],
+        default="none",
+        help=(
+            "When loading an optimiser, a CPU offload mechanism can be used. Currently, no offload is used by default, and only torchao is supported."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_offload_gradients",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating a CPU-offloaded optimiser, the gradients can be offloaded to the CPU to save more memory."
+        ),
+    )
+    parser.add_argument(
+        "--fuse_optimizer",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating a CPU-offloaded optimiser, the fused optimiser could be used to save on memory, while running slightly slower."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_torch_compile",
+        action="store_true",
+        default=False,
+        help=(
+            "When using a CPU-offloaded optimiser, we can torch.compile() it and save some time using a compiled graph."
+            " This option will not work on Apple MPS devices, and may not work on all systems."
+        ),
+    )
+    parser.add_argument(
         "--optimizer_beta1",
         type=float,
         default=None,

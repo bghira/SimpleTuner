@@ -23,7 +23,6 @@ from helpers.training.validation import Validation, prepare_validation_prompt_li
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
 from helpers.training.custom_schedule import get_lr_scheduler
-from helpers.training.optimizer_param import is_lr_scheduler_disabled
 from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
 from helpers.training.text_encoding import (
@@ -35,6 +34,8 @@ from helpers.training.text_encoding import (
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
     determine_params_to_optimize,
+    is_lr_scheduler_disabled,
+    cpu_offload_optimizer,
 )
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import (
@@ -1090,10 +1091,19 @@ class Trainer:
                 if self.text_encoder_2 is not None:
                     self.params_to_optimize[2]["lr"] = float(self.config.learning_rate)
 
-            self.optimizer = optimizer_class(
-                self.params_to_optimize,
-                **extra_optimizer_args,
+            self.optimizer = cpu_offload_optimizer(
+                params_to_optimize=self.params_to_optimize,
+                optimizer_cls=optimizer_class,
+                optimizer_parameters=extra_optimizer_args,
+                fused=self.config.fuse_optimizer,
+                offload_gradients=self.config.optimizer_offload_gradients,
+                offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
+
+            # self.optimizer = optimizer_class(
+            #     self.params_to_optimize,
+            #     **extra_optimizer_args,
+            # )
 
         if (
             is_optimi_available

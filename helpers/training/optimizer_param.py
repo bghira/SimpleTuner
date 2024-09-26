@@ -23,6 +23,7 @@ try:
         Adam4bit as AOAdamW4Bit,
         AdamFp8 as AOAdamFp8,
         AdamWFp8 as AOAdamWFp8,
+        CPUOffloadOptimizer as AOCPUOffloadOptimizer,
     )
 
     if torch.backends.mps.is_available():
@@ -339,6 +340,31 @@ def is_optimizer_grad_fp32(optimizer: str) -> bool:
     if optimizer_precision == "fp32":
         return True
     return False
+
+
+def cpu_offload_optimizer(
+    params_to_optimize,
+    optimizer_cls,
+    optimizer_parameters: dict,
+    offload_gradients: bool = True,
+    fused: bool = True,
+    offload_mechanism: str = None,
+):
+    if not offload_mechanism:
+        return optimizer_cls(params_to_optimize, **optimizer_parameters)
+    if offload_mechanism != "torchao":
+        raise ValueError(
+            f"Unknown CPU optimiser offload mechanism: {offload_mechanism}"
+        )
+
+    if offload_gradients:
+        optimizer_parameters["offload_gradients"] = offload_gradients
+    if fused:
+        optimizer_parameters["fused"] = fused
+
+    optimizer_parameters["optimizer_class"] = optimizer_cls
+
+    return AOCPUOffloadOptimizer(params_to_optimize, **optimizer_parameters)
 
 
 def determine_optimizer_class_with_config(
