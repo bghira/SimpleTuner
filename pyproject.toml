@@ -46,6 +46,7 @@ lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 toml = "^0.10.2"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
+bf16-fused-adam = "^0.1"
 
 
 [build-system]

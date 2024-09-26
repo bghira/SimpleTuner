@@ -243,6 +243,16 @@ tests = ["cloudpickle", "hypothesis", "mypy (>=1.11.1)", "pympler", "pytest (>=4
 tests-mypy = ["mypy (>=1.11.1)", "pytest-mypy-plugins"]
 
 [[package]]
+name = "bf16-fused-adam"
+version = "0.1"
+description = "BFloat16 Fused Adam Optimizer"
+optional = false
+python-versions = "*"
+files = [
+    {file = "bf16_fused_adam-0.1.tar.gz", hash = "sha256:393ef40b422dc0cb8002c57c9af08cdc5ad11607186119be95acd964b892885d"},
+]
+
+[[package]]
 name = "boto3"
 version = "1.35.24"
 description = "The AWS SDK for Python"
@@ -4146,4 +4156,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "82295db251d4b321c71129276385db89a8c91ed72db5d8142e92f7abc46ccf85"
+content-hash = "746d492b71ea78de9fa4776f0f8d846872f98e9bad5c5efc6123b5235dce4552"

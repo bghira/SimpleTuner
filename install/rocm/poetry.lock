@@ -228,6 +228,16 @@ tests-mypy = ["mypy (>=1.6)", "pytest-mypy-plugins"]
 tests-no-zope = ["attrs[tests-mypy]", "cloudpickle", "hypothesis", "pympler", "pytest (>=4.3.0)", "pytest-xdist[psutil]"]
 
 [[package]]
+name = "bf16-fused-adam"
+version = "0.1"
+description = "BFloat16 Fused Adam Optimizer"
+optional = false
+python-versions = "*"
+files = [
+    {file = "bf16_fused_adam-0.1.tar.gz", hash = "sha256:393ef40b422dc0cb8002c57c9af08cdc5ad11607186119be95acd964b892885d"},
+]
+
+[[package]]
 name = "boto3"
 version = "1.35.24"
 description = "The AWS SDK for Python"
@@ -4113,4 +4123,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "90e439290743857506f87e10db930629bd13a0c642cf493ae01ac6a28fc09351"
+content-hash = "216e8a5d5bd89799696711173eabfe1c1ba1ca8426d53bb3138e621fbc622359"

@@ -243,6 +243,16 @@ tests = ["cloudpickle", "hypothesis", "mypy (>=1.11.1)", "pympler", "pytest (>=4
 tests-mypy = ["mypy (>=1.11.1)", "pytest-mypy-plugins"]
 
 [[package]]
+name = "bf16-fused-adam"
+version = "0.1"
+description = "BFloat16 Fused Adam Optimizer"
+optional = false
+python-versions = "*"
+files = [
+    {file = "bf16_fused_adam-0.1.tar.gz", hash = "sha256:393ef40b422dc0cb8002c57c9af08cdc5ad11607186119be95acd964b892885d"},
+]
+
+[[package]]
 name = "bitsandbytes"
 version = "0.43.3"
 description = "k-bit optimizers and matrix multiplication routines."
@@ -4212,4 +4222,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "975a447a7f64bb6e7340d3e10153e4e3e2c649393fa18c2516b1720ad4b5b32b"
+content-hash = "515012bd04399c36f24a0cc6b3d2fb1e9e035a58ea28de1a6f236b5e92f79cd8"

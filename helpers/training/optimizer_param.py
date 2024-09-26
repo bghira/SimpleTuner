@@ -13,6 +13,13 @@ from helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
 
 try:
+    from bf16_fused_adam.adamw import BF16FusedAdamW
+except ImportError as e:
+    print(
+        f"To use Fused BF16, install the latest dependencies via `poetry install`: {e}"
+    )
+
+try:
     from optimum.quanto import QTensor
 except:
     pass
@@ -22,7 +29,7 @@ try:
 
     is_optimi_available = True
 except:
-    logger.error(
+    print(
         "Could not load optimi library. Please install `torch-optimi` for better memory efficiency."
     )
 
@@ -35,6 +42,15 @@ optimizer_choices = {
             "eps": 1e-6,
         },
         "class": AdamWBF16,
+    },
+    "adamw_bf16_fused": {
+        "precision": "bf16",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-8,
+        },
+        "class": BF16FusedAdamW,
     },
     "adamw_schedulefree": {
         "precision": "any",

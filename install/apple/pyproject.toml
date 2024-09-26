@@ -43,6 +43,7 @@ lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 fastapi = {extras = ["standard"], version = "^0.115.0"}
 deepspeed = "^0.15.1"
 sentencepiece = "^0.2.0"
+bf16-fused-adam = "^0.1"
 
 
 [build-system]
