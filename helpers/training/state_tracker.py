@@ -420,6 +420,10 @@ class StateTracker:
         cls.data_backends[data_backend_id]["config"] = config
 
     @classmethod
+    def clear_data_backends(cls):
+        cls.data_backends = {}
+
+    @classmethod
     def get_data_backends(cls, _type="image"):
         output = {}
         for backend_id, backend in dict(cls.data_backends).items():
