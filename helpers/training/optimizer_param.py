@@ -54,7 +54,7 @@ optimizer_choices = {
         "class": AdamWBF16,
     },
     "ao-adamw8bit": {
-        "gradient_precision": "fp32",
+        "gradient_precision": "bf16",
         "precision": "any",
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -64,7 +64,7 @@ optimizer_choices = {
         "class": AOAdamW8Bit,
     },
     "ao-adamw4bit": {
-        "gradient_precision": "fp32",
+        "gradient_precision": "bf16",
         "precision": "any",
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -74,7 +74,7 @@ optimizer_choices = {
         "class": AOAdamW4Bit,
     },
     "ao-adamfp8": {
-        "gradient_precision": "fp32",
+        "gradient_precision": "bf16",
         "precision": "any",
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -84,7 +84,7 @@ optimizer_choices = {
         "class": AOAdamFp8,
     },
     "ao-adamwfp8": {
-        "gradient_precision": "fp32",
+        "gradient_precision": "bf16",
         "precision": "any",
         "default_settings": {
             "betas": (0.9, 0.999),
@@ -350,7 +350,7 @@ def cpu_offload_optimizer(
     fused: bool = True,
     offload_mechanism: str = None,
 ):
-    if not offload_mechanism:
+    if not offload_mechanism or offload_mechanism == "none":
         return optimizer_cls(params_to_optimize, **optimizer_parameters)
     if offload_mechanism != "torchao":
         raise ValueError(

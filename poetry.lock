@@ -1587,7 +1587,7 @@ source = ["Cython (>=3.0.11)"]
 
 [[package]]
 name = "lycoris_lora"
-version = "3.0.1.dev11"
+version = "3.0.1.dev13"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
@@ -1604,7 +1604,7 @@ tqdm = "*"
 type = "git"
 url = "https://github.com/kohakublueleaf/lycoris"
 reference = "dev"
-resolved_reference = "9b0e184fccdf937cb42854858b9be786ebffa24e"
+resolved_reference = "a3eceaf2bff728a51e16d8e32f269615d849ef2d"
 
 [[package]]
 name = "markdown"
@@ -5137,4 +5137,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "04712ea77edd4a06556097779e42d86c3ae76bc489e99343ad670632067b9473"
+content-hash = "e2c21c1dcb978973738dde54a1675dfdbf717124e366a7b709a81c793d9e496f"
