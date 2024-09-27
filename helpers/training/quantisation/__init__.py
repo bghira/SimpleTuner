@@ -85,6 +85,7 @@ def _torchao_model(model, model_precision, base_model_precision=None):
         return model
 
     try:
+        from helpers.training.quantisation import torchao_workarounds
         from torchao.float8 import convert_to_float8_training, Float8LinearConfig
         from torchao.prototype.quantized_training import (
             int8_weight_only_quantized_training,
