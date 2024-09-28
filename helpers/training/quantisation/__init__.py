@@ -103,7 +103,8 @@ def _torchao_model(model, model_precision, base_model_precision=None):
         return torchao.autoquant(torch.compile(model, mode="max-autotune"))
     elif model_precision == "int8-torchao":
         quantize_(
-            model, int8_weight_only_quantized_training(), filter_fn=_torchao_filter_fn
+            model,
+            int8_weight_only_quantized_training(),  # , filter_fn=_torchao_filter_fn
         )
     elif model_precision == "fp8-torchao":
         if not torch.cuda.is_available():
