@@ -98,10 +98,7 @@ def _torchao_model(model, model_precision, base_model_precision=None):
         )
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
 
-    if model_precision == "auto-torchao":
-        logger.info("Auto-tuning model via torch.compile with max-autotune.")
-        return torchao.autoquant(torch.compile(model, mode="max-autotune"))
-    elif model_precision == "int8-torchao":
+    if model_precision == "int8-torchao":
         quantize_(
             model,
             int8_weight_only_quantized_training(),  # , filter_fn=_torchao_filter_fn
