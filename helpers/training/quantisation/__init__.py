@@ -123,7 +123,7 @@ def _torchao_model(model, model_precision, base_model_precision=None):
     return model
 
 
-def quantoise(
+def quantise_model(
     unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet, args
 ):
     if "quanto" in args.base_model_precision.lower():

@@ -760,11 +760,11 @@ class Trainer:
             self.config.is_torchao = True
 
         if self.config.is_quanto:
-            from helpers.training.quantisation import quantoise
+            from helpers.training.quantisation import quantise_model
 
-            self.quantoise = quantoise
+            self.quantise_model = quantise_model
             with self.accelerator.local_main_process_first():
-                quantoise(
+                quantise_model(
                     unet=self.unet,
                     transformer=self.transformer,
                     text_encoder_1=self.text_encoder_1,
@@ -774,9 +774,9 @@ class Trainer:
                     args=self.config,
                 )
         elif self.config.is_torchao:
-            from helpers.training.quantisation import quantoise
+            from helpers.training.quantisation import quantise_model
 
-            self.quantoise = quantoise
+            self.quantise_model = quantise_model
             with self.accelerator.local_main_process_first():
                 (
                     self.unet,
@@ -785,7 +785,7 @@ class Trainer:
                     self.text_encoder_2,
                     self.text_encoder_3,
                     self.controlnet,
-                ) = quantoise(
+                ) = quantise_model(
                     unet=self.unet,
                     transformer=self.transformer,
                     text_encoder_1=self.text_encoder_1,
@@ -810,7 +810,7 @@ class Trainer:
         if "quanto" in self.config.base_model_precision:
             # since controlnet training uses no adapter currently, we just quantise the base transformer here.
             with self.accelerator.local_main_process_first():
-                self.quantoise(
+                self.quantise_model(
                     unet=self.unet,
                     transformer=self.transformer,
                     text_encoder_1=self.text_encoder_1,
