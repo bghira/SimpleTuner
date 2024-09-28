@@ -113,6 +113,10 @@ class AdamWBF16(Optimizer):
                     )
 
 
+@torch.compile(
+    disable=True if torch.backends.mps.is_available() else False,
+    mode="max-autotune",
+)
 def _make_step(
     grad,
     p,
