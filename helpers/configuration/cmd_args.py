@@ -1150,10 +1150,10 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--optimizer_cpu_offload_method",
-        choices=["none", "torchao"],
+        choices=["none"], #, "torchao"],
         default="none",
         help=(
-            "When loading an optimiser, a CPU offload mechanism can be used. Currently, no offload is used by default, and only torchao is supported."
+            "This option is a placeholder. In the future, it will allow for the selection of different CPU offload methods."
         ),
     )
     parser.add_argument(
