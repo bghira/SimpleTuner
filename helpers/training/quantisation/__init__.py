@@ -103,13 +103,16 @@ def _torchao_model(model, model_precision, base_model_precision=None):
         return torchao.autoquant(torch.compile(model, mode="max-autotune"))
     elif model_precision == "int8-torchao":
         quantize_(
-            model, int8_weight_only_quantized_training()
-        )  # , filter_fn=_torchao_filter_fn)
+            model, int8_weight_only_quantized_training(), filter_fn=_torchao_filter_fn
+        )
     elif model_precision == "fp8-torchao":
         if not torch.cuda.is_available():
             raise ValueError(
-                "torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
+                "fp8-torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
             )
+        logger.error(
+            "fp8-torchao requires the latest pytorch nightly build, but int8-torchao, int8-quanto, or fp8-quanto may be used instead."
+        )
         model = convert_to_float8_training(
             model,
             module_filter_fn=_torchao_filter_fn,
