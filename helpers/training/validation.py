@@ -2,6 +2,7 @@ import torch
 import os
 import wandb
 import logging
+import numpy as np
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
@@ -1341,6 +1342,16 @@ class Validation:
                             image,
                             name=f"{shortname} - {self.validation_resolutions[idx]}",
                         )
+            elif tracker.name == "tensorboard":
+                tracker = self.accelerator.get_tracker("tensorboard")
+                for shortname, image_list in validation_images.items():
+                    tracker.log_images(
+                            {
+                                f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(np.array(image), -1, 0)[np.newaxis, ...] 
+                                for idx, image in enumerate(image_list)
+                            }, 
+                            step=StateTracker.get_global_step()
+                    )
             elif tracker.name == "wandb":
                 resolution_list = [
                     f"{res[0]}x{res[1]}" for res in get_validation_resolutions()
