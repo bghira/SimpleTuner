@@ -1762,6 +1762,7 @@ class Trainer:
                 backend["sampler"].should_abort = True
         self.should_abort = True
 
+    @torch.compile(disable=True if torch.backends.mps.is_available() else False)
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -2442,11 +2443,7 @@ class Trainer:
                                 should_not_release_gradients
                             )
                         else:
-                            if self.config.optimizer_torch_compile:
-                                with torch._dynamo.optimize("inductor"):
-                                    self.optimizer.step()
-                            else:
-                                self.optimizer.step()
+                            self.optimizer.step()
                         self.optimizer.zero_grad(
                             set_to_none=self.config.set_grads_to_none
                         )
