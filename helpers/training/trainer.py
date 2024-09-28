@@ -1100,8 +1100,8 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
             if self.config.optimizer_torch_compile:
-                self.optimizer = torch.compile(
-                    self.optimizer,
+                self.optimizer.step = torch.compile(
+                    self.optimizer.step,
                     fullgraph=True,
                     mode="max-autotune",
                     backend="inductor" if torch.cuda.is_available() else "aot_eager",
