@@ -3,6 +3,7 @@ quantised_precision_levels = [
     # "fp4-bnb",
     # "fp8-bnb",
     "fp8-quanto",
+    "nf4-quanto",
     "int8-quanto",
     "int4-quanto",
     "int2-quanto",
