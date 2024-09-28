@@ -918,12 +918,14 @@ class VAECache(WebhookMixin):
             shuffle(shuffled_keys)
 
         if self.webhook_handler is not None:
-            total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
+            total_count = len(
+                [item for sublist in aspect_bucket_cache.values() for item in sublist]
+            )
             self.send_progress_update(
                 type="init_cache_vae_processing_started",
                 progress=int(len(processed_images) / total_count * 100),
                 total=total_count,
-                current=len(processed_images)
+                current=len(processed_images),
             )
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -940,7 +942,7 @@ class VAECache(WebhookMixin):
                     "total": 0,
                 }
                 last_reported_index = 0
-    
+
                 for raw_filepath in tqdm(
                     relevant_files,
                     desc=f"Processing bucket {bucket}",
@@ -985,13 +987,25 @@ class VAECache(WebhookMixin):
                                 self._encode_images_in_batch
                             )
                             futures.append(future_to_process)
-                            if self.webhook_handler is not None and int(statistics["total"] // self.webhook_progress_interval) > last_reported_index:
-                                last_reported_index = statistics["total"] // self.webhook_progress_interval
+                            if (
+                                self.webhook_handler is not None
+                                and int(
+                                    statistics["total"]
+                                    // self.webhook_progress_interval
+                                )
+                                > last_reported_index
+                            ):
+                                last_reported_index = (
+                                    statistics["total"]
+                                    // self.webhook_progress_interval
+                                )
                                 self.send_progress_update(
                                     type="vaecache",
-                                    progress=int(statistics["total"] / len(relevant_files) * 100),
+                                    progress=int(
+                                        statistics["total"] / len(relevant_files) * 100
+                                    ),
                                     total=len(relevant_files),
-                                    current=statistics["total"]
+                                    current=statistics["total"],
                                 )
 
                         # If we have accumulated enough write objects, we can write them to disk at once.
@@ -1055,8 +1069,8 @@ class VAECache(WebhookMixin):
                         self.send_progress_update(
                             type="init_cache_vae_processing_complete",
                             progress=100,
-                            total=statistics['total'],
-                            current=statistics['total']
+                            total=statistics["total"],
+                            current=statistics["total"],
                         )
                     self.debug_log(
                         "Completed process_buckets, all futures have been returned."

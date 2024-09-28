@@ -24,8 +24,9 @@ def prepare_model_for_deepspeed(accelerator, args):
     use_deepspeed_optimizer = False
     use_deepspeed_scheduler = False
     if (
-        hasattr(accelerator, 'state') and hasattr(accelerator.state, "deepspeed_plugin")
-        and getattr(accelerator.state, 'deepspeed_plugin') is not None
+        hasattr(accelerator, "state")
+        and hasattr(accelerator.state, "deepspeed_plugin")
+        and getattr(accelerator.state, "deepspeed_plugin") is not None
     ):
         offload_param = accelerator.state.deepspeed_plugin.deepspeed_config[
             "zero_optimization"

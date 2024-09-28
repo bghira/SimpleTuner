@@ -138,7 +138,11 @@ class WebhookHandler:
             self._send_request(message, images, store_response=store_response)
 
     def send_raw(
-        self, structured_data: dict, message_type: str, message_level: str = "info", job_id: str = None
+        self,
+        structured_data: dict,
+        message_type: str,
+        message_level: str = "info",
+        job_id: str = None,
     ):
         """
         for sending structured dict to the callback for eg. training step progress updates

@@ -22,9 +22,14 @@ def safety_check(args, accelerator):
                     "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
                 )
                 sys.exit(1)
-    if 'fp8-quanto' == args.base_model_precision and accelerator.state.dynamo_plugin.backend.lower() == 'inductor':
-        logger.warning("fp8-quanto is not supported with Dynamo backend. Switching to int8-quanto instead.")
-        args.base_model_precision = 'int8-quanto'
+    if (
+        "fp8-quanto" == args.base_model_precision
+        and accelerator.state.dynamo_plugin.backend.lower() == "inductor"
+    ):
+        logger.warning(
+            "fp8-quanto is not supported with Dynamo backend. Switching to int8-quanto instead."
+        )
+        args.base_model_precision = "int8-quanto"
     if args.report_to == "wandb":
         if not is_wandb_available():
             raise ImportError(

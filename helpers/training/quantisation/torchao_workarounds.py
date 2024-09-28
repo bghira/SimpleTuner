@@ -4,6 +4,7 @@ from torch import Tensor
 from typing import Optional
 from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight
 
+
 class _Int8WeightOnlyLinear(torch.autograd.Function):
     @staticmethod
     def forward(

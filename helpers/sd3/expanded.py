@@ -12,12 +12,22 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward, _chunked_feed_forward
-from diffusers.models.attention_processor import Attention, AttentionProcessor, JointAttnProcessor2_0
+from diffusers.models.attention_processor import (
+    Attention,
+    AttentionProcessor,
+    JointAttnProcessor2_0,
+)
 from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings, PatchEmbed
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero
 from diffusers.models.transformers.transformer_2d import Transformer2DModelOutput
-from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    is_torch_version,
+    logging,
+    scale_lora_layers,
+    unscale_lora_layers,
+)
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 
@@ -54,13 +64,20 @@ class JointTransformerBlock(nn.Module):
         super().__init__()
 
         self.context_pre_only = context_pre_only
-        context_norm_type = "ada_norm_continous" if context_pre_only else "ada_norm_zero"
+        context_norm_type = (
+            "ada_norm_continous" if context_pre_only else "ada_norm_zero"
+        )
 
         self.norm1 = AdaLayerNormZero(dim)
 
         if context_norm_type == "ada_norm_continous":
             self.norm1_context = AdaLayerNormContinuous(
-                dim, dim, elementwise_affine=False, eps=1e-6, bias=True, norm_type="layer_norm"
+                dim,
+                dim,
+                elementwise_affine=False,
+                eps=1e-6,
+                bias=True,
+                norm_type="layer_norm",
             )
         elif context_norm_type == "ada_norm_zero":
             self.norm1_context = AdaLayerNormZero(dim)
@@ -92,7 +109,9 @@ class JointTransformerBlock(nn.Module):
 
         if not context_pre_only:
             self.norm2_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-            self.ff_context = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
+            self.ff_context = FeedForward(
+                dim=dim, dim_out=dim, activation_fn="gelu-approximate"
+            )
         else:
             self.norm2_context = None
             self.ff_context = None
@@ -108,20 +127,30 @@ class JointTransformerBlock(nn.Module):
         self._chunk_dim = dim
 
     def forward(
-        self, hidden_states: torch.FloatTensor, encoder_hidden_states: torch.FloatTensor, temb: torch.FloatTensor
+        self,
+        hidden_states: torch.FloatTensor,
+        encoder_hidden_states: torch.FloatTensor,
+        temb: torch.FloatTensor,
     ):
-        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
+        norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
+            hidden_states, emb=temb
+        )
 
         if self.context_pre_only:
             norm_encoder_hidden_states = self.norm1_context(encoder_hidden_states, temb)
         else:
-            norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
-                encoder_hidden_states, emb=temb
-            )
+            (
+                norm_encoder_hidden_states,
+                c_gate_msa,
+                c_shift_mlp,
+                c_scale_mlp,
+                c_gate_mlp,
+            ) = self.norm1_context(encoder_hidden_states, emb=temb)
 
         # Attention.
         attn_output, context_attn_output = self.attn(
-            hidden_states=norm_hidden_states, encoder_hidden_states=norm_encoder_hidden_states
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
         )
 
         # Process attention outputs for the `hidden_states`.
@@ -129,10 +158,14 @@ class JointTransformerBlock(nn.Module):
         hidden_states = hidden_states + attn_output
 
         norm_hidden_states = self.norm2(hidden_states)
-        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        norm_hidden_states = (
+            norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        )
         if self._chunk_size is not None:
             # "feed_forward_chunk_size" can be used to save memory
-            ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
+            ff_output = _chunked_feed_forward(
+                self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size
+            )
         else:
             ff_output = self.ff(norm_hidden_states)
         ff_output = gate_mlp.unsqueeze(1) * ff_output
@@ -147,20 +180,30 @@ class JointTransformerBlock(nn.Module):
             encoder_hidden_states = encoder_hidden_states + context_attn_output
 
             norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
-            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+            norm_encoder_hidden_states = (
+                norm_encoder_hidden_states * (1 + c_scale_mlp[:, None])
+                + c_shift_mlp[:, None]
+            )
             if self._chunk_size is not None:
                 # "feed_forward_chunk_size" can be used to save memory
                 context_ff_output = _chunked_feed_forward(
-                    self.ff_context, norm_encoder_hidden_states, self._chunk_dim, self._chunk_size
+                    self.ff_context,
+                    norm_encoder_hidden_states,
+                    self._chunk_dim,
+                    self._chunk_size,
                 )
             else:
                 context_ff_output = self.ff_context(norm_encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+            encoder_hidden_states = (
+                encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+            )
 
         return encoder_hidden_states, hidden_states
 
 
-class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class SD3TransformerQKNorm2DModel(
+    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin
+):
     """
     The Transformer model introduced in Stable Diffusion 3.
 
@@ -200,12 +243,16 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         pooled_projection_dim: int = 2048,
         out_channels: int = 16,
         pos_embed_max_size: int = 96,
-        qk_norm: str|None="layer_norm",
+        qk_norm: str | None = "layer_norm",
     ):
         super().__init__()
         default_out_channels = in_channels
-        self.out_channels = out_channels if out_channels is not None else default_out_channels
-        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
+        self.out_channels = (
+            out_channels if out_channels is not None else default_out_channels
+        )
+        self.inner_dim = (
+            self.config.num_attention_heads * self.config.attention_head_dim
+        )
 
         self.pos_embed = PatchEmbed(
             height=self.config.sample_size,
@@ -216,9 +263,12 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             pos_embed_max_size=pos_embed_max_size,  # hard-code for now.
         )
         self.time_text_embed = CombinedTimestepTextProjEmbeddings(
-            embedding_dim=self.inner_dim, pooled_projection_dim=self.config.pooled_projection_dim
+            embedding_dim=self.inner_dim,
+            pooled_projection_dim=self.config.pooled_projection_dim,
         )
-        self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.config.caption_projection_dim)
+        self.context_embedder = nn.Linear(
+            self.config.joint_attention_dim, self.config.caption_projection_dim
+        )
 
         # `attention_head_dim` is doubled to account for the mixing.
         # It needs to crafted when we get the actual checkpoints.
@@ -235,13 +285,19 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             ]
         )
 
-        self.norm_out = AdaLayerNormContinuous(self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6)
-        self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
+        self.norm_out = AdaLayerNormContinuous(
+            self.inner_dim, self.inner_dim, elementwise_affine=False, eps=1e-6
+        )
+        self.proj_out = nn.Linear(
+            self.inner_dim, patch_size * patch_size * self.out_channels, bias=True
+        )
 
         self.gradient_checkpointing = False
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
-    def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
+    def enable_forward_chunking(
+        self, chunk_size: Optional[int] = None, dim: int = 0
+    ) -> None:
         """
         Sets the attention processor to use [feed forward
         chunking](https://huggingface.co/blog/reformer#2-chunked-feed-forward-layers).
@@ -260,7 +316,9 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         # By default chunk size is 1
         chunk_size = chunk_size or 1
 
-        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
+        def fn_recursive_feed_forward(
+            module: torch.nn.Module, chunk_size: int, dim: int
+        ):
             if hasattr(module, "set_chunk_feed_forward"):
                 module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
 
@@ -281,9 +339,15 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         # set recursively
         processors = {}
 
-        def fn_recursive_add_processors(name: str, module: torch.nn.Module, processors: Dict[str, AttentionProcessor]):
+        def fn_recursive_add_processors(
+            name: str,
+            module: torch.nn.Module,
+            processors: Dict[str, AttentionProcessor],
+        ):
             if hasattr(module, "get_processor"):
-                processors[f"{name}.processor"] = module.get_processor(return_deprecated_lora=True)
+                processors[f"{name}.processor"] = module.get_processor(
+                    return_deprecated_lora=True
+                )
 
             for sub_name, child in module.named_children():
                 fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
@@ -296,7 +360,9 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         return processors
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
+    def set_attn_processor(
+        self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]
+    ):
         r"""
         Sets the attention processor to use to compute attention.
 
@@ -346,7 +412,9 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         for _, attn_processor in self.attn_processors.items():
             if "Added" in str(attn_processor.__class__.__name__):
-                raise ValueError("`fuse_qkv_projections()` is not supported for models having added KV projections.")
+                raise ValueError(
+                    "`fuse_qkv_projections()` is not supported for models having added KV projections."
+                )
 
         self.original_attn_processors = self.attn_processors
 
@@ -415,14 +483,19 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             # weight the lora layers by setting `lora_scale` for each PEFT layer
             scale_lora_layers(self, lora_scale)
         else:
-            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
+            if (
+                joint_attention_kwargs is not None
+                and joint_attention_kwargs.get("scale", None) is not None
+            ):
                 logger.warning(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
 
         height, width = hidden_states.shape[-2:]
 
-        hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
+        hidden_states = self.pos_embed(
+            hidden_states
+        )  # takes care of adding positional embeddings too.
         temb = self.time_text_embed(timestep, pooled_projections)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
@@ -438,7 +511,9 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
                     return custom_forward
 
-                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                ckpt_kwargs: Dict[str, Any] = (
+                    {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                )
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
                     hidden_states,
@@ -449,7 +524,9 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
             else:
                 encoder_hidden_states, hidden_states = block(
-                    hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, temb=temb
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=temb,
                 )
 
         hidden_states = self.norm_out(hidden_states, temb)
@@ -461,11 +538,23 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         width = width // patch_size
 
         hidden_states = hidden_states.reshape(
-            shape=(hidden_states.shape[0], height, width, patch_size, patch_size, self.out_channels)
+            shape=(
+                hidden_states.shape[0],
+                height,
+                width,
+                patch_size,
+                patch_size,
+                self.out_channels,
+            )
         )
         hidden_states = torch.einsum("nhwpqc->nchpwq", hidden_states)
         output = hidden_states.reshape(
-            shape=(hidden_states.shape[0], self.out_channels, height * patch_size, width * patch_size)
+            shape=(
+                hidden_states.shape[0],
+                self.out_channels,
+                height * patch_size,
+                width * patch_size,
+            )
         )
 
         if USE_PEFT_BACKEND:
@@ -507,35 +596,44 @@ def verify_all_parameters_offset_copy(
             # Retrieve the corresponding parameter from the destination layer
             if isinstance(operator.attrgetter(param_name)(dest_layer), torch.Tensor):
                 dest_param = operator.attrgetter(param_name)(dest_layer)
-                
+
                 # Check if the parameters are close enough (considering floating-point arithmetic)
                 if not torch.allclose(source_param, dest_param, atol=1e-6):
-                    raise AssertionError(f'Parameter mismatch for {layer_name_prefix}.{source_idx}.{param_name} (original) -> {layer_name_prefix}.{dest_idx}.{param_name} (new).')
+                    raise AssertionError(
+                        f"Parameter mismatch for {layer_name_prefix}.{source_idx}.{param_name} (original) -> {layer_name_prefix}.{dest_idx}.{param_name} (new)."
+                    )
             else:
-                raise AssertionError(f'Missing parameter {layer_name_prefix}.{dest_idx}.{param_name} in the new model.')
-    
-    print(f"All parameters from {source_start_idx} to {source_start_idx + num_layers_to_check - 1} ({num_layers_to_check} layers) in {layer_name_prefix} have been verified to be correctly copied to {dest_start_idx} to {dest_start_idx + num_layers_to_check - 1}.")
+                raise AssertionError(
+                    f"Missing parameter {layer_name_prefix}.{dest_idx}.{param_name} in the new model."
+                )
+
+    print(
+        f"All parameters from {source_start_idx} to {source_start_idx + num_layers_to_check - 1} ({num_layers_to_check} layers) in {layer_name_prefix} have been verified to be correctly copied to {dest_start_idx} to {dest_start_idx + num_layers_to_check - 1}."
+    )
+
 
 def expand_existing_sd3_model(model_old):
     # This model is 36 layers deep, versus 24 layers deep from the original model.
     # We will prune 12 layers off from the end and the start of the merged weights.
-    model_new = SD3TransformerQKNorm2DModel.from_config({
-        "_class_name": "SD3Transformer2DModel",
-        "_diffusers_version": "0.30.0.dev0",
-        "_name_or_path": "stabilityai/stable-diffusion-3-medium-diffusers",
-        "attention_head_dim": 64,
-        "caption_projection_dim": 1536,
-        "in_channels": 16,
-        "joint_attention_dim": 4096,
-        "num_attention_heads": 24,
-        "num_layers": FINAL_DEPTH,
-        "out_channels": 16,
-        "patch_size": 2,
-        "pooled_projection_dim": 2048,
-        "pos_embed_max_size": 192,
-        "qk_norm": "layer_norm",
-        "sample_size": 128,
-    })
+    model_new = SD3TransformerQKNorm2DModel.from_config(
+        {
+            "_class_name": "SD3Transformer2DModel",
+            "_diffusers_version": "0.30.0.dev0",
+            "_name_or_path": "stabilityai/stable-diffusion-3-medium-diffusers",
+            "attention_head_dim": 64,
+            "caption_projection_dim": 1536,
+            "in_channels": 16,
+            "joint_attention_dim": 4096,
+            "num_attention_heads": 24,
+            "num_layers": FINAL_DEPTH,
+            "out_channels": 16,
+            "patch_size": 2,
+            "pooled_projection_dim": 2048,
+            "pos_embed_max_size": 192,
+            "qk_norm": "layer_norm",
+            "sample_size": 128,
+        }
+    )
 
     # Copy in layers 0...23 and all other layers.
     with torch.no_grad():
@@ -548,10 +646,13 @@ def expand_existing_sd3_model(model_old):
                 try:
                     model_new.state_dict()[name].copy_(param)
                 except RuntimeError as e:
-                    if 'The size of tensor a (9216) must match the size of tensor b (3072) at non-singleton dimension 0' in str(e):
+                    if (
+                        "The size of tensor a (9216) must match the size of tensor b (3072) at non-singleton dimension 0"
+                        in str(e)
+                    ):
                         pass
                     else:
-                        print(f'Got {str(e)} on layer {name}')
+                        print(f"Got {str(e)} on layer {name}")
                         raise
 
     # We now need to deal with [18:] for both transformer_blocks.
@@ -562,11 +663,11 @@ def expand_existing_sd3_model(model_old):
             range(ORIG_DEPTH - M_VALUE, FINAL_DEPTH),
         ):
             for name, param in model_old.named_parameters():
-                if 'transformer_blocks' in name:
-                    if f'transformer_blocks.{layer_idx}.' in name:
+                if "transformer_blocks" in name:
+                    if f"transformer_blocks.{layer_idx}." in name:
                         name_to_inject_into = name.replace(
-                            f'transformer_blocks.{layer_idx}.',
-                            f'transformer_blocks.{injection_idx}.',
+                            f"transformer_blocks.{layer_idx}.",
+                            f"transformer_blocks.{injection_idx}.",
                         )
                         model_new.state_dict()[name_to_inject_into].copy_(param)
 
@@ -575,39 +676,46 @@ def expand_existing_sd3_model(model_old):
     # should do nothing to the model.
     with torch.no_grad():
         for name, param in model_new.named_parameters():
-            if 'transformer_blocks' in name and ('norm_q' in name or 'norm_k' in name):
-                if 'norm_q.weight' in name:
+            if "transformer_blocks" in name and ("norm_q" in name or "norm_k" in name):
+                if "norm_q.weight" in name:
                     param.fill_(1)
-                elif 'norm_q.bias' in name:
+                elif "norm_q.bias" in name:
                     param.fill_(0)
 
-    verify_all_parameters_offset_copy(model_old, model_new, 'transformer_blocks', 0, 0, ORIG_DEPTH - M_VALUE) # Adjust the index as needed
-    verify_all_parameters_offset_copy(model_old, model_new, 'transformer_blocks', 6, 18, ORIG_DEPTH - M_VALUE) # Adjust the last parameter as needed based on the number of layers you're checking
+    verify_all_parameters_offset_copy(
+        model_old, model_new, "transformer_blocks", 0, 0, ORIG_DEPTH - M_VALUE
+    )  # Adjust the index as needed
+    verify_all_parameters_offset_copy(
+        model_old, model_new, "transformer_blocks", 6, 18, ORIG_DEPTH - M_VALUE
+    )  # Adjust the last parameter as needed based on the number of layers you're checking
 
     orig_params = sum(p.numel() for p in model_old.parameters())
     expanded_params = sum(p.numel() for p in model_new.parameters())
-    print(f'Model has been successfully expanded from {orig_params / 1e6:.2f}M to {expanded_params / 1e6:.2f}M.')
+    print(
+        f"Model has been successfully expanded from {orig_params / 1e6:.2f}M to {expanded_params / 1e6:.2f}M."
+    )
 
     model_new.save_pretrained((os.path.join(args.output_model, "transformer")))
     return model_new
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from diffusers.models.transformers.transformer_sd3 import SD3Transformer2DModel
+
     parser = argparse.ArgumentParser(
-        description='Make a 24 block deep SD3 2B into a 36 block deep version',
+        description="Make a 24 block deep SD3 2B into a 36 block deep version",
     )
     parser.add_argument(
-        'input_model',
-        action='store',
+        "input_model",
+        action="store",
         type=str,
-        help='The input pretrained model',
+        help="The input pretrained model",
     )
     parser.add_argument(
-        'output_model',
-        action='store',
+        "output_model",
+        action="store",
         type=str,
-        help='The output pretrained model location',
+        help="The output pretrained model location",
     )
 
     args = parser.parse_args()
@@ -619,12 +727,14 @@ if __name__ == '__main__':
     model_new = expand_existing_sd3_model(model_old)
     del model_old
     gc.collect()
-    model_new = model_new.to('cuda', dtype=torch.bfloat16)
+    model_new = model_new.to("cuda", dtype=torch.bfloat16)
     with torch.no_grad(), torch.inference_mode():
         model_new(
-            hidden_states=torch.rand((1, 16, 64, 64)).to('cuda', dtype=torch.bfloat16),
-            encoder_hidden_states=torch.rand((1, 144, 4096)).to('cuda', dtype=torch.bfloat16),
-            pooled_projections=torch.rand((1, 2048)).to('cuda', dtype=torch.bfloat16),
-            timestep=torch.tensor([500]).to('cuda', dtype=torch.bfloat16),
+            hidden_states=torch.rand((1, 16, 64, 64)).to("cuda", dtype=torch.bfloat16),
+            encoder_hidden_states=torch.rand((1, 144, 4096)).to(
+                "cuda", dtype=torch.bfloat16
+            ),
+            pooled_projections=torch.rand((1, 2048)).to("cuda", dtype=torch.bfloat16),
+            timestep=torch.tensor([500]).to("cuda", dtype=torch.bfloat16),
         )
-    print('Successfully expanded and tested model.')
+    print("Successfully expanded and tested model.")
