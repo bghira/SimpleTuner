@@ -40,12 +40,18 @@ The script `configure.py` in the project root can be used via `python configure.
 - **What**: Path to the pretrained T5 model or its identifier from https://huggingface.co/models.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
-### `--hub_model_id`
+### `--refiner_training`
 
-- **What**: The name of the Huggingface Hub model and local results directory.
-- **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
+- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
 
 ## Precision
+
+### `--quantize_via`
+
+- **Choices**: `cpu`, `accelerator`
+  - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
+  - On `cpu`, quantisation takes about 30 seconds. (**Default**)
+
 
 ### `--base_model_precision`
 
@@ -60,21 +66,24 @@ Provided by Hugging Face, the optimum-quanto library has robust support across a
   - works with `TRAINING_DYNAMO_BACKEND=inductor` (`torch.compile()`)
 - `nf4-quanto` is an experimental fp8 variant for CUDA and perhaps ROCm devices.
   - can be slightly faster than `int8-quanto` on a 4090 for training, but not inference (1 second slower)
-  - also works with dynamo enabled (`torch.compile()`)
+  - works with `TRAINING_DYNAMO_BACKEND=inductor` (`torch.compile()`)
 - `fp8-quanto` will not (currently) use fp8 matmul, does not work on Apple systems.
   - does not have hardware fp8 matmul yet on CUDA or ROCm devices, so it will possibly be noticeably slower than int8
+  - incompatible with dynamo, will automatically switch to `int8-quanto` for you and keep dynamo enabled for speedup.
   
 #### TorchAO
 
 A newer library from Pytorch, AO allows us to replace the linears and 2D convolutions (eg. unet style models) with quantised counterparts.
-
-Additionally, it provides an experimental CPU offload optimiser that essentially provides a simpler reimplementation of DeepSpeed.
+<!-- Additionally, it provides an experimental CPU offload optimiser that essentially provides a simpler reimplementation of DeepSpeed. -->
 
 - `int8-torchao` will reduce memory consumption to the same level as any of Quanto's precision levels
-  - at the time of writing, runs slightly slower than Quanto does on Apple MPS, but an open PR aims to address this
+  - at the time of writing, runs slightly slower (11s/iter) than Quanto does (9s/iter) on Apple MPS
+  - Same speed and memory use as `int8-quanto` on CUDA devices, unknown speed profile on ROCm
 - `fp8-torchao` is not enabled for use due to bugs in the implementation.
 
-To enable `torch.compile()` for torchao, add the following line to `config/config.env`:
+#### Torch Dynamo
+
+To enable `torch.compile()`, add the following line to `config/config.env`:
 ```bash
 TRAINING_DYNAMO_BACKEND=inductor
 ```
@@ -83,13 +92,17 @@ Note that the first several steps of training will be slower than usual because 
 
 ---
 
+## 📰 Publishing
+
 ### `--push_to_hub`
 
 - **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
 
-### `--refiner_training`
+### `--hub_model_id`
 
-- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+- **What**: The name of the Huggingface Hub model and local results directory.
+- **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
+
 
 ### `--disable_benchmark`
 
@@ -158,26 +171,19 @@ A lot of settings are instead set through the [dataloader config](/documentation
     - All images in the dataset will have their smaller edge resized to this resolution for training, which could result in a lot of VRAM use due to the size of the resulting images.
     - Example resulting sizes for `1024`: 1024x1024, 1766x1024, 1024x1766
   - `resolution_type=area`
-    - An internal option that isn't user-friendly. Use `pixel_area` instead.
+    - **Deprecated**. Use `pixel_area` instead.
 
 ### `--resolution`
 
 - **What**: Input image resolution expressed in pixel edge length
 - **Default**: 1024
+- **Note**: This is the global default, if a dataset does not have a resolution set.
 
 ### `--validation_resolution`
 
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
-### `--caption_strategy`
-
-- **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
-- **Why**: Determines how captions are generated for training images.
-  - `textfile` will use the contents of a `.txt` file with the same filename as the image
-  - `filename` will apply some cleanup to the filename before using it as the caption.
-  - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
-  - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
 
 ### `--crop`
 
@@ -198,6 +204,15 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - `crop_aspect=random` will use a random aspect value from `crop_aspect_buckets` without going too far - it will use square crops if your aspects are incompatible
   - `crop_aspect=square` will use the standard square crop style
 
+### `--caption_strategy`
+
+- **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
+- **Why**: Determines how captions are generated for training images.
+  - `textfile` will use the contents of a `.txt` file with the same filename as the image
+  - `filename` will apply some cleanup to the filename before using it as the caption.
+  - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
+  - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
+
 ---
 
 ## 🎛 Training Parameters
@@ -212,10 +227,26 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Number of training steps to exit training after. If set to 0, will allow `--num_train_epochs` to take priority.
 - **Why**: Useful for shortening the length of training.
 
+### `--learning_rate`
+
+- **What**: Initial learning rate after potential warmup.
+- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value for a `full` tune might be as low as `1e-7` to a max of `1e-6` while for `lora` tuning a minimal value might be `1e-5` with a maximal value as high as `1e-3`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
+
+### `--lr_scheduler`
+
+- **What**: How to scale the learning rate over time.
+- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, **polynomial** (recommended), linear
+- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low). A polynomial schedule is best paired with a warmup, where it will gradually approach the `learning_rate` value before then slowing down and approaching `--lr_end` by the end.
+
 ### `--train_batch_size`
 
 - **What**: Batch size for the training data loader.
 - **Why**: Affects the model's memory consumption, convergence quality, and training speed. The higher the batch size, the better the results will be, but a very high batch size might result in overfitting or destabilized training, as well as increasing the duration of the training session unnecessarily. Experimentation is warranted, but in general, you want to try to max out your video memory while not decreasing the training speed.
+
+### `--gradient_accumulation_steps`
+
+- **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.
+- **Why**: Useful for handling larger models or datasets.
 
 ---
 
@@ -242,21 +273,6 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Reduce the update interval of your EMA shadow parameters.
 - **Why**: Updating the EMA weights on every step could be an unnecessary waste of resources. Providing `--ema_update_interval=100` will update the EMA weights only once every 100 optimizer steps.
 
-### `--gradient_accumulation_steps`
-
-- **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.
-- **Why**: Useful for handling larger models or datasets.
-
-### `--learning_rate`
-
-- **What**: Initial learning rate after potential warmup.
-- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value for a `full` tune might be as low as `1e-7` to a max of `1e-6` while for `lora` tuning a minimal value might be `1e-5` with a maximal value as high as `1e-3`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
-
-### `--lr_scheduler`
-
-- **What**: How to scale the learning rate over time.
-- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, **polynomial** (recommended), linear
-- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low). A polynomial schedule is best paired with a warmup, where it will gradually approach the `learning_rate` value before then slowing down and approaching `--lr_end` by the end.
 
 ### `--snr_gamma`
 
@@ -296,7 +312,8 @@ A lot of settings are instead set through the [dataloader config](/documentation
 ### `--report_to`
 
 - **What**: Specifies the platform for reporting results and logs.
-- **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring.
+- **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
+- **Choices**: wandb, tensorboard, comet_ml
 
 ---
 
