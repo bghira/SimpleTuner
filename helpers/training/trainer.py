@@ -1099,7 +1099,13 @@ class Trainer:
                 offload_gradients=self.config.optimizer_offload_gradients,
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
-
+            if self.config.optimizer_torch_compile:
+                self.optimizer = torch.compile(
+                    self.optimizer,
+                    fullgraph=True,
+                    mode="max-autotune",
+                    backend="inductor" if torch.cuda.is_available() else "aot_eager",
+                )
             # self.optimizer = optimizer_class(
             #     self.params_to_optimize,
             #     **extra_optimizer_args,
