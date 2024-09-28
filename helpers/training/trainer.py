@@ -1100,11 +1100,6 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
-            # self.optimizer = optimizer_class(
-            #     self.params_to_optimize,
-            #     **extra_optimizer_args,
-            # )
-
         if (
             is_optimi_available
             and self.config.optimizer_release_gradients
