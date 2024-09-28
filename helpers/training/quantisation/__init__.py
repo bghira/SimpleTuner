@@ -11,6 +11,7 @@ else:
 
 def _quanto_model(model, model_precision, base_model_precision=None):
     try:
+        from helpers.training.quantisation import quanto_workarounds
         from optimum.quanto import (
             freeze,
             quantize,

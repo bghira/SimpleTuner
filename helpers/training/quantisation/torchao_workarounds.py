@@ -29,6 +29,7 @@ class _Int8WeightOnlyLinear(torch.autograd.Function):
             grad_output.dtype
         )
         # print(f"dtypes: grad_output {grad_output.dtype}, input {input.dtype}, weight {weight.dtype}")
+        # here is the patch: we will cast the input to the grad_output dtype.
         grad_weight = grad_output.view(-1, weight.shape[0]).T @ input.to(
             grad_output.dtype
         ).view(-1, weight.shape[1])

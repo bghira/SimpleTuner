@@ -11,10 +11,7 @@ from diffusers.pipelines.flux.pipeline_flux import (
 def apply_flux_schedule_shift(args, noise_scheduler, sigmas, noise):
     # Resolution-dependent shifting of timestep schedules as per section 5.3.2 of SD3 paper
     shift = None
-    if (
-        args.flux_schedule_shift is not None
-        and args.flux_schedule_shift > 0
-    ):
+    if args.flux_schedule_shift is not None and args.flux_schedule_shift > 0:
         # Static shift value for every resolution
         shift = args.flux_schedule_shift
     elif args.flux_schedule_auto_shift:
@@ -29,9 +26,7 @@ def apply_flux_schedule_shift(args, noise_scheduler, sigmas, noise):
         )
         shift = math.exp(mu)
     if shift is not None:
-        sigmas = (sigmas * shift) / (
-            1 + (shift - 1) * sigmas
-        )
+        sigmas = (sigmas * shift) / (1 + (shift - 1) * sigmas)
     return sigmas
 
 
