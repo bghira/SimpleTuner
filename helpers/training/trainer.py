@@ -1762,7 +1762,6 @@ class Trainer:
                 backend["sampler"].should_abort = True
         self.should_abort = True
 
-    @torch.compile(disable=True if torch.backends.mps.is_available() else False)
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
