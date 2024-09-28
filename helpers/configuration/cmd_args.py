@@ -1315,8 +1315,8 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--validation_torch_compile",
-        type=str,
-        default="false",
+        action="store_true",
+        default=False,
         help=(
             "Supply `--validation_torch_compile=true` to enable the use of torch.compile() on the validation pipeline."
             " For some setups, torch.compile() may error out. This is dependent on PyTorch version, phase of the moon,"
@@ -2145,10 +2145,6 @@ def parse_cmdline_args(input_args=None):
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
-    if args.validation_torch_compile == "true":
-        args.validation_torch_compile = True
-    else:
-        args.validation_torch_compile = False
 
     if args.model_family == "sd3":
         args.pretrained_vae_model_name_or_path = None
