@@ -423,7 +423,6 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--optimizer_config OPTIMIZER_CONFIG]
                 [--optimizer_cpu_offload_method {none,torchao}]
                 [--optimizer_offload_gradients] [--fuse_optimizer]
-                [--optimizer_torch_compile]
                 [--optimizer_beta1 OPTIMIZER_BETA1]
                 [--optimizer_beta2 OPTIMIZER_BETA2]
                 [--optimizer_release_gradients] [--adam_beta1 ADAM_BETA1]
@@ -1126,11 +1125,6 @@ options:
   --fuse_optimizer      When creating a CPU-offloaded optimiser, the fused
                         optimiser could be used to save on memory, while
                         running slightly slower.
-  --optimizer_torch_compile
-                        When using a CPU-offloaded optimiser, we can
-                        torch.compile() it and save some time using a compiled
-                        graph. This option will not work on Apple MPS devices,
-                        and may not work on all systems.
   --optimizer_beta1 OPTIMIZER_BETA1
                         The value to use for the first beta value in the
                         optimiser, which is used for the first moment
