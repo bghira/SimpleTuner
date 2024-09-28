@@ -1099,18 +1099,6 @@ class Trainer:
                 offload_gradients=self.config.optimizer_offload_gradients,
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
-            if self.config.optimizer_torch_compile:
-                self.optimizer.step = torch.compile(
-                    self.optimizer.step,
-                    fullgraph=True,
-                    mode="max-autotune",
-                    backend="inductor" if torch.cuda.is_available() else "aot_eager",
-                )
-            # self.optimizer = optimizer_class(
-            #     self.params_to_optimize,
-            #     **extra_optimizer_args,
-            # )
-
 
         if (
             is_optimi_available
@@ -1805,7 +1793,6 @@ class Trainer:
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
-
         for epoch in range(self.state["first_epoch"], self.config.num_train_epochs + 1):
             if self.state["current_epoch"] > self.config.num_train_epochs + 1:
                 # This might immediately end training, but that's useful for simply exporting the model.

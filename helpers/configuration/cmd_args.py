@@ -1150,7 +1150,7 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--optimizer_cpu_offload_method",
-        choices=["none"], #, "torchao"],
+        choices=["none"],  # , "torchao"],
         default="none",
         help=(
             "This option is a placeholder. In the future, it will allow for the selection of different CPU offload methods."
@@ -1170,15 +1170,6 @@ def get_argument_parser():
         default=False,
         help=(
             "When creating a CPU-offloaded optimiser, the fused optimiser could be used to save on memory, while running slightly slower."
-        ),
-    )
-    parser.add_argument(
-        "--optimizer_torch_compile",
-        action="store_true",
-        default=False,
-        help=(
-            "When using a CPU-offloaded optimiser, we can torch.compile() it and save some time using a compiled graph."
-            " This option will not work on Apple MPS devices, and may not work on all systems."
         ),
     )
     parser.add_argument(
