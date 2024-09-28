@@ -126,10 +126,11 @@ def _torchao_model(model, model_precision, base_model_precision=None):
 def quantoise(
     unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet, args
 ):
-    logger.info("Loading Quanto for LoRA training. This may take a few minutes.")
     if "quanto" in args.base_model_precision.lower():
+        logger.info("Loading Quanto. This may take a few minutes.")
         quant_fn = _quanto_model
     elif "torchao" in args.base_model_precision.lower():
+        logger.info("Loading TorchAO. This may take a few minutes.")
         quant_fn = _torchao_model
     if transformer is not None:
         transformer = quant_fn(transformer, args.base_model_precision)
