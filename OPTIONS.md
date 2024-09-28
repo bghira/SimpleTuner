@@ -25,7 +25,7 @@ The script `configure.py` in the project root can be used via `python configure.
 - **Default**: lora
   - If lora is used, `--lora_type` dictates whether PEFT or LyCORIS are in use. Some models (PixArt) work only with LyCORIS adapters.
 
-## `--model_family`
+### `--model_family`
 
 - **What**: Determines which model architecture is being trained.
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
@@ -40,20 +40,69 @@ The script `configure.py` in the project root can be used via `python configure.
 - **What**: Path to the pretrained T5 model or its identifier from https://huggingface.co/models.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
-### `--hub_model_id`
+### `--refiner_training`
 
-- **What**: The name of the Huggingface Hub model and local results directory.
-- **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
+- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+
+## Precision
+
+### `--quantize_via`
+
+- **Choices**: `cpu`, `accelerator`
+  - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
+  - On `cpu`, quantisation takes about 30 seconds. (**Default**)
+
+
+### `--base_model_precision`
+
+- **What**: Reduce model precision and train using less memory. There are currently two supported quantisation backends: quanto and torchao.
+
+#### Optimum Quanto
+
+Provided by Hugging Face, the optimum-quanto library has robust support across all supported platforms.
+
+- `int8-quanto` is the most broadly compatible and probably produces the best results
+  - uses hardware-accelerated matmul on CUDA devices for int8, int4
+  - works with `TRAINING_DYNAMO_BACKEND=inductor` (`torch.compile()`)
+- `nf4-quanto` is an experimental fp8 variant for CUDA and perhaps ROCm devices.
+  - can be slightly faster than `int8-quanto` on a 4090 for training, but not inference (1 second slower)
+  - works with `TRAINING_DYNAMO_BACKEND=inductor` (`torch.compile()`)
+- `fp8-quanto` will not (currently) use fp8 matmul, does not work on Apple systems.
+  - does not have hardware fp8 matmul yet on CUDA or ROCm devices, so it will possibly be noticeably slower than int8
+  - incompatible with dynamo, will automatically switch to `int8-quanto` for you and keep dynamo enabled for speedup.
+  
+#### TorchAO
+
+A newer library from Pytorch, AO allows us to replace the linears and 2D convolutions (eg. unet style models) with quantised counterparts.
+<!-- Additionally, it provides an experimental CPU offload optimiser that essentially provides a simpler reimplementation of DeepSpeed. -->
+
+- `int8-torchao` will reduce memory consumption to the same level as any of Quanto's precision levels
+  - at the time of writing, runs slightly slower (11s/iter) than Quanto does (9s/iter) on Apple MPS
+  - Same speed and memory use as `int8-quanto` on CUDA devices, unknown speed profile on ROCm
+- `fp8-torchao` is not enabled for use due to bugs in the implementation.
+
+#### Torch Dynamo
+
+To enable `torch.compile()`, add the following line to `config/config.env`:
+```bash
+TRAINING_DYNAMO_BACKEND=inductor
+```
+
+Note that the first several steps of training will be slower than usual because of compilation occuring in the background.
 
 ---
+
+## 📰 Publishing
 
 ### `--push_to_hub`
 
 - **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
 
-### `--refiner_training`
+### `--hub_model_id`
 
-- **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.
+- **What**: The name of the Huggingface Hub model and local results directory.
+- **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
+
 
 ### `--disable_benchmark`
 
@@ -122,26 +171,19 @@ A lot of settings are instead set through the [dataloader config](/documentation
     - All images in the dataset will have their smaller edge resized to this resolution for training, which could result in a lot of VRAM use due to the size of the resulting images.
     - Example resulting sizes for `1024`: 1024x1024, 1766x1024, 1024x1766
   - `resolution_type=area`
-    - An internal option that isn't user-friendly. Use `pixel_area` instead.
+    - **Deprecated**. Use `pixel_area` instead.
 
 ### `--resolution`
 
 - **What**: Input image resolution expressed in pixel edge length
 - **Default**: 1024
+- **Note**: This is the global default, if a dataset does not have a resolution set.
 
 ### `--validation_resolution`
 
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
-### `--caption_strategy`
-
-- **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
-- **Why**: Determines how captions are generated for training images.
-  - `textfile` will use the contents of a `.txt` file with the same filename as the image
-  - `filename` will apply some cleanup to the filename before using it as the caption.
-  - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
-  - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
 
 ### `--crop`
 
@@ -162,6 +204,15 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - `crop_aspect=random` will use a random aspect value from `crop_aspect_buckets` without going too far - it will use square crops if your aspects are incompatible
   - `crop_aspect=square` will use the standard square crop style
 
+### `--caption_strategy`
+
+- **What**: Strategy for deriving image captions. **Choices**: `textfile`, `filename`, `parquet`, `instanceprompt`
+- **Why**: Determines how captions are generated for training images.
+  - `textfile` will use the contents of a `.txt` file with the same filename as the image
+  - `filename` will apply some cleanup to the filename before using it as the caption.
+  - `parquet` requires a parquet file to be present in the dataset, and will use the `caption` column as the caption unless `parquet_caption_column` is provided. All captions must be present unless a `parquet_fallback_caption_column` is provided.
+  - `instanceprompt` will use the value for `instance_prompt` in the dataset config as the prompt for every image in the dataset.
+
 ---
 
 ## 🎛 Training Parameters
@@ -176,10 +227,26 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Number of training steps to exit training after. If set to 0, will allow `--num_train_epochs` to take priority.
 - **Why**: Useful for shortening the length of training.
 
+### `--learning_rate`
+
+- **What**: Initial learning rate after potential warmup.
+- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value for a `full` tune might be as low as `1e-7` to a max of `1e-6` while for `lora` tuning a minimal value might be `1e-5` with a maximal value as high as `1e-3`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
+
+### `--lr_scheduler`
+
+- **What**: How to scale the learning rate over time.
+- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, **polynomial** (recommended), linear
+- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low). A polynomial schedule is best paired with a warmup, where it will gradually approach the `learning_rate` value before then slowing down and approaching `--lr_end` by the end.
+
 ### `--train_batch_size`
 
 - **What**: Batch size for the training data loader.
 - **Why**: Affects the model's memory consumption, convergence quality, and training speed. The higher the batch size, the better the results will be, but a very high batch size might result in overfitting or destabilized training, as well as increasing the duration of the training session unnecessarily. Experimentation is warranted, but in general, you want to try to max out your video memory while not decreasing the training speed.
+
+### `--gradient_accumulation_steps`
+
+- **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.
+- **Why**: Useful for handling larger models or datasets.
 
 ---
 
@@ -206,21 +273,6 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Reduce the update interval of your EMA shadow parameters.
 - **Why**: Updating the EMA weights on every step could be an unnecessary waste of resources. Providing `--ema_update_interval=100` will update the EMA weights only once every 100 optimizer steps.
 
-### `--gradient_accumulation_steps`
-
-- **What**: Number of update steps to accumulate before performing a backward/update pass, essentially splitting the work over multiple batches to save memory at the cost of a higher training runtime.
-- **Why**: Useful for handling larger models or datasets.
-
-### `--learning_rate`
-
-- **What**: Initial learning rate after potential warmup.
-- **Why**: The learning rate behaves as a sort of "step size" for gradient updates - too high, and we overstep the solution. Too low, and we never reach the ideal solution. A minimal value for a `full` tune might be as low as `1e-7` to a max of `1e-6` while for `lora` tuning a minimal value might be `1e-5` with a maximal value as high as `1e-3`. When a higher learning rate is used, it's advantageous to use an EMA network with a learning rate warmup - see `--use_ema`, `--lr_warmup_steps`, and `--lr_scheduler`.
-
-### `--lr_scheduler`
-
-- **What**: How to scale the learning rate over time.
-- **Choices**: constant, constant_with_warmup, cosine, cosine_with_restarts, **polynomial** (recommended), linear
-- **Why**: Models benefit from continual learning rate adjustments to further explore the loss landscape. A cosine schedule is used as the default; this allows the training to smoothly transition between two extremes. If using a constant learning rate, it is common to select a too-high or too-low value, causing divergence (too high) or getting stuck in a local minima (too low). A polynomial schedule is best paired with a warmup, where it will gradually approach the `learning_rate` value before then slowing down and approaching `--lr_end` by the end.
 
 ### `--snr_gamma`
 
@@ -260,7 +312,8 @@ A lot of settings are instead set through the [dataloader config](/documentation
 ### `--report_to`
 
 - **What**: Specifies the platform for reporting results and logs.
-- **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring.
+- **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
+- **Choices**: wandb, tensorboard, comet_ml
 
 ---
 
@@ -281,7 +334,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--flux_guidance_value FLUX_GUIDANCE_VALUE]
                 [--flux_guidance_min FLUX_GUIDANCE_MIN]
                 [--flux_guidance_max FLUX_GUIDANCE_MAX]
-                [--flux_attention_masked_training] [--smoldit]
+                [--flux_attention_masked_training]
+                [--t5_padding {zero,unmodified}] [--smoldit]
                 [--smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}]
                 [--flow_matching_loss {diffusers,compatible,diffusion}]
                 [--sd3_t5_mask_behaviour {do-nothing,mask}]
@@ -289,7 +343,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
                 [--init_lora INIT_LORA] [--lora_rank LORA_RANK]
                 [--lora_alpha LORA_ALPHA] [--lora_dropout LORA_DROPOUT]
-                [--lycoris_config LYCORIS_CONFIG] [--controlnet]
+                [--lycoris_config LYCORIS_CONFIG]
+                [--init_lokr_norm INIT_LOKR_NORM] [--controlnet]
                 [--controlnet_model_name_or_path]
                 --pretrained_model_name_or_path PRETRAINED_MODEL_NAME_OR_PATH
                 [--pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH]
@@ -323,7 +378,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--data_backend_config DATA_BACKEND_CONFIG]
                 [--data_backend_sampling {uniform,auto-weighting}]
-                [--write_batch_size WRITE_BATCH_SIZE]
+                [--ignore_missing_files] [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
                 [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
                 [--enable_multiprocessing] [--max_workers MAX_WORKERS]
@@ -364,8 +419,11 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
                 [--offload_param_path OFFLOAD_PARAM_PATH] --optimizer
-                {adamw_bf16,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
+                {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
                 [--optimizer_config OPTIMIZER_CONFIG]
+                [--optimizer_cpu_offload_method {none,torchao}]
+                [--optimizer_offload_gradients] [--fuse_optimizer]
+                [--optimizer_torch_compile]
                 [--optimizer_beta1 OPTIMIZER_BETA1]
                 [--optimizer_beta2 OPTIMIZER_BETA2]
                 [--optimizer_release_gradients] [--adam_beta1 ADAM_BETA1]
@@ -378,11 +436,12 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
                 [--benchmark_base_model] [--disable_benchmark]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
-                [--validation_torch_compile VALIDATION_TORCH_COMPILE]
+                [--validation_torch_compile]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
                 [--allow_tf32] [--disable_tf32] [--validation_using_datasets]
-                [--webhook_config WEBHOOK_CONFIG] [--report_to REPORT_TO]
-                [--tracker_run_name TRACKER_RUN_NAME]
+                [--webhook_config WEBHOOK_CONFIG]
+                [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
+                [--report_to REPORT_TO] [--tracker_run_name TRACKER_RUN_NAME]
                 [--tracker_project_name TRACKER_PROJECT_NAME]
                 [--tracker_image_layout {gallery,table}]
                 [--validation_prompt VALIDATION_PROMPT]
@@ -399,11 +458,12 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--validation_disable_unconditional] [--enable_watermark]
                 [--mixed_precision {bf16,no}]
                 [--gradient_precision {unmodified,fp32}]
-                [--base_model_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--quantize_via {cpu,accelerator}]
+                [--base_model_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
                 [--base_model_default_dtype {bf16,fp32}]
-                [--text_encoder_1_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
-                [--text_encoder_2_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
-                [--text_encoder_3_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}]
+                [--text_encoder_1_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--text_encoder_2_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--text_encoder_3_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
                 [--local_rank LOCAL_RANK]
                 [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
@@ -531,6 +591,10 @@ options:
   --flux_guidance_max FLUX_GUIDANCE_MAX
   --flux_attention_masked_training
                         Use attention masking while training flux.
+  --t5_padding {zero,unmodified}
+                        The padding behaviour for Flux. The default is 'zero',
+                        which will pad the input with zeros. The alternative
+                        is 'unmodified', which will not pad the input.
   --smoldit             Use the experimental SmolDiT model architecture.
   --smoldit_config {smoldit-small,smoldit-swiglu,smoldit-base,smoldit-large,smoldit-huge}
                         The SmolDiT configuration to use. This is a list of
@@ -588,6 +652,10 @@ options:
   --lycoris_config LYCORIS_CONFIG
                         The location for the JSON file of the Lycoris
                         configuration.
+  --init_lokr_norm INIT_LOKR_NORM
+                        Setting this turns on perturbed normal initialization
+                        of the LyCORIS LoKr PEFT layers. A good value is
+                        between 1e-4 and 1e-2.
   --controlnet          If set, ControlNet style training will be used, where
                         a conditioning input image is required alongside the
                         training data.
@@ -802,6 +870,13 @@ options:
                         automatically adjust the sampling weights based on the
                         number of images in each backend. 'uniform' will
                         sample from each backend equally.
+  --ignore_missing_files
+                        This option will disable the check for files that have
+                        been deleted or removed from your data directory. This
+                        would allow training on large datasets without keeping
+                        the associated images on disk, though it's not
+                        recommended and is not a supported feature. Use with
+                        caution, as it mostly exists for experimentation.
   --write_batch_size WRITE_BATCH_SIZE
                         When using certain storage backends, it is better to
                         batch smaller writes rather than continuous
@@ -1035,12 +1110,27 @@ options:
                         When using DeepSpeed ZeRo stage 2 or 3 with NVMe
                         offload, this may be specified to provide a path for
                         the offload.
-  --optimizer {adamw_bf16,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
+  --optimizer {adamw_bf16,ao-adamw8bit,ao-adamw4bit,ao-adamfp8,ao-adamwfp8,adamw_schedulefree,adamw_schedulefree+aggressive,adamw_schedulefree+no_kahan,optimi-stableadamw,optimi-adamw,optimi-lion,optimi-radam,optimi-ranger,optimi-adan,optimi-adam,optimi-sgd}
   --optimizer_config OPTIMIZER_CONFIG
                         When setting a given optimizer, this allows a comma-
                         separated list of key-value pairs to be provided that
                         will override the optimizer defaults. For example, `--
                         optimizer_config=decouple_lr=True,weight_decay=0.01`.
+  --optimizer_cpu_offload_method {none,torchao}
+                        When loading an optimiser, a CPU offload mechanism can
+                        be used. Currently, no offload is used by default, and
+                        only torchao is supported.
+  --optimizer_offload_gradients
+                        When creating a CPU-offloaded optimiser, the gradients
+                        can be offloaded to the CPU to save more memory.
+  --fuse_optimizer      When creating a CPU-offloaded optimiser, the fused
+                        optimiser could be used to save on memory, while
+                        running slightly slower.
+  --optimizer_torch_compile
+                        When using a CPU-offloaded optimiser, we can
+                        torch.compile() it and save some time using a compiled
+                        graph. This option will not work on Apple MPS devices,
+                        and may not work on all systems.
   --optimizer_beta1 OPTIMIZER_BETA1
                         The value to use for the first beta value in the
                         optimiser, which is used for the first moment
@@ -1107,7 +1197,7 @@ options:
                         validation errors. If so, please set
                         SIMPLETUNER_LOG_LEVEL=DEBUG and submit debug.log to a
                         new Github issue report.
-  --validation_torch_compile VALIDATION_TORCH_COMPILE
+  --validation_torch_compile
                         Supply `--validation_torch_compile=true` to enable the
                         use of torch.compile() on the validation pipeline. For
                         some setups, torch.compile() may error out. This is
@@ -1134,6 +1224,11 @@ options:
                         should be a JSON file with the following format:
                         {"url": "https://your.webhook.url", "webhook_type":
                         "discord"}}
+  --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
+                        When using 'raw' webhooks that receive structured
+                        data, you can specify a reporting interval here for
+                        training progress updates to be sent at. This does not
+                        impact 'discord' webhook types.
   --report_to REPORT_TO
                         The integration to report the results and logs to.
                         Supported platforms are `"tensorboard"` (default),
@@ -1225,7 +1320,14 @@ options:
                         accumulation steps are enabled is now to use fp32
                         gradients, which is slower, but provides more accurate
                         updates.
-  --base_model_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --quantize_via {cpu,accelerator}
+                        When quantising the model, the quantisation process
+                        can be done on the CPU or the accelerator. When done
+                        on the accelerator (default), slightly more VRAM is
+                        required, but the process completes in milliseconds.
+                        When done on the CPU, the process may take upwards of
+                        60 seconds, but can complete without OOM on 16G cards.
+  --base_model_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise the
                         base model to a lower precision to save more VRAM. The
                         default value, 'no_change', does not quantise any
@@ -1243,7 +1345,7 @@ options:
                         optimizers than adamw_bf16. However, this uses
                         marginally more memory, and may not be necessary for
                         your use case.
-  --text_encoder_1_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --text_encoder_1_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 1 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1251,7 +1353,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_2_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --text_encoder_2_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 2 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1259,7 +1361,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_3_precision {no_change,fp8-quanto,int8-quanto,int4-quanto,int2-quanto}
+  --text_encoder_3_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 3 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision

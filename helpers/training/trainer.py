@@ -23,7 +23,6 @@ from helpers.training.validation import Validation, prepare_validation_prompt_li
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
 from helpers.training.custom_schedule import get_lr_scheduler
-from helpers.training.optimizer_param import is_lr_scheduler_disabled
 from helpers.training.adapter import determine_adapter_target_modules, load_lora_weights
 from helpers.training.diffusion_model import load_diffusion_model
 from helpers.training.text_encoding import (
@@ -35,6 +34,8 @@ from helpers.training.text_encoding import (
 from helpers.training.optimizer_param import (
     determine_optimizer_class_with_config,
     determine_params_to_optimize,
+    is_lr_scheduler_disabled,
+    cpu_offload_optimizer,
 )
 from helpers.data_backend.factory import BatchFetcher
 from helpers.training.deepspeed import (
@@ -730,6 +731,7 @@ class Trainer:
         )
         self.config.base_weight_dtype = self.config.weight_dtype
         self.config.is_quanto = False
+        self.config.is_torchao = False
         quantization_device = (
             "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
         )
@@ -752,27 +754,46 @@ class Trainer:
                 self.transformer.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
-        if (
-            "quanto" in self.config.base_model_precision
-            and "lora" in self.config.model_type
-        ):
+        if "quanto" in self.config.base_model_precision:
             self.config.is_quanto = True
-            from helpers.training.quantisation import quantoise
+        elif "torchao" in self.config.base_model_precision:
+            self.config.is_torchao = True
 
-            self.quantoise = quantoise
+        if self.config.is_quanto:
+            from helpers.training.quantisation import quantise_model
 
-            # we'll quantise pretty much everything but the adapter, if we execute this here.
-            if not self.config.controlnet:
-                with self.accelerator.local_main_process_first():
-                    quantoise(
-                        unet=self.unet,
-                        transformer=self.transformer,
-                        text_encoder_1=self.text_encoder_1,
-                        text_encoder_2=self.text_encoder_2,
-                        text_encoder_3=self.text_encoder_3,
-                        controlnet=None,
-                        args=self.config,
-                    )
+            self.quantise_model = quantise_model
+            with self.accelerator.local_main_process_first():
+                quantise_model(
+                    unet=self.unet,
+                    transformer=self.transformer,
+                    text_encoder_1=self.text_encoder_1,
+                    text_encoder_2=self.text_encoder_2,
+                    text_encoder_3=self.text_encoder_3,
+                    controlnet=None,
+                    args=self.config,
+                )
+        elif self.config.is_torchao:
+            from helpers.training.quantisation import quantise_model
+
+            self.quantise_model = quantise_model
+            with self.accelerator.local_main_process_first():
+                (
+                    self.unet,
+                    self.transformer,
+                    self.text_encoder_1,
+                    self.text_encoder_2,
+                    self.text_encoder_3,
+                    self.controlnet,
+                ) = quantise_model(
+                    unet=self.unet,
+                    transformer=self.transformer,
+                    text_encoder_1=self.text_encoder_1,
+                    text_encoder_2=self.text_encoder_2,
+                    text_encoder_3=self.text_encoder_3,
+                    controlnet=None,
+                    args=self.config,
+                )
 
     def init_controlnet_model(self):
         if not self.config.controlnet:
@@ -789,7 +810,7 @@ class Trainer:
         if "quanto" in self.config.base_model_precision:
             # since controlnet training uses no adapter currently, we just quantise the base transformer here.
             with self.accelerator.local_main_process_first():
-                self.quantoise(
+                self.quantise_model(
                     unet=self.unet,
                     transformer=self.transformer,
                     text_encoder_1=self.text_encoder_1,
@@ -1070,9 +1091,13 @@ class Trainer:
                 if self.text_encoder_2 is not None:
                     self.params_to_optimize[2]["lr"] = float(self.config.learning_rate)
 
-            self.optimizer = optimizer_class(
-                self.params_to_optimize,
-                **extra_optimizer_args,
+            self.optimizer = cpu_offload_optimizer(
+                params_to_optimize=self.params_to_optimize,
+                optimizer_cls=optimizer_class,
+                optimizer_parameters=extra_optimizer_args,
+                fused=self.config.fuse_optimizer,
+                offload_gradients=self.config.optimizer_offload_gradients,
+                offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
         if (

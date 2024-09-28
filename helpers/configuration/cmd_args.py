@@ -13,7 +13,7 @@ from helpers.models.smoldit import SmolDiTConfigurationNames
 from helpers.training import quantised_precision_levels
 from helpers.training.optimizer_param import (
     is_optimizer_deprecated,
-    is_optimizer_bf16,
+    is_optimizer_grad_fp32,
     map_deprecated_optimizer_parameter,
     optimizer_choices,
 )
@@ -1149,6 +1149,39 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--optimizer_cpu_offload_method",
+        choices=["none"], #, "torchao"],
+        default="none",
+        help=(
+            "This option is a placeholder. In the future, it will allow for the selection of different CPU offload methods."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_offload_gradients",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating a CPU-offloaded optimiser, the gradients can be offloaded to the CPU to save more memory."
+        ),
+    )
+    parser.add_argument(
+        "--fuse_optimizer",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating a CPU-offloaded optimiser, the fused optimiser could be used to save on memory, while running slightly slower."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_torch_compile",
+        action="store_true",
+        default=False,
+        help=(
+            "When using a CPU-offloaded optimiser, we can torch.compile() it and save some time using a compiled graph."
+            " This option will not work on Apple MPS devices, and may not work on all systems."
+        ),
+    )
+    parser.add_argument(
         "--optimizer_beta1",
         type=float,
         default=None,
@@ -1282,8 +1315,8 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--validation_torch_compile",
-        type=str,
-        default="false",
+        action="store_true",
+        default=False,
         help=(
             "Supply `--validation_torch_compile=true` to enable the use of torch.compile() on the validation pipeline."
             " For some setups, torch.compile() may error out. This is dependent on PyTorch version, phase of the moon,"
@@ -1984,6 +2017,21 @@ def parse_cmdline_args(input_args=None):
         raise ValueError(
             f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
+    if is_optimizer_grad_fp32(args.optimizer):
+        print(
+            "[WARNING] Using a low-precision optimizer that requires fp32 gradients. Training will run more slowly."
+        )
+        if args.gradient_precision != "fp32":
+            print(
+                f"[WARNING] Overriding gradient_precision to 'fp32' for {args.optimizer} optimizer."
+            )
+            args.gradient_precision = "fp32"
+    else:
+        if args.gradient_precision == "fp32":
+            print(
+                f"[WARNING] Overriding gradient_precision to 'unmodified' for {args.optimizer} optimizer, as fp32 gradients are not required."
+            )
+            args.gradient_precision = "unmodified"
 
     if torch.backends.mps.is_available():
         if (
@@ -2000,6 +2048,12 @@ def parse_cmdline_args(input_args=None):
                 "\nPlease reduce the batch size to 12 or lower."
             )
             sys.exit(1)
+
+        if args.quantize_via == "accelerator":
+            error_log(
+                "MPS does not benefit from models being quantized on the accelerator device. Overriding --quantize_via to 'cpu'."
+            )
+            args.quantize_via = "cpu"
 
     if (
         args.max_train_steps is not None
@@ -2091,10 +2145,6 @@ def parse_cmdline_args(input_args=None):
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
-    if args.validation_torch_compile == "true":
-        args.validation_torch_compile = True
-    else:
-        args.validation_torch_compile = False
 
     if args.model_family == "sd3":
         args.pretrained_vae_model_name_or_path = None
@@ -2247,9 +2297,7 @@ def parse_cmdline_args(input_args=None):
     )
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
-    if "lora" not in args.model_type:
-        args.base_model_precision = "no_change"
-    elif "lycoris" == args.lora_type.lower():
+    if "lycoris" == args.lora_type.lower():
         from lycoris import create_lycoris
 
         if args.lycoris_config is None:

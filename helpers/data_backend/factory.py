@@ -1112,7 +1112,7 @@ def get_csv_backend(
     caption_column: str,
     compress_cache: bool = False,
     hash_filenames: bool = False,
-    shorten_filenames: bool = False
+    shorten_filenames: bool = False,
 ) -> CSVDataBackend:
     from pathlib import Path
 

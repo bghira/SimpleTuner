@@ -261,7 +261,7 @@ def rope(pos: torch.Tensor, dim: int, theta: int) -> torch.Tensor:
             0,
             dim,
             2,
-            dtype=torch.float32 if torch.backends.mps.is_available() else torch.float64,
+            dtype=torch.float32,
             device=pos.device,
         )
         / dim
