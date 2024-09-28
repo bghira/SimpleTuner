@@ -2,6 +2,7 @@ import torch
 import os
 import wandb
 import logging
+import numpy as np
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
@@ -151,7 +152,7 @@ def prepare_validation_prompt_list(args, embed_cache):
     )
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
-            f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().multidatabackend_config}."
+            f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
         )
     model_type = embed_cache.model_type
     validation_sample_images = None
@@ -1341,6 +1342,16 @@ class Validation:
                             image,
                             name=f"{shortname} - {self.validation_resolutions[idx]}",
                         )
+            elif tracker.name == "tensorboard":
+                tracker = self.accelerator.get_tracker("tensorboard")
+                for shortname, image_list in validation_images.items():
+                    tracker.log_images(
+                            {
+                                f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(np.array(image), -1, 0)[np.newaxis, ...] 
+                                for idx, image in enumerate(image_list)
+                            }, 
+                            step=StateTracker.get_global_step()
+                    )
             elif tracker.name == "wandb":
                 resolution_list = [
                     f"{res[0]}x{res[1]}" for res in get_validation_resolutions()

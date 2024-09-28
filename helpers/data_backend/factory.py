@@ -320,6 +320,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
     """
     Configure a multiple dataloaders based on the provided commandline args.
     """
+    StateTracker.clear_data_backends()
     logger.setLevel(
         os.environ.get(
             "SIMPLETUNER_LOG_LEVEL", "INFO" if accelerator.is_main_process else "ERROR"
@@ -395,7 +396,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
             # Ensure we have a trailing slash on the prefix:
-            init_backend["cache_dir"] = backend.get("aws_data_prefix", None)
+            init_backend["cache_dir"] = backend.get(
+                "aws_data_prefix", backend.get("cache_dir", args.cache_dir_text)
+            )
         elif backend["type"] == "csv":
             raise ValueError("Cannot use CSV backend for text embed storage.")
         else:
@@ -418,6 +421,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_family(),
             write_batch_size=backend.get("write_batch_size", 1),
+        )
+        init_backend["text_embed_cache"].set_webhook_handler(
+            StateTracker.get_webhook_handler()
         )
         with accelerator.main_process_first():
             init_backend["text_embed_cache"].discover_all_files()
@@ -633,7 +639,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 ),
             )
             # S3 buckets use the aws_data_prefix as their prefix/ for all data.
-            init_backend["instance_data_dir"] = backend["aws_data_prefix"]
+            init_backend["instance_data_dir"] = backend.get("aws_data_prefix", "")
         elif backend["type"] == "csv":
             check_csv_config(backend=backend, args=args)
             init_backend["data_backend"] = get_csv_backend(
@@ -942,7 +948,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
                 raise ValueError(
-                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
+                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."
                 )
             vae_cache_dir_paths.append(vae_cache_dir)
 
@@ -951,7 +957,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 and vae_cache_dir in text_embed_cache_dir_paths
             ):
                 raise ValueError(
-                    f"VAE image embed cache directory {init_backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
+                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
                 )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
@@ -990,6 +996,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 ),
                 vae_cache_ondemand=args.vae_cache_ondemand,
                 hash_filenames=hash_filenames,
+            )
+            init_backend["vaecache"].set_webhook_handler(
+                StateTracker.get_webhook_handler()
             )
 
             if not args.vae_cache_ondemand:
@@ -1103,6 +1112,7 @@ def get_csv_backend(
     caption_column: str,
     compress_cache: bool = False,
     hash_filenames: bool = False,
+    shorten_filenames: bool = False
 ) -> CSVDataBackend:
     from pathlib import Path
 
