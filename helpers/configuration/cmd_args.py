@@ -2003,19 +2003,13 @@ def parse_cmdline_args(input_args=None):
             f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
     if is_optimizer_grad_fp32(args.optimizer):
-        print(
-            "[WARNING] Using a low-precision optimizer that requires fp32 gradients. Training will run more slowly."
+        warning_log(
+            "Using an optimizer that requires fp32 gradients. Training will potentially run more slowly."
         )
         if args.gradient_precision != "fp32":
-            print(
-                f"[WARNING] Overriding gradient_precision to 'fp32' for {args.optimizer} optimizer."
-            )
             args.gradient_precision = "fp32"
     else:
         if args.gradient_precision == "fp32":
-            print(
-                f"[WARNING] Overriding gradient_precision to 'unmodified' for {args.optimizer} optimizer, as fp32 gradients are not required."
-            )
             args.gradient_precision = "unmodified"
 
     if torch.backends.mps.is_available():
@@ -2159,7 +2153,7 @@ def parse_cmdline_args(input_args=None):
         or args.flux_fast_schedule
     ):
         if not args.flux_fast_schedule:
-            logger.error("Schnell requires --flux_fast_schedule.")
+            error_log("Schnell requires --flux_fast_schedule.")
             sys.exit(1)
         flux_version = "schnell"
         model_max_seq_length = 256
@@ -2196,11 +2190,11 @@ def parse_cmdline_args(input_args=None):
             )
 
         if args.flux_guidance_mode == "mobius":
-            logger.warning(
+            warning_log(
                 "Mobius training is only for the most elite. Pardon my English, but this is not for those who don't like to destroy something beautiful every now and then. If you feel perhaps this is not for you, please consider using a different guidance mode."
             )
             if args.flux_guidance_min < 1.0:
-                logger.warning(
+                warning_log(
                     "Flux minimum guidance value for Mobius training is 1.0. Updating value.."
                 )
                 args.flux_guidance_min = 1.0
@@ -2333,7 +2327,7 @@ def parse_cmdline_args(input_args=None):
                 )
                 args.use_dora = False
             else:
-                logger.warning(
+                warning_log(
                     "DoRA support is experimental and not very thoroughly tested."
                 )
                 args.lora_initialisation_style = "default"
@@ -2344,7 +2338,7 @@ def parse_cmdline_args(input_args=None):
         args.data_backend_config = os.path.join(
             StateTracker.get_config_path(), "multidatabackend.json"
         )
-        logger.warning(
+        warning_log(
             f"No data backend config provided. Using default config at {args.data_backend_config}."
         )
 
