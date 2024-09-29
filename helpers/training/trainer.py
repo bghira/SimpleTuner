@@ -2133,6 +2133,9 @@ class Trainer:
                                 num_channels_latents=latents.shape[1],
                                 height=latents.shape[2],
                                 width=latents.shape[3],
+                            ).to(
+                                dtype=self.config.base_weight_dtype,
+                                device=self.accelerator.device,
                             )
                             if self.config.flux_guidance_mode == "mobius":
                                 guidance_scales = get_mobius_guidance(
@@ -2204,10 +2207,7 @@ class Trainer:
                             )
 
                             flux_transformer_kwargs = {
-                                "hidden_states": packed_noisy_latents.to(
-                                    dtype=self.config.base_weight_dtype,
-                                    device=self.accelerator.device,
-                                ),
+                                "hidden_states": packed_noisy_latents,
                                 # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                                 "timestep": timesteps,
                                 "guidance": guidance,

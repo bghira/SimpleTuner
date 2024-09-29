@@ -114,6 +114,8 @@ class SOAP(optim.Optimizer):
             closure (`Callable`, *optional*): A closure that reevaluates the model and returns the loss.
         """
         loss = None
+        if closure is not None:
+            loss = closure()
 
         for group in self.param_groups:
             for p in group["params"]:
