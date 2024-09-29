@@ -60,3 +60,22 @@ def safety_check(args, accelerator):
         raise FileNotFoundError(
             f"User prompt library not found at {args.user_prompt_library}. Please check the path and try again."
         )
+
+
+    # optimizer memory limit check for SOAP w/ 24G
+    if accelerator.device.type == "cuda" and accelerator.is_main_process:
+        import subprocess
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+            ]
+        ).split(b"\n")[get_rank()]
+        total_memory = int(output.decode().strip()) / 1024
+        from math import ceil
+        total_memory_gb = ceil(total_memory)
+        if total_memory_gb < 32 and args.optimizer == "soap":
+            logger.warning(
+                f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser may require more than this."
+            )

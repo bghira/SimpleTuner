@@ -5,10 +5,10 @@ from helpers.training import quantised_precision_levels, lycoris_defaults
 from helpers.training.optimizer_param import optimizer_choices
 
 bf16_only_optims = [
-    key for key, value in optimizer_choices.items() if value["precision"] == "bf16"
+    key for key, value in optimizer_choices.items() if value.get("precision", "any") == "bf16"
 ]
 any_precision_optims = [
-    key for key, value in optimizer_choices.items() if value["precision"] == "any"
+    key for key, value in optimizer_choices.items() if value.get("precision", "any") == "any"
 ]
 model_classes = {
     "full": [

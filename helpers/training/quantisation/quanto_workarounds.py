@@ -34,3 +34,23 @@ if torch.cuda.is_available():
         )
 
     optimum.quanto.library.extensions.cuda.fp8_marlin_gemm = fp8_marlin_gemm
+
+    class TinyGemmQBitsLinearFunction(optimum.quanto.tensor.function.QuantizedLinearFunction):
+        @staticmethod
+        def forward(ctx, input, other, bias):
+            ctx.save_for_backward(input, other)
+            if type(input) is not torch.Tensor:
+                input = input.dequantize()
+            in_features = input.shape[-1]
+            out_features = other.shape[0]
+            output_shape = input.shape[:-1] + (out_features,)
+            output = torch._weight_int4pack_mm(
+                input.view(-1, in_features).to(dtype=other.dtype), other._data._data, other._group_size, other._scale_shift
+            )
+            output = output.view(output_shape)
+            if bias is not None:
+                output = output + bias
+            return output
+        
+    from optimum.quanto.tensor.weights import tinygemm
+    tinygemm.qbits.TinyGemmQBitsLinearFunction = TinyGemmQBitsLinearFunction
