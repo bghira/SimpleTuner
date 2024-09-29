@@ -248,7 +248,18 @@ version = "0.43.3"
 description = "k-bit optimizers and matrix multiplication routines."
 optional = false
 python-versions = "*"
-files = []
+files = [
+    {file = "bitsandbytes-0.43.3-py3-none-manylinux_2_24_x86_64.whl", hash = "sha256:cc99507c352be0715098b2c7577b690dd158972dc4ea10c7495bac104c7c79f0"},
+    {file = "bitsandbytes-0.43.3-py3-none-win_amd64.whl", hash = "sha256:257f6552f2144748a84e6c44e1f7a98f3da888f675ed74e18fd7f7eb13c6cafa"},
+]
+
+[package.dependencies]
+numpy = "*"
+torch = "*"
+
+[package.extras]
+benchmark = ["matplotlib", "pandas"]
+test = ["scipy"]
 
 [[package]]
 name = "boto3"
@@ -4021,9 +4032,13 @@ optional = false
 python-versions = ">=3.8"
 files = [
     {file = "torchvision-0.20.0.dev20240929+cu124-cp310-cp310-linux_x86_64.whl", hash = "sha256:f525a61b532baf70b9f798b46c951143ee2c103c529b83365a2995fb5a4d3aa6"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp310-cp310-win_amd64.whl", hash = "sha256:f4a4fce7e0f98938682e2faae181d31553e5c05aa7892fc05fd2fb06673949f2"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp311-cp311-linux_x86_64.whl", hash = "sha256:255f7f5142b22430fd0c50ac53659dec98826e69576c449a5483d39446bbc471"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp311-cp311-win_amd64.whl", hash = "sha256:3646651e57a25c4156f9cbc431ef112f88f29fac198167b3c3bbb21cfea43467"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp312-cp312-linux_x86_64.whl", hash = "sha256:ef9c0c3201b8f383e9cdbdb9908d61b9a06e066e707015ffd4e03c69d46a660d"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp312-cp312-win_amd64.whl", hash = "sha256:31a1551aaf080e82205cd3a21583ab5a9f9a859f8fb2b45265ba741599ef97ef"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp39-cp39-linux_x86_64.whl", hash = "sha256:f3e2e23952c4e2f472e4301d4b2c7554d76ce45dece4d2cc33a34f99be39e75a"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp39-cp39-win_amd64.whl", hash = "sha256:d892a3f2c3689806c72d9561c8be0495913c0422ca7739bb7a30eec1343e41e5"},
 ]
 
 [package.dependencies]
@@ -4163,7 +4178,31 @@ version = "3.0.0"
 description = "A language and compiler for custom Deep Learning operations"
 optional = false
 python-versions = "*"
-files = []
+files = [
+    {file = "triton-3.0.0-1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e1efef76935b2febc365bfadf74bcb65a6f959a9872e5bddf44cc9e0adce1e1a"},
+    {file = "triton-3.0.0-1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5ce8520437c602fb633f1324cc3871c47bee3b67acf9756c1a66309b60e3216c"},
+    {file = "triton-3.0.0-1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:34e509deb77f1c067d8640725ef00c5cbfcb2052a1a3cb6a6d343841f92624eb"},
+    {file = "triton-3.0.0-1-cp38-cp38-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:bcbf3b1c48af6a28011a5c40a5b3b9b5330530c3827716b5fbf6d7adcc1e53e9"},
+    {file = "triton-3.0.0-1-cp39-cp39-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6e5727202f7078c56f91ff13ad0c1abab14a0e7f2c87e91b12b6f64f3e8ae609"},
+    {file = "triton-3.0.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:39b052da883351fdf6be3d93cedae6db3b8e3988d3b09ed221bccecfa9612230"},
+    {file = "triton-3.0.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cd34f19a8582af96e6291d4afce25dac08cb2a5d218c599163761e8e0827208e"},
+    {file = "triton-3.0.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0d5e10de8c011adeb7c878c6ce0dd6073b14367749e34467f1cff2bde1b78253"},
+    {file = "triton-3.0.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e8903767951bf86ec960b4fe4e21bc970055afc65e9d57e916d79ae3c93665e3"},
+    {file = "triton-3.0.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:41004fb1ae9a53fcb3e970745feb87f0e3c94c6ce1ba86e95fa3b8537894bef7"},
+]
+
+[package.dependencies]
+filelock = "*"
+
+[package.extras]
+build = ["cmake (>=3.20)", "lit"]
+tests = ["autopep8", "flake8", "isort", "llnl-hatchet", "numpy", "pytest", "scipy (>=1.7.1)"]
+tutorials = ["matplotlib", "pandas", "tabulate"]
+
+[package.source]
+type = "legacy"
+url = "https://download.pytorch.org/whl/cu124"
+reference = "pytorch"
 
 [[package]]
 name = "triton-library"
@@ -4975,4 +5014,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "e52ae7de9536135892069225fb2abc6d60b96c1c47fa3351b30441052207212d"
+content-hash = "b7a29deccc162729660c6eb5e910ff1cc7abc2856594cda855b8185da7327ab8"

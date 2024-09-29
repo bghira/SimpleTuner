@@ -14,7 +14,7 @@ torchvision = { version = ">0.19", source = "pytorch-nightly" }
 diffusers = "^0.30.3"
 transformers = "^4.44.2"
 datasets = "^3.0.0"
-bitsandbytes = { version = "^0.43.3", source = "pytorch-nightly" }
+bitsandbytes = { version = "^0.43.3" }
 wandb = "^0.18.1"
 requests = "^2.32.3"
 pillow = "^10.4.0"
@@ -39,7 +39,7 @@ colorama = "^0.4.6"
 numpy = "1.26"
 peft = "^0.12.0"
 tensorboard = "^2.17.1"
-triton = { version = "^3.0.0", source = "pytorch-nightly" }
+triton = {version = "^3.0.0", source = "pytorch"}
 sentencepiece = "^0.2.0"
 optimum-quanto = {git = "https://github.com/huggingface/optimum-quanto"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
