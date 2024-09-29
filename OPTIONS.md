@@ -64,7 +64,8 @@ Provided by Hugging Face, the optimum-quanto library has robust support across a
 - `int8-quanto` is the most broadly compatible and probably produces the best results
   - uses hardware-accelerated matmul on CUDA devices for int8, int4
   - works with `TRAINING_DYNAMO_BACKEND=inductor` (`torch.compile()`)
-- `nf4-quanto` is an experimental fp8 variant for CUDA and perhaps ROCm devices.
+- `fp8uz-quanto` is an experimental fp8 variant for CUDA and ROCm devices.
+  - better-supported on AMD silicon such as Instinct or newer architecture
   - can be slightly faster than `int8-quanto` on a 4090 for training, but not inference (1 second slower)
   - works with `TRAINING_DYNAMO_BACKEND=inductor` (`torch.compile()`)
 - `fp8-quanto` will not (currently) use fp8 matmul, does not work on Apple systems.
@@ -458,11 +459,11 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--mixed_precision {bf16,no}]
                 [--gradient_precision {unmodified,fp32}]
                 [--quantize_via {cpu,accelerator}]
-                [--base_model_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--base_model_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
                 [--base_model_default_dtype {bf16,fp32}]
-                [--text_encoder_1_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
-                [--text_encoder_2_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
-                [--text_encoder_3_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--text_encoder_1_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--text_encoder_2_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--text_encoder_3_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
                 [--local_rank LOCAL_RANK]
                 [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
@@ -1321,7 +1322,7 @@ options:
                         required, but the process completes in milliseconds.
                         When done on the CPU, the process may take upwards of
                         60 seconds, but can complete without OOM on 16G cards.
-  --base_model_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --base_model_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise the
                         base model to a lower precision to save more VRAM. The
                         default value, 'no_change', does not quantise any
@@ -1339,7 +1340,7 @@ options:
                         optimizers than adamw_bf16. However, this uses
                         marginally more memory, and may not be necessary for
                         your use case.
-  --text_encoder_1_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_1_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 1 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1347,7 +1348,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_2_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_2_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 2 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision
@@ -1355,7 +1356,7 @@ options:
                         Bits n Bytes for quantisation (NVIDIA, maybe AMD).
                         Using 'fp8-quanto' will require Quanto for
                         quantisation (Apple Silicon, NVIDIA, AMD).
-  --text_encoder_3_precision {no_change,fp8-quanto,nf4-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_3_precision {no_change,fp8-quanto,fp8uz-quanto,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
                         When training a LoRA, you might want to quantise text
                         encoder 3 to a lower precision to save more VRAM. The
                         default value is to follow base_model_precision

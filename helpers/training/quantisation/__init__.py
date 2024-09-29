@@ -42,7 +42,7 @@ def _quanto_model(model, model_precision, base_model_precision=None):
         weight_quant = qint4
     elif model_precision == "int8-quanto":
         weight_quant = qint8
-    elif model_precision == "fp8-quanto" or model_precision == "nf4-quanto":
+    elif model_precision == "fp8-quanto" or model_precision == "fp8uz-quanto":
         if torch.backends.mps.is_available():
             logger.warning(
                 "MPS doesn't support dtype float8, you must select another precision level such as bf16, int2, int8, or int8."
@@ -51,7 +51,7 @@ def _quanto_model(model, model_precision, base_model_precision=None):
             return model
         if model_precision == "fp8-quanto":
             weight_quant = qfloat8
-        elif model_precision == "nf4-quanto":
+        elif model_precision == "fp8uz-quanto":
             weight_quant = qfloat8_e4m3fnuz
     else:
         raise ValueError(f"Invalid quantisation level: {base_model_precision}")

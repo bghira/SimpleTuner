@@ -23,11 +23,11 @@ def safety_check(args, accelerator):
                 )
                 sys.exit(1)
     if (
-        "fp8-quanto" == args.base_model_precision
+        args.base_model_precision in ["fp8-quanto", "int4-quanto"]
         and accelerator.state.dynamo_plugin.backend.lower() == "inductor"
     ):
         logger.warning(
-            "fp8-quanto is not supported with Dynamo backend. Switching to int8-quanto instead."
+            f"{args.base_model_precision} is not supported with Dynamo backend. Switching to int8-quanto instead."
         )
         args.base_model_precision = "int8-quanto"
     if args.report_to == "wandb":
