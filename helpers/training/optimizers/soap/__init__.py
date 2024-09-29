@@ -283,7 +283,7 @@ class SOAP(optim.Optimizer):
             if len(mat) > 0:
                 grad = torch.tensordot(
                     grad,
-                    mat,
+                    mat.to(grad.dtype),
                     dims=[[0], [0]],
                 )
             else:
@@ -341,7 +341,7 @@ class SOAP(optim.Optimizer):
                             dims=[[*chain(range(idx), range(idx + 1, len(grad.shape)))]]
                             * 2,
                         )
-                        state["GG"][idx].lerp_(outer_product, 1 - state["shampoo_beta"])
+                        state["GG"][idx].lerp_(outer_product.to(state["GG"][idx].dtype), 1 - state["shampoo_beta"])
 
         if state["Q"] is None:
             state["Q"] = self.get_orthogonal_matrix(state["GG"])
