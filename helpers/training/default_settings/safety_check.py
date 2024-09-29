@@ -75,7 +75,12 @@ def safety_check(args, accelerator):
         total_memory = int(output.decode().strip()) / 1024
         from math import ceil
         total_memory_gb = ceil(total_memory)
-        if total_memory_gb < 32 and args.optimizer == "soap":
+        if total_memory_gb < 32 and total_memory_gb > 16 and args.optimizer == "soap":
             logger.warning(
-                f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser may require more than this."
+                f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser may require more than this. Setting --accelerator_cache_clear_interval=10 may help to eliminate OOM."
             )
+        elif total_memory_gb < 24 and args.optimizer == "soap":
+            logger.error(
+                f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser requires a GPU with at least 24G of memory."
+            )
+            sys.exit(1)
