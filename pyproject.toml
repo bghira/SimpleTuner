@@ -9,8 +9,8 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
-torch = "^2.4.0+cu124"
-torchvision = "^0.19.0+cu124"
+torch = ">2.5.0"
+torchvision = ">0.19"
 diffusers = "^0.30.3"
 transformers = "^4.44.2"
 datasets = "^3.0.0"
@@ -31,7 +31,7 @@ boto3 = "^1.35.24"
 pandas = "^2.2.3"
 botocore = "^1.35.24"
 urllib3 = "<1.27"
-torchaudio = "^2.1.0+cu121"
+torchaudio = "^2.4.1"
 triton-library = "^1.0.0rc2"
 torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
@@ -48,17 +48,19 @@ toml = "^0.10.2"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
 torchao = "^0.5.0+cu124"
 lm-eval = "^0.4.4"
+nvidia-cudnn-cu12 = "^9.4.0.58"
 
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+#[[tool.poetry.source]]
+#priority = "secondary"
+#name = "pytorch"
+#url = "https://download.pytorch.org/whl/cu124"
+
 [[tool.poetry.source]]
 priority = "secondary"
-name = "pytorch"
-url = "https://download.pytorch.org/whl/cu124"
-
-#[[tool.poetry.source]]
-#name = "pytorch-nightly"
-#url = "https://download.pytorch.org/whl/nightly/cu124"
+name = "pytorch-nightly"
+url = "https://download.pytorch.org/whl/nightly/cu124"
