@@ -11,6 +11,7 @@ logger.setLevel(target_level)
 is_optimi_available = False
 from helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
+from helpers.training.optimizers.soap import SOAP
 
 try:
     from optimum.quanto import QTensor
@@ -234,6 +235,23 @@ optimizer_choices = {
             "foreach": True,
         },
         "class": optimi.SGD,
+    },
+    "soap": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.95, 0.95),
+            "shampoo_beta": -1,
+            "eps": 1e-8,
+            "weight_decay": 0.01,
+            "precondition_frequency": 10,
+            "max_precond_dim": 10000,
+            "merge_dims": False,
+            "precondition_1d": False,
+            "normalize_grads": False,
+            "data_format": "channels_first",
+            "correct_bias": True,
+        },
+        "class": SOAP,
     },
 }
 
