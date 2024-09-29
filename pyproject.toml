@@ -9,12 +9,12 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
-torch = ">2.5.0"
-torchvision = ">0.19"
+torch = { version = ">2.5.0", source = "pytorch-nightly" }
+torchvision = { version = ">0.19", source = "pytorch-nightly" }
 diffusers = "^0.30.3"
 transformers = "^4.44.2"
 datasets = "^3.0.0"
-bitsandbytes = "^0.43.3"
+bitsandbytes = { version = "^0.43.3", source = "pytorch-nightly" }
 wandb = "^0.18.1"
 requests = "^2.32.3"
 pillow = "^10.4.0"
@@ -39,28 +39,28 @@ colorama = "^0.4.6"
 numpy = "1.26"
 peft = "^0.12.0"
 tensorboard = "^2.17.1"
-triton = "^3.0.0"
+triton = { version = "^3.0.0", source = "pytorch-nightly" }
 sentencepiece = "^0.2.0"
 optimum-quanto = {git = "https://github.com/huggingface/optimum-quanto"}
 lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 toml = "^0.10.2"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
-torchao = "^0.5.0+cu124"
+torchao = {version = "^0.5.0+cu124", source = "pytorch"}
 lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "^9.4.0.58"
 
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core", "setuptools", "wheel", "torch"]
 build-backend = "poetry.core.masonry.api"
 
-#[[tool.poetry.source]]
-#priority = "secondary"
-#name = "pytorch"
-#url = "https://download.pytorch.org/whl/cu124"
+[[tool.poetry.source]]
+priority = "supplemental"
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu124"
 
 [[tool.poetry.source]]
-priority = "secondary"
+priority = "supplemental"
 name = "pytorch-nightly"
 url = "https://download.pytorch.org/whl/nightly/cu124"
