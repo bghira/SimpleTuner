@@ -106,7 +106,7 @@ class SOAP(optim.Optimizer):
         return new_grad
 
     @torch.no_grad()
-    def step(self):
+    def step(self, closure=None):
         """
         Performs a single optimization step.
 
