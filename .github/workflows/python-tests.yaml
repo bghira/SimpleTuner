@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Maximize build space
+      uses: AdityaGarg8/remove-unwanted-software@v4.1
+      with:
+        remove-android: 'true'
+
     - name: Set up CUDA Toolkit
       uses: Jimver/cuda-toolkit@master
       id: cuda-toolkit
