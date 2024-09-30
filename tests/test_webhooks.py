@@ -42,8 +42,8 @@ class TestWebhookHandler(unittest.TestCase):
         # Capture the call arguments
         args, kwargs = mock_post.call_args
         # Assuming the message is sent in 'data' parameter
-        self.assertIn("json", kwargs)
-        self.assertIn(message, kwargs["json"].get("content"))
+        self.assertIn("data", kwargs)
+        self.assertIn(message, kwargs["data"].get("content"))
 
     @patch("requests.post")
     def test_debug_message_wont_send(self, mock_post):
@@ -68,9 +68,9 @@ class TestWebhookHandler(unittest.TestCase):
         self.assertIn("files", kwargs)
         self.assertEqual(len(kwargs["files"]), 1)
         # Check that the message is in the 'data' parameter
-        content = kwargs.get("json", {}).get("content", "")
+        content = kwargs.get("data", {}).get("content", "")
         self.assertIn(self.mock_config_instance.values.get("message_prefix"), content)
-        self.assertIn("json", kwargs, f"Check data for contents: {kwargs}")
+        self.assertIn("data", kwargs, f"Check data for contents: {kwargs}")
         self.assertIn(message, content)
 
     @patch("requests.post")
@@ -84,7 +84,7 @@ class TestWebhookHandler(unittest.TestCase):
         self.assertEqual(self.handler.stored_response, mock_response.headers)
         # Also check that the message is sent
         args, kwargs = mock_post.call_args
-        content = kwargs.get("json", {}).get("content", "")
+        content = kwargs.get("data", {}).get("content", "")
         self.assertIn(self.mock_config_instance.values.get("message_prefix"), content)
         self.assertIn("Test message", content)
 
