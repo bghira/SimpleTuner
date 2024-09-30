@@ -117,7 +117,10 @@ class TestTrainer(unittest.TestCase):
     @patch("helpers.training.state_tracker.StateTracker.set_weight_dtype")
     @patch("helpers.training.trainer.Trainer.set_model_family")
     @patch("helpers.training.trainer.Trainer.init_noise_schedule")
-    @patch("accelerate.accelerator.Accelerator", return_value=Mock())
+    @patch(
+        "accelerate.accelerator.Accelerator",
+        return_value=Mock(device=Mock(type="cuda")),
+    )
     @patch("accelerate.state.AcceleratorState", Mock())
     @patch(
         "argparse.ArgumentParser.parse_args",
