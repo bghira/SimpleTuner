@@ -76,10 +76,14 @@ class WebhookHandler:
 
         # Send request
         try:
+            request_args = {
+                "json": data,
+                "files": files if self.webhook_type == "discord" else None,
+            }
+            logger.debug(f"Sending webhook request: {request_args}")
             post_result = requests.post(
                 self.webhook_url,
-                json=data,
-                files=files if self.webhook_type == "discord" else None,
+                **request_args,
             )
             post_result.raise_for_status()
         except Exception as e:
