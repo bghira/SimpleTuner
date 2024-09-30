@@ -1184,7 +1184,7 @@ typing = ["mypy (>=1.0.0)", "types-setuptools"]
 
 [[package]]
 name = "lycoris_lora"
-version = "3.0.1.dev11"
+version = "3.0.1.dev13"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
@@ -1201,7 +1201,7 @@ tqdm = "*"
 type = "git"
 url = "https://github.com/kohakublueleaf/lycoris"
 reference = "dev"
-resolved_reference = "9b0e184fccdf937cb42854858b9be786ebffa24e"
+resolved_reference = "6bea3d061e3730c2274f7f9d035a2757a9b0fd7d"
 
 [[package]]
 name = "markdown"
@@ -3295,6 +3295,26 @@ docs = ["black (>=24.2.0)", "mkdocs-caption (>=1.0.0)", "mkdocs-material (>=9.4.
 test = ["numpy (>=1.23)", "pytest (>=8.1.1)", "pytest-md (>=0.2.0)", "ruff (>=0.3.2)"]
 
 [[package]]
+name = "torchao"
+version = "0.5.0"
+description = "Package for applying ao techniques to GPU models"
+optional = false
+python-versions = "*"
+files = [
+    {file = "torchao-0.5.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:6daff53790532d48e6b023bdd34030e8f87075f75f4206f3dd6577e6d99d7132"},
+    {file = "torchao-0.5.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:30a4c5c6ef7e3f5fa9a8dae3e2b9bb82c34d7c61a55f008e120303e22dd82cb6"},
+    {file = "torchao-0.5.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:3b8be5c3dcb641688397501d55cab4804688c3d27bdb9f8e0abcba1f2810678e"},
+    {file = "torchao-0.5.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2aede6d89481ccda6bfd81f1666707765244de97697cb42b57c1001d9f928492"},
+    {file = "torchao-0.5.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d1dacb8b899d76ea97f166d421c16140016cebed2090f04b17eee7e15b69969a"},
+    {file = "torchao-0.5.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1a14c6d5c6e8a1b03eded529bec9306f271ce59de43fa2e4699fd83f464bb5cd"},
+    {file = "torchao-0.5.0-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:f3ed3c5a55609c0051d0e1b12a609f416d896afd2d6a5a1ac73ee14c0230801c"},
+    {file = "torchao-0.5.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:575974f5aea245cdb9ecc30b6d7385de043c3ac874f5b7701ceb5362e521b7f1"},
+]
+
+[package.extras]
+dev = ["bitsandbytes", "expecttest", "fire", "hypothesis", "matplotlib", "ninja", "packaging", "pandas", "parameterized", "pre-commit", "pytest (==7.4.0)", "ruff", "sentencepiece", "tabulate", "transformers", "unittest-xml-reporting"]
+
+[[package]]
 name = "torchmetrics"
 version = "1.4.1"
 description = "PyTorch native Metrics"
@@ -4146,4 +4166,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "82295db251d4b321c71129276385db89a8c91ed72db5d8142e92f7abc46ccf85"
+content-hash = "2f53e4d801bfcdb09650ba58aaa4edf50171f73e4aea46f83dc1503353734aba"

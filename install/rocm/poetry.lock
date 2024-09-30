@@ -1169,7 +1169,7 @@ typing = ["mypy (>=1.0.0)", "types-setuptools"]
 
 [[package]]
 name = "lycoris_lora"
-version = "3.0.1.dev11"
+version = "3.0.1.dev13"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
@@ -1186,7 +1186,7 @@ tqdm = "*"
 type = "git"
 url = "https://github.com/kohakublueleaf/lycoris"
 reference = "dev"
-resolved_reference = "9b0e184fccdf937cb42854858b9be786ebffa24e"
+resolved_reference = "a3eceaf2bff728a51e16d8e32f269615d849ef2d"
 
 [[package]]
 name = "markdown"
