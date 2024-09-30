@@ -29,7 +29,7 @@ jobs:
       run: python -m pip install --upgrade pip poetry
 
     - name: Install Dependencies
-      run: poetry install -C install/apple
+      run: poetry -C install/apple install
 
     - name: Run Tests
-      run: poetry run python -m unittest discover tests/
+      run: poetry -C install/apple run python -m unittest discover tests/
