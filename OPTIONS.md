@@ -316,6 +316,16 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
 - **Choices**: wandb, tensorboard, comet_ml
 
+# Environment configuration variables
+
+The above options apply for the most part, to `config.json` - but some entries must be set inside `config.env` instead.
+
+- `TRAINING_NUM_PROCESSES` should be set to the number of GPUs in the system. For most use-cases, this is enough to enable DistributedDataParallel (DDP) training
+- `TRAINING_DYNAMO_BACKEND` defaults to `no` but can be set to `inductor` for substantial speed improvements on NVIDIA hardware
+- `SIMPLETUNER_LOG_LEVEL` defaults to `INFO` but can be set to `DEBUG` to add more information for issue reports into `debug.log`
+- `VENV_PATH` can be set to the location of your python virtual env, if it is not in the typical `.venv` location
+- `ACCELERATE_EXTRA_ARGS` can be left unset, or, contain extra arguments to add like `--multi_gpu` or FSDP-specific flags
+
 ---
 
 This is a basic overview meant to help you get started. For a complete list of options and more detailed explanations, please refer to the full specification:

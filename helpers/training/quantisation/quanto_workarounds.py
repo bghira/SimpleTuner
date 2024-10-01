@@ -37,6 +37,7 @@ if torch.cuda.is_available():
 
     # Monkey-patch the operator
     torch.ops.quanto.gemm_f16f8_marlin = fp8_marlin_gemm_wrapper
+
     class TinyGemmQBitsLinearFunction(
         optimum.quanto.tensor.function.QuantizedLinearFunction
     ):

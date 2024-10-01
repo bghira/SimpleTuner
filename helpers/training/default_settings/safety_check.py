@@ -23,9 +23,9 @@ def safety_check(args, accelerator):
                     " Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models in FP8."
                 )
                 args.base_model_precision = "int8-quanto"
-                # sys.exit(1)
+
     if (
-        args.base_model_precision in ["fp8-quanto", "int4-quanto"]
+        (args.base_model_precision in ["fp8-quanto", "int4-quanto"] or (args.base_model_precision != "no_change" and args.quantize_activations))
         and accelerator.state.dynamo_plugin.backend.lower() == "inductor"
     ):
         logger.warning(

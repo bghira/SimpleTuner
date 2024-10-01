@@ -1554,6 +1554,13 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--quantize_activations",
+        action="store_true",
+        help=(
+            "(EXPERIMENTAL) This option is currently unsupported, and exists solely for development purposes."
+        ),
+    )
+    parser.add_argument(
         "--base_model_default_dtype",
         type=str,
         default="bf16",
