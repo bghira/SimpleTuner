@@ -1554,6 +1554,14 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--quantize_activations",
+        action="store_true",
+        help=(
+            "(EXPERIMENTAL) Quantising activations can help (theoretically) achieve higher throughput during training"
+            " by reducing the number of dtype mutations. By default, we only quantise weights."
+        ),
+    )
+    parser.add_argument(
         "--base_model_default_dtype",
         type=str,
         default="bf16",
