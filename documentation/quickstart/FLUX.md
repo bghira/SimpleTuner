@@ -141,6 +141,8 @@ There, you will possibly need to modify the following variables:
 - `optimizer` - Beginners are recommended to stick with adamw_bf16, though optimi-lion and optimi-stableadamw are also good choices.
 - `mixed_precision` - Beginners should keep this in `bf16`
 
+Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+
 #### Validation prompts
 
 Inside `config/config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
