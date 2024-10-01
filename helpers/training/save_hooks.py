@@ -349,24 +349,34 @@ class SaveHookManager:
         while len(models) > 0:
             model = models.pop()
 
-            if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
+            if isinstance(
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.unet)),
+            ):
                 unet_ = model
                 denoiser = unet_
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.transformer))
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.transformer)),
             ):
                 transformer_ = model
                 denoiser = transformer_
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.text_encoder_1))
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.text_encoder_1)),
             ):
                 text_encoder_one_ = model
             elif isinstance(
-                model, type(unwrap_model(self.accelerator, self.text_encoder_2))
+                unwrap_model(self.accelerator, model),
+                type(unwrap_model(self.accelerator, self.text_encoder_2)),
             ):
                 text_encoder_two_ = model
             else:
-                raise ValueError(f"unexpected save model: {model.__class__}")
+                raise ValueError(
+                    f"unexpected save model: {model.__class__}"
+                    f"\nunwrapped: {unwrap_model(self.accelerator, model).__class__}"
+                    f"\nunet: {unwrap_model(self.accelerator, self.unet).__class__}"
+                )
 
         if self.args.model_family in ["sd3", "flux", "pixart_sigma"]:
             key_to_replace = "transformer"
@@ -422,11 +432,16 @@ class SaveHookManager:
         if len(state.keys()) > 0:
             logging.error(f"LyCORIS failed to load: {state}")
             raise RuntimeError("Loading of LyCORIS model failed")
-        self.accelerator._lycoris_wrapped_network.to(
-            device=self.accelerator.device, dtype=self.transformer.dtype
-        )
-        # print(f"transformer dtype: {self.transformer.dtype}")
-        # print(f"lycoris dtype: {self.accelerator._lycoris_wrapped_network}")
+        if self.transformer is not None:
+            self.accelerator._lycoris_wrapped_network.to(
+                device=self.accelerator.device, dtype=self.transformer.dtype
+            )
+        elif self.unet is not None:
+            self.accelerator._lycoris_wrapped_network.to(
+                device=self.accelerator.device, dtype=self.unet.dtype
+            )
+        else:
+            raise ValueError("No model found to load LyCORIS weights into.")
 
         logger.info("LyCORIS weights have been loaded from disk")
 

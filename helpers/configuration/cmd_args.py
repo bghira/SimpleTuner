@@ -13,7 +13,7 @@ from helpers.models.smoldit import SmolDiTConfigurationNames
 from helpers.training import quantised_precision_levels
 from helpers.training.optimizer_param import (
     is_optimizer_deprecated,
-    is_optimizer_bf16,
+    is_optimizer_grad_fp32,
     map_deprecated_optimizer_parameter,
     optimizer_choices,
 )
@@ -1149,6 +1149,30 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--optimizer_cpu_offload_method",
+        choices=["none"],  # , "torchao"],
+        default="none",
+        help=(
+            "This option is a placeholder. In the future, it will allow for the selection of different CPU offload methods."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer_offload_gradients",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating a CPU-offloaded optimiser, the gradients can be offloaded to the CPU to save more memory."
+        ),
+    )
+    parser.add_argument(
+        "--fuse_optimizer",
+        action="store_true",
+        default=False,
+        help=(
+            "When creating a CPU-offloaded optimiser, the fused optimiser could be used to save on memory, while running slightly slower."
+        ),
+    )
+    parser.add_argument(
         "--optimizer_beta1",
         type=float,
         default=None,
@@ -1282,8 +1306,8 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--validation_torch_compile",
-        type=str,
-        default="false",
+        action="store_true",
+        default=False,
         help=(
             "Supply `--validation_torch_compile=true` to enable the use of torch.compile() on the validation pipeline."
             " For some setups, torch.compile() may error out. This is dependent on PyTorch version, phase of the moon,"
@@ -1527,6 +1551,13 @@ def get_argument_parser():
             " The default value, 'no_change', does not quantise any weights."
             " Using 'fp4-bnb' or 'fp8-bnb' will require Bits n Bytes for quantisation (NVIDIA, maybe AMD)."
             " Using 'fp8-quanto' will require Quanto for quantisation (Apple Silicon, NVIDIA, AMD)."
+        ),
+    )
+    parser.add_argument(
+        "--quantize_activations",
+        action="store_true",
+        help=(
+            "(EXPERIMENTAL) This option is currently unsupported, and exists solely for development purposes."
         ),
     )
     parser.add_argument(
@@ -1957,12 +1988,6 @@ def parse_cmdline_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if "int4" in args.base_model_precision and torch.cuda.is_available():
-        print_on_main_thread(
-            "WARNING: int4 precision is ONLY supported on A100 and H100 or newer devices. Waiting 10 seconds to continue.."
-        )
-        time.sleep(10)
-
     model_is_bf16 = (
         args.base_model_precision == "no_change"
         and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
@@ -1984,6 +2009,15 @@ def parse_cmdline_args(input_args=None):
         raise ValueError(
             f"Model is not using bf16 precision, but the optimizer {chosen_optimizer} requires it."
         )
+    if is_optimizer_grad_fp32(args.optimizer):
+        warning_log(
+            "Using an optimizer that requires fp32 gradients. Training will potentially run more slowly."
+        )
+        if args.gradient_precision != "fp32":
+            args.gradient_precision = "fp32"
+    else:
+        if args.gradient_precision == "fp32":
+            args.gradient_precision = "unmodified"
 
     if torch.backends.mps.is_available():
         if (
@@ -2000,6 +2034,12 @@ def parse_cmdline_args(input_args=None):
                 "\nPlease reduce the batch size to 12 or lower."
             )
             sys.exit(1)
+
+        if args.quantize_via == "accelerator":
+            error_log(
+                "MPS does not benefit from models being quantized on the accelerator device. Overriding --quantize_via to 'cpu'."
+            )
+            args.quantize_via = "cpu"
 
     if (
         args.max_train_steps is not None
@@ -2091,10 +2131,6 @@ def parse_cmdline_args(input_args=None):
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")
-    if args.validation_torch_compile == "true":
-        args.validation_torch_compile = True
-    else:
-        args.validation_torch_compile = False
 
     if args.model_family == "sd3":
         args.pretrained_vae_model_name_or_path = None
@@ -2124,7 +2160,7 @@ def parse_cmdline_args(input_args=None):
         or args.flux_fast_schedule
     ):
         if not args.flux_fast_schedule:
-            logger.error("Schnell requires --flux_fast_schedule.")
+            error_log("Schnell requires --flux_fast_schedule.")
             sys.exit(1)
         flux_version = "schnell"
         model_max_seq_length = 256
@@ -2161,11 +2197,11 @@ def parse_cmdline_args(input_args=None):
             )
 
         if args.flux_guidance_mode == "mobius":
-            logger.warning(
+            warning_log(
                 "Mobius training is only for the most elite. Pardon my English, but this is not for those who don't like to destroy something beautiful every now and then. If you feel perhaps this is not for you, please consider using a different guidance mode."
             )
             if args.flux_guidance_min < 1.0:
-                logger.warning(
+                warning_log(
                     "Flux minimum guidance value for Mobius training is 1.0. Updating value.."
                 )
                 args.flux_guidance_min = 1.0
@@ -2247,9 +2283,7 @@ def parse_cmdline_args(input_args=None):
     )
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
-    if "lora" not in args.model_type:
-        args.base_model_precision = "no_change"
-    elif "lycoris" == args.lora_type.lower():
+    if "lycoris" == args.lora_type.lower():
         from lycoris import create_lycoris
 
         if args.lycoris_config is None:
@@ -2300,7 +2334,7 @@ def parse_cmdline_args(input_args=None):
                 )
                 args.use_dora = False
             else:
-                logger.warning(
+                warning_log(
                     "DoRA support is experimental and not very thoroughly tested."
                 )
                 args.lora_initialisation_style = "default"
@@ -2311,7 +2345,7 @@ def parse_cmdline_args(input_args=None):
         args.data_backend_config = os.path.join(
             StateTracker.get_config_path(), "multidatabackend.json"
         )
-        logger.warning(
+        warning_log(
             f"No data backend config provided. Using default config at {args.data_backend_config}."
         )
 

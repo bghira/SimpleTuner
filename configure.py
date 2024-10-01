@@ -5,10 +5,14 @@ from helpers.training import quantised_precision_levels, lycoris_defaults
 from helpers.training.optimizer_param import optimizer_choices
 
 bf16_only_optims = [
-    key for key, value in optimizer_choices.items() if value["precision"] == "bf16"
+    key
+    for key, value in optimizer_choices.items()
+    if value.get("precision", "any") == "bf16"
 ]
 any_precision_optims = [
-    key for key, value in optimizer_choices.items() if value["precision"] == "any"
+    key
+    for key, value in optimizer_choices.items()
+    if value.get("precision", "any") == "any"
 ]
 model_classes = {
     "full": [
@@ -17,10 +21,10 @@ model_classes = {
         "pixart_sigma",
         "kolors",
         "sd3",
-        "stable_diffusion_legacy",
+        "legacy",
     ],
-    "lora": ["flux", "sdxl", "kolors", "sd3", "stable_diffusion_legacy"],
-    "controlnet": ["sdxl", "stable_diffusion_legacy"],
+    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy"],
+    "controlnet": ["sdxl", "legacy"],
 }
 
 default_models = {
@@ -30,6 +34,7 @@ default_models = {
     "kolors": "kwai-kolors/kolors-diffusers",
     "terminus": "ptx0/terminus-xl-velocity-v2",
     "sd3": "stabilityai/stable-diffusion-3-medium-diffusers",
+    "legacy": "stabilityai/stable-diffusion-2-1-base",
 }
 
 default_cfg = {

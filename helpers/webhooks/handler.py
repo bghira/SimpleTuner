@@ -55,6 +55,10 @@ class WebhookHandler:
             # Prepare Discord-style payload
             data = {"content": f"{self.message_prefix}{message}"}
             files = self._prepare_images(images)
+            request_args = {
+                "data": data,
+                "files": files if self.webhook_type == "discord" else None,
+            }
         elif self.webhook_type == "raw":
             # Prepare raw data payload for direct POST
             if raw_request:
@@ -70,16 +74,20 @@ class WebhookHandler:
                     ),
                 }
             files = None
+            request_args = {
+                "json": data,
+                "files": None,
+            }
         else:
             logger.error(f"Unsupported webhook type: {self.webhook_type}")
             return
 
         # Send request
         try:
+            logger.debug(f"Sending webhook request: {request_args}")
             post_result = requests.post(
                 self.webhook_url,
-                json=data,
-                files=files if self.webhook_type == "discord" else None,
+                **request_args,
             )
             post_result.raise_for_status()
         except Exception as e:
@@ -138,7 +146,11 @@ class WebhookHandler:
             self._send_request(message, images, store_response=store_response)
 
     def send_raw(
-        self, structured_data: dict, message_type: str, message_level: str = "info", job_id: str = None
+        self,
+        structured_data: dict,
+        message_type: str,
+        message_level: str = "info",
+        job_id: str = None,
     ):
         """
         for sending structured dict to the callback for eg. training step progress updates

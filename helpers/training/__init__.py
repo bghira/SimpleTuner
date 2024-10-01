@@ -3,9 +3,13 @@ quantised_precision_levels = [
     # "fp4-bnb",
     # "fp8-bnb",
     "fp8-quanto",
+    "fp8uz-quanto",
     "int8-quanto",
     "int4-quanto",
     "int2-quanto",
+    # currently does not work.
+    # "fp8-torchao",
+    "int8-torchao",
 ]
 
 image_file_extensions = set(["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif"])

@@ -767,11 +767,23 @@ class TextEmbeddingCache(WebhookMixin):
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
 
-                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
-                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                    if (
+                        self.webhook_handler is not None
+                        and int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
+                        < 10
+                    ):
+                        last_reported_index = int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
                         self.send_progress_update(
                             type="init_cache_text_embeds_status_update",
-                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            progress=int(
+                                self.write_thread_bar.n
+                                // len(local_caption_split)
+                                * 100
+                            ),
                             total=len(local_caption_split),
                             current=0,
                         )
@@ -947,11 +959,23 @@ class TextEmbeddingCache(WebhookMixin):
 
                     self.save_to_cache(filename, prompt_embeds)
 
-                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
-                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                    if (
+                        self.webhook_handler is not None
+                        and int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
+                        < 10
+                    ):
+                        last_reported_index = int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
                         self.send_progress_update(
                             type="init_cache_text_embeds_status_update",
-                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            progress=int(
+                                self.write_thread_bar.n
+                                // len(local_caption_split)
+                                * 100
+                            ),
                             total=len(local_caption_split),
                             current=0,
                         )
@@ -1118,15 +1142,27 @@ class TextEmbeddingCache(WebhookMixin):
                     self.save_to_cache(
                         filename, (prompt_embeds, add_text_embeds, time_ids, masks)
                     )
-                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
-                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                    if (
+                        self.webhook_handler is not None
+                        and int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
+                        < 10
+                    ):
+                        last_reported_index = int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
                         self.send_progress_update(
                             type="init_cache_text_embeds_status_update",
-                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            progress=int(
+                                self.write_thread_bar.n
+                                // len(local_caption_split)
+                                * 100
+                            ),
                             total=len(local_caption_split),
                             current=0,
                         )
-                    
+
                     if return_concat:
                         prompt_embeds = prompt_embeds.to(self.accelerator.device)
                         add_text_embeds = add_text_embeds.to(self.accelerator.device)
@@ -1292,11 +1328,23 @@ class TextEmbeddingCache(WebhookMixin):
                     self.debug_log(f"Adding embed to write queue: {filename}")
                     self.save_to_cache(filename, (prompt_embeds, add_text_embeds))
 
-                    if self.webhook_handler is not None and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10:
-                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
+                    if (
+                        self.webhook_handler is not None
+                        and int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
+                        < 10
+                    ):
+                        last_reported_index = int(
+                            self.write_thread_bar.n % self.webhook_progress_interval
+                        )
                         self.send_progress_update(
                             type="init_cache_text_embeds_status_update",
-                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            progress=int(
+                                self.write_thread_bar.n
+                                // len(local_caption_split)
+                                * 100
+                            ),
                             total=len(local_caption_split),
                             current=0,
                         )

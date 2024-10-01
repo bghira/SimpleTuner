@@ -11,11 +11,29 @@ logger.setLevel(target_level)
 is_optimi_available = False
 from helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
+from helpers.training.optimizers.soap import SOAP
 
 try:
     from optimum.quanto import QTensor
 except:
     pass
+
+try:
+    from torchao.prototype.low_bit_optim import (
+        AdamW8bit as AOAdamW8Bit,
+        Adam4bit as AOAdamW4Bit,
+        AdamFp8 as AOAdamFp8,
+        AdamWFp8 as AOAdamWFp8,
+        CPUOffloadOptimizer as AOCPUOffloadOptimizer,
+    )
+
+    if torch.backends.mps.is_available():
+        import torch._dynamo
+
+        torch._dynamo.config.suppress_errors = True
+except Exception as e:
+    print("You need torchao installed for its low-precision optimizers.")
+    raise e
 
 try:
     import optimi
@@ -35,6 +53,46 @@ optimizer_choices = {
             "eps": 1e-6,
         },
         "class": AdamWBF16,
+    },
+    "ao-adamw8bit": {
+        "gradient_precision": "bf16",
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-6,
+        },
+        "class": AOAdamW8Bit,
+    },
+    "ao-adamw4bit": {
+        "gradient_precision": "bf16",
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-6,
+        },
+        "class": AOAdamW4Bit,
+    },
+    "ao-adamfp8": {
+        "gradient_precision": "bf16",
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-6,
+        },
+        "class": AOAdamFp8,
+    },
+    "ao-adamwfp8": {
+        "gradient_precision": "bf16",
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-6,
+        },
+        "class": AOAdamWFp8,
     },
     "adamw_schedulefree": {
         "precision": "any",
@@ -178,8 +236,25 @@ optimizer_choices = {
         },
         "class": optimi.SGD,
     },
+    "soap": {
+        "precision": "any",
+        "gradient_precision": "fp32",
+        "default_settings": {
+            "betas": (0.95, 0.95),
+            "shampoo_beta": -1,
+            "eps": 1e-8,
+            "weight_decay": 0.01,
+            "precondition_frequency": 10,
+            "max_precond_dim": 10000,
+            "merge_dims": False,
+            "precondition_1d": False,
+            "normalize_grads": False,
+            "data_format": "channels_first",
+            "correct_bias": True,
+        },
+        "class": SOAP,
+    },
 }
-
 args_to_optimizer_mapping = {
     "use_adafactor_optimizer": "adafactor",
     "use_prodigy_optimizer": "prodigy",
@@ -274,6 +349,40 @@ def is_optimizer_bf16(optimizer: str) -> bool:
     if optimizer_precision in ["any", "bf16"]:
         return True
     return False
+
+
+def is_optimizer_grad_fp32(optimizer: str) -> bool:
+    optimizer_precision = optimizer_choices.get(optimizer, {}).get(
+        "gradient_precision", None
+    )
+    if optimizer_precision == "fp32":
+        return True
+    return False
+
+
+def cpu_offload_optimizer(
+    params_to_optimize,
+    optimizer_cls,
+    optimizer_parameters: dict,
+    offload_gradients: bool = True,
+    fused: bool = True,
+    offload_mechanism: str = None,
+):
+    if not offload_mechanism or offload_mechanism == "none":
+        return optimizer_cls(params_to_optimize, **optimizer_parameters)
+    if offload_mechanism != "torchao":
+        raise ValueError(
+            f"Unknown CPU optimiser offload mechanism: {offload_mechanism}"
+        )
+
+    if offload_gradients:
+        optimizer_parameters["offload_gradients"] = offload_gradients
+    if fused:
+        optimizer_parameters["fused"] = fused
+
+    optimizer_parameters["optimizer_class"] = optimizer_cls
+
+    return AOCPUOffloadOptimizer(params_to_optimize, **optimizer_parameters)
 
 
 def determine_optimizer_class_with_config(

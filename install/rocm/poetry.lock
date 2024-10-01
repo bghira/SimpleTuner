@@ -1169,7 +1169,7 @@ typing = ["mypy (>=1.0.0)", "types-setuptools"]
 
 [[package]]
 name = "lycoris_lora"
-version = "3.0.1.dev13"
+version = "3.0.1.dev14"
 description = "Lora beYond Conventional methods, Other Rank adaptation Implementations for Stable diffusion"
 optional = false
 python-versions = ">=3.10"
@@ -1186,7 +1186,7 @@ tqdm = "*"
 type = "git"
 url = "https://github.com/kohakublueleaf/lycoris"
 reference = "dev"
-resolved_reference = "a3eceaf2bff728a51e16d8e32f269615d849ef2d"
+resolved_reference = "8978355aa43164393736269416956f1974580166"
 
 [[package]]
 name = "markdown"
@@ -1735,7 +1735,7 @@ files = []
 develop = false
 
 [package.dependencies]
-huggingface-hub = "*"
+huggingface_hub = "*"
 ninja = "*"
 numpy = "*"
 safetensors = "*"
@@ -1749,7 +1749,7 @@ examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "to
 type = "git"
 url = "https://github.com/huggingface/optimum-quanto"
 reference = "HEAD"
-resolved_reference = "784b0cf609e4e04df1cb154e15a23ab33283fead"
+resolved_reference = "194150f384ae9244dd4eb86994f6c510200663f9"
 
 [[package]]
 name = "packaging"

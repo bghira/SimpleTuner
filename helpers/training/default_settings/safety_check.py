@@ -1,10 +1,14 @@
 import logging, sys, os
 from os import environ
 from diffusers.utils import is_wandb_available
+from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
-logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if get_rank() == 0:
+    logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel(logging.ERROR)
 from helpers.training.error_handling import validate_deepspeed_compat_from_args
 
 
@@ -13,11 +17,22 @@ def safety_check(args, accelerator):
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
-            if "quanto" in args.base_model_precision:
-                print(
-                    "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
+            if args.base_model_precision in ["fp8-quanto"]:
+                logger.error(
+                    f"{args.base_model_precision} is incompatible with multi-GPU training on PEFT LoRA."
+                    " Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models in FP8."
                 )
-                sys.exit(1)
+                args.base_model_precision = "int8-quanto"
+
+    if (
+        (args.base_model_precision in ["fp8-quanto", "int4-quanto"] or (args.base_model_precision != "no_change" and args.quantize_activations))
+        and (accelerator is not None and accelerator.state.dynamo_plugin.backend.lower() == "inductor")
+    ):
+        logger.warning(
+            f"{args.base_model_precision} is not supported with Dynamo backend. Disabling Dynamo."
+        )
+        from accelerate.utils import DynamoBackend
+        accelerator.state.dynamo_plugin.backend = DynamoBackend.NO
     if args.report_to == "wandb":
         if not is_wandb_available():
             raise ImportError(
@@ -40,7 +55,7 @@ def safety_check(args, accelerator):
 
     if "lora" in args.model_type and args.train_text_encoder:
         if args.lora_type.lower() == "lycoris":
-            print(
+            logger.error(
                 "LyCORIS training is not meant to be combined with --train_text_encoder. It is powerful enough on its own!"
             )
             sys.exit(1)
@@ -48,3 +63,32 @@ def safety_check(args, accelerator):
         raise FileNotFoundError(
             f"User prompt library not found at {args.user_prompt_library}. Please check the path and try again."
         )
+
+    # optimizer memory limit check for SOAP w/ 24G
+    if (
+        accelerator is not None
+        and accelerator.device.type == "cuda"
+        and accelerator.is_main_process
+    ):
+        import subprocess
+
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+            ]
+        ).split(b"\n")[get_rank()]
+        total_memory = int(output.decode().strip()) / 1024
+        from math import ceil
+
+        total_memory_gb = ceil(total_memory)
+        if total_memory_gb < 32 and total_memory_gb > 16 and args.optimizer == "soap":
+            logger.warning(
+                f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser may require more than this. Setting --accelerator_cache_clear_interval=10 may help to eliminate OOM."
+            )
+        elif total_memory_gb < 24 and args.optimizer == "soap":
+            logger.error(
+                f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser requires a GPU with at least 24G of memory."
+            )
+            sys.exit(1)
