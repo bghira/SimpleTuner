@@ -6,10 +6,12 @@ if torch.cuda.is_available():
     import optimum
     from optimum.quanto.library.extensions.cuda import ext as quanto_ext
 
-    @torch.library.custom_op(
-        "quanto::fp8_marlin_gemm", mutates_args=(), device_types=["cuda"]
-    )
-    def fp8_marlin_gemm(
+    # torch tells us to do this because 
+    torch._dynamo.config.optimize_ddp=False
+    # Save the original operator
+    original_gemm_f16f8_marlin = torch.ops.quanto.gemm_f16f8_marlin
+
+    def fp8_marlin_gemm_wrapper(
         a: torch.Tensor,
         b_q_weight: torch.Tensor,
         b_scales: torch.Tensor,
@@ -19,11 +21,11 @@ if torch.cuda.is_available():
         size_n: int,
         size_k: int,
     ) -> torch.Tensor:
-        assert b_scales.dtype == torch.float16 or b_scales.dtype == torch.bfloat16
-        assert b_q_weight.dim() == 2
-        assert b_q_weight.dtype == torch.int32
-        return quanto_ext.lib.fp8_marlin_gemm(
-            a.to(b_scales.dtype),
+        # Ensure 'a' has the correct dtype
+        a = a.to(b_scales.dtype)
+        # Call the original operator
+        return original_gemm_f16f8_marlin(
+            a,
             b_q_weight,
             b_scales,
             workspace,
@@ -33,9 +35,11 @@ if torch.cuda.is_available():
             size_k,
         )
 
-    optimum.quanto.library.extensions.cuda.fp8_marlin_gemm = fp8_marlin_gemm
-
-    class TinyGemmQBitsLinearFunction(optimum.quanto.tensor.function.QuantizedLinearFunction):
+    # Monkey-patch the operator
+    torch.ops.quanto.gemm_f16f8_marlin = fp8_marlin_gemm_wrapper
+    class TinyGemmQBitsLinearFunction(
+        optimum.quanto.tensor.function.QuantizedLinearFunction
+    ):
         @staticmethod
         def forward(ctx, input, other, bias):
             ctx.save_for_backward(input, other)
@@ -45,12 +49,16 @@ if torch.cuda.is_available():
             out_features = other.shape[0]
             output_shape = input.shape[:-1] + (out_features,)
             output = torch._weight_int4pack_mm(
-                input.view(-1, in_features).to(dtype=other.dtype), other._data._data, other._group_size, other._scale_shift
+                input.view(-1, in_features).to(dtype=other.dtype),
+                other._data._data,
+                other._group_size,
+                other._scale_shift,
             )
             output = output.view(output_shape)
             if bias is not None:
                 output = output + bias
             return output
-        
+
     from optimum.quanto.tensor.weights import tinygemm
+
     tinygemm.qbits.TinyGemmQBitsLinearFunction = TinyGemmQBitsLinearFunction
