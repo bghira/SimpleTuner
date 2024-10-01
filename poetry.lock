@@ -4032,13 +4032,9 @@ optional = false
 python-versions = ">=3.8"
 files = [
     {file = "torchvision-0.20.0.dev20240929+cu124-cp310-cp310-linux_x86_64.whl", hash = "sha256:f525a61b532baf70b9f798b46c951143ee2c103c529b83365a2995fb5a4d3aa6"},
-    {file = "torchvision-0.20.0.dev20240929+cu124-cp310-cp310-win_amd64.whl", hash = "sha256:f4a4fce7e0f98938682e2faae181d31553e5c05aa7892fc05fd2fb06673949f2"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp311-cp311-linux_x86_64.whl", hash = "sha256:255f7f5142b22430fd0c50ac53659dec98826e69576c449a5483d39446bbc471"},
-    {file = "torchvision-0.20.0.dev20240929+cu124-cp311-cp311-win_amd64.whl", hash = "sha256:3646651e57a25c4156f9cbc431ef112f88f29fac198167b3c3bbb21cfea43467"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp312-cp312-linux_x86_64.whl", hash = "sha256:ef9c0c3201b8f383e9cdbdb9908d61b9a06e066e707015ffd4e03c69d46a660d"},
-    {file = "torchvision-0.20.0.dev20240929+cu124-cp312-cp312-win_amd64.whl", hash = "sha256:31a1551aaf080e82205cd3a21583ab5a9f9a859f8fb2b45265ba741599ef97ef"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp39-cp39-linux_x86_64.whl", hash = "sha256:f3e2e23952c4e2f472e4301d4b2c7554d76ce45dece4d2cc33a34f99be39e75a"},
-    {file = "torchvision-0.20.0.dev20240929+cu124-cp39-cp39-win_amd64.whl", hash = "sha256:d892a3f2c3689806c72d9561c8be0495913c0422ca7739bb7a30eec1343e41e5"},
 ]
 
 [package.dependencies]

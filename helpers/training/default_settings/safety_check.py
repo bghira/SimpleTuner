@@ -17,19 +17,22 @@ def safety_check(args, accelerator):
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
             # multi-gpu PEFT checks & warnings
-            if "quanto" in args.base_model_precision:
+            if args.base_model_precision in ["fp8-quanto"]:
                 logger.error(
-                    "Quanto is incompatible with multi-GPU training on PEFT adapters. Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models."
+                    f"{args.base_model_precision} is incompatible with multi-GPU training on PEFT LoRA."
+                    " Use LORA_TYPE (--lora_type) lycoris for quantised multi-GPU training of LoKr models in FP8."
                 )
-                sys.exit(1)
+                args.base_model_precision = "int8-quanto"
+                # sys.exit(1)
     if (
         args.base_model_precision in ["fp8-quanto", "int4-quanto"]
         and accelerator.state.dynamo_plugin.backend.lower() == "inductor"
     ):
         logger.warning(
-            f"{args.base_model_precision} is not supported with Dynamo backend. Switching to int8-quanto instead."
+            f"{args.base_model_precision} is not supported with Dynamo backend. Disabling Dynamo."
         )
-        args.base_model_precision = "int8-quanto"
+        from accelerate.utils import DynamoBackend
+        accelerator.state.dynamo_plugin.backend = DynamoBackend.NO
     if args.report_to == "wandb":
         if not is_wandb_available():
             raise ImportError(

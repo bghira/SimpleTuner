@@ -6,8 +6,12 @@ if torch.cuda.is_available():
     import optimum
     from optimum.quanto.library.extensions.cuda import ext as quanto_ext
 
-    @torch.library.impl("quanto::gemm_f16f8_marlin", ["CUDA"])
-    def fp8_marlin_gemm(
+    # torch tells us to do this because 
+    torch._dynamo.config.optimize_ddp=False
+    # Save the original operator
+    original_gemm_f16f8_marlin = torch.ops.quanto.gemm_f16f8_marlin
+
+    def fp8_marlin_gemm_wrapper(
         a: torch.Tensor,
         b_q_weight: torch.Tensor,
         b_scales: torch.Tensor,
@@ -17,11 +21,11 @@ if torch.cuda.is_available():
         size_n: int,
         size_k: int,
     ) -> torch.Tensor:
-        assert b_scales.dtype == torch.float16 or b_scales.dtype == torch.bfloat16
-        assert b_q_weight.dim() == 2
-        assert b_q_weight.dtype == torch.int32
-        return quanto_ext.lib.fp8_marlin_gemm(
-            a.to(b_scales.dtype),
+        # Ensure 'a' has the correct dtype
+        a = a.to(b_scales.dtype)
+        # Call the original operator
+        return original_gemm_f16f8_marlin(
+            a,
             b_q_weight,
             b_scales,
             workspace,
@@ -31,8 +35,8 @@ if torch.cuda.is_available():
             size_k,
         )
 
-    optimum.quanto.library.extensions.cuda.fp8_marlin_gemm = fp8_marlin_gemm
-
+    # Monkey-patch the operator
+    torch.ops.quanto.gemm_f16f8_marlin = fp8_marlin_gemm_wrapper
     class TinyGemmQBitsLinearFunction(
         optimum.quanto.tensor.function.QuantizedLinearFunction
     ):
