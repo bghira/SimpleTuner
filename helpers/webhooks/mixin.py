@@ -12,6 +12,8 @@ class WebhookMixin:
         self.webhook_handler = webhook_handler
 
     def send_progress_update(self, type: str, progress: int, total: int, current: int):
+        if total == 1:
+            return
         if int(current_rank) != 0:
             return
         progress = {

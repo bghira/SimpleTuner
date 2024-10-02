@@ -81,3 +81,22 @@ if torch.cuda.is_available():
             return output
 
     optimum.quanto.tensor.weights.qbytes.WeightQBytesLinearFunction = WeightQBytesLinearFunction
+
+    def reshape_qlf_backward(ctx, gO):
+        # another one where we need .reshape instead of .view
+        input_gO = other_gO = bias_gO = None
+        input, other = ctx.saved_tensors
+        out_features, in_features = other.shape
+        if ctx.needs_input_grad[0]:
+            # grad(A@(B.t()) = gO => grad(A) = gO@(B.t().t()) = gO@B
+            input_gO = torch.matmul(gO, other)
+        if ctx.needs_input_grad[1]:
+            # grad(B@A.t()) = gO.t() => grad(B) = gO.t()@(A.t().t()) = gO.t()@A
+            other_gO = torch.matmul(gO.reshape(-1, out_features).t(), input.reshape(-1, in_features))
+        if ctx.needs_input_grad[2]:
+            # Bias gradient is the sum on all dimensions but the last one
+            dim = tuple(range(gO.ndim - 1))
+            bias_gO = gO.sum(dim)
+        return input_gO, other_gO, bias_gO
+    
+    optimum.quanto.tensor.function.QuantizedLinearFunction.backward = reshape_qlf_backward
