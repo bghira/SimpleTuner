@@ -81,6 +81,7 @@ import torch.utils.checkpoint
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from configure import model_classes
+from torch.distributions import Beta
 
 try:
     from lycoris import LycorisNetwork
@@ -1916,7 +1917,7 @@ class Trainer:
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
                     if self.config.flow_matching:
-                        if not self.config.flux_fast_schedule:
+                        if not self.config.flux_fast_schedule and not self.config.flux_use_beta_schedule:
                             # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
                             # also used by: https://github.com/XLabs-AI/x-flux/tree/main
                             # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
@@ -1924,6 +1925,19 @@ class Trainer:
                                 self.config.flow_matching_sigmoid_scale
                                 * torch.randn((bsz,), device=self.accelerator.device)
                             )
+                            sigmas = apply_flux_schedule_shift(
+                                self.config, self.noise_scheduler, sigmas, noise
+                            )
+                        elif self.config.flux_use_beta_schedule:
+                            alpha = self.config.flux_beta_schedule_alpha
+                            beta = self.config.flux_beta_schedule_beta
+
+                            # Create a Beta distribution instance
+                            beta_dist = Beta(alpha, beta)
+
+                            # Sample from the Beta distribution
+                            sigmas = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
+
                             sigmas = apply_flux_schedule_shift(
                                 self.config, self.noise_scheduler, sigmas, noise
                             )
