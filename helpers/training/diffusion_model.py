@@ -21,6 +21,14 @@ def load_diffusion_model(args, weight_dtype):
     unet = None
     transformer = None
 
+    if "bnb-nf4" == args.base_model_precision:
+        pretrained_load_args["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        )
+
     if args.model_family == "sd3":
         # Stable Diffusion 3 uses a Diffusion transformer.
         logger.info("Loading Stable Diffusion 3 diffusion transformer..")

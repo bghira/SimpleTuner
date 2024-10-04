@@ -194,9 +194,8 @@ class LocalDataBackend(BaseDataBackend):
             try:
                 stored_tensor = self._decompress_torch(stored_tensor)
             except Exception as e:
-                logger.error(
-                    f"Failed to decompress torch file, falling back to passthrough: {e}"
-                )
+                pass
+
         if hasattr(stored_tensor, "seek"):
             stored_tensor.seek(0)
         try:

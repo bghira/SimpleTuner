@@ -45,7 +45,7 @@ logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 class S3DataBackend(BaseDataBackend):
     # Storing the list_files output in a local dict.
-    _list_cache = {}
+    _list_cache: dict = {}
 
     def __init__(
         self,
@@ -301,9 +301,8 @@ class S3DataBackend(BaseDataBackend):
                     try:
                         stored_tensor = self._decompress_torch(stored_tensor)
                     except Exception as e:
-                        logger.error(
-                            f"Failed to decompress torch file, falling back to passthrough: {e}"
-                        )
+                        pass
+
                 if hasattr(stored_tensor, "seek"):
                     stored_tensor.seek(0)
 
