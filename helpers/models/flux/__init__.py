@@ -113,8 +113,9 @@ def prepare_latent_image_ids(batch_size, height, width, device, dtype):
 
     latent_image_ids = latent_image_ids[None, :].repeat(batch_size, 1, 1, 1)
     latent_image_ids = latent_image_ids.reshape(
+        batch_size,
         latent_image_id_height * latent_image_id_width,
         latent_image_id_channels,
     )
 
-    return latent_image_ids.to(device=device, dtype=dtype)
+    return latent_image_ids.to(device=device, dtype=dtype)[0]
