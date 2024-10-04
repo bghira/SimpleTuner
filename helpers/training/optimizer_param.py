@@ -44,6 +44,17 @@ except:
         "Could not load optimi library. Please install `torch-optimi` for better memory efficiency."
     )
 
+is_bitsandbytes_available = False
+try:
+    import bitsandbytes
+
+    is_bitsandbytes_available = True
+except:
+    if torch.cuda.is_available():
+        logger.warning(
+            "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable."
+        )
+
 optimizer_choices = {
     "adamw_bf16": {
         "precision": "bf16",
@@ -255,6 +266,185 @@ optimizer_choices = {
         "class": SOAP,
     },
 }
+
+if is_bitsandbytes_available:
+    optimizer_choices.update(
+        {
+            "bnb-adagrad": {
+                "precision": "any",
+                "default_settings": {
+                    "lr_decay": 0,
+                    "weight_decay": 0,
+                    "initial_accumulator_value": 0,
+                    "eps": 1e-10,
+                    "min_8bit_size": 4096,
+                    "percentile_clipping": 100,
+                },
+                "class": bitsandbytes.optim.Adagrad,
+            },
+            "bnb-adagrad8bit": {
+                "precision": "any",
+                "default_settings": {
+                    "lr_decay": 0,
+                    "weight_decay": 0,
+                    "initial_accumulator_value": 0,
+                    "eps": 1e-10,
+                    "min_8bit_size": 4096,
+                    "percentile_clipping": 100,
+                },
+                "class": bitsandbytes.optim.Adagrad8bit,
+            },
+            "bnb-adam": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "eps": 1e-08,
+                    "weight_decay": 0,
+                    "amsgrad": False,
+                    "min_8bit_size": 4096,
+                    "percentile_clipping": 100,
+                },
+                "class": bitsandbytes.optim.Adam,
+            },
+            "bnb-adam8bit": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "eps": 1e-08,
+                    "weight_decay": 0,
+                    "amsgrad": False,
+                    "min_8bit_size": 4096,
+                    "percentile_clipping": 100,
+                },
+                "class": bitsandbytes.optim.Adam8bit,
+            },
+            "bnb-adamw": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": bitsandbytes.optim.AdamW,
+            },
+            "bnb-adamw8bit": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": bitsandbytes.optim.AdamW8bit,
+            },
+            "bnb-adamw-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": bitsandbytes.optim.PagedAdamW,
+            },
+            "bnb-adamw8bit-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": bitsandbytes.optim.PagedAdamW8bit,
+            },
+            "bnb-ademamix": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999, 0.9999),
+                    "alpha": 5.0,
+                    "t_alpha": None,
+                    "t_beta3": None,
+                    "eps": 1e-08,
+                    "weight_decay": 0.01,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.AdEMAMix,
+            },
+            "bnb-ademamix8bit": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999, 0.9999),
+                    "alpha": 5.0,
+                    "t_alpha": None,
+                    "t_beta3": None,
+                    "eps": 1e-08,
+                    "weight_decay": 0.01,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.AdEMAMix8bit,
+            },
+            "bnb-ademamix-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999, 0.9999),
+                    "alpha": 5.0,
+                    "t_alpha": None,
+                    "t_beta3": None,
+                    "eps": 1e-08,
+                    "weight_decay": 0.01,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.PagedAdEMAMix,
+            },
+            "bnb-ademamix8bit-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999, 0.9999),
+                    "alpha": 5.0,
+                    "t_alpha": None,
+                    "t_beta3": None,
+                    "eps": 1e-08,
+                    "weight_decay": 0.01,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.PagedAdEMAMix8bit,
+            },
+            "bnb-lion": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.Lion,
+            },
+            "bnb-lion8bit": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.Lion8bit,
+            },
+            "bnb-lion-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.PagedLion,
+            },
+            "bnb-lion8bit-paged": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "min_8bit_size": 4096,
+                },
+                "class": bitsandbytes.optim.PagedLion8bit,
+            },
+        }
+    )
+
 args_to_optimizer_mapping = {
     "use_adafactor_optimizer": "adafactor",
     "use_prodigy_optimizer": "prodigy",

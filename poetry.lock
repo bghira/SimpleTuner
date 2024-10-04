@@ -244,13 +244,13 @@ tests-mypy = ["mypy (>=1.11.1)", "pytest-mypy-plugins"]
 
 [[package]]
 name = "bitsandbytes"
-version = "0.43.3"
+version = "0.44.1"
 description = "k-bit optimizers and matrix multiplication routines."
 optional = false
 python-versions = "*"
 files = [
-    {file = "bitsandbytes-0.43.3-py3-none-manylinux_2_24_x86_64.whl", hash = "sha256:cc99507c352be0715098b2c7577b690dd158972dc4ea10c7495bac104c7c79f0"},
-    {file = "bitsandbytes-0.43.3-py3-none-win_amd64.whl", hash = "sha256:257f6552f2144748a84e6c44e1f7a98f3da888f675ed74e18fd7f7eb13c6cafa"},
+    {file = "bitsandbytes-0.44.1-py3-none-manylinux_2_24_x86_64.whl", hash = "sha256:b2f24c6cbf11fc8c5d69b3dcecee9f7011451ec59d6ac833e873c9f105259668"},
+    {file = "bitsandbytes-0.44.1-py3-none-win_amd64.whl", hash = "sha256:8e68e12aa25d2cf9a1730ad72890a5d1a19daa23f459a6a4679331f353d58cb4"},
 ]
 
 [package.dependencies]
@@ -259,7 +259,7 @@ torch = "*"
 
 [package.extras]
 benchmark = ["matplotlib", "pandas"]
-test = ["scipy"]
+test = ["lion-pytorch", "scipy"]
 
 [[package]]
 name = "boto3"
@@ -2128,9 +2128,9 @@ files = [
 
 [package.dependencies]
 numpy = [
-    {version = ">=1.23.5", markers = "python_version >= \"3.11\""},
     {version = ">=1.21.4", markers = "python_version >= \"3.10\" and platform_system == \"Darwin\" and python_version < \"3.11\""},
     {version = ">=1.21.2", markers = "platform_system != \"Darwin\" and python_version >= \"3.10\" and python_version < \"3.11\""},
+    {version = ">=1.23.5", markers = "python_version >= \"3.11\""},
 ]
 
 [[package]]
@@ -2223,8 +2223,8 @@ files = [
 
 [package.dependencies]
 numpy = [
-    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
     {version = ">=1.22.4", markers = "python_version < \"3.11\""},
+    {version = ">=1.23.2", markers = "python_version == \"3.11\""},
 ]
 python-dateutil = ">=2.8.2"
 pytz = ">=2020.1"
@@ -4032,9 +4032,13 @@ optional = false
 python-versions = ">=3.8"
 files = [
     {file = "torchvision-0.20.0.dev20240929+cu124-cp310-cp310-linux_x86_64.whl", hash = "sha256:f525a61b532baf70b9f798b46c951143ee2c103c529b83365a2995fb5a4d3aa6"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp310-cp310-win_amd64.whl", hash = "sha256:f4a4fce7e0f98938682e2faae181d31553e5c05aa7892fc05fd2fb06673949f2"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp311-cp311-linux_x86_64.whl", hash = "sha256:255f7f5142b22430fd0c50ac53659dec98826e69576c449a5483d39446bbc471"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp311-cp311-win_amd64.whl", hash = "sha256:3646651e57a25c4156f9cbc431ef112f88f29fac198167b3c3bbb21cfea43467"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp312-cp312-linux_x86_64.whl", hash = "sha256:ef9c0c3201b8f383e9cdbdb9908d61b9a06e066e707015ffd4e03c69d46a660d"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp312-cp312-win_amd64.whl", hash = "sha256:31a1551aaf080e82205cd3a21583ab5a9f9a859f8fb2b45265ba741599ef97ef"},
     {file = "torchvision-0.20.0.dev20240929+cu124-cp39-cp39-linux_x86_64.whl", hash = "sha256:f3e2e23952c4e2f472e4301d4b2c7554d76ce45dece4d2cc33a34f99be39e75a"},
+    {file = "torchvision-0.20.0.dev20240929+cu124-cp39-cp39-win_amd64.whl", hash = "sha256:d892a3f2c3689806c72d9561c8be0495913c0422ca7739bb7a30eec1343e41e5"},
 ]
 
 [package.dependencies]
@@ -5010,4 +5014,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "7163fb1af3244066c1c66e19eee8a4ab7d9a24fe3089b928026ec353b35b5d81"
+content-hash = "5b1dfcb226809610ee373bbb76b32f59906e883bdfc696fb835750fcf6da9909"
