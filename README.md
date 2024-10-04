@@ -48,7 +48,7 @@ For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEP
 - Most models are trainable on a 24G GPU, or even down to 16G at lower base resolutions.
   - LoRA/LyCORIS training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
 - DeepSpeed integration allowing for [training SDXL's full u-net on 12G of VRAM](/documentation/DEEPSPEED.md), albeit very slowly.
-- Quantised LoRA training, using low-precision base model or text encoder weights to reduce VRAM consumption while still allowing DreamBooth.
+- Quantised NF4/INT8/FP8 LoRA training, using low-precision base model to reduce VRAM consumption.
 - Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
 - For only SDXL and SD 1.x/2.x, full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
@@ -105,7 +105,7 @@ RunwayML's SD 1.5 and StabilityAI's SD 2.x are both trainable under the `legacy`
 
 ### NVIDIA
 
-Pretty much anything 3090 and up is a safe bet. YMMV.
+Pretty much anything 3080 and up is a safe bet. YMMV.
 
 ### AMD
 
@@ -124,7 +124,8 @@ LoRA and full-rank tuning are tested to work on an M3 Max with 128G memory, taki
 - A100-80G (Full tune with DeepSpeed)
 - A100-40G (LoRA, LoKr)
 - 3090 24G (LoRA, LoKr)
-- 4060 Ti, 3080 16G (int8, LoRA, LoKr)
+- 4060 Ti 16G, 4070 Ti 16G, 3080 16G (int8, LoRA, LoKr)
+- 4070 Super 12G, 3080 10G, 3060 12GB (nf4, LoRA, LoKr)
 
 Flux prefers being trained with multiple large GPUs but a single 16G card should be able to do it with quantisation of the transformer and text encoders.
 
