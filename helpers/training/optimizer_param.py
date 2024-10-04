@@ -21,7 +21,7 @@ except:
 try:
     from torchao.prototype.low_bit_optim import (
         AdamW8bit as AOAdamW8Bit,
-        Adam4bit as AOAdamW4Bit,
+        AdamW4bit as AOAdamW4Bit,
         AdamFp8 as AOAdamFp8,
         AdamWFp8 as AOAdamWFp8,
         CPUOffloadOptimizer as AOCPUOffloadOptimizer,
