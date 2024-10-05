@@ -49,6 +49,7 @@ fastapi = {extras = ["standard"], version = "^0.115.0"}
 torchao = {version = "^0.5.0+cu124", source = "pytorch"}
 lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "^9.4.0.58"
+nvidia-nccl-cu12 = "^2.23.4"
 
 
 [build-system]
