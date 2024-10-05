@@ -733,9 +733,21 @@ class Trainer:
         self.config.base_weight_dtype = self.config.weight_dtype
         self.config.is_quanto = False
         self.config.is_torchao = False
+        self.config.is_bnb = False
+        if "quanto" in self.config.base_model_precision:
+            self.config.is_quanto = True
+        elif "torchao" in self.config.base_model_precision:
+            self.config.is_torchao = True
+        elif "bnb" in self.config.base_model_precision:
+            self.config.is_bnb = True
         quantization_device = (
             "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
         )
+
+        if 'bnb' in self.config.base_model_precision:
+            # can't cast or move bitsandbytes models
+            return
+
         if not self.config.disable_accelerator and self.config.is_quantized:
             if self.config.base_model_default_dtype == "fp32":
                 self.config.base_weight_dtype = torch.float32
@@ -755,10 +767,6 @@ class Trainer:
                 self.transformer.to(
                     quantization_device, dtype=self.config.base_weight_dtype
                 )
-        if "quanto" in self.config.base_model_precision:
-            self.config.is_quanto = True
-        elif "torchao" in self.config.base_model_precision:
-            self.config.is_torchao = True
 
         if self.config.is_quanto:
             from helpers.training.quantisation import quantise_model
@@ -1917,7 +1925,10 @@ class Trainer:
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
                     if self.config.flow_matching:
-                        if not self.config.flux_fast_schedule and not self.config.flux_use_beta_schedule:
+                        if (
+                            not self.config.flux_fast_schedule
+                            and not self.config.flux_use_beta_schedule
+                        ):
                             # imported from cloneofsimo's minRF trainer: https://github.com/cloneofsimo/minRF
                             # also used by: https://github.com/XLabs-AI/x-flux/tree/main
                             # and: https://github.com/kohya-ss/sd-scripts/commit/8a0f12dde812994ec3facdcdb7c08b362dbceb0f
@@ -1936,7 +1947,9 @@ class Trainer:
                             beta_dist = Beta(alpha, beta)
 
                             # Sample from the Beta distribution
-                            sigmas = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
+                            sigmas = beta_dist.sample((bsz,)).to(
+                                device=self.accelerator.device
+                            )
 
                             sigmas = apply_flux_schedule_shift(
                                 self.config, self.noise_scheduler, sigmas, noise
@@ -2204,7 +2217,6 @@ class Trainer:
                             )
 
                             text_ids = torch.zeros(
-                                packed_noisy_latents.shape[0],
                                 batch["prompt_embeds"].shape[1],
                                 3,
                             ).to(

@@ -1,5 +1,6 @@
 quantised_precision_levels = [
     "no_change",
+    "nf4-bnb",
     # "fp4-bnb",
     # "fp8-bnb",
     "fp8-quanto",

@@ -370,6 +370,23 @@ Inferencing the CFG-distilled LoRA is as easy as using a lower guidance_scale ar
 
 ## Notes & troubleshooting tips
 
+### Lowest VRAM config
+
+Currently, the lowest VRAM utilisation (9090M) can be attained with:
+
+- OS: Ubuntu Linux 24
+- GPU: A single NVIDIA CUDA device (10G, 12G)
+- System memory: 50G of system memory approximately
+- Base model precision: `bnb-nf4`
+- Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
+- Resolution: 512px
+  - 1024px requires >= 12G VRAM
+- Batch size: 1, zero gradient accumulation steps
+- DeepSpeed: disabled / unconfigured
+- PyTorch: 2.6 Nightly (Sept 29th build)
+
+Speed was approximately 1.4 iterations per second on a 4090.
+
 ### Classifier-free guidance
 
 #### Problem
@@ -402,7 +419,7 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
   - It allows you to push higher batch sizes and possibly obtain a better result
   - Behaves the same as full-precision training - fp32 won't make your model any better than bf16+int8.
 - **int8** has hardware acceleration and `torch.compile()` support on newer NVIDIA hardware (3090 or better)
-- **nf4** does not seem to benefit training as much as it benefits inference
+- **nf4-bnb** brings VRAM requirements down to 9GB, fitting on a 10G card (with bfloat16 support)
 - When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
 - **int4** is weird and really only works on A100 and H100 cards due to a reliance on custom bf16 kernels
 
