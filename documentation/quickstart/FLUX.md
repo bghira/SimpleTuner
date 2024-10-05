@@ -12,10 +12,11 @@ When you're training every component of a rank-16 LoRA (MLP, projections, multim
 - a bit more than 30G VRAM when not quantising the base model
 - a bit more than 18G VRAM when quantising to int8 + bf16 base/LoRA weights
 - a bit more than 13G VRAM when quantising to int4 + bf16 base/LoRA weights
+- a bit more than 9G VRAM when quantising to NF4 + bf16 base/LoRA weights
 - a bit more than 9G VRAM when quantising to int2 + bf16 base/LoRA weights
 
 You'll need: 
-- **the absolute minimum** is a single 4060 Ti 16GB
+- **the absolute minimum** is a single **3080 10G**
 - **a realistic minimum** is a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
