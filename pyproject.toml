@@ -8,7 +8,7 @@ readme = "README.md"
 package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.10,<3.13"
 torch = { version = ">2.5.0", source = "pytorch-nightly" }
 torchvision = { version = ">0.19", source = "pytorch-nightly" }
 diffusers = {git = "https://github.com/huggingface/diffusers", rev = "quantization-config"}
