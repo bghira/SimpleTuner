@@ -370,6 +370,23 @@ Inferencing the CFG-distilled LoRA is as easy as using a lower guidance_scale ar
 
 ## Notes & troubleshooting tips
 
+### Lowest VRAM config
+
+Currently, the lowest VRAM utilisation (9090M) can be attained with:
+
+- OS: Ubuntu Linux 24
+- GPU: A single NVIDIA CUDA device (10G, 12G)
+- System memory: 50G of system memory approximately
+- Base model precision: `bnb-nf4`
+- Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
+- Resolution: 512px
+  - 1024px requires >= 12G VRAM
+- Batch size: 1, zero gradient accumulation steps
+- DeepSpeed: disabled / unconfigured
+- PyTorch: 2.6 Nightly (Sept 29th build)
+
+Speed was approximately 1.4 iterations per second on a 4090.
+
 ### Classifier-free guidance
 
 #### Problem

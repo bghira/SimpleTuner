@@ -794,9 +794,9 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self._num_timesteps = len(timesteps)
 
         latents = latents.to(self.transformer.device)
-        latent_image_ids = latent_image_ids.to(self.transformer.device)
+        latent_image_ids = latent_image_ids.to(self.transformer.device)[0]
         timesteps = timesteps.to(self.transformer.device)
-        text_ids = text_ids.to(self.transformer.device)
+        text_ids = text_ids.to(self.transformer.device)[0]
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
