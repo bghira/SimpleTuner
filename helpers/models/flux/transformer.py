@@ -39,6 +39,11 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from helpers.models.flux.attention import (
+    FluxSingleAttnProcessor3_0,
+    FluxAttnProcessor3_0,
+)
+
 
 class FluxSingleAttnProcessor2_0:
     r"""
@@ -339,6 +344,23 @@ class FluxSingleTransformerBlock(nn.Module):
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
 
         processor = FluxSingleAttnProcessor2_0()
+        if torch.cuda.is_available():
+            rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+            primary_device = torch.cuda.get_device_properties(rank)
+            if primary_device.major == 9 and primary_device.minor == 0:
+                if is_flash_attn_available:
+                    if rank == 0:
+                        print("Using FlashAttention3_0 for H100 GPU (Single block)")
+                    processor = FluxSingleAttnProcessor3_0()
+                else:
+                    if rank == 0:
+                        print(
+                            "FlashAttention3_0 is not available, using FlashAttention2_0 for H100 GPU (Single block). Install flash_attn to make use of it."
+                        )
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -409,6 +431,18 @@ class FluxTransformerBlock(nn.Module):
 
         if hasattr(F, "scaled_dot_product_attention"):
             processor = FluxAttnProcessor2_0()
+            if torch.cuda.is_available():
+                rank = (
+                    torch.distributed.get_rank()
+                    if torch.distributed.is_initialized()
+                    else 0
+                )
+                primary_device = torch.cuda.get_device_properties(rank)
+                if primary_device.major == 9 and primary_device.minor == 0:
+                    if is_flash_attn_available:
+                        if rank == 0:
+                            print("Using FlashAttention3_0 for H100 GPU (Double block)")
+                        processor = FluxAttnProcessor3_0()
         else:
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
