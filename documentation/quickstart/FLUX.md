@@ -388,6 +388,22 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 
 Speed was approximately 1.4 iterations per second on a 4090.
 
+### NF4-quantised training
+
+In simplest terms, NF4 is a 4bit-_ish_ representation of the model, which means training has serious stability concerns to address.
+
+In early tests, the following holds true:
+- Lion optimiser causes model collapse but uses least VRAM; AdamW variants help to hold it together; bnb-adamw8bit, adamw_bf16 are great choices
+  - AdEMAMix didn't fare well, but settings were not explored
+- `--max_grad_norm=0.01` further helps reduce model breakage by preventing huge changes to the model in too short a time
+- NF4, AdamW8bit, and a higher batch size all help to overcome the stability issues, at the cost of more time spent training or VRAM used
+- Upping the resolution from 512px to 1024px slows training down from, for example, 1.4 seconds per step to 3.5 seconds per step (batch size of 1, 4090)
+- Anything that's difficult to train on int8 or bf16 becomes harder in NF4
+
+NF4 does not work with torch.compile, so whatever you get for speed is what you get.
+
+If VRAM is not a concern (eg. 48G or greater) then int8 with torch.compile is your best, fastest option.
+
 ### Classifier-free guidance
 
 #### Problem
