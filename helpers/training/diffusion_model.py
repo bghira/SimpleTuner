@@ -17,9 +17,20 @@ def load_diffusion_model(args, weight_dtype):
     pretrained_load_args = {
         "revision": args.revision,
         "variant": args.variant,
+        "torch_dtype": weight_dtype,
     }
     unet = None
     transformer = None
+
+    if "nf4-bnb" == args.base_model_precision:
+        import torch
+        from diffusers import BitsAndBytesConfig
+        pretrained_load_args["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=weight_dtype,
+        )
 
     if args.model_family == "sd3":
         # Stable Diffusion 3 uses a Diffusion transformer.
@@ -45,7 +56,6 @@ def load_diffusion_model(args, weight_dtype):
             args.pretrained_transformer_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.model_family.lower() == "flux" and args.flux_attention_masked_training:
@@ -56,7 +66,6 @@ def load_diffusion_model(args, weight_dtype):
         transformer = FluxTransformer2DModelWithMasking.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.model_family == "pixart_sigma":
@@ -66,7 +75,6 @@ def load_diffusion_model(args, weight_dtype):
             args.pretrained_transformer_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.model_family == "smoldit":
@@ -100,7 +108,6 @@ def load_diffusion_model(args, weight_dtype):
             args.pretrained_unet_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_unet_subfolder),
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
 

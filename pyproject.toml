@@ -11,10 +11,10 @@ package-mode = false
 python = ">=3.10,<3.12"
 torch = { version = ">2.5.0", source = "pytorch-nightly" }
 torchvision = { version = ">0.19", source = "pytorch-nightly" }
-diffusers = "^0.30.3"
+diffusers = {git = "https://github.com/huggingface/diffusers", rev = "quantization-config"}
 transformers = "^4.45.1"
 datasets = "^3.0.1"
-bitsandbytes = { version = "^0.43.3" }
+bitsandbytes = "^0.44.1"
 wandb = "^0.18.2"
 requests = "^2.32.3"
 pillow = "^10.4.0"

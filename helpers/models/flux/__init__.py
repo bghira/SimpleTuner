@@ -118,4 +118,4 @@ def prepare_latent_image_ids(batch_size, height, width, device, dtype):
         latent_image_id_channels,
     )
 
-    return latent_image_ids.to(device=device, dtype=dtype)
+    return latent_image_ids.to(device=device, dtype=dtype)[0]

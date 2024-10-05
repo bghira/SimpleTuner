@@ -25,7 +25,7 @@ from transformers import (
 )
 
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.loaders import SD3LoraLoaderMixin
+from diffusers.loaders import FluxLoraLoaderMixin
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.models.transformers import FluxTransformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
@@ -147,7 +147,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
+class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
     r"""
     The Flux pipeline for text-to-image generation.
 
@@ -361,7 +361,7 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
 
         # set lora scale so that monkey patched LoRA
         # function of text encoder can correctly access it
-        if lora_scale is not None and isinstance(self, SD3LoraLoaderMixin):
+        if lora_scale is not None and isinstance(self, FluxLoraLoaderMixin):
             self._lora_scale = lora_scale
 
             # dynamically adjust the LoRA scale
@@ -395,12 +395,12 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
             )
 
         if self.text_encoder is not None:
-            if isinstance(self, SD3LoraLoaderMixin) and USE_PEFT_BACKEND:
+            if isinstance(self, FluxLoraLoaderMixin) and USE_PEFT_BACKEND:
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder, lora_scale)
 
         if self.text_encoder_2 is not None:
-            if isinstance(self, SD3LoraLoaderMixin) and USE_PEFT_BACKEND:
+            if isinstance(self, FluxLoraLoaderMixin) and USE_PEFT_BACKEND:
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
@@ -794,9 +794,9 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
         self._num_timesteps = len(timesteps)
 
         latents = latents.to(self.transformer.device)
-        latent_image_ids = latent_image_ids.to(self.transformer.device)
+        latent_image_ids = latent_image_ids.to(self.transformer.device)[0]
         timesteps = timesteps.to(self.transformer.device)
-        text_ids = text_ids.to(self.transformer.device)
+        text_ids = text_ids.to(self.transformer.device)[0]
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -824,16 +824,16 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
 
                 noise_pred = self.transformer(
                     hidden_states=latents.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
                     ),
                     # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                     timestep=timestep / 1000,
                     guidance=guidance,
                     pooled_projections=pooled_prompt_embeds.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
                     ),
                     encoder_hidden_states=prompt_embeds.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
                     ),
                     txt_ids=text_ids,
                     img_ids=latent_image_ids,
@@ -846,16 +846,16 @@ class FluxPipeline(DiffusionPipeline, SD3LoraLoaderMixin):
                 if guidance_scale_real > 1.0 and i >= no_cfg_until_timestep:
                     noise_pred_uncond = self.transformer(
                         hidden_states=latents.to(
-                            device=self.transformer.device, dtype=self.transformer.dtype
+                            device=self.transformer.device # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
                         ),
                         # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                         timestep=timestep / 1000,
                         guidance=guidance,
                         pooled_projections=negative_pooled_prompt_embeds.to(
-                            device=self.transformer.device, dtype=self.transformer.dtype
+                            device=self.transformer.device # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
                         ),
                         encoder_hidden_states=negative_prompt_embeds.to(
-                            device=self.transformer.device, dtype=self.transformer.dtype
+                            device=self.transformer.device # , dtype=self.transformer.dtype     # can't cast dtype like this because of NF4
                         ),
                         txt_ids=negative_text_ids.to(device=self.transformer.device),
                         img_ids=latent_image_ids.to(device=self.transformer.device),

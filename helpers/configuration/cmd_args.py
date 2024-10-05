@@ -149,6 +149,30 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--flux_use_beta_schedule",
+        action="store_true",
+        help=(
+            "Whether or not to use a beta schedule with Flux instead of sigmoid. The default values of alpha"
+            " and beta approximate a sigmoid."
+        ),
+    )
+    parser.add_argument(
+        "--flux_beta_schedule_alpha",
+        type=float,
+        default=2.0,
+        help=(
+            "The alpha value of the flux beta schedule. Default is 2.0"
+        ),
+    )
+    parser.add_argument(
+        "--flux_beta_schedule_beta",
+        type=float,
+        default=2.0,
+        help=(
+            "The beta value of the flux beta schedule. Default is 2.0"
+        ),
+    )
+    parser.add_argument(
         "--flux_schedule_shift",
         type=float,
         default=None,
