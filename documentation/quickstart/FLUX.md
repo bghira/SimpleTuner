@@ -12,10 +12,11 @@ When you're training every component of a rank-16 LoRA (MLP, projections, multim
 - a bit more than 30G VRAM when not quantising the base model
 - a bit more than 18G VRAM when quantising to int8 + bf16 base/LoRA weights
 - a bit more than 13G VRAM when quantising to int4 + bf16 base/LoRA weights
+- a bit more than 9G VRAM when quantising to NF4 + bf16 base/LoRA weights
 - a bit more than 9G VRAM when quantising to int2 + bf16 base/LoRA weights
 
 You'll need: 
-- **the absolute minimum** is a single 4060 Ti 16GB
+- **the absolute minimum** is a single **3080 10G**
 - **a realistic minimum** is a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
@@ -370,6 +371,39 @@ Inferencing the CFG-distilled LoRA is as easy as using a lower guidance_scale ar
 
 ## Notes & troubleshooting tips
 
+### Lowest VRAM config
+
+Currently, the lowest VRAM utilisation (9090M) can be attained with:
+
+- OS: Ubuntu Linux 24
+- GPU: A single NVIDIA CUDA device (10G, 12G)
+- System memory: 50G of system memory approximately
+- Base model precision: `bnb-nf4`
+- Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
+- Resolution: 512px
+  - 1024px requires >= 12G VRAM
+- Batch size: 1, zero gradient accumulation steps
+- DeepSpeed: disabled / unconfigured
+- PyTorch: 2.6 Nightly (Sept 29th build)
+
+Speed was approximately 1.4 iterations per second on a 4090.
+
+### NF4-quantised training
+
+In simplest terms, NF4 is a 4bit-_ish_ representation of the model, which means training has serious stability concerns to address.
+
+In early tests, the following holds true:
+- Lion optimiser causes model collapse but uses least VRAM; AdamW variants help to hold it together; bnb-adamw8bit, adamw_bf16 are great choices
+  - AdEMAMix didn't fare well, but settings were not explored
+- `--max_grad_norm=0.01` further helps reduce model breakage by preventing huge changes to the model in too short a time
+- NF4, AdamW8bit, and a higher batch size all help to overcome the stability issues, at the cost of more time spent training or VRAM used
+- Upping the resolution from 512px to 1024px slows training down from, for example, 1.4 seconds per step to 3.5 seconds per step (batch size of 1, 4090)
+- Anything that's difficult to train on int8 or bf16 becomes harder in NF4
+
+NF4 does not work with torch.compile, so whatever you get for speed is what you get.
+
+If VRAM is not a concern (eg. 48G or greater) then int8 with torch.compile is your best, fastest option.
+
 ### Classifier-free guidance
 
 #### Problem
@@ -402,7 +436,7 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
   - It allows you to push higher batch sizes and possibly obtain a better result
   - Behaves the same as full-precision training - fp32 won't make your model any better than bf16+int8.
 - **int8** has hardware acceleration and `torch.compile()` support on newer NVIDIA hardware (3090 or better)
-- **nf4** does not seem to benefit training as much as it benefits inference
+- **nf4-bnb** brings VRAM requirements down to 9GB, fitting on a 10G card (with bfloat16 support)
 - When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
 - **int4** is weird and really only works on A100 and H100 cards due to a reliance on custom bf16 kernels
 

@@ -18,6 +18,7 @@ def load_diffusion_model(args, weight_dtype):
         "revision": args.revision,
         "variant": args.variant,
         "torch_dtype": weight_dtype,
+        "use_safetensors": True,
     }
     unet = None
     transformer = None
@@ -92,8 +93,9 @@ def load_diffusion_model(args, weight_dtype):
         )
 
         transformer = FluxTransformer2DModelWithMasking.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="transformer",
+            args.pretrained_transformer_model_name_or_path
+            or args.pretrained_model_name_or_path,
+            subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
     elif args.model_family == "pixart_sigma":
