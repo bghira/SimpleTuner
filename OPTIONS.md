@@ -84,7 +84,13 @@ A newer library from Pytorch, AO allows us to replace the linears and 2D convolu
   - at the time of writing, runs slightly slower (11s/iter) than Quanto does (9s/iter) on Apple MPS
   - When not using `torch.compile`, same speed and memory use as `int8-quanto` on CUDA devices, unknown speed profile on ROCm
   - When using `torch.compile`, slower than `int8-quanto`
-- `fp8-torchao` is not enabled due to bugs in the implementation.
+- `fp8-torchao` is only available for Hopper (H100, H200) or newer (Blackwell B200) accelerators
+
+##### Optimisers
+
+TorchAO includes generally-available 4bit and 8bit optimisers: `ao-adamw8bit`, `ao-adamw4bit`
+
+It also provides two optimisers that are directed toward Hopper (H100 or better) users: `ao-adamfp8`, and `ao-adamwfp8`
 
 #### Torch Dynamo
 
