@@ -1,16 +1,26 @@
 quantised_precision_levels = [
     "no_change",
-    # "fp4-bnb",
-    # "fp8-bnb",
-    "fp8-quanto",
-    "fp8uz-quanto",
     "int8-quanto",
     "int4-quanto",
     "int2-quanto",
-    # currently does not work.
-    # "fp8-torchao",
     "int8-torchao",
 ]
+import torch
+
+if torch.cuda.is_available():
+    quantised_precision_levels.extend(
+        [
+            "nf4-bnb",
+            # "fp4-bnb",
+            # "fp8-bnb",
+            "fp8-quanto",
+            "fp8uz-quanto",
+        ]
+    )
+    primary_device = torch.cuda.get_device_properties(0)
+    if primary_device.major >= 9:
+        # Hopper! Or blackwell+.
+        quantised_precision_levels.append("fp8-torchao")
 
 image_file_extensions = set(["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif"])
 

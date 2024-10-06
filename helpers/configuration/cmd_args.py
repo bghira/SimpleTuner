@@ -2242,7 +2242,9 @@ def parse_cmdline_args(input_args=None):
                     f"{'PixArt Sigma' if args.model_family == 'pixart_sigma' else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
-
+    if args.gradient_checkpointing:
+        # enable torch compile w/ activation checkpointing :[ slows us down.
+        torch._dynamo.config.optimize_ddp = False
     if args.gradient_accumulation_steps > 1:
         if args.gradient_precision == "unmodified" or args.gradient_precision is None:
             warning_log(
@@ -2287,10 +2289,6 @@ def parse_cmdline_args(input_args=None):
             info_log(
                 "Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems."
             )
-
-    if args.gradient_checkpointing:
-        # enable torch compile w/ activation checkpointing :[ slows us down.
-        torch._dynamo.config.optimize_ddp = False
 
     args.is_quantized = (
         False

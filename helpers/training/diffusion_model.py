@@ -17,16 +17,20 @@ def load_diffusion_model(args, weight_dtype):
     pretrained_load_args = {
         "revision": args.revision,
         "variant": args.variant,
+        "torch_dtype": weight_dtype,
     }
     unet = None
     transformer = None
 
-    if "bnb-nf4" == args.base_model_precision:
+    if "nf4-bnb" == args.base_model_precision:
+        import torch
+        from diffusers import BitsAndBytesConfig
+
         pretrained_load_args["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_compute_dtype=weight_dtype,
         )
 
     if args.model_family == "sd3":
@@ -48,12 +52,38 @@ def load_diffusion_model(args, weight_dtype):
         args.model_family.lower() == "flux" and not args.flux_attention_masked_training
     ):
         from diffusers.models import FluxTransformer2DModel
+        import torch
+
+        if torch.cuda.is_available():
+            rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
+            primary_device = torch.cuda.get_device_properties(rank)
+            if primary_device.major >= 9:
+                try:
+                    from flash_attn_interface import flash_attn_func
+                    import diffusers
+
+                    diffusers.models.attention_processor.FluxSingleAttnProcessor2_0 = (
+                        FluxSingleAttnProcessor3_0
+                    )
+                    diffusers.models.attention_processor.FluxAttnProcessor2_0 = (
+                        FluxAttnProcessor3_0
+                    )
+                    if rank == 0:
+                        print("Using FlashAttention3_0 for H100 GPU (Single block)")
+                except:
+                    if rank == 0:
+                        logger.warning(
+                            "No flash_attn is available, using slower FlashAttention_2_0. Install flash_attn to make use of FA3 for Hopper or newer arch."
+                        )
 
         transformer = FluxTransformer2DModel.from_pretrained(
             args.pretrained_transformer_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.model_family.lower() == "flux" and args.flux_attention_masked_training:
@@ -64,7 +94,6 @@ def load_diffusion_model(args, weight_dtype):
         transformer = FluxTransformer2DModelWithMasking.from_pretrained(
             args.pretrained_model_name_or_path,
             subfolder="transformer",
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.model_family == "pixart_sigma":
@@ -74,7 +103,6 @@ def load_diffusion_model(args, weight_dtype):
             args.pretrained_transformer_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
     elif args.model_family == "smoldit":
@@ -108,7 +136,6 @@ def load_diffusion_model(args, weight_dtype):
             args.pretrained_unet_model_name_or_path
             or args.pretrained_model_name_or_path,
             subfolder=determine_subfolder(args.pretrained_unet_subfolder),
-            torch_dtype=weight_dtype,
             **pretrained_load_args,
         )
 
