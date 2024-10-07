@@ -6,6 +6,11 @@ from diffusers.models.attention_processor import (
     apply_rope,
 )
 
+try:
+    from flash_attn_interface import flash_attn_func
+except:
+    pass
+
 
 def fa3_sdpa(
     q,
