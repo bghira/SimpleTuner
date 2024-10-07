@@ -2810,6 +2810,33 @@ files = [
 ]
 
 [[package]]
+name = "pytorch-triton"
+version = "3.1.0+cf34004b8a"
+description = "A language and compiler for custom Deep Learning operations"
+optional = false
+python-versions = "*"
+files = [
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp310-cp310-linux_x86_64.whl", hash = "sha256:d67dbfa7cdcb0465ec23b14f130abc69c97bc01b9dcad610a1ee099d55256186"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp311-cp311-linux_x86_64.whl", hash = "sha256:6337b9b202e710f8bb8da452ba26a99851c8486903cd7a96d90321ade3ea848a"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp312-cp312-linux_x86_64.whl", hash = "sha256:9452ed059f30243ca646785dcfaf569929f9878c825c8ee48fbce8a37ca39389"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp38-cp38-linux_x86_64.whl", hash = "sha256:8b213606c34c232f29d9808c7af9160e10050d8062ab8eb98d03c0283c9f08d3"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp39-cp39-linux_x86_64.whl", hash = "sha256:bcac090504988e6749aad0a4769c921c7a623469271887089b0a29eae671b8cf"},
+]
+
+[package.dependencies]
+filelock = "*"
+
+[package.extras]
+build = ["cmake (>=3.20)", "lit"]
+tests = ["autopep8", "flake8", "isort", "llnl-hatchet", "numpy", "pytest", "scipy (>=1.7.1)"]
+tutorials = ["matplotlib", "pandas", "tabulate"]
+
+[package.source]
+type = "legacy"
+url = "https://download.pytorch.org/whl/nightly/cu124"
+reference = "pytorch-nightly"
+
+[[package]]
 name = "pytz"
 version = "2024.2"
 description = "World timezone definitions, modern and historical"
@@ -5032,4 +5059,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "eb2230bc4381f33f76cdd400db335f8ff5cdd8cb32dfe2ef81227be90bd42dd3"
+content-hash = "f0da2159964a47e2b1de1c17e96129090308cbc90f459e2f9818f06d52a836dc"
