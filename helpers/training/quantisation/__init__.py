@@ -85,8 +85,15 @@ def _quanto_model(
     else:
         logger.info("Freezing model weights only")
 
-    quantize(model, weights=weight_quant, **extra_quanto_args)
-    freeze(model)
+    try:
+        quantize(model, weights=weight_quant, **extra_quanto_args)
+        freeze(model)
+    except Exception as e:
+        if "out of memory" in str(e).lower():
+            logger.error(
+                "GPU ran out of memory during quantisation. Use --quantize_via=cpu to use the slower CPU method."
+            )
+        raise e
 
     return model
 
