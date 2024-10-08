@@ -8,7 +8,7 @@ readme = "README.md"
 package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.10,<3.13"
 torch = { version = ">2.5.0", source = "pytorch-nightly" }
 torchvision = { version = ">0.19", source = "pytorch-nightly" }
 diffusers = {git = "https://github.com/huggingface/diffusers", rev = "quantization-config"}
@@ -32,7 +32,7 @@ pandas = "^2.2.3"
 botocore = "^1.35.24"
 urllib3 = "<1.27"
 torchaudio = "^2.4.1"
-triton-library = "^1.0.0rc2"
+triton-library = "^1.0.0rc4"
 torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
 colorama = "^0.4.6"
@@ -49,6 +49,8 @@ fastapi = {extras = ["standard"], version = "^0.115.0"}
 torchao = {version = "^0.5.0+cu124", source = "pytorch"}
 lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "^9.4.0.58"
+nvidia-nccl-cu12 = "^2.23.4"
+pytorch-triton = {version = "^3.1.0+cf34004b8a", source = "pytorch-nightly"}
 
 
 [build-system]

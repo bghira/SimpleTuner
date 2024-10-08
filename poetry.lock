@@ -2091,6 +2091,17 @@ files = [
 nvidia-cublas-cu12 = "*"
 
 [[package]]
+name = "nvidia-nccl-cu12"
+version = "2.23.4"
+description = "NVIDIA Collective Communication Library (NCCL) Runtime"
+optional = false
+python-versions = ">=3"
+files = [
+    {file = "nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_aarch64.whl", hash = "sha256:aa946c8327e22ced28e7cef508a334673abc42064ec85f02d005ba1785ea4cec"},
+    {file = "nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_x86_64.whl", hash = "sha256:b097258d9aab2fa9f686e33c6fe40ae57b27df60cedbd15d139701bb5509e0c1"},
+]
+
+[[package]]
 name = "open-clip-torch"
 version = "2.26.1"
 description = "Open reproduction of consastive language-image pretraining (CLIP) and related."
@@ -2134,7 +2145,8 @@ files = [
 numpy = [
     {version = ">=1.21.4", markers = "python_version >= \"3.10\" and platform_system == \"Darwin\" and python_version < \"3.11\""},
     {version = ">=1.21.2", markers = "platform_system != \"Darwin\" and python_version >= \"3.10\" and python_version < \"3.11\""},
-    {version = ">=1.23.5", markers = "python_version >= \"3.11\""},
+    {version = ">=1.23.5", markers = "python_version >= \"3.11\" and python_version < \"3.12\""},
+    {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
 ]
 
 [[package]]
@@ -2229,6 +2241,7 @@ files = [
 numpy = [
     {version = ">=1.22.4", markers = "python_version < \"3.11\""},
     {version = ">=1.23.2", markers = "python_version == \"3.11\""},
+    {version = ">=1.26.0", markers = "python_version >= \"3.12\""},
 ]
 python-dateutil = ">=2.8.2"
 pytz = ">=2020.1"
@@ -2795,6 +2808,33 @@ files = [
     {file = "python_multipart-0.0.12-py3-none-any.whl", hash = "sha256:43dcf96cf65888a9cd3423544dd0d75ac10f7aa0c3c28a175bbcd00c9ce1aebf"},
     {file = "python_multipart-0.0.12.tar.gz", hash = "sha256:045e1f98d719c1ce085ed7f7e1ef9d8ccc8c02ba02b5566d5f7521410ced58cb"},
 ]
+
+[[package]]
+name = "pytorch-triton"
+version = "3.1.0+cf34004b8a"
+description = "A language and compiler for custom Deep Learning operations"
+optional = false
+python-versions = "*"
+files = [
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp310-cp310-linux_x86_64.whl", hash = "sha256:d67dbfa7cdcb0465ec23b14f130abc69c97bc01b9dcad610a1ee099d55256186"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp311-cp311-linux_x86_64.whl", hash = "sha256:6337b9b202e710f8bb8da452ba26a99851c8486903cd7a96d90321ade3ea848a"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp312-cp312-linux_x86_64.whl", hash = "sha256:9452ed059f30243ca646785dcfaf569929f9878c825c8ee48fbce8a37ca39389"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp38-cp38-linux_x86_64.whl", hash = "sha256:8b213606c34c232f29d9808c7af9160e10050d8062ab8eb98d03c0283c9f08d3"},
+    {file = "pytorch_triton-3.1.0+cf34004b8a-cp39-cp39-linux_x86_64.whl", hash = "sha256:bcac090504988e6749aad0a4769c921c7a623469271887089b0a29eae671b8cf"},
+]
+
+[package.dependencies]
+filelock = "*"
+
+[package.extras]
+build = ["cmake (>=3.20)", "lit"]
+tests = ["autopep8", "flake8", "isort", "llnl-hatchet", "numpy", "pytest", "scipy (>=1.7.1)"]
+tutorials = ["matplotlib", "pandas", "tabulate"]
+
+[package.source]
+type = "legacy"
+url = "https://download.pytorch.org/whl/nightly/cu124"
+reference = "pytorch-nightly"
 
 [[package]]
 name = "pytz"
@@ -3904,6 +3944,7 @@ filelock = "*"
 fsspec = "*"
 jinja2 = "*"
 networkx = "*"
+setuptools = {version = "*", markers = "python_version >= \"3.12\""}
 sympy = {version = "1.13.1", markers = "python_version >= \"3.9\""}
 typing-extensions = ">=4.8.0"
 
@@ -5017,5 +5058,5 @@ cffi = ["cffi (>=1.11)"]
 
 [metadata]
 lock-version = "2.0"
-python-versions = ">=3.10,<3.12"
-content-hash = "eea1cd458cf26ac71571071e4fae1ed343ea6654f48f0dcae85ca266dd81b48b"
+python-versions = ">=3.10,<3.13"
+content-hash = "f0da2159964a47e2b1de1c17e96129090308cbc90f459e2f9818f06d52a836dc"

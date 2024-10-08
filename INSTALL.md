@@ -36,6 +36,23 @@ poetry install
 poetry install -C install/rocm
 ```
 
+#### NVIDIA Hopper / Blackwell follow-up steps
+
+Optionally, Hopper (or newer) equipment can make use of FlashAttention3 for improved inference and training performance when making use of `torch.compile`
+
+You'll need to run the following sequence of commands from your SimpleTuner directory, with your venv active:
+
+```bash
+git clone https://github.com/Dao-AILab/flash-attention
+pushd flash-attention
+  pushd hopper
+    python setup.py install
+  popd
+popd
+```
+
+> ⚠️ Managing the flash_attn build is poorly-supported in SimpleTuner, currently. This can break on updates, requiring you to re-run this build procedure manually from time-to-time.
+
 #### AMD ROCm follow-up steps
 
 The following must be executed for an AMD MI300X to be useable:

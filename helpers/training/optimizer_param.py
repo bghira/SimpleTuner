@@ -249,7 +249,6 @@ optimizer_choices = {
     },
     "soap": {
         "precision": "any",
-        "gradient_precision": "fp32",
         "default_settings": {
             "betas": (0.95, 0.95),
             "shampoo_beta": -1,

@@ -6,8 +6,6 @@ if torch.cuda.is_available():
     import optimum
     from optimum.quanto.library.extensions.cuda import ext as quanto_ext
 
-    # torch tells us to do this because
-    torch._dynamo.config.optimize_ddp = False
     # Save the original operator
     original_gemm_f16f8_marlin = torch.ops.quanto.gemm_f16f8_marlin
 

@@ -19,6 +19,7 @@ def _quanto_type_map(model_precision: str):
         qint4,
         qint2,
     )
+
     if model_precision == "int2-quanto":
         quant_level = qint2
     elif model_precision == "int4-quanto":
@@ -41,7 +42,13 @@ def _quanto_type_map(model_precision: str):
 
     return quant_level
 
-def _quanto_model(model, model_precision, base_model_precision=None, quantize_activations: bool = False):
+
+def _quanto_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
     try:
         from helpers.training.quantisation import quanto_workarounds
         from optimum.quanto import (
@@ -78,8 +85,15 @@ def _quanto_model(model, model_precision, base_model_precision=None, quantize_ac
     else:
         logger.info("Freezing model weights only")
 
-    quantize(model, weights=weight_quant, **extra_quanto_args)
-    freeze(model)
+    try:
+        quantize(model, weights=weight_quant, **extra_quanto_args)
+        freeze(model)
+    except Exception as e:
+        if "out of memory" in str(e).lower():
+            logger.error(
+                "GPU ran out of memory during quantisation. Use --quantize_via=cpu to use the slower CPU method."
+            )
+        raise e
 
     return model
 
@@ -95,7 +109,12 @@ def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
     return True
 
 
-def _torchao_model(model, model_precision, base_model_precision=None, quantize_activations:bool=False):
+def _torchao_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
     if model_precision is None:
         model_precision = base_model_precision
     if model is None:
@@ -118,7 +137,9 @@ def _torchao_model(model, model_precision, base_model_precision=None, quantize_a
         )
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     if quantize_activations:
-        logger.warning("Activation quantisation is not used in TorchAO. This will be ignored.")
+        logger.warning(
+            "Activation quantisation is not used in TorchAO. This will be ignored."
+        )
 
     if model_precision == "int8-torchao":
         quantize_(
@@ -126,13 +147,6 @@ def _torchao_model(model, model_precision, base_model_precision=None, quantize_a
             int8_weight_only_quantized_training(),  # , filter_fn=_torchao_filter_fn
         )
     elif model_precision == "fp8-torchao":
-        if not torch.cuda.is_available():
-            raise ValueError(
-                "fp8-torchao is only supported on CUDA enabled GPUs. int8-quanto can be used everywhere else."
-            )
-        logger.error(
-            "fp8-torchao requires the latest pytorch nightly build, but int8-torchao, int8-quanto, or fp8-quanto may be used instead."
-        )
         model = convert_to_float8_training(
             model,
             module_filter_fn=_torchao_filter_fn,
@@ -155,23 +169,41 @@ def quantise_model(
         logger.info("Loading TorchAO. This may take a few minutes.")
         quant_fn = _torchao_model
     if transformer is not None:
-        transformer = quant_fn(transformer, model_precision=args.base_model_precision, quantize_activations=args.quantize_activations)
+        transformer = quant_fn(
+            transformer,
+            model_precision=args.base_model_precision,
+            quantize_activations=args.quantize_activations,
+        )
     if unet is not None:
-        unet = quant_fn(unet, model_precision=args.base_model_precision, quantize_activations=args.quantize_activations)
+        unet = quant_fn(
+            unet,
+            model_precision=args.base_model_precision,
+            quantize_activations=args.quantize_activations,
+        )
     if controlnet is not None:
-        controlnet = quant_fn(controlnet, model_precision=args.base_model_precision, quantize_activations=args.quantize_activations)
+        controlnet = quant_fn(
+            controlnet,
+            model_precision=args.base_model_precision,
+            quantize_activations=args.quantize_activations,
+        )
 
     if text_encoder_1 is not None:
         text_encoder_1 = quant_fn(
-            text_encoder_1, model_precision=args.text_encoder_1_precision, base_model_precision=args.base_model_precision
+            text_encoder_1,
+            model_precision=args.text_encoder_1_precision,
+            base_model_precision=args.base_model_precision,
         )
     if text_encoder_2 is not None:
         text_encoder_2 = quant_fn(
-            text_encoder_2, model_precision=args.text_encoder_2_precision, base_model_precision=args.base_model_precision
+            text_encoder_2,
+            model_precision=args.text_encoder_2_precision,
+            base_model_precision=args.base_model_precision,
         )
     if text_encoder_3 is not None:
         text_encoder_3 = quant_fn(
-            text_encoder_3, model_precision=args.text_encoder_3_precision, base_model_precision=args.base_model_precision
+            text_encoder_3,
+            model_precision=args.text_encoder_3_precision,
+            base_model_precision=args.base_model_precision,
         )
 
     return unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet

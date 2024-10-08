@@ -7,7 +7,7 @@ from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
 from PIL import Image
 from helpers.training.state_tracker import StateTracker
-from helpers.sdxl.pipeline import (
+from helpers.models.sdxl.pipeline import (
     StableDiffusionXLPipeline,
     StableDiffusionXLImg2ImgPipeline,
 )
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 try:
-    from helpers.sd3.pipeline import (
+    from helpers.models.sd3.pipeline import (
         StableDiffusion3Pipeline,
         StableDiffusion3Img2ImgPipeline,
     )
@@ -583,7 +583,7 @@ class Validation:
                 raise Exception(
                     "PixArt Sigma inference validation using img2img is not yet supported. Please remove --validation_using_datasets."
                 )
-            from helpers.pixart.pipeline import PixArtSigmaPipeline
+            from helpers.models.pixart.pipeline import PixArtSigmaPipeline
 
             return PixArtSigmaPipeline
         elif model_type == "smoldit":
@@ -1346,11 +1346,15 @@ class Validation:
                 tracker = self.accelerator.get_tracker("tensorboard")
                 for shortname, image_list in validation_images.items():
                     tracker.log_images(
-                            {
-                                f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(np.array(image), -1, 0)[np.newaxis, ...] 
-                                for idx, image in enumerate(image_list)
-                            }, 
-                            step=StateTracker.get_global_step()
+                        {
+                            f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(
+                                np.array(image), -1, 0
+                            )[
+                                np.newaxis, ...
+                            ]
+                            for idx, image in enumerate(image_list)
+                        },
+                        step=StateTracker.get_global_step(),
                     )
             elif tracker.name == "wandb":
                 resolution_list = [

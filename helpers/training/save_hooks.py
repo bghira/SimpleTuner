@@ -7,7 +7,7 @@ from diffusers.utils import (
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 
-from helpers.sdxl.pipeline import StableDiffusionXLPipeline
+from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
 from helpers.models.smoldit import SmolDiT2DModel, SmolDiTPipeline
 import os

@@ -89,7 +89,7 @@ except:
     print("[ERROR] Lycoris not available. Please install ")
 from tqdm.auto import tqdm
 from transformers import PretrainedConfig, CLIPTokenizer
-from helpers.sdxl.pipeline import StableDiffusionXLPipeline
+from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
 
 from diffusers import (
