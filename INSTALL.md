@@ -17,6 +17,9 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 
 pip install -U poetry pip
+
+# Necessary on some systems to prevent it from deciding it knows better than us.
+poetry config virtualenvs.create false
 ```
 
 > ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config/config.env` file.
