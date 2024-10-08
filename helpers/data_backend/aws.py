@@ -44,31 +44,6 @@ logger = logging.getLogger("S3DataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
-def _detect_file_format(self, fileobj):
-    fileobj.seek(0)
-    magic_number = fileobj.read(4)
-    fileobj.seek(0)
-    if magic_number[:2] == b"\x80\x04":
-        # This is likely a torch-saved object (Pickle protocol 4)
-        # Need to check whether it's the incorrectly saved compressed data
-        try:
-            obj = torch.load(fileobj, map_location="cpu")
-            if isinstance(obj, bytes):
-                # If obj is bytes, it means compressed data was saved incorrectly
-                return "incorrect"
-            else:
-                return "correct_uncompressed"
-        except Exception as e:
-            # If torch.load fails, it's possibly compressed correctly
-            return "correct_compressed"
-    elif magic_number[:2] == b"\x1f\x8b":
-        # GZIP magic number, compressed data saved correctly
-        return "correct_compressed"
-    else:
-        # Unrecognized format
-        return "unknown"
-
-
 class S3DataBackend(BaseDataBackend):
     # Storing the list_files output in a local dict.
     _list_cache: dict = {}
@@ -314,6 +289,30 @@ class S3DataBackend(BaseDataBackend):
     def create_directory(self, directory_path):
         # Since S3 doesn't have a traditional directory structure, this is just a pass-through
         pass
+
+    def _detect_file_format(self, fileobj):
+        fileobj.seek(0)
+        magic_number = fileobj.read(4)
+        fileobj.seek(0)
+        if magic_number[:2] == b"\x80\x04":
+            # This is likely a torch-saved object (Pickle protocol 4)
+            # Need to check whether it's the incorrectly saved compressed data
+            try:
+                obj = torch.load(fileobj, map_location="cpu")
+                if isinstance(obj, bytes):
+                    # If obj is bytes, it means compressed data was saved incorrectly
+                    return "incorrect"
+                else:
+                    return "correct_uncompressed"
+            except Exception as e:
+                # If torch.load fails, it's possibly compressed correctly
+                return "correct_compressed"
+        elif magic_number[:2] == b"\x1f\x8b":
+            # GZIP magic number, compressed data saved correctly
+            return "correct_compressed"
+        else:
+            # Unrecognized format
+            return "unknown"
 
     def torch_load(self, s3_key):
         for i in range(self.read_retry_limit):
