@@ -192,7 +192,7 @@ class TrainingSample:
             # If any of the aspect buckets will result in that, we'll ignore it.
             if type(bucket) is dict:
                 aspect = bucket["aspect_ratio"]
-            elif type(bucket) is float:
+            elif type(bucket) is float or type(bucket) is int:
                 aspect = bucket
             else:
                 raise ValueError(
