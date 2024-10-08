@@ -335,7 +335,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             f"Data backend config file {args.data_backend_config} not found."
         )
     info_log(f"Loading data backend config from {args.data_backend_config}")
-    with open(args.data_backend_config, "r") as f:
+    with open(args.data_backend_config, "r", encoding="utf-8") as f:
         data_backend_config = json.load(f)
     if len(data_backend_config) == 0:
         raise ValueError(
