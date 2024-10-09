@@ -607,7 +607,7 @@ class PromptHandler:
             raise FileNotFoundError(f"User prompt file {user_prompt_path} not found.")
         # Load the file.
         try:
-            with user_prompt_path.open("r") as f:
+            with user_prompt_path.open("r", encoding="utf-8") as f:
                 user_prompts = json.load(f)
                 # logger.debug(f"Loaded user prompts: {user_prompts}")
             return user_prompts

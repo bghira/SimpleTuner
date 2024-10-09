@@ -118,12 +118,22 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         if (
             output["config"]["crop_aspect"] == "random"
             or output["config"]["crop_aspect"] == "closest"
-        ) and "crop_aspect_buckets" not in backend:
-            raise ValueError(
-                f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
-                " This should be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
-                " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
-            )
+        ):
+            if "crop_aspect_buckets" not in backend or not isinstance(
+                backend["crop_aspect_buckets"], list
+            ):
+                raise ValueError(
+                    f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
+                    " This should be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
+                    " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
+                )
+            for bucket in backend.get("crop_aspect_buckets"):
+                if type(bucket) not in [float, int, dict]:
+                    raise ValueError(
+                        f"(id={backend['id']}) crop_aspect_buckets must be a list of float values or a list of dictionaries following the format: {'aspect_bucket': float, 'weight': float}."
+                        " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
+                    )
+
         output["config"]["crop_aspect_buckets"] = backend.get("crop_aspect_buckets")
     else:
         output["config"]["crop_aspect"] = "square"
@@ -335,7 +345,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             f"Data backend config file {args.data_backend_config} not found."
         )
     info_log(f"Loading data backend config from {args.data_backend_config}")
-    with open(args.data_backend_config, "r") as f:
+    with open(args.data_backend_config, "r", encoding="utf-8") as f:
         data_backend_config = json.load(f)
     if len(data_backend_config) == 0:
         raise ValueError(

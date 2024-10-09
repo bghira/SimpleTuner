@@ -65,6 +65,9 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 
 pip install -U poetry pip
+
+# Necessary on some systems to prevent it from deciding it knows better than us.
+poetry config virtualenvs.create false
 ```
 
 **Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
@@ -438,7 +441,7 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
 - **int8** has hardware acceleration and `torch.compile()` support on newer NVIDIA hardware (3090 or better)
 - **nf4-bnb** brings VRAM requirements down to 9GB, fitting on a 10G card (with bfloat16 support)
 - When loading the LoRA in ComfyUI later, you **must** use the same base model precision as you trained your LoRA on.
-- **int4** is weird and really only works on A100 and H100 cards due to a reliance on custom bf16 kernels
+- **int4** is relies on custom bf16 kernels, and will not work if your card does not support bfloat16
 
 ### Crashing
 - If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.

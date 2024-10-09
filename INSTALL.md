@@ -17,6 +17,9 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 
 pip install -U poetry pip
+
+# Necessary on some systems to prevent it from deciding it knows better than us.
+poetry config virtualenvs.create false
 ```
 
 > ℹ️ You can use your own custom venv path by setting `export VENV_PATH=/path/to/.venv` in your `config/config.env` file.
@@ -35,6 +38,23 @@ poetry install
 # Linux with ROCM
 poetry install -C install/rocm
 ```
+
+#### NVIDIA Hopper / Blackwell follow-up steps
+
+Optionally, Hopper (or newer) equipment can make use of FlashAttention3 for improved inference and training performance when making use of `torch.compile`
+
+You'll need to run the following sequence of commands from your SimpleTuner directory, with your venv active:
+
+```bash
+git clone https://github.com/Dao-AILab/flash-attention
+pushd flash-attention
+  pushd hopper
+    python setup.py install
+  popd
+popd
+```
+
+> ⚠️ Managing the flash_attn build is poorly-supported in SimpleTuner, currently. This can break on updates, requiring you to re-run this build procedure manually from time-to-time.
 
 #### AMD ROCm follow-up steps
 
