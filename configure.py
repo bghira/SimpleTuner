@@ -301,7 +301,7 @@ def configure_env():
 
             # approximate the rank of the lycoris
             lora_rank = 16
-            with open("config/lycoris_config.json", "w") as f:
+            with open("config/lycoris_config.json", "w", encoding="utf-8") as f:
                 f.write(json.dumps(lycoris_config, indent=4))
         else:
             env_contents["--lora_type"] = "standard"
@@ -825,7 +825,7 @@ def configure_env():
     if confirm:
         import json
 
-        with open("config/multidatabackend.json", "w") as f:
+        with open("config/multidatabackend.json", "w", encoding="utf-8") as f:
             f.write(json.dumps(default_local_configuration, indent=4))
         print("Dataloader configuration written successfully!")
 
