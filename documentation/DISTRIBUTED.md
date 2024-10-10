@@ -74,8 +74,8 @@ main_process_ip: 10.0.0.100
 main_process_port: 8080
 main_training_function: main
 mixed_precision: bf16
-num_machines: 2
-num_processes: 16
+num_machines: 4
+num_processes: 32
 rdzv_backend: static
 same_network: false
 tpu_env: []
