@@ -494,7 +494,7 @@ class SaveHookManager:
             StateTracker.load_training_state(self.training_state_path)
         else:
             logger.warning(
-                f"Could not find training_state.json in checkpoint dir {input_dir}"
+                f"Could not find {self.training_state_path} in checkpoint dir {input_dir}"
             )
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)

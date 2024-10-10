@@ -2645,7 +2645,8 @@ class Trainer:
                                     logger.debug(f"Backend: {backend}")
                                     backend["sampler"].save_state(
                                         state_path=os.path.join(
-                                            save_path, "training_state.json"
+                                            save_path,
+                                            self.model_hooks.training_state_path,
                                         ),
                                     )
 
