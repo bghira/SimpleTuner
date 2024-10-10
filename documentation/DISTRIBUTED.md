@@ -4,6 +4,140 @@ This document contains notes* on configuring a 4-way 8xH100 cluster for use with
 
 > *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](/INSTALL.md) document or one of the [quickstart guides](/documentation/QUICKSTART.md).
 
+## Storage backend
+
+Multi-node training requires by default the use of shared storage between nodes for the `output_dir`
+
+
+### Ubuntu NFS example
+
+Just a basic storage example that will get you started.
+
+#### On the 'master' node that will write the checkpoints
+
+**1. Install NFS Server Packages**
+
+```bash
+sudo apt update
+sudo apt install nfs-kernel-server
+```
+
+**2. Configure the NFS Export**
+
+Edit the NFS exports file to share the directory:
+
+```bash
+sudo nano /etc/exports
+```
+
+Add the following line at the end of the file (replace `slave_ip` with the actual IP address of your slave machine):
+
+```
+/home/ubuntu/simpletuner/output slave_ip(rw,sync,no_subtree_check)
+```
+
+*If you want to allow multiple slaves or an entire subnet, you can use:*
+
+```
+/home/ubuntu/simpletuner/output subnet_ip/24(rw,sync,no_subtree_check)
+```
+
+**3. Export the Shared Directory**
+
+```bash
+sudo exportfs -a
+```
+
+**4. Restart the NFS Server**
+
+```bash
+sudo systemctl restart nfs-kernel-server
+```
+
+**5. Verify NFS Server Status**
+
+```bash
+sudo systemctl status nfs-kernel-server
+```
+
+---
+
+#### **On the Slave Machine:**
+
+**1. Install NFS Client Packages**
+
+```bash
+sudo apt update
+sudo apt install nfs-common
+```
+
+**2. Create the Mount Point Directory**
+
+Ensure the directory exists (it should already exist based on your setup):
+
+```bash
+sudo mkdir -p /home/ubuntu/simpletuner/output
+```
+
+*Note:* If the directory contains data, back it up, as mounting will hide existing contents.
+
+**3. Mount the NFS Share**
+
+Mount the master's shared directory to the slave's local directory (replace `master_ip` with the master's IP address):
+
+```bash
+sudo mount master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output
+```
+
+**4. Verify the Mount**
+
+Check that the mount is successful:
+
+```bash
+mount | grep /home/ubuntu/simpletuner/output
+```
+
+**5. Test Write Access**
+
+Create a test file to ensure you have write permissions:
+
+```bash
+touch /home/ubuntu/simpletuner/output/test_file_from_slave.txt
+```
+
+Then, check on the master machine if the file appears in `/home/ubuntu/simpletuner/output`.
+
+**6. Make the Mount Persistent**
+
+To ensure the mount persists across reboots, add it to the `/etc/fstab` file:
+
+```bash
+sudo nano /etc/fstab
+```
+
+Add the following line at the end:
+
+```
+master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs defaults 0 0
+```
+
+---
+
+#### **Additional Considerations:**
+
+- **User Permissions:** Ensure that the `ubuntu` user has the same UID and GID on both machines so that file permissions are consistent. You can check UIDs with `id ubuntu`.
+
+- **Firewall Settings:** If you have a firewall enabled, make sure to allow NFS traffic. On the master machine:
+
+  ```bash
+  sudo ufw allow from slave_ip to any port nfs
+  ```
+
+- **Synchronize Clocks:** It's good practice to have both systems' clocks synchronized, especially in distributed setups. Use `ntp` or `systemd-timesyncd`.
+
+- **Testing DeepSpeed Checkpoints:** Run a small DeepSpeed job to confirm that checkpoints are correctly written to the master's directory.
+
+
 ## Dataloader configuration
 
 Very-large datasets can be a challenge to efficiently manage. SimpleTuner will automatically shard datasets over each node and distribute pre-processing across every available GPU in the cluster, while using asynchronous queues and threads to maintain throughput.
