@@ -62,7 +62,7 @@ sudo systemctl status nfs-kernel-server
 
 ---
 
-#### **On the Slave Machine:**
+#### On the slave nodes that send optimiser and other states
 
 **1. Install NFS Client Packages**
 
