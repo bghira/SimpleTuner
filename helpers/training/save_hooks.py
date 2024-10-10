@@ -1,5 +1,6 @@
 from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
 from helpers.training.wrappers import unwrap_model
+from helpers.training.multi_process import _get_rank as get_rank
 from diffusers.utils import (
     convert_state_dict_to_diffusers,
     convert_unet_state_dict_to_peft,
@@ -184,7 +185,7 @@ class SaveHookManager:
                 self.ema_model_cls = PixArtTransformer2DModel
         self.training_state_path = "training_state.json"
         if self.accelerator is not None:
-            rank = getattr(self.accelerator, "rank", 0)
+            rank = get_rank()
             if rank > 0:
                 self.training_state_path = f"training_state-rank{rank}.json"
 
