@@ -1342,6 +1342,14 @@ class Trainer:
         )
 
     def init_validations(self):
+        if (
+            self.accelerator.state.deepspeed_plugin.deepspeed_config[
+                "zero_optimization"
+            ].get("stage")
+            == 3
+        ):
+            logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
+            return
         self.validation = Validation(
             accelerator=self.accelerator,
             unet=self.unet,
@@ -1364,22 +1372,21 @@ class Trainer:
             vae=self.vae,
             controlnet=self.controlnet if self.config.controlnet else None,
         )
-        if not self.config.train_text_encoder:
+        if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
         self.init_benchmark_base_model()
         self.accelerator.wait_for_everyone()
 
     def init_benchmark_base_model(self):
-        if self.config.disable_benchmark or self.validation.benchmark_exists(
-            "base_model"
+        if (
+            self.config.disable_benchmark
+            or self.validation is None
+            or self.validation.benchmark_exists("base_model")
         ):
             # if we've disabled it or the benchmark exists, we will not do it again.
+            # deepspeed zero3 can't do validations at all.
             return
-        if (
-            not self.accelerator.is_main_process
-            and not self.config.use_deepspeed_optimizer
-        ):
-            # on deepspeed, every process has to enter. otherwise, only the main process does.
+        if not self.accelerator.is_main_process:
             return
         logger.info(
             "Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour."
@@ -1782,7 +1789,8 @@ class Trainer:
             # Just in Case.
             self.mark_optimizer_eval()
             # normal run-of-the-mill validation on startup.
-            self.validation.run_validations(validation_type="base_model", step=0)
+            if self.validation is not None:
+                self.validation.run_validations(validation_type="base_model", step=0)
 
         self.mark_optimizer_train()
 
@@ -2667,9 +2675,10 @@ class Trainer:
 
                 progress_bar.set_postfix(**logs)
                 self.mark_optimizer_eval()
-                self.validation.run_validations(
-                    validation_type="intermediary", step=step
-                )
+                if self.validation is not None:
+                    self.validation.run_validations(
+                        validation_type="intermediary", step=step
+                    )
                 self.mark_optimizer_train()
                 if (
                     self.config.push_to_hub
@@ -2681,7 +2690,11 @@ class Trainer:
                     if self.accelerator.is_main_process:
                         try:
                             self.hub_manager.upload_latest_checkpoint(
-                                validation_images=self.validation.validation_images,
+                                validation_images=(
+                                    getattr(self.validation, "validation_images")
+                                    if self.validation is not None
+                                    else None
+                                ),
                                 webhook_handler=self.webhook_handler,
                             )
                         except Exception as e:
@@ -2710,14 +2723,16 @@ class Trainer:
 
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()
+        validation_images = None
         if self.accelerator.is_main_process:
             self.mark_optimizer_eval()
-            validation_images = self.validation.run_validations(
-                validation_type="final",
-                step=self.state["global_step"],
-                force_evaluation=True,
-                skip_execution=True,
-            ).validation_images
+            if self.validation is not None:
+                validation_images = self.validation.run_validations(
+                    validation_type="final",
+                    step=self.state["global_step"],
+                    force_evaluation=True,
+                    skip_execution=True,
+                ).validation_images
             if self.unet is not None:
                 self.unet = unwrap_model(self.accelerator, self.unet)
             if self.transformer is not None:
