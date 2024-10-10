@@ -330,11 +330,11 @@ class SaveHookManager:
 
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
-        if not self.accelerator.is_main_process:
-            return
         StateTracker.save_training_state(
             os.path.join(output_dir, self.training_state_path)
         )
+        if not self.accelerator.is_main_process:
+            return
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._save_lora(models=models, weights=weights, output_dir=output_dir)
             return
