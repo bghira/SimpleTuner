@@ -744,8 +744,8 @@ class Trainer:
             "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
         )
 
-        if 'bnb' in self.config.base_model_precision:
-            # can't cast or move bitsandbytes models
+        if "bnb" in self.config.base_model_precision:
+            # can't cast or move bitsandbytes modelsthis
             return
 
         if not self.config.disable_accelerator and self.config.is_quantized:
@@ -2616,7 +2616,13 @@ class Trainer:
                                         removing_checkpoint = os.path.join(
                                             self.config.output_dir, removing_checkpoint
                                         )
-                                        shutil.rmtree(removing_checkpoint)
+                                        try:
+                                            shutil.rmtree(removing_checkpoint)
+                                        except Exception as e:
+                                            logger.error(
+                                                f"Failed to remove directory: {removing_checkpoint}"
+                                            )
+                                            print(e)
 
                         if (
                             self.accelerator.is_main_process
