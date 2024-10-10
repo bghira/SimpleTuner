@@ -182,6 +182,11 @@ class SaveHookManager:
                 self.ema_model_cls = SD3Transformer2DModel
             elif self.args.model_family == "pixart_sigma":
                 self.ema_model_cls = PixArtTransformer2DModel
+        self.training_state_path = "training_state.json"
+        if self.accelerator is not None:
+            rank = getattr(self.accelerator, "rank", 0)
+            if rank > 0:
+                self.training_state_path = f"training_state-rank{rank}.json"
 
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
@@ -327,7 +332,7 @@ class SaveHookManager:
         if not self.accelerator.is_main_process:
             return
         StateTracker.save_training_state(
-            os.path.join(output_dir, "training_state.json")
+            os.path.join(output_dir, self.training_state_path)
         )
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._save_lora(models=models, weights=weights, output_dir=output_dir)
@@ -485,9 +490,8 @@ class SaveHookManager:
 
     def load_model_hook(self, models, input_dir):
         # Check the checkpoint dir for a "training_state.json" file to load
-        training_state_path = os.path.join(input_dir, "training_state.json")
-        if os.path.exists(training_state_path):
-            StateTracker.load_training_state(training_state_path)
+        if os.path.exists(self.training_state_path):
+            StateTracker.load_training_state(self.training_state_path)
         else:
             logger.warning(
                 f"Could not find training_state.json in checkpoint dir {input_dir}"

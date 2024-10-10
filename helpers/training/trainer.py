@@ -19,6 +19,7 @@ os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 from helpers import log_format  # noqa
 from helpers.configuration.loader import load_config
 from helpers.caching.memory import reclaim_memory
+from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.validation import Validation, prepare_validation_prompt_list
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
@@ -1464,7 +1465,9 @@ class Trainer:
             if "sampler" in backend:
                 backend["sampler"].load_states(
                     state_path=os.path.join(
-                        self.config.output_dir, path, "training_state.json"
+                        self.config.output_dir,
+                        path,
+                        f"training_state-{get_rank()}.json",
                     ),
                 )
         self.state["global_resume_step"] = self.state["global_step"] = (
