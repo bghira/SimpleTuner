@@ -56,6 +56,11 @@ def load_diffusion_model(args, weight_dtype):
         import torch
 
         if torch.cuda.is_available():
+            rank = (
+                torch.distributed.get_rank()
+                if torch.distributed.is_initialized()
+                else 0
+            )
             primary_device = torch.cuda.get_device_properties(0)
             if primary_device.major >= 9:
                 try:
