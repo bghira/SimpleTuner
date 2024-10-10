@@ -243,6 +243,10 @@ def save_model_card(
         raise ValueError(
             f"The validation_prompts must be a list. Received {validation_prompts}"
         )
+    # if we have more than one '/' in the base_model, we will turn it into unknown/model
+    model_family = StateTracker.get_model_family()
+    if base_model.count("/") > 1:
+        base_model = f"{model_family}/unknown-model"
     logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
     optimizer_config = StateTracker.get_args().optimizer_config
@@ -289,11 +293,11 @@ def save_model_card(
             shortname_idx += 1
     args = StateTracker.get_args()
     yaml_content = f"""---
-license: {licenses[StateTracker.get_model_family()]}
+license: {licenses[model_family]}
 base_model: "{base_model}"
 tags:
-  - {StateTracker.get_model_family()}
-  - {f'{StateTracker.get_model_family()}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
+  - {model_family}
+  - {f'{model_family}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - text-to-image
   - diffusers
   - simpletuner
