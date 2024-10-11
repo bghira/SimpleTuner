@@ -1343,9 +1343,11 @@ class Trainer:
 
     def init_validations(self):
         if (
-            self.accelerator.state.deepspeed_plugin.deepspeed_config[
-                "zero_optimization"
-            ].get("stage")
+            hasattr(self.accelerator, "state")
+            and hasattr(self.accelerator.state, "deepspeed_plugin")
+            and getattr(self.accelerator.state.deepspeed_plugin, "deepspeed_config", {})
+            .get("zero_optimization", {})
+            .get("stage")
             == 3
         ):
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
