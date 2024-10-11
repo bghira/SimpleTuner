@@ -25,13 +25,17 @@ def safety_check(args, accelerator):
                 args.base_model_precision = "int8-quanto"
 
     if (
-        (args.base_model_precision in ["fp8-quanto", "int4-quanto"] or (args.base_model_precision != "no_change" and args.quantize_activations))
-        and (accelerator is not None and accelerator.state.dynamo_plugin.backend.lower() == "inductor")
+        args.base_model_precision in ["fp8-quanto", "int4-quanto"]
+        or (args.base_model_precision != "no_change" and args.quantize_activations)
+    ) and (
+        accelerator is not None
+        and accelerator.state.dynamo_plugin.backend.lower() == "inductor"
     ):
         logger.warning(
             f"{args.base_model_precision} is not supported with Dynamo backend. Disabling Dynamo."
         )
         from accelerate.utils import DynamoBackend
+
         accelerator.state.dynamo_plugin.backend = DynamoBackend.NO
     if args.report_to == "wandb":
         if not is_wandb_available():
