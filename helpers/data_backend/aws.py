@@ -92,19 +92,34 @@ class S3DataBackend(BaseDataBackend):
             **extra_args,
         )
 
-    def exists(self, s3_key) -> bool:
-        """Determine whether a file exists in S3."""
-        try:
-            # logger.debug(f"Checking if file exists: {s3_key}")
-            self.client.head_object(Bucket=self.bucket_name, Key=str(s3_key))
-            return True
-        # Catch the error when the file does not exist
-        except (Exception, self.client.exceptions.NoSuchKey) as e:
-            if "Not Found" not in str(e) and "Bad Request" not in str(e):
-                raise
-            return False
-        except:
-            return False
+    def exists(self, s3_key):
+        """Check if the key exists in S3, with retries for transient errors."""
+        for i in range(self.read_retry_limit):
+            try:
+                self.client.head_object(Bucket=self.bucket_name, Key=str(s3_key))
+                return True
+            except self.client.exceptions.NoSuchKey:
+                logger.debug(
+                    f"File {s3_key} does not exist in S3 bucket ({self.bucket_name})"
+                )
+                return False
+            except (NoCredentialsError, PartialCredentialsError) as e:
+                raise e  # Raise credential errors to the caller
+            except Exception as e:
+                logger.error(f'Error checking existence of S3 key "{s3_key}": {e}')
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise e
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
+            except:
+                if i == self.read_retry_limit - 1:
+                    # We have reached our maximum retry count.
+                    raise
+                else:
+                    # Sleep for a bit before retrying.
+                    time.sleep(self.read_retry_interval)
 
     def read(self, s3_key):
         """Retrieve and return the content of the file from S3."""
