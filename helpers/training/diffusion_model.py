@@ -61,7 +61,7 @@ def load_diffusion_model(args, weight_dtype):
                 if torch.distributed.is_initialized()
                 else 0
             )
-            primary_device = torch.cuda.get_device_properties(rank)
+            primary_device = torch.cuda.get_device_properties(0)
             if primary_device.major >= 9:
                 try:
                     from flash_attn_interface import flash_attn_func

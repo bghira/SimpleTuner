@@ -837,6 +837,8 @@ class Validation:
         base_model_benchmark = self._benchmark_path(benchmark=benchmark)
         if not os.path.exists(base_model_benchmark):
             os.makedirs(base_model_benchmark, exist_ok=True)
+        if self.validation_images is None:
+            return
         for shortname, image_list in self.validation_images.items():
             for idx, image in enumerate(image_list):
                 width, height = image.size
