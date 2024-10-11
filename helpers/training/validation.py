@@ -1141,7 +1141,10 @@ class Validation:
             self._log_validations_to_webhook(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
         self.validation_images = validation_images
-        self._log_validations_to_trackers(validation_images)
+        try:
+            self._log_validations_to_trackers(validation_images)
+        except Exception as e:
+            logger.error(f"Error logging validation images: {e}")
 
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
