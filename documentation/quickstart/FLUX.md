@@ -204,10 +204,10 @@ A commonly-recommended approach is to follow several recent works and enable res
 ##### Manual specification
 _Thanks to General Awareness from Discord for the following examples_
 
-When using a shift value of 0.1 (a very low value), only the finer details of the image are affected:
+When using a `--flux_schedule_shift` value of 0.1 (a very low value), only the finer details of the image are affected:
 ![image](https://github.com/user-attachments/assets/991ca0ad-e25a-4b13-a3d6-b4f2de1fe982)
 
-When using a shift value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
+When using a `--flux_schedule_shift` value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
 ![image](https://github.com/user-attachments/assets/857a1f8a-07ab-4b75-8e6a-eecff616a28d)
 
 
