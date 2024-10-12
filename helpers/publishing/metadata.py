@@ -227,6 +227,36 @@ def model_card_note(args):
     return f"\n{note_contents}\n"
 
 
+def flux_schedule_info(args):
+    if args.model_family.lower() != "flux":
+        return ""
+    output_args = []
+    if args.flux_fast_schedule:
+        output_args.append("flux_fast_schedule")
+    if args.flux_schedule_auto_shift:
+        output_args.append("flux_schedule_auto_shift")
+    if args.flux_schedule_shift is not None:
+        output_args.append(f"shift={args.flux_schedule_shift}")
+    if args.flux_guidance_value:
+        output_args.append(f"flux_guidance_value={args.flux_guidance_value}")
+    if args.flux_guidance_min:
+        output_args.append(f"flux_guidance_min={args.flux_guidance_min}")
+    if args.flux_guidance_mode == "random-range":
+        output_args.append(f"flux_guidance_max={args.flux_guidance_max}")
+        output_args.append(f"flux_guidance_min={args.flux_guidance_min}")
+    if args.flux_use_beta_schedule:
+        output_args.append(f"flux_beta_schedule_alpha={args.flux_beta_schedule_alpha}")
+        output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
+    if args.flux_attention_masked_training:
+        output_args.append("flux_attention_masked_training")
+
+    output_str = (
+        f" (flux parameters={output_args})"
+        if output_args
+        else " (no special parameters set)"
+    )
+
+
 def save_model_card(
     repo_id: str,
     images=None,
@@ -344,11 +374,12 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Training epochs: {StateTracker.get_epoch() - 1}
 - Training steps: {StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
+- Max grad norm: {StateTracker.get_args().max_grad_norm}
 - Effective batch size: {StateTracker.get_args().train_batch_size * StateTracker.get_args().gradient_accumulation_steps * StateTracker.get_accelerator().num_processes}
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{flux_schedule_info(args=StateTracker.get_args())}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
