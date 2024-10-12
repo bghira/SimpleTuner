@@ -189,6 +189,12 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 
 > ℹ️ This value behaves differently to the same option in Kohya's scripts, where a value of 1 means no repeats. **For SimpleTuner, a value of 0 means no repeats**. Subtract one from your Kohya config value to obtain the equivalent for SimpleTuner, hence a value of **9** resulting from the calculation `(dataset_length + repeats * dataset_length)` .
 
+### `is_regularisation_data`
+
+- Also may be spelt `is_regularization_data`
+- Enables parent-teacher training for LyCORIS adapters so that the prediction target prefers the base model's result for a given dataset.
+  - Standard LoRA are not currently supported.
+
 ### `vae_cache_clear_each_epoch`
 
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.

@@ -262,7 +262,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "skip_file_discovery": "",
     "caption_strategy": "filename",
     "metadata_backend": "discovery",
-    "repeats": 0
+    "repeats": 0,
+    "is_regularisation_data": true
   },
   {
     "id": "dreambooth-subject",
@@ -469,6 +470,7 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
 #### LoKr (--lora_type=lycoris)
 - Higher learning rates are better for LoKr (`1e-3` with AdamW, `2e-4` with Lion)
 - Other algo need more exploration.
+- Setting `is_regularisation_data` on such datasets may help preserve / prevent bleed.
 
 ### Image artifacts
 Flux will immediately absorb bad image artifacts. It's just how it is - a final training run on just high quality data may be required to fix it at the end.
