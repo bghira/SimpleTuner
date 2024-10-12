@@ -96,3 +96,13 @@ def safety_check(args, accelerator):
                 f"Your GPU has {total_memory_gb}GB of memory. The SOAP optimiser requires a GPU with at least 24G of memory."
             )
             sys.exit(1)
+
+    if (
+        args.model_type != "lora"
+        and args.base_model_precision != "no_change"
+        and not args.i_know_what_i_am_doing
+    ):
+        logger.error(
+            f"{args.model_type} tuning is not compatible with quantisation. Please set --base_model_precision to 'no_change' or train LyCORIS/LoRA."
+        )
+        sys.exit(1)
