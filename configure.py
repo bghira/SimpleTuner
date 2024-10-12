@@ -772,6 +772,43 @@ def configure_env():
         },
     ]
 
+    # Let's offer to generate a prompt library for the user. Preserve their existing one if it already exists.
+    should_generate_by_default = "n"
+    if not os.path.exists("config/user_prompt_library.json"):
+        should_generate_by_default = "y"
+    should_generate_prompt_library = (
+        prompt_user(
+            (
+                "Would you like to generate a very rudimentary subject-centric prompt library for your dataset?"
+                " This will download a small 1B Llama 3.2 model."
+                " If a user prompt library exists, it will be overwritten. (y/n)"
+            ),
+            should_generate_by_default,
+        ).lower()
+        == "y"
+    )
+    if should_generate_prompt_library:
+        try:
+            user_caption_trigger = prompt_user(
+                "Enter a trigger word (or a few words) that you would like Llama 3.2 1B to expand.",
+                "Character Name",
+            )
+            number_of_prompts = int(
+                prompt_user("How many prompts would you like to generate?", 8)
+            )
+            from helpers.prompt_expander import PromptExpander
+
+            PromptExpander.initialize_model()
+            user_prompt_library = PromptExpander.generate_prompts(
+                trigger_phrase=user_caption_trigger, num_prompts=number_of_prompts
+            )
+            with open("config/user_prompt_library.json", "w", encoding="utf-8") as f:
+                f.write(json.dumps(user_prompt_library, indent=4))
+            print("Prompt library generated successfully!")
+            env_contents["--user_prompt_library"] = "config/user_prompt_library.json"
+        except Exception as e:
+            print(f"(warning) Failed to generate prompt library: {e}")
+
     # now we ask user the path to their data, the path to the cache (cache/), number of repeats, update the id placeholder based on users dataset name
     # then we'll write the file to multidatabackend.json
     should_configure_dataloader = (
@@ -807,7 +844,7 @@ def configure_env():
     if "instanceprompt" in dataset_caption_strategy:
         dataset_instance_prompt = prompt_user(
             "Enter the instance_prompt you want to use for all images in this dataset",
-            "CatchPhrase",
+            "Character Name",
         )
     dataset_repeats = int(
         prompt_user(
