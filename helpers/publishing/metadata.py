@@ -249,7 +249,8 @@ def flux_schedule_info(args):
         output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
     if args.flux_attention_masked_training:
         output_args.append("flux_attention_masked_training")
-
+    if args.model_type == "lora" and args.lora_type == "standard":
+        output_args.append(f"flux_lora_target={args.flux_lora_target}")
     output_str = (
         f" (flux parameters={output_args})"
         if output_args
