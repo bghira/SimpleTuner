@@ -835,6 +835,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             )
 
         use_captions = True
+        is_regularisation_data = backend.get(
+            "is_regularisation_data", backend.get("is_regularization_data", False)
+        )
         if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
             use_captions = False
         elif args.only_instance_prompt:
@@ -842,6 +845,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         init_backend["train_dataset"] = MultiAspectDataset(
             id=init_backend["id"],
             datasets=[init_backend["metadata_backend"]],
+            is_regularisation_data=is_regularisation_data,
         )
 
         if "deepfloyd" in args.model_type:

@@ -20,11 +20,13 @@ class MultiAspectDataset(Dataset):
         self,
         id: str,
         datasets: list,
-        print_names=False,
+        print_names: bool = False,
+        is_regularisation_data: bool = False,
     ):
         self.id = id
         self.datasets = datasets
         self.print_names = print_names
+        self.is_regularisation_data = is_regularisation_data
 
     def __len__(self):
         # Sum the length of all data backends:
@@ -34,6 +36,7 @@ class MultiAspectDataset(Dataset):
         output_data = {
             "training_samples": [],
             "conditioning_samples": [],
+            "is_regularisation_data": self.is_regularisation_data,
         }
         first_aspect_ratio = None
         for sample in image_tuple:
