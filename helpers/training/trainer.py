@@ -2375,6 +2375,10 @@ class Trainer:
                                     "Detaching LyCORIS adapter for parent prediction."
                                 )
                                 self.accelerator._lycoris_wrapped_network.restore()
+                            else:
+                                raise ValueError(
+                                    f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
+                                )
                             target = self.model_predict(
                                 batch=batch,
                                 latents=latents,
@@ -2463,6 +2467,7 @@ class Trainer:
                             loss.mean(dim=list(range(1, len(loss.shape))))
                             * mse_loss_weights
                         ).mean()
+
                     if is_regularisation_data:
                         parent_loss = loss
 
