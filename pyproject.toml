@@ -50,7 +50,8 @@ torchao = {version = "^0.5.0+cu124", source = "pytorch"}
 lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "^9.4.0.58"
 nvidia-nccl-cu12 = "^2.23.4"
-pytorch-triton = {version = "^3.1.0+cf34004b8a", source = "pytorch-nightly"}
+pytorch-triton = {version = "3.1.0+cf34004b8a", source = "pytorch-nightly"}
+aiohappyeyeballs = "2.4.2"
 
 
 [build-system]
