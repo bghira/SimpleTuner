@@ -87,9 +87,8 @@ def fetch_pixel_values(fp, data_backend_id: str):
     debug_log(
         f" -> pull pixels for fp {fp} from cache via data backend {data_backend_id}"
     )
-    image = StateTracker.get_data_backend(data_backend_id)["data_backend"].read_image(
-        fp
-    )
+    data_backend = StateTracker.get_data_backend(data_backend_id)
+    image = data_backend["data_backend"].read_image(fp)
     training_sample = TrainingSample(
         image=image,
         data_backend_id=data_backend_id,
@@ -123,6 +122,64 @@ def deepfloyd_pixels(filepaths, data_backend_id: str):
             )
     except Exception as e:
         logger.error(f"(id={data_backend_id}) Error while computing pixels: {e}")
+        raise
+    pixels = torch.stack(pixels)
+    pixels = pixels.to(memory_format=torch.contiguous_format).float()
+
+    return pixels
+
+
+def fetch_conditioning_pixel_values(
+    fp, training_fp, conditioning_data_backend_id: str, training_data_backend_id: str
+):
+    """Worker method to fetch pixel values for a single image."""
+    # Retrieve data backends
+    conditioning_data_backend = StateTracker.get_data_backend(
+        conditioning_data_backend_id
+    )
+    training_data_backend = StateTracker.get_data_backend(training_data_backend_id)
+
+    # Use the provided training file path directly
+    training_sample = TrainingSample.from_image_path(
+        image_path=training_fp,
+        data_backend_id=training_data_backend_id,
+    )
+
+    conditioning_sample = TrainingSample.from_image_path(
+        image_path=fp,
+        data_backend_id=conditioning_data_backend_id,
+    )
+
+    # Prepare the conditioning sample to match the training sample
+    prepared_like = conditioning_sample.prepare_like(
+        training_sample, return_tensor=True
+    ).image
+
+    return prepared_like
+
+
+def conditioning_pixels(
+    filepaths,
+    training_filepaths,
+    conditioning_data_backend_id: str,
+    training_data_backend_id: str,
+):
+    """For pixel-based conditioning images that must be prepared matching a paired image's metadata.."""
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            pixels = list(
+                executor.map(
+                    fetch_conditioning_pixel_values,
+                    filepaths,
+                    training_filepaths,
+                    [conditioning_data_backend_id] * len(filepaths),
+                    [training_data_backend_id] * len(filepaths),
+                )
+            )
+    except Exception as e:
+        logger.error(
+            f"(conditioning_data_backend_id={conditioning_data_backend_id}) Error while retrieving or transforming pixels (training data id={training_data_backend_id}): {e}"
+        )
         raise
     pixels = torch.stack(pixels)
     pixels = pixels.to(memory_format=torch.contiguous_format).float()
@@ -416,31 +473,44 @@ def collate_fn(batch):
         )
 
     conditioning_filepaths = []
-    conditioning_pixel_values = None
+    training_filepaths = []
     conditioning_type = None
+    conditioning_pixel_values = None
+
     if len(conditioning_examples) > 0:
-        for example in conditioning_examples:
-            # Building the list of conditioning image filepaths.
-            if conditioning_type is not None:
-                if example.get_conditioning_type() != conditioning_type:
-                    raise ValueError(
-                        f"Conditioning type mismatch: {conditioning_type} != {example.get_conditioning_type()}"
-                        "\n-> Ensure all conditioning samples are of the same type."
-                    )
-            else:
-                conditioning_type = example.get_conditioning_type()
-            if conditioning_type == "mask" and len(conditioning_examples) != len(
-                examples
-            ):
-                raise ValueError(
-                    f"Masks seem to be missing for some of the following images: {examples}"
-                    f"\n-> Ensure all images have a corresponding mask: {[example.image_path() for example in conditioning_examples]}"
-                )
-            conditioning_filepaths.append(example.image_path(basename_only=False))
-        # Use the poorly-named method to retrieve the image pixel values
-        conditioning_pixel_values = deepfloyd_pixels(
-            conditioning_filepaths, data_backend_id
+        if len(conditioning_examples) != len(examples):
+            raise ValueError(
+                "The number of conditioning examples must match the number of training examples."
+            )
+
+        data_backend = StateTracker.get_data_backend(data_backend_id)
+        conditioning_data_backend_id = data_backend.get("conditioning_data", {}).get(
+            "id"
         )
+
+        for cond_example, train_example in zip(conditioning_examples, examples):
+            # Ensure conditioning types match
+            cond_type = cond_example.get_conditioning_type()
+            if conditioning_type is None:
+                conditioning_type = cond_type
+            elif cond_type != conditioning_type:
+                raise ValueError(
+                    f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
+                    "\n-> Ensure all conditioning samples are of the same type."
+                )
+
+            # Collect conditioning and training file paths
+            conditioning_filepaths.append(cond_example.image_path(basename_only=False))
+            training_filepaths.append(train_example["image_path"])
+
+        # Pass both file paths to `conditioning_pixels`
+        conditioning_pixel_values = conditioning_pixels(
+            conditioning_filepaths,
+            training_filepaths,
+            conditioning_data_backend_id,
+            data_backend_id,
+        )
+
         conditioning_pixel_values = torch.stack(
             [
                 latent.to(StateTracker.get_accelerator().device)
