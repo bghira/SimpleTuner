@@ -2,6 +2,7 @@ from torch import Tensor, FloatTensor
 from torch.nn import functional as F
 from einops import rearrange
 from diffusers.models.attention_processor import Attention
+from diffusers.models.embeddings import apply_rotary_emb
 
 try:
     from flash_attn_interface import flash_attn_func
@@ -95,9 +96,6 @@ class FluxSingleAttnProcessor3_0:
             )
 
         return hidden_states
-
-
-from diffusers.models.embeddings import apply_rotary_emb
 
 
 class FluxAttnProcessor3_0:
