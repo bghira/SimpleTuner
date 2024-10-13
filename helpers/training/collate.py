@@ -416,17 +416,35 @@ def collate_fn(batch):
         )
 
     conditioning_filepaths = []
-    conditioning_latents = None
+    conditioning_pixel_values = None
+    conditioning_type = None
     if len(conditioning_examples) > 0:
         for example in conditioning_examples:
             # Building the list of conditioning image filepaths.
+            if conditioning_type is not None:
+                if example.get_conditioning_type() != conditioning_type:
+                    raise ValueError(
+                        f"Conditioning type mismatch: {conditioning_type} != {example.get_conditioning_type()}"
+                        "\n-> Ensure all conditioning samples are of the same type."
+                    )
+            else:
+                conditioning_type = example.get_conditioning_type()
+            if conditioning_type == "mask" and len(conditioning_examples) != len(
+                examples
+            ):
+                raise ValueError(
+                    f"Masks seem to be missing for some of the following images: {examples}"
+                    f"\n-> Ensure all images have a corresponding mask: {[example.image_path() for example in conditioning_examples]}"
+                )
             conditioning_filepaths.append(example.image_path(basename_only=False))
         # Use the poorly-named method to retrieve the image pixel values
-        conditioning_latents = deepfloyd_pixels(conditioning_filepaths, data_backend_id)
-        conditioning_latents = torch.stack(
+        conditioning_pixel_values = deepfloyd_pixels(
+            conditioning_filepaths, data_backend_id
+        )
+        conditioning_pixel_values = torch.stack(
             [
                 latent.to(StateTracker.get_accelerator().device)
-                for latent in conditioning_latents
+                for latent in conditioning_pixel_values
             ]
         )
 
@@ -474,7 +492,8 @@ def collate_fn(batch):
         "add_text_embeds": add_text_embeds_all,
         "batch_time_ids": batch_time_ids,
         "batch_luminance": batch_luminance,
-        "conditioning_pixel_values": conditioning_latents,
+        "conditioning_pixel_values": conditioning_pixel_values,
         "encoder_attention_mask": attn_mask,
         "is_regularisation_data": is_regularisation_data,
+        "conditioning_type": conditioning_type,
     }

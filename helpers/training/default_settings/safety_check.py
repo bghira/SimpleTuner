@@ -99,6 +99,7 @@ def safety_check(args, accelerator):
 
     if (
         args.model_type != "lora"
+        and not args.controlnet
         and args.base_model_precision != "no_change"
         and not args.i_know_what_i_am_doing
     ):

@@ -47,8 +47,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `dataset_type`
 
-- **Values:** `image` | `text_embeds` | `image_embeds`
-- **Description:** `image` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one.
+- **Values:** `image` | `text_embeds` | `image_embeds` | `conditioning`
+- **Description:** `image` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one. When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
 - **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 
 ### `default`
@@ -70,6 +70,16 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 - **Values:** `aws` | `local` | `csv`
 - **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
+
+### `conditioning_type`
+
+- **Values:** `controlnet` | `mask`
+- **Description:** A dataset may contain ControlNet conditioning inputs or masks to use during loss calculations. Only one or the other may be used.
+
+### `conditioning_data`
+
+- **Values:** `id` value of conditioning dataset
+- **Description:** As described in [the ControlNet guide](/documentation/CONTROLNET.md), an `image` dataset can be paired to its ControlNet or image mask data via this option.
 
 ### `instance_data_dir` / `aws_data_prefix`
 

@@ -25,6 +25,7 @@ class TrainingSample:
         data_backend_id: str,
         image_metadata: dict = None,
         image_path: str = None,
+        conditioning_type: str = None,
     ):
         """
         Initializes a new TrainingSample instance with a provided PIL.Image object and a data backend identifier.
@@ -38,6 +39,7 @@ class TrainingSample:
         self.target_size = None
         self.intermediary_size = None
         self.original_size = None
+        self.conditioning_type = conditioning_type
         self.data_backend_id = data_backend_id
         self.image_metadata = (
             image_metadata
@@ -600,6 +602,12 @@ class TrainingSample:
             Image.Image: The current image.
         """
         return self.image
+
+    def is_conditioning_sample(self):
+        return self.conditioning_type is not None
+
+    def get_conditioning_type(self):
+        return self.conditioning_type
 
     def get_conditioning_image(self):
         """
