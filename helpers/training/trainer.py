@@ -1783,6 +1783,251 @@ class Trainer:
                 backend["sampler"].should_abort = True
         self.should_abort = True
 
+    def model_predict(
+        self,
+        batch,
+        latents,
+        noisy_latents,
+        encoder_hidden_states,
+        added_cond_kwargs,
+        add_text_embeds,
+        timesteps,
+    ):
+        if self.config.controlnet:
+            training_logger.debug(
+                f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
+            )
+        if not self.config.disable_accelerator:
+            if self.config.controlnet:
+                # ControlNet conditioning.
+                controlnet_image = batch["conditioning_pixel_values"].to(
+                    dtype=self.config.weight_dtype
+                )
+                training_logger.debug(f"Image shape: {controlnet_image.shape}")
+                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states=encoder_hidden_states,
+                    added_cond_kwargs=added_cond_kwargs,
+                    controlnet_cond=controlnet_image,
+                    return_dict=False,
+                )
+                # Predict the noise residual
+                if self.unet is not None:
+                    model_pred = self.unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states=encoder_hidden_states,
+                        added_cond_kwargs=added_cond_kwargs,
+                        down_block_additional_residuals=[
+                            sample.to(dtype=self.config.weight_dtype)
+                            for sample in down_block_res_samples
+                        ],
+                        mid_block_additional_residual=mid_block_res_sample.to(
+                            dtype=self.config.weight_dtype
+                        ),
+                        return_dict=False,
+                    )[0]
+                if self.transformer is not None:
+                    raise Exception(
+                        "ControlNet predictions for transformer models are not yet implemented."
+                    )
+            elif self.config.model_family == "flux":
+                # handle guidance
+                packed_noisy_latents = pack_latents(
+                    noisy_latents,
+                    batch_size=latents.shape[0],
+                    num_channels_latents=latents.shape[1],
+                    height=latents.shape[2],
+                    width=latents.shape[3],
+                ).to(
+                    dtype=self.config.base_weight_dtype,
+                    device=self.accelerator.device,
+                )
+                if self.config.flux_guidance_mode == "mobius":
+                    guidance_scales = get_mobius_guidance(
+                        self.config,
+                        self.state["global_step"],
+                        self.config.num_update_steps_per_epoch,
+                        latents.shape[0],
+                        self.accelerator.device,
+                    )
+                elif self.config.flux_guidance_mode == "constant":
+                    guidance_scales = [
+                        float(self.config.flux_guidance_value)
+                    ] * latents.shape[0]
+
+                elif self.config.flux_guidance_mode == "random-range":
+                    # Generate a list of random values within the specified range for each latent
+                    guidance_scales = [
+                        random.uniform(
+                            self.config.flux_guidance_min,
+                            self.config.flux_guidance_max,
+                        )
+                        for _ in range(latents.shape[0])
+                    ]
+                self.guidance_values_list.append(guidance_scales)
+
+                # Now `guidance` will have different values for each latent in `latents`.
+                transformer_config = None
+                if hasattr(self.transformer, "module"):
+                    transformer_config = self.transformer.module.config
+                elif hasattr(self.transformer, "config"):
+                    transformer_config = self.transformer.config
+                if transformer_config is not None and getattr(
+                    transformer_config, "guidance_embeds", False
+                ):
+                    guidance = torch.tensor(
+                        guidance_scales, device=self.accelerator.device
+                    )
+                else:
+                    guidance = None
+                img_ids = prepare_latent_image_ids(
+                    latents.shape[0],
+                    latents.shape[2],
+                    latents.shape[3],
+                    self.accelerator.device,
+                    self.config.weight_dtype,
+                )
+                timesteps = (
+                    torch.tensor(timesteps)
+                    .expand(noisy_latents.shape[0])
+                    .to(device=self.accelerator.device)
+                    / 1000
+                )
+
+                text_ids = torch.zeros(
+                    batch["prompt_embeds"].shape[1],
+                    3,
+                ).to(
+                    device=self.accelerator.device,
+                    dtype=self.config.base_weight_dtype,
+                )
+                training_logger.debug(
+                    "DTypes:"
+                    f"\n-> Text IDs shape: {text_ids.shape if hasattr(text_ids, 'shape') else None}, dtype: {text_ids.dtype if hasattr(text_ids, 'dtype') else None}"
+                    f"\n-> Image IDs shape: {img_ids.shape if hasattr(img_ids, 'shape') else None}, dtype: {img_ids.dtype if hasattr(img_ids, 'dtype') else None}"
+                    f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else None}, dtype: {timesteps.dtype if hasattr(timesteps, 'dtype') else None}"
+                    f"\n-> Guidance: {guidance}"
+                    f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
+                )
+
+                flux_transformer_kwargs = {
+                    "hidden_states": packed_noisy_latents,
+                    # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
+                    "timestep": timesteps,
+                    "guidance": guidance,
+                    "pooled_projections": batch["add_text_embeds"].to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    "encoder_hidden_states": batch["prompt_embeds"].to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    "txt_ids": text_ids.to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    "img_ids": img_ids,
+                    "joint_attention_kwargs": None,
+                    "return_dict": False,
+                }
+                if self.config.flux_attention_masked_training:
+                    flux_transformer_kwargs["attention_mask"] = batch[
+                        "encoder_attention_mask"
+                    ]
+                    if flux_transformer_kwargs["attention_mask"] is None:
+                        raise ValueError(
+                            "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
+                        )
+
+                model_pred = self.transformer(**flux_transformer_kwargs)[0]
+
+            elif self.config.model_family == "sd3":
+                # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
+                #  image embeds are passed in with the TE-produced text embeds.
+                model_pred = self.transformer(
+                    hidden_states=noisy_latents.to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    timestep=timesteps,
+                    encoder_hidden_states=encoder_hidden_states.to(
+                        device=self.accelerator.device,
+                        dtype=self.config.base_weight_dtype,
+                    ),
+                    pooled_projections=add_text_embeds.to(
+                        device=self.accelerator.device,
+                        dtype=self.config.weight_dtype,
+                    ),
+                    return_dict=False,
+                )[0]
+            elif self.config.model_family == "pixart_sigma":
+                model_pred = self.transformer(
+                    noisy_latents,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=batch["encoder_attention_mask"],
+                    timestep=timesteps,
+                    added_cond_kwargs=added_cond_kwargs,
+                    return_dict=False,
+                )[0]
+                model_pred = model_pred.chunk(2, dim=1)[0]
+            elif self.config.model_family == "smoldit":
+                first_latent_shape = noisy_latents.shape
+                height = first_latent_shape[1] * 8
+                width = first_latent_shape[2] * 8
+                grid_height = height // 8 // self.transformer.config.patch_size
+                grid_width = width // 8 // self.transformer.config.patch_size
+                base_size = 512 // 8 // self.transformer.config.patch_size
+                grid_crops_coords = get_resize_crop_region_for_grid(
+                    (grid_height, grid_width), base_size
+                )
+                inputs = {
+                    "hidden_states": noisy_latents,
+                    "timestep": timesteps,
+                    "encoder_hidden_states": encoder_hidden_states,
+                    "encoder_attention_mask": batch["encoder_attention_mask"],
+                    "image_rotary_emb": get_2d_rotary_pos_embed(
+                        self.transformer.inner_dim
+                        // self.transformer.config.num_attention_heads,
+                        grid_crops_coords,
+                        (grid_height, grid_width),
+                    ),
+                }
+                model_pred = self.transformer(**inputs).sample
+            elif self.unet is not None:
+                if self.config.model_family == "legacy":
+                    # SD 1.5 or 2.x
+                    model_pred = self.unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states,
+                    ).sample
+                else:
+                    # SDXL, Kolors, other default unet prediction.
+                    model_pred = self.unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states,
+                        added_cond_kwargs=added_cond_kwargs,
+                    ).sample
+            else:
+                raise Exception("Unknown error occurred, no prediction could be made.")
+
+            if self.config.model_family == "flux":
+                model_pred = unpack_latents(
+                    model_pred,
+                    height=latents.shape[2] * 8,
+                    width=latents.shape[3] * 8,
+                    vae_scale_factor=16,
+                )
+        else:
+            # Dummy model prediction for debugging.
+            model_pred = torch.randn_like(noisy_latents)
+
+        return model_pred
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -2088,11 +2333,9 @@ class Trainer:
                             "Supported types are 'epsilon', `sample`, and 'v_prediction'."
                         )
 
+                    added_cond_kwargs = None
                     # Predict the noise residual and compute loss
-                    if self.config.model_family == "sd3":
-                        # Even if we're using DDPM process, we don't add in extra kwargs, which are SDXL-specific.
-                        added_cond_kwargs = None
-                    elif (
+                    if (
                         StateTracker.get_model_family() == "sdxl"
                         or self.config.model_family == "kolors"
                     ):
@@ -2120,259 +2363,47 @@ class Trainer:
                             dtype=self.config.weight_dtype,
                         )
 
-                    training_logger.debug("Predicting noise residual.")
-
-                    if self.config.controlnet:
-                        training_logger.debug(
-                            f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
-                        )
-                    if not self.config.disable_accelerator:
-                        if self.config.controlnet:
-                            # ControlNet conditioning.
-                            controlnet_image = batch["conditioning_pixel_values"].to(
-                                dtype=self.config.weight_dtype
-                            )
-                            training_logger.debug(
-                                f"Image shape: {controlnet_image.shape}"
-                            )
-                            down_block_res_samples, mid_block_res_sample = (
-                                self.controlnet(
-                                    noisy_latents,
-                                    timesteps,
-                                    encoder_hidden_states=encoder_hidden_states,
-                                    added_cond_kwargs=added_cond_kwargs,
-                                    controlnet_cond=controlnet_image,
-                                    return_dict=False,
+                    # a marker to know whether we had a model capable of regularised data training.
+                    handled_regularisation = False
+                    is_regularisation_data = batch.get("is_regularisation_data", False)
+                    if is_regularisation_data and self.config.model_type == "lora":
+                        training_logger.debug("Predicting parent model residual.")
+                        handled_regularisation = True
+                        with torch.no_grad():
+                            if self.config.lora_type.lower() == "lycoris":
+                                logger.info(
+                                    "Detaching LyCORIS adapter for parent prediction."
                                 )
-                            )
-                            # Predict the noise residual
-                            if self.unet is not None:
-                                model_pred = self.unet(
-                                    noisy_latents,
-                                    timesteps,
-                                    encoder_hidden_states=encoder_hidden_states,
-                                    added_cond_kwargs=added_cond_kwargs,
-                                    down_block_additional_residuals=[
-                                        sample.to(dtype=self.config.weight_dtype)
-                                        for sample in down_block_res_samples
-                                    ],
-                                    mid_block_additional_residual=mid_block_res_sample.to(
-                                        dtype=self.config.weight_dtype
-                                    ),
-                                    return_dict=False,
-                                )[0]
-                            if self.transformer is not None:
-                                raise Exception(
-                                    "ControlNet predictions for transformer models are not yet implemented."
-                                )
-                        elif self.config.model_family == "flux":
-                            # handle guidance
-                            packed_noisy_latents = pack_latents(
-                                noisy_latents,
-                                batch_size=latents.shape[0],
-                                num_channels_latents=latents.shape[1],
-                                height=latents.shape[2],
-                                width=latents.shape[3],
-                            ).to(
-                                dtype=self.config.base_weight_dtype,
-                                device=self.accelerator.device,
-                            )
-                            if self.config.flux_guidance_mode == "mobius":
-                                guidance_scales = get_mobius_guidance(
-                                    self.config,
-                                    self.state["global_step"],
-                                    self.config.num_update_steps_per_epoch,
-                                    latents.shape[0],
-                                    self.accelerator.device,
-                                )
-                            elif self.config.flux_guidance_mode == "constant":
-                                guidance_scales = [
-                                    float(self.config.flux_guidance_value)
-                                ] * latents.shape[0]
-
-                            elif self.config.flux_guidance_mode == "random-range":
-                                # Generate a list of random values within the specified range for each latent
-                                guidance_scales = [
-                                    random.uniform(
-                                        self.config.flux_guidance_min,
-                                        self.config.flux_guidance_max,
-                                    )
-                                    for _ in range(latents.shape[0])
-                                ]
-                            self.guidance_values_list.append(guidance_scales)
-
-                            # Now `guidance` will have different values for each latent in `latents`.
-                            transformer_config = None
-                            if hasattr(self.transformer, "module"):
-                                transformer_config = self.transformer.module.config
-                            elif hasattr(self.transformer, "config"):
-                                transformer_config = self.transformer.config
-                            if transformer_config is not None and getattr(
-                                transformer_config, "guidance_embeds", False
-                            ):
-                                guidance = torch.tensor(
-                                    guidance_scales, device=self.accelerator.device
-                                )
+                                self.accelerator._lycoris_wrapped_network.restore()
                             else:
-                                guidance = None
-                            img_ids = prepare_latent_image_ids(
-                                latents.shape[0],
-                                latents.shape[2],
-                                latents.shape[3],
-                                self.accelerator.device,
-                                self.config.weight_dtype,
-                            )
-                            timesteps = (
-                                torch.tensor(timesteps)
-                                .expand(noisy_latents.shape[0])
-                                .to(device=self.accelerator.device)
-                                / 1000
-                            )
-
-                            text_ids = torch.zeros(
-                                batch["prompt_embeds"].shape[1],
-                                3,
-                            ).to(
-                                device=self.accelerator.device,
-                                dtype=self.config.base_weight_dtype,
-                            )
-                            training_logger.debug(
-                                "DTypes:"
-                                f"\n-> Text IDs shape: {text_ids.shape if hasattr(text_ids, 'shape') else None}, dtype: {text_ids.dtype if hasattr(text_ids, 'dtype') else None}"
-                                f"\n-> Image IDs shape: {img_ids.shape if hasattr(img_ids, 'shape') else None}, dtype: {img_ids.dtype if hasattr(img_ids, 'dtype') else None}"
-                                f"\n-> Timesteps shape: {timesteps.shape if hasattr(timesteps, 'shape') else None}, dtype: {timesteps.dtype if hasattr(timesteps, 'dtype') else None}"
-                                f"\n-> Guidance: {guidance}"
-                                f"\n-> Packed Noisy Latents shape: {packed_noisy_latents.shape if hasattr(packed_noisy_latents, 'shape') else None}, dtype: {packed_noisy_latents.dtype if hasattr(packed_noisy_latents, 'dtype') else None}"
-                            )
-
-                            flux_transformer_kwargs = {
-                                "hidden_states": packed_noisy_latents,
-                                # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
-                                "timestep": timesteps,
-                                "guidance": guidance,
-                                "pooled_projections": batch["add_text_embeds"].to(
-                                    device=self.accelerator.device,
-                                    dtype=self.config.base_weight_dtype,
-                                ),
-                                "encoder_hidden_states": batch["prompt_embeds"].to(
-                                    device=self.accelerator.device,
-                                    dtype=self.config.base_weight_dtype,
-                                ),
-                                "txt_ids": text_ids.to(
-                                    device=self.accelerator.device,
-                                    dtype=self.config.base_weight_dtype,
-                                ),
-                                "img_ids": img_ids,
-                                "joint_attention_kwargs": None,
-                                "return_dict": False,
-                            }
-                            if self.config.flux_attention_masked_training:
-                                flux_transformer_kwargs["attention_mask"] = batch[
-                                    "encoder_attention_mask"
-                                ]
-                                if flux_transformer_kwargs["attention_mask"] is None:
-                                    raise ValueError(
-                                        "No attention mask was discovered when attempting validation - this means you need to recreate your text embed cache."
-                                    )
-
-                            model_pred = self.transformer(**flux_transformer_kwargs)[0]
-
-                        elif self.config.model_family == "sd3":
-                            # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
-                            #  image embeds are passed in with the TE-produced text embeds.
-                            model_pred = self.transformer(
-                                hidden_states=noisy_latents.to(
-                                    device=self.accelerator.device,
-                                    dtype=self.config.base_weight_dtype,
-                                ),
-                                timestep=timesteps,
-                                encoder_hidden_states=encoder_hidden_states.to(
-                                    device=self.accelerator.device,
-                                    dtype=self.config.base_weight_dtype,
-                                ),
-                                pooled_projections=add_text_embeds.to(
-                                    device=self.accelerator.device,
-                                    dtype=self.config.weight_dtype,
-                                ),
-                                return_dict=False,
-                            )[0]
-                        elif self.config.model_family == "pixart_sigma":
-                            model_pred = self.transformer(
-                                noisy_latents,
+                                raise ValueError(
+                                    f"Cannot train parent-student networks on {self.config.lora_type} model. Only LyCORIS is supported."
+                                )
+                            target = self.model_predict(
+                                batch=batch,
+                                latents=latents,
+                                noisy_latents=noisy_latents,
                                 encoder_hidden_states=encoder_hidden_states,
-                                encoder_attention_mask=batch["encoder_attention_mask"],
-                                timestep=timesteps,
                                 added_cond_kwargs=added_cond_kwargs,
-                                return_dict=False,
-                            )[0]
-                            model_pred = model_pred.chunk(2, dim=1)[0]
-                        elif self.config.model_family == "smoldit":
-                            first_latent_shape = noisy_latents.shape
-                            height = first_latent_shape[1] * 8
-                            width = first_latent_shape[2] * 8
-                            grid_height = (
-                                height // 8 // self.transformer.config.patch_size
+                                add_text_embeds=add_text_embeds,
+                                timesteps=timesteps,
                             )
-                            grid_width = (
-                                width // 8 // self.transformer.config.patch_size
-                            )
-                            base_size = 512 // 8 // self.transformer.config.patch_size
-                            grid_crops_coords = get_resize_crop_region_for_grid(
-                                (grid_height, grid_width), base_size
-                            )
-                            inputs = {
-                                "hidden_states": noisy_latents,
-                                "timestep": timesteps,
-                                "encoder_hidden_states": encoder_hidden_states,
-                                "encoder_attention_mask": batch[
-                                    "encoder_attention_mask"
-                                ],
-                                "image_rotary_emb": get_2d_rotary_pos_embed(
-                                    self.transformer.inner_dim
-                                    // self.transformer.config.num_attention_heads,
-                                    grid_crops_coords,
-                                    (grid_height, grid_width),
-                                ),
-                            }
-                            model_pred = self.transformer(**inputs).sample
-                        elif self.unet is not None:
-                            if self.config.model_family == "legacy":
-                                # SD 1.5 or 2.x
-                                model_pred = self.unet(
-                                    noisy_latents,
-                                    timesteps,
-                                    encoder_hidden_states,
-                                ).sample
-                            else:
-                                # SDXL, Kolors, other default unet prediction.
-                                model_pred = self.unet(
-                                    noisy_latents,
-                                    timesteps,
-                                    encoder_hidden_states,
-                                    added_cond_kwargs=added_cond_kwargs,
-                                ).sample
-                        else:
-                            raise Exception(
-                                "Unknown error occurred, no prediction could be made."
-                            )
-                        # if we're quantising with quanto, we need to dequantise the result
-                        # if "quanto" in self.config.base_model_precision:
-                        #     if hasattr(model_pred, "dequantize") and isinstance(
-                        #         model_pred, QTensor
-                        #     ):
-                        #         model_pred = model_pred.dequantize()
+                            if self.config.lora_type.lower() == "lycoris":
+                                logger.info(
+                                    "Attaching LyCORIS adapter for student prediction."
+                                )
+                                self.accelerator._lycoris_wrapped_network.apply_to()
 
-                        if self.config.model_family == "flux":
-                            model_pred = unpack_latents(
-                                model_pred,
-                                height=latents.shape[2] * 8,
-                                width=latents.shape[3] * 8,
-                                vae_scale_factor=16,
-                            )
-
-                    else:
-                        # Dummy model prediction for debugging.
-                        model_pred = torch.randn_like(noisy_latents)
+                    training_logger.debug("Predicting noise residual.")
+                    model_pred = self.model_predict(
+                        batch=batch,
+                        latents=latents,
+                        noisy_latents=noisy_latents,
+                        encoder_hidden_states=encoder_hidden_states,
+                        added_cond_kwargs=added_cond_kwargs,
+                        add_text_embeds=add_text_embeds,
+                        timesteps=timesteps,
+                    )
 
                     # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                     if (
@@ -2382,6 +2413,7 @@ class Trainer:
                     ):
                         model_pred = model_pred - noise
 
+                    parent_loss = None
                     if self.config.flow_matching:
                         loss = torch.mean(
                             ((model_pred.float() - target.float()) ** 2).reshape(
@@ -2435,6 +2467,9 @@ class Trainer:
                             loss.mean(dim=list(range(1, len(loss.shape))))
                             * mse_loss_weights
                         ).mean()
+
+                    if is_regularisation_data:
+                        parent_loss = loss
 
                     # Gather the losses across all processes for logging (if we use distributed training).
                     avg_loss = self.accelerator.gather(
@@ -2506,6 +2541,8 @@ class Trainer:
                         "learning_rate": self.lr,
                         "epoch": epoch,
                     }
+                    if parent_loss is not None:
+                        wandb_logs["regularisation_loss"] = parent_loss
                     if self.config.model_family == "flux" and self.guidance_values_list:
                         # avg the values
                         guidance_values = torch.tensor(self.guidance_values_list).mean()
@@ -2584,6 +2621,7 @@ class Trainer:
                         structured_data = {
                             "state": self.state,
                             "loss": round(self.train_loss, 4),
+                            "parent_loss": parent_loss,
                             "learning_rate": self.lr,
                             "epoch": epoch,
                             "final_epoch": self.config.num_train_epochs,

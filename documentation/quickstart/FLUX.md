@@ -191,6 +191,26 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 > ℹ️ Flux is a flow-matching model and shorter prompts that have strong similarities will result in practically the same image being produced by the model. Be sure to use longer, more descriptive prompts.
 
+#### Flux time schedule shifting
+
+Flow-matching models such as Flux and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
+
+##### Defaults
+By default, no schedule shift is applied to flux, which results in a sigmoid bell-shape to the timestep sampling distribution. This is unlikely to be the ideal approach for Flux, but it results in a greater amount of learning in a shorter period of time than auto-shift.
+
+##### Auto-shift
+A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flux_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
+
+##### Manual specification
+_Thanks to General Awareness from Discord for the following examples_
+
+When using a `--flux_schedule_shift` value of 0.1 (a very low value), only the finer details of the image are affected:
+![image](https://github.com/user-attachments/assets/991ca0ad-e25a-4b13-a3d6-b4f2de1fe982)
+
+When using a `--flux_schedule_shift` value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
+![image](https://github.com/user-attachments/assets/857a1f8a-07ab-4b75-8e6a-eecff616a28d)
+
+
 #### Quantised model training
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training Flux on just 16GB.
@@ -262,7 +282,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "skip_file_discovery": "",
     "caption_strategy": "filename",
     "metadata_backend": "discovery",
-    "repeats": 0
+    "repeats": 0,
+    "is_regularisation_data": true
   },
   {
     "id": "dreambooth-subject",
@@ -469,6 +490,7 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
 #### LoKr (--lora_type=lycoris)
 - Higher learning rates are better for LoKr (`1e-3` with AdamW, `2e-4` with Lion)
 - Other algo need more exploration.
+- Setting `is_regularisation_data` on such datasets may help preserve / prevent bleed.
 
 ### Image artifacts
 Flux will immediately absorb bad image artifacts. It's just how it is - a final training run on just high quality data may be required to fix it at the end.

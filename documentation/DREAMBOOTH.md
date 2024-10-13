@@ -28,7 +28,7 @@ Since that time, the idea has evolved and debated, with an opposing camp decidin
 
 The model contains something called a "prior" which could, in theory, be preserved during Dreambooth training. In experiments with Stable Diffusion however, it didn't seem to help - the model just overfits on its own knowledge.
 
-> 🔴 Prior preservation loss is not supported in SimpleTuner, all regularisation data is treated as if it were usual training data.
+> 🟢 ([#1031](https://github.com/bghira/SimpleTuner/issues/1031)) Prior preservation loss is supported in SimpleTuner when training LyCORIS adapters by setting `is_regularisation_data` on that dataset.
 
 ## Setup
 
@@ -105,7 +105,8 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "repeats": 0,
         "resolution": 512,
         "resolution_type": "pixel_area",
-        "minimum_image_size": 192
+        "minimum_image_size": 192,
+        "is_regularisation_data": true
     },
     {
         "id": "regularisation-data-1024px",
@@ -117,7 +118,8 @@ Inside our dataloader config `multidatabackend-dreambooth.json`, it will look so
         "repeats": 0,
         "resolution": 1024,
         "resolution_type": "pixel_area",
-        "minimum_image_size": 768
+        "minimum_image_size": 768,
+        "is_regularisation_data": true
     },
     {
         "id": "textembeds",
@@ -143,6 +145,8 @@ For a regularisation dataset:
   - If your Regularisation set has 1000 images, and you have 10 images in your training set, you'd want a repeats value of at least 100 to get fast results
 - `minimum_image_size` has been increased to ensure we don't introduce too many low-quality artifacts
 - Similarly, using more descriptive captions may help avoid forgetting. Switching from `instanceprompt` to `textfile` or other strategies will require creating `.txt` files for each image.
+- When `is_regularisation_data` (or 🇺🇸 `is_regularization_data` with a z, for the American users) is set, the data from this set will be fed into the base model to obtain a prediction that can be used as a loss target for the student LyCORIS model.
+  - Note, currently this only functions on a LyCORIS adapter.
 
 ## Selecting an instance prompt
 
