@@ -2365,7 +2365,7 @@ class Trainer:
                         handled_regularisation = True
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
-                                logger.info(
+                                training_logger.debug(
                                     "Detaching LyCORIS adapter for parent prediction."
                                 )
                                 self.accelerator._lycoris_wrapped_network.restore()
@@ -2383,7 +2383,7 @@ class Trainer:
                                 timesteps=timesteps,
                             )
                             if self.config.lora_type.lower() == "lycoris":
-                                logger.info(
+                                training_logger.debug(
                                     "Attaching LyCORIS adapter for student prediction."
                                 )
                                 self.accelerator._lycoris_wrapped_network.apply_to()
