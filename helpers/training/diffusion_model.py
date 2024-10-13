@@ -68,7 +68,7 @@ def load_diffusion_model(args, weight_dtype):
                     import diffusers
 
                     diffusers.models.attention_processor.FluxSingleAttnProcessor2_0 = (
-                        FluxSingleAttnProcessor3_0
+                        FluxAttnProcessor3_0
                     )
                     diffusers.models.attention_processor.FluxAttnProcessor2_0 = (
                         FluxAttnProcessor3_0

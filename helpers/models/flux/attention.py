@@ -1,10 +1,7 @@
 from torch import Tensor, FloatTensor
 from torch.nn import functional as F
 from einops import rearrange
-from diffusers.models.attention_processor import (
-    Attention,
-    apply_rope,
-)
+from diffusers.models.attention_processor import Attention
 
 try:
     from flash_attn_interface import flash_attn_func
@@ -78,11 +75,8 @@ class FluxSingleAttnProcessor3_0:
 
         # Apply RoPE if needed
         if image_rotary_emb is not None:
-            # YiYi to-do: update uising apply_rotary_emb
-            # from ..embeddings import apply_rotary_emb
-            # query = apply_rotary_emb(query, image_rotary_emb)
-            # key = apply_rotary_emb(key, image_rotary_emb)
-            query, key = apply_rope(query, key, image_rotary_emb)
+            query = apply_rotary_emb(query, image_rotary_emb)
+            key = apply_rotary_emb(key, image_rotary_emb)
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
         # TODO: add support for attn.scale when we move to Torch 2.1
@@ -101,6 +95,9 @@ class FluxSingleAttnProcessor3_0:
             )
 
         return hidden_states
+
+
+from diffusers.models.embeddings import apply_rotary_emb
 
 
 class FluxAttnProcessor3_0:
@@ -182,11 +179,9 @@ class FluxAttnProcessor3_0:
         value = torch.cat([encoder_hidden_states_value_proj, value], dim=2)
 
         if image_rotary_emb is not None:
-            # YiYi to-do: update uising apply_rotary_emb
-            # from ..embeddings import apply_rotary_emb
-            # query = apply_rotary_emb(query, image_rotary_emb)
-            # key = apply_rotary_emb(key, image_rotary_emb)
-            query, key = apply_rope(query, key, image_rotary_emb)
+
+            query = apply_rotary_emb(query, image_rotary_emb)
+            key = apply_rotary_emb(key, image_rotary_emb)
 
         # hidden_states = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
         hidden_states = fa3_sdpa(query, key, value)
