@@ -112,7 +112,7 @@ class TrainingSample:
             TrainingSample: A new TrainingSample instance.
         """
         data_backend = StateTracker.get_data_backend(data_backend_id)
-        image = data_backend["metadata_backend"].read_image(image_path)
+        image = data_backend["data_backend"].read_image(image_path)
         return TrainingSample(image, data_backend_id, image_path=image_path)
 
     def _validate_image_metadata(self) -> bool:
@@ -299,6 +299,26 @@ class TrainingSample:
 
         # Default to 1.0 if none of the conditions above match
         return 1.0
+
+    def prepare_like(self, other_sample, return_tensor=False):
+        """
+        Prepare the current TrainingSample in the same way as other_sample.
+
+        Args:
+            other_sample (TrainingSample): The sample to mimic.
+            return_tensors (bool): Whether to return tensors.
+
+        Returns:
+            PreparedSample: The prepared sample.
+        """
+        # Copy over the image metadata from the other sample
+        self.image_metadata = (
+            other_sample.image_metadata.copy() if other_sample.image_metadata else {}
+        )
+        # Validate the metadata to set internal attributes
+        self._validate_image_metadata()
+        # Proceed to prepare the image
+        return self.prepare(return_tensor=return_tensor)
 
     def prepare(self, return_tensor: bool = False):
         """
@@ -608,21 +628,6 @@ class TrainingSample:
 
     def get_conditioning_type(self):
         return self.conditioning_type
-
-    def get_conditioning_image(self):
-        """
-        Fetch a conditioning image, eg. a canny edge map for ControlNet training.
-        Currently, this example is not implemented or used.
-
-        Returns:
-            None
-        """
-        if not StateTracker.get_args().controlnet:
-            return None
-        conditioning_dataset = StateTracker.get_conditioning_dataset(
-            data_backend_id=self.data_backend_id
-        )
-        raise NotImplementedError("Conditioning images are not yet implemented.")
 
     def cache_path(self):
         """
