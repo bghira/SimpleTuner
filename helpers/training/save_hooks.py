@@ -451,6 +451,9 @@ class SaveHookManager:
             raise ValueError("No model found to load LyCORIS weights into.")
 
         logger.info("LyCORIS weights have been loaded from disk")
+        # disable LyCORIS spam logging
+        lycoris_logger = logging.getLogger("LyCORIS")
+        lycoris_logger.setLevel(logging.ERROR)
 
     def _load_full_model(self, models, input_dir):
         if self.args.use_ema:
