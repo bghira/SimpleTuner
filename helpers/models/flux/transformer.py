@@ -39,6 +39,14 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+is_flash_attn_available = False
+try:
+    from flash_attn_interface import flash_attn_func
+
+    is_flash_attn_available = True
+except:
+    pass
+
 from helpers.models.flux.attention import (
     FluxSingleAttnProcessor3_0,
     FluxAttnProcessor3_0,
@@ -62,7 +70,11 @@ class FluxAttnProcessor2_0:
         attention_mask: Optional[torch.FloatTensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
     ) -> torch.FloatTensor:
-        batch_size, _, _ = hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+        batch_size, _, _ = (
+            hidden_states.shape
+            if encoder_hidden_states is None
+            else encoder_hidden_states.shape
+        )
 
         # `sample` projections.
         query = attn.to_q(hidden_states)
@@ -196,7 +208,7 @@ class FluxSingleTransformerBlock(nn.Module):
         self.act_mlp = nn.GELU(approximate="tanh")
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
 
-        processor = FluxSingleAttnProcessor2_0()
+        processor = FluxAttnProcessor2_0()
         if torch.cuda.is_available():
             rank = (
                 torch.distributed.get_rank()
@@ -431,9 +443,7 @@ class FluxTransformer2DModelWithMasking(
             self.config.num_attention_heads * self.config.attention_head_dim
         )
 
-        self.pos_embed = FluxPosEmbed(
-            theta=10000, axes_dim=axes_dims_rope
-        )
+        self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
         text_time_guidance_cls = (
             CombinedTimestepGuidanceTextProjEmbeddings
             if guidance_embeds
