@@ -52,6 +52,7 @@ from helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from helpers.training.min_snr_gamma import compute_snr
+from helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from accelerate.logging import get_logger
 from diffusers.models.embeddings import get_2d_rotary_pos_embed
 from helpers.models.smoldit import get_resize_crop_region_for_grid
@@ -930,6 +931,12 @@ class Trainer:
                     linear_alpha,
                     **self.lycoris_config,
                 )
+
+                if self.config.init_lokr_norm is not None:
+                    init_lokr_network_with_perturbed_normal(
+                        self.lycoris_wrapped_network,
+                        scale=self.config.init_lokr_norm,
+                    )
 
             self.lycoris_wrapped_network.apply_to()
             setattr(

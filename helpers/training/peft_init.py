@@ -2,10 +2,11 @@ import torch
 
 
 def approximate_normal_tensor(inp, target, scale=1.0):
-    tensor = torch.randn_like(target)
-    desired_norm = inp.norm()
-    desired_mean = inp.mean()
-    desired_std = inp.std()
+    device = inp.device
+    tensor = torch.randn_like(target).to(device)
+    desired_norm = inp.norm().to(device)
+    desired_mean = inp.mean().to(device)
+    desired_std = inp.std().to(device)
 
     current_norm = tensor.norm()
     tensor = tensor * (desired_norm / current_norm)
