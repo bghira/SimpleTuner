@@ -428,6 +428,10 @@ NF4 does not work with torch.compile, so whatever you get for speed is what you 
 
 If VRAM is not a concern (eg. 48G or greater) then int8 with torch.compile is your best, fastest option.
 
+### Masked loss
+
+If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
+
 ### Classifier-free guidance
 
 #### Problem
@@ -490,7 +494,9 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
 #### LoKr (--lora_type=lycoris)
 - Higher learning rates are better for LoKr (`1e-3` with AdamW, `2e-4` with Lion)
 - Other algo need more exploration.
-- Setting `is_regularisation_data` on such datasets may help preserve / prevent bleed.
+- Setting `is_regularisation_data` on such datasets may help preserve / prevent bleed and improve the final resulting model's quality.
+  - This behaves differently from "prior loss preservation" which is known for doubling training batch sizes and not improving the result much
+  - SimpleTuner's regularisation data implementation provides an efficient manner of preserving the base model
 
 ### Image artifacts
 Flux will immediately absorb bad image artifacts. It's just how it is - a final training run on just high quality data may be required to fix it at the end.

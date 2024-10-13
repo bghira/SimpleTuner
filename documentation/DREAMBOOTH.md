@@ -30,6 +30,73 @@ The model contains something called a "prior" which could, in theory, be preserv
 
 > 🟢 ([#1031](https://github.com/bghira/SimpleTuner/issues/1031)) Prior preservation loss is supported in SimpleTuner when training LyCORIS adapters by setting `is_regularisation_data` on that dataset.
 
+### Masked loss
+
+Image masks may be defined in pairs with image data. The dark portions of the mask will cause the loss calculations to ignore these parts of the image.
+
+An example [script](/toolkit/datasets/masked_loss/generate_dataset_masks.py) exists to generate these masks, given an input_dir and output_dir:
+
+```bash
+python generate_dataset_masks.py --input_dir /images/input \
+                      --output_dir /images/output \
+                      --text_input "person"
+```
+
+However, this does not have any advanced functionality such as mask padding blurring.
+
+When defining your image mask dataset:
+
+- Every image must have a mask. Use an all-white image if you do not want to mask.
+- Set `dataset_type=conditioning` on your conditioning (mask) data folder
+- Set `conditioning_type=mask` on your mask dataset
+- Set `conditioning_data=` to your conditioning dataset `id` on your image dataset
+
+```json
+[
+    {
+        "id": "dreambooth-data",
+        "type": "local",
+        "dataset_type": "image",
+        "conditioning_data": "dreambooth-conditioning",
+        "instance_data_dir": "/training/datasets/test_datasets/dreambooth",
+        "cache_dir_vae": "/training/cache/vae/sdxl/dreambooth-data",
+        "caption_strategy": "instanceprompt",
+        "instance_prompt": "an dreambooth",
+        "metadata_backend": "discovery",
+        "resolution": 1024,
+        "minimum_image_size": 1024,
+        "maximum_image_size": 1024,
+        "target_downsample_size": 1024,
+        "crop": true,
+        "crop_aspect": "square",
+        "crop_style": "center",
+        "resolution_type": "pixel_area"
+    },
+    {
+        "id": "dreambooth-conditioning",
+        "type": "local",
+        "dataset_type": "conditioning",
+        "instance_data_dir": "/training/datasets/test_datasets/dreambooth_mask",
+        "resolution": 1024,
+        "minimum_image_size": 1024,
+        "maximum_image_size": 1024,
+        "target_downsample_size": 1024,
+        "crop": true,
+        "crop_aspect": "square",
+        "crop_style": "center",
+        "resolution_type": "pixel_area",
+        "conditioning_type": "mask"
+    },
+    {
+        "id": "an example backend for text embeds.",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "type": "local",
+        "cache_dir": "/training/cache/text/sdxl-base/masked_loss"
+    }
+]
+```
+
 ## Setup
 
 Following the [tutorial](/TUTORIAL.md) is required before you can continue into Dreambooth-specific configuration.

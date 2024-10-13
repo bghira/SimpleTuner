@@ -338,6 +338,24 @@ class Trainer:
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = (
             prepare_model_for_deepspeed(self.accelerator, self.config)
         )
+        self.config.base_weight_dtype = self.config.weight_dtype
+        self.config.is_quanto = False
+        self.config.is_torchao = False
+        self.config.is_bnb = False
+        if "quanto" in self.config.base_model_precision:
+            self.config.is_quanto = True
+        elif "torchao" in self.config.base_model_precision:
+            self.config.is_torchao = True
+        elif "bnb" in self.config.base_model_precision:
+            self.config.is_bnb = True
+        if self.config.is_quanto:
+            from helpers.training.quantisation import quantise_model
+
+            self.quantise_model = quantise_model
+        elif self.config.is_torchao:
+            from helpers.training.quantisation import quantise_model
+
+            self.quantise_model = quantise_model
 
     def set_model_family(self, model_family: str = None):
         model_family = getattr(self.config, "model_family", model_family)
@@ -731,16 +749,6 @@ class Trainer:
         self.config.enable_adamw_bf16 = (
             True if self.config.weight_dtype == torch.bfloat16 else False
         )
-        self.config.base_weight_dtype = self.config.weight_dtype
-        self.config.is_quanto = False
-        self.config.is_torchao = False
-        self.config.is_bnb = False
-        if "quanto" in self.config.base_model_precision:
-            self.config.is_quanto = True
-        elif "torchao" in self.config.base_model_precision:
-            self.config.is_torchao = True
-        elif "bnb" in self.config.base_model_precision:
-            self.config.is_bnb = True
         quantization_device = (
             "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
         )
@@ -770,11 +778,8 @@ class Trainer:
                 )
 
         if self.config.is_quanto:
-            from helpers.training.quantisation import quantise_model
-
-            self.quantise_model = quantise_model
             with self.accelerator.local_main_process_first():
-                quantise_model(
+                self.quantise_model(
                     unet=self.unet,
                     transformer=self.transformer,
                     text_encoder_1=self.text_encoder_1,
@@ -784,9 +789,6 @@ class Trainer:
                     args=self.config,
                 )
         elif self.config.is_torchao:
-            from helpers.training.quantisation import quantise_model
-
-            self.quantise_model = quantise_model
             with self.accelerator.local_main_process_first():
                 (
                     self.unet,
@@ -795,7 +797,7 @@ class Trainer:
                     self.text_encoder_2,
                     self.text_encoder_3,
                     self.controlnet,
-                ) = quantise_model(
+                ) = self.quantise_model(
                     unet=self.unet,
                     transformer=self.transformer,
                     text_encoder_1=self.text_encoder_1,
@@ -811,24 +813,13 @@ class Trainer:
         logger.info("Creating the controlnet..")
         if self.config.controlnet_model_name_or_path:
             logger.info("Loading existing controlnet weights")
-            controlnet = ControlNetModel.from_pretrained(
+            self.controlnet = ControlNetModel.from_pretrained(
                 self.config.controlnet_model_name_or_path
             )
         else:
             logger.info("Initializing controlnet weights from unet")
-            controlnet = ControlNetModel.from_unet(self.unet)
-        if "quanto" in self.config.base_model_precision:
-            # since controlnet training uses no adapter currently, we just quantise the base transformer here.
-            with self.accelerator.local_main_process_first():
-                self.quantise_model(
-                    unet=self.unet,
-                    transformer=self.transformer,
-                    text_encoder_1=self.text_encoder_1,
-                    text_encoder_2=self.text_encoder_2,
-                    text_encoder_3=self.text_encoder_3,
-                    controlnet=None,
-                    args=self.config,
-                )
+            self.controlnet = ControlNetModel.from_unet(self.unet)
+
         self.accelerator.wait_for_everyone()
 
     def init_trainable_peft_adapter(self):
@@ -1626,6 +1617,9 @@ class Trainer:
 
         if self.config.controlnet:
             self.controlnet.train()
+            logger.info(
+                f"Moving ControlNet to {target_device} in {self.config.weight_dtype} precision."
+            )
             self.controlnet.to(device=target_device, dtype=self.config.weight_dtype)
             if self.config.train_text_encoder:
                 logger.warning(
@@ -2371,7 +2365,7 @@ class Trainer:
                         handled_regularisation = True
                         with torch.no_grad():
                             if self.config.lora_type.lower() == "lycoris":
-                                logger.info(
+                                training_logger.debug(
                                     "Detaching LyCORIS adapter for parent prediction."
                                 )
                                 self.accelerator._lycoris_wrapped_network.restore()
@@ -2389,7 +2383,7 @@ class Trainer:
                                 timesteps=timesteps,
                             )
                             if self.config.lora_type.lower() == "lycoris":
-                                logger.info(
+                                training_logger.debug(
                                     "Attaching LyCORIS adapter for student prediction."
                                 )
                                 self.accelerator._lycoris_wrapped_network.apply_to()
@@ -2420,11 +2414,11 @@ class Trainer:
                                 target.shape[0], -1
                             ),
                             1,
-                        ).mean()
+                        )
                     elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
                         training_logger.debug("Calculating loss")
                         loss = self.config.snr_weight * F.mse_loss(
-                            model_pred.float(), target.float(), reduction="mean"
+                            model_pred.float(), target.float(), reduction="none"
                         )
                     else:
                         # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
@@ -2466,8 +2460,25 @@ class Trainer:
                         loss = (
                             loss.mean(dim=list(range(1, len(loss.shape))))
                             * mse_loss_weights
-                        ).mean()
+                        )
 
+                    # Mask the loss using any conditioning data
+                    conditioning_type = batch.get("conditioning_type")
+                    if conditioning_type == "mask":
+                        # adapted from: https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
+                        mask_image = (
+                            batch["conditioning_pixel_values"]
+                            .to(dtype=loss.dtype, device=loss.device)[:, 0]
+                            .unsqueeze(1)
+                        )
+                        mask_image = torch.nn.functional.interpolate(
+                            mask_image, size=loss.shape[2:], mode="area"
+                        )
+                        mask_image = mask_image / 2 + 0.5
+                        loss = loss * mask_image
+
+                    # reduce loss now
+                    loss = loss.mean()
                     if is_regularisation_data:
                         parent_loss = loss
 
