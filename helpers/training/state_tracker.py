@@ -407,7 +407,7 @@ class StateTracker:
 
     @classmethod
     def get_conditioning_dataset(cls, data_backend_id: str):
-        return cls.data_backends[data_backend_id]["conditioning_data"]
+        return cls.data_backends[data_backend_id].get("conditioning_data", None)
 
     @classmethod
     def get_data_backend_config(cls, data_backend_id: str):

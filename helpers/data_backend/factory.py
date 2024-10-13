@@ -873,6 +873,10 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                     "Increasing resolution to 256, as is required for DF Stage II."
                 )
 
+        conditioning_type = None
+        if backend.get("dataset_type") == "conditioning":
+            conditioning_type = backend.get("conditioning_type", "controlnet")
+
         init_backend["sampler"] = MultiAspectSampler(
             id=init_backend["id"],
             metadata_backend=init_backend["metadata_backend"],
@@ -891,6 +895,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 "prepend_instance_prompt", args.prepend_instance_prompt
             ),
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
+            conditioning_type=conditioning_type,
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, args, init_backend["data_backend"])
