@@ -492,6 +492,14 @@ class SaveHookManager:
     def load_model_hook(self, models, input_dir):
         # Check the checkpoint dir for a "training_state.json" file to load
         training_state_path = os.path.join(input_dir, self.training_state_path)
+        if (
+            not os.path.exists(training_state_path)
+            and self.training_state_path != "training_state.json"
+        ):
+            logger.warning(
+                f"Could not find {training_state_path} in checkpoint dir {input_dir}. Trying the default path."
+            )
+            training_state_path = os.path.join(input_dir, "training_state.json")
         if os.path.exists(training_state_path):
             StateTracker.load_training_state(training_state_path)
         else:
