@@ -1461,13 +1461,16 @@ class Trainer:
             structured_data={"message": f"Resuming model: {path}"},
             message_type="init_resume_checkpoint",
         )
+        training_state_filename = f"training_state.json"
+        if get_rank() > 0:
+            training_state_filename = f"training_state-{get_rank()}.json"
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
                 backend["sampler"].load_states(
                     state_path=os.path.join(
                         self.config.output_dir,
                         path,
-                        f"training_state-{get_rank()}.json",
+                        training_state_filename,
                     ),
                 )
         self.state["global_resume_step"] = self.state["global_step"] = (
