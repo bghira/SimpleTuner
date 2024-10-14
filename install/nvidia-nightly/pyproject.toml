@@ -8,9 +8,9 @@ readme = "README.md"
 package-mode = false
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
-torch = { version = "2.4.1+cu124", source = "pytorch" }
-torchvision = { version = ">0.19", source = "pytorch" }
+python = ">=3.10,<3.13"
+torch = { version = ">2.5.0", source = "pytorch-nightly" }
+torchvision = { version = ">0.19", source = "pytorch-nightly" }
 diffusers = {git = "https://github.com/huggingface/diffusers", rev = "quantization-config"}
 transformers = "^4.45.1"
 datasets = "^3.0.1"
@@ -48,9 +48,10 @@ toml = "^0.10.2"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
 torchao = {version = "^0.5.0+cu124", source = "pytorch"}
 lm-eval = "^0.4.4"
-nvidia-cudnn-cu12 = "*"
-nvidia-nccl-cu12 = "*"
-
+nvidia-cudnn-cu12 = "^9.4.0.58"
+nvidia-nccl-cu12 = "^2.23.4"
+pytorch-triton = {version = "3.1.0+cf34004b8a", source = "pytorch-nightly"}
+aiohappyeyeballs = "2.4.2"
 
 
 [build-system]
@@ -61,3 +62,8 @@ build-backend = "poetry.core.masonry.api"
 priority = "supplemental"
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu124"
+
+[[tool.poetry.source]]
+priority = "supplemental"
+name = "pytorch-nightly"
+url = "https://download.pytorch.org/whl/nightly/cu124"

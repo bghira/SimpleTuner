@@ -748,9 +748,14 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             repeats=init_backend["config"].get("repeats", 0),
             **metadata_backend_args,
         )
+        conditioning_type = None
+        if backend.get("dataset_type") == "conditioning":
+            conditioning_type = backend.get("conditioning_type", "controlnet")
 
-        if "aspect" not in args.skip_file_discovery and "aspect" not in backend.get(
-            "skip_file_discovery", ""
+        if (
+            "aspect" not in args.skip_file_discovery
+            and "aspect" not in backend.get("skip_file_discovery", "")
+            and conditioning_type not in ["mask", "controlnet"]
         ):
             if accelerator.is_local_main_process:
                 info_log(
@@ -829,7 +834,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         info_log(f"Configured backend: {init_backend}")
 
         print_bucket_info(init_backend["metadata_backend"])
-        if len(init_backend["metadata_backend"]) == 0:
+        if len(init_backend["metadata_backend"]) == 0 and conditioning_type is None:
             raise Exception(
                 f"No images were discovered by the bucket manager in the dataset: {init_backend['id']}."
             )
@@ -872,10 +877,6 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 logger.warning(
                     "Increasing resolution to 256, as is required for DF Stage II."
                 )
-
-        conditioning_type = None
-        if backend.get("dataset_type") == "conditioning":
-            conditioning_type = backend.get("conditioning_type", "controlnet")
 
         init_backend["sampler"] = MultiAspectSampler(
             id=init_backend["id"],
@@ -925,8 +926,10 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         StateTracker.register_data_backend(init_backend)
 
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
-        if "text" not in args.skip_file_discovery and "text" not in backend.get(
-            "skip_file_discovery", ""
+        if (
+            conditioning_type != "mask"
+            and "text" not in args.skip_file_discovery
+            and "text" not in backend.get("skip_file_discovery", "")
         ):
             info_log(f"(id={init_backend['id']}) Collecting captions.")
             captions = PromptHandler.get_all_captions(
@@ -962,7 +965,10 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
 
-        if "deepfloyd" not in StateTracker.get_args().model_type:
+        if (
+            "deepfloyd" not in StateTracker.get_args().model_type
+            and conditioning_type not in ["mask", "controlnet"]
+        ):
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
             if vae_cache_dir in vae_cache_dir_paths:
@@ -1040,6 +1046,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             and accelerator.is_main_process
             and backend.get("scan_for_errors", False)
             and "deepfloyd" not in StateTracker.get_args().model_type
+            and conditioning_type not in ["mask", "controlnet"]
         ):
             info_log(
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
@@ -1061,6 +1068,8 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             not args.vae_cache_ondemand
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
+            and "deepfloyd" not in StateTracker.get_args().model_type
+            and conditioning_type not in ["mask", "controlnet"]
         ):
             init_backend["vaecache"].discover_unprocessed_files()
             if not args.vae_cache_ondemand:
