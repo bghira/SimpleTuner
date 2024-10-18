@@ -2412,24 +2412,30 @@ class Trainer:
                     # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                     if (
                         hasattr(self.noise_scheduler, "config")
-                        and hasattr(self.noise_scheduler.config, "prediction_type")
-                        and self.noise_scheduler.config.prediction_type == "sample"
+                        and hasattr(
+                            self.noise_scheduler.config, "prediction_type"
+                        )
+                        and self.noise_scheduler.config.prediction_type
+                        == "sample"
                     ):
                         model_pred = model_pred - noise
 
                     parent_loss = None
+
+                    # Compute the per-pixel loss without reducing over spatial dimensions
                     if self.config.flow_matching:
-                        loss = torch.mean(
-                            ((model_pred.float() - target.float()) ** 2).reshape(
-                                target.shape[0], -1
-                            ),
-                            1,
-                        )
-                    elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
+                        # For flow matching, compute the per-pixel squared differences
+                        loss = (
+                            model_pred.float() - target.float()
+                        ) ** 2  # Shape: (batch_size, C, H, W)
+                    elif (
+                        self.config.snr_gamma is None
+                        or self.config.snr_gamma == 0
+                    ):
                         training_logger.debug("Calculating loss")
                         loss = self.config.snr_weight * F.mse_loss(
                             model_pred.float(), target.float(), reduction="none"
-                        )
+                        )  # Shape: (batch_size, C, H, W)
                     else:
                         # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                         # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -2442,7 +2448,8 @@ class Trainer:
                             == "v_prediction"
                             or (
                                 self.config.flow_matching
-                                and self.config.flow_matching_loss == "diffusion"
+                                and self.config.flow_matching_loss
+                                == "diffusion"
                             )
                         ):
                             snr_divisor = snr + 1
@@ -2454,52 +2461,62 @@ class Trainer:
                             torch.stack(
                                 [
                                     snr,
-                                    self.config.snr_gamma * torch.ones_like(timesteps),
+                                    self.config.snr_gamma
+                                    * torch.ones_like(timesteps),
                                 ],
                                 dim=1,
                             ).min(dim=1)[0]
                             / snr_divisor
-                        )
+                        )  # Shape: (batch_size,)
 
-                        # We first calculate the original loss. Then we mean over the non-batch dimensions and
-                        # rebalance the sample-wise losses with their respective loss weights.
-                        # Finally, we take the mean of the rebalanced loss.
+                        # Compute the per-pixel MSE loss without reduction
                         loss = F.mse_loss(
                             model_pred.float(), target.float(), reduction="none"
-                        )
+                        )  # Shape: (batch_size, C, H, W)
+
+                        # Reshape mse_loss_weights for broadcasting and apply to loss
+                        mse_loss_weights = mse_loss_weights.view(
+                            -1, 1, 1, 1
+                        )  # Shape: (batch_size, 1, 1, 1)
                         loss = (
-                            loss.mean(dim=list(range(1, len(loss.shape))))
-                            * mse_loss_weights
-                        )
+                            loss * mse_loss_weights
+                        )  # Shape: (batch_size, C, H, W)
 
                     # Mask the loss using any conditioning data
                     conditioning_type = batch.get("conditioning_type")
                     if conditioning_type == "mask":
-                        # adapted from: https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
+                        # Adapted from:
+                        # https://github.com/kohya-ss/sd-scripts/blob/main/library/custom_train_functions.py#L482
                         mask_image = (
                             batch["conditioning_pixel_values"]
                             .to(dtype=loss.dtype, device=loss.device)[:, 0]
                             .unsqueeze(1)
-                        )
+                        )  # Shape: (batch_size, 1, H', W')
                         mask_image = torch.nn.functional.interpolate(
                             mask_image, size=loss.shape[2:], mode="area"
-                        )
-                        mask_image = mask_image / 2 + 0.5
-                        loss = loss * mask_image
+                        )  # Resize to match loss spatial dimensions
+                        mask_image = mask_image / 2 + 0.5  # Normalize to [0,1]
+                        loss = loss * mask_image  # Element-wise multiplication
 
-                    # reduce loss now
-                    loss = loss.mean()
+                    # Reduce the loss by averaging over channels and spatial dimensions
+                    loss = loss.mean(
+                        dim=list(range(1, len(loss.shape)))
+                    )  # Shape: (batch_size,)
+
+                    # Further reduce the loss by averaging over the batch dimension
+                    loss = loss.mean()  # Scalar value
+
                     if is_regularisation_data:
                         parent_loss = loss
 
-                    # Gather the losses across all processes for logging (if we use distributed training).
+                    # Gather the losses across all processes for logging (if using distributed training)
                     avg_loss = self.accelerator.gather(
                         loss.repeat(self.config.train_batch_size)
                     ).mean()
                     self.train_loss += (
-                        avg_loss.item() / self.config.gradient_accumulation_steps
+                        avg_loss.item()
+                        / self.config.gradient_accumulation_steps
                     )
-
                     # Backpropagate
                     grad_norm = None
                     if not self.config.disable_accelerator:
