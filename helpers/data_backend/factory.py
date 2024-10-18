@@ -1069,6 +1069,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         if (
             not args.vae_cache_ondemand
+            and "vaecache" in init_backend
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
             and "deepfloyd" not in StateTracker.get_args().model_type
