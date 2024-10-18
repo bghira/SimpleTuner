@@ -559,8 +559,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             or backend["id"] in StateTracker.get_data_backends()
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
+        conditioning_type = None
+        if backend.get("dataset_type") == "conditioning":
+            conditioning_type = backend.get("conditioning_type", "controlnet")
         resolution_type = backend.get("resolution_type", args.resolution_type)
-        if resolution_type == "pixel_area":
+        if resolution_type == "pixel_area" and conditioning_type is None:
             pixel_edge_length = backend.get("resolution", args.resolution)
             if pixel_edge_length is None or (
                 type(pixel_edge_length) is not int
@@ -748,9 +751,6 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             repeats=init_backend["config"].get("repeats", 0),
             **metadata_backend_args,
         )
-        conditioning_type = None
-        if backend.get("dataset_type") == "conditioning":
-            conditioning_type = backend.get("conditioning_type", "controlnet")
 
         if (
             "aspect" not in args.skip_file_discovery
