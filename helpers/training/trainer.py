@@ -2501,6 +2501,7 @@ class Trainer:
                     )
 
                     # Backpropagate
+                    grad_norm = None
                     if not self.config.disable_accelerator:
                         training_logger.debug("Backwards pass.")
                         self.accelerator.backward(loss)
@@ -2514,7 +2515,6 @@ class Trainer:
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
 
-                        grad_norm = None
                         if (
                             self.accelerator.sync_gradients
                             and self.config.optimizer != "optimi-stableadamw"
