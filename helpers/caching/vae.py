@@ -144,8 +144,9 @@ class VAECache(WebhookMixin):
         subfolders = ""
         if self.instance_data_dir is not None:
             subfolders = os.path.dirname(filepath).replace(self.instance_data_dir, "")
-        if len(subfolders) > 0 and subfolders[0] == "/" and self.cache_dir[0] != "/":
-            subfolders = subfolders[1:]
+            subfolders = subfolders.lstrip(os.sep)
+
+        if len(subfolders) > 0:
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
             # logger.debug(
             #     f"full_filename: {full_filename} = os.path.join({self.cache_dir}, {subfolders}, {base_filename})"
