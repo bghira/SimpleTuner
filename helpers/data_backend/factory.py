@@ -561,7 +561,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             raise ValueError("Each dataset needs a unique 'id' field.")
         resolution_type = backend.get("resolution_type", args.resolution_type)
         if resolution_type == "pixel_area":
-            pixel_edge_length = backend.get("resolution")
+            pixel_edge_length = backend.get("resolution", args.resolution)
             if pixel_edge_length is None or (
                 type(pixel_edge_length) is not int
                 or not str(pixel_edge_length).isdigit()
@@ -968,6 +968,9 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
         if (
             "deepfloyd" not in StateTracker.get_args().model_type
             and conditioning_type not in ["mask", "controlnet"]
+            and not backend.get(
+                "is_regularisation_data", backend.get("is_regularization_data", False)
+            )
         ):
             info_log(f"(id={init_backend['id']}) Creating VAE latent cache.")
             vae_cache_dir = backend.get("cache_dir_vae", None)
