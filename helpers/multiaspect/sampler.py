@@ -379,8 +379,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             data_backend_config = StateTracker.get_data_backend_config(self.id)
             is_regularisation_data = data_backend_config.get(
                 "is_regularisation_data",
-                data_backend_config.get("is_regularization_data"),
-                False,
+                data_backend_config.get("is_regularization_data", False),
             )
             printed_state = (
                 f"- Repeats: {data_backend_config.get('repeats', 0)}\n"
