@@ -376,15 +376,24 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 # We don't know the direct count without more work, so we'll estimate it here for multi-GPU training.
                 total_image_count *= self.accelerator.num_processes
                 total_image_count = f"~{total_image_count}"
+            data_backend_config = StateTracker.get_data_backend_config(self.id)
+            is_regularisation_data = data_backend_config.get(
+                "is_regularisation_data",
+                data_backend_config.get("is_regularization_data"),
+                False,
+            )
             printed_state = (
-                f"- Repeats: {StateTracker.get_data_backend_config(self.id).get('repeats', 0)}\n"
+                f"- Repeats: {data_backend_config.get('repeats', 0)}\n"
                 f"- Total number of images: {total_image_count}\n"
                 f"- Total number of aspect buckets: {len(self.buckets)}\n"
                 f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}\n"
-                f"- Cropped: {StateTracker.get_data_backend_config(self.id).get('crop')}\n"
-                f"- Crop style: {'None' if not StateTracker.get_data_backend_config(self.id).get('crop') else StateTracker.get_data_backend_config(self.id).get('crop_style')}\n"
-                f"- Crop aspect: {'None' if not StateTracker.get_data_backend_config(self.id).get('crop') else StateTracker.get_data_backend_config(self.id).get('crop_aspect')}\n"
+                f"- Cropped: {data_backend_config.get('crop')}\n"
+                f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}\n"
+                f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}\n"
+                f"- Used for regularisation data: {'Yes' if is_regularisation_data else 'No'}\n"
             )
+            if self.conditioning_type:
+                printed_state += f"- Conditioning type: {self.conditioning_type}\n"
         else:
             # Return a snapshot of the current state during training.
             printed_state = (
