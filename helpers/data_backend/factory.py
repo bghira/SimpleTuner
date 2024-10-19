@@ -559,15 +559,19 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             or backend["id"] in StateTracker.get_data_backends()
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
+        info_log(f"Configuring data backend: {backend['id']}")
+        conditioning_type = backend.get("conditioning_type")
+        if backend.get("dataset_type") == "conditioning" or conditioning_type is not None:
+            backend['dataset_type'] = 'conditioning'
         resolution_type = backend.get("resolution_type", args.resolution_type)
         if resolution_type == "pixel_area":
-            pixel_edge_length = backend.get("resolution")
+            pixel_edge_length = backend.get("resolution", int(args.resolution))
             if pixel_edge_length is None or (
                 type(pixel_edge_length) is not int
                 or not str(pixel_edge_length).isdigit()
             ):
                 raise ValueError(
-                    f"Resolution type 'pixel_area' requires a 'resolution' field to be set in the backend config using an integer in the format: 1024"
+                    f"Resolution type 'pixel_area' requires a 'resolution' field to be set in the backend config using an integer in the format: 1024, but {pixel_edge_length} was given"
                 )
             # we'll convert pixel_area to area
             backend["resolution_type"] = "area"
@@ -596,7 +600,6 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                     backend["minimum_image_size"] * backend["minimum_image_size"]
                 ) / 1_000_000
 
-        info_log(f"Configuring data backend: {backend['id']}")
         # Retrieve some config file overrides for commandline arguments, eg. cropping
         init_backend = init_backend_config(backend, args, accelerator)
         StateTracker.set_data_backend_config(
@@ -748,9 +751,6 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             repeats=init_backend["config"].get("repeats", 0),
             **metadata_backend_args,
         )
-        conditioning_type = None
-        if backend.get("dataset_type") == "conditioning":
-            conditioning_type = backend.get("conditioning_type", "controlnet")
 
         if (
             "aspect" not in args.skip_file_discovery
@@ -1066,6 +1066,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
 
         if (
             not args.vae_cache_ondemand
+            and "vaecache" in init_backend
             and "vae" not in args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
             and "deepfloyd" not in StateTracker.get_args().model_type
