@@ -257,6 +257,8 @@ def flux_schedule_info(args):
         else " (no special parameters set)"
     )
 
+    return output_str
+
 
 def save_model_card(
     repo_id: str,
