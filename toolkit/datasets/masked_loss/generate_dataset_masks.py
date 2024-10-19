@@ -1,5 +1,6 @@
 import argparse
 import os
+import PIL
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 from typing import Union, Any, Tuple, Dict
@@ -116,6 +117,11 @@ def main():
         default="person",
         help='Text prompt for masking (default: "person").',
     )
+    parser.add_argument(
+        "--invert_mask",
+        action="store_true",
+        help="Invert the mask to ignore the segmented portion instead of isolate it.",
+    )
     args = parser.parse_args()
     if args.input_dir is None or args.output_dir is None:
         import sys
@@ -193,6 +199,10 @@ def main():
                 # Combine masks if multiple detections
                 combined_mask = np.any(detections.mask, axis=0)
                 mask_image = Image.fromarray(combined_mask.astype("uint8") * 255)
+                # Invert masks if necessary
+                if args.invert_mask:
+                    # 0 becomes 1, 1 becomes 0
+                    mask_image = PIL.ImageOps.invert(mask_image)
                 mask_image.save(mask_path)
                 print(f"Saved mask to {mask_path}")
             except Exception as e:
