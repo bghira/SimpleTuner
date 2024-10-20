@@ -1395,13 +1395,9 @@ class Trainer:
             structured_data={"message": "Base model benchmark begins"},
             message_type="init_benchmark_base_model_begin",
         )
-        if is_lr_scheduler_disabled(self.config.optimizer):
-            self.optimizer.eval()
         # we'll run validation on base model if it hasn't already.
         self.validation.run_validations(validation_type="base_model", step=0)
         self.validation.save_benchmark("base_model")
-        if is_lr_scheduler_disabled(self.config.optimizer):
-            self.optimizer.train()
         self._send_webhook_raw(
             structured_data={"message": "Base model benchmark completed"},
             message_type="init_benchmark_base_model_completed",
@@ -2412,11 +2408,8 @@ class Trainer:
                     # x-prediction requires that we now subtract the noise residual from the prediction to get the target sample.
                     if (
                         hasattr(self.noise_scheduler, "config")
-                        and hasattr(
-                            self.noise_scheduler.config, "prediction_type"
-                        )
-                        and self.noise_scheduler.config.prediction_type
-                        == "sample"
+                        and hasattr(self.noise_scheduler.config, "prediction_type")
+                        and self.noise_scheduler.config.prediction_type == "sample"
                     ):
                         model_pred = model_pred - noise
 
@@ -2428,10 +2421,7 @@ class Trainer:
                         loss = (
                             model_pred.float() - target.float()
                         ) ** 2  # Shape: (batch_size, C, H, W)
-                    elif (
-                        self.config.snr_gamma is None
-                        or self.config.snr_gamma == 0
-                    ):
+                    elif self.config.snr_gamma is None or self.config.snr_gamma == 0:
                         training_logger.debug("Calculating loss")
                         loss = self.config.snr_weight * F.mse_loss(
                             model_pred.float(), target.float(), reduction="none"
@@ -2448,8 +2438,7 @@ class Trainer:
                             == "v_prediction"
                             or (
                                 self.config.flow_matching
-                                and self.config.flow_matching_loss
-                                == "diffusion"
+                                and self.config.flow_matching_loss == "diffusion"
                             )
                         ):
                             snr_divisor = snr + 1
@@ -2461,8 +2450,7 @@ class Trainer:
                             torch.stack(
                                 [
                                     snr,
-                                    self.config.snr_gamma
-                                    * torch.ones_like(timesteps),
+                                    self.config.snr_gamma * torch.ones_like(timesteps),
                                 ],
                                 dim=1,
                             ).min(dim=1)[0]
@@ -2478,9 +2466,7 @@ class Trainer:
                         mse_loss_weights = mse_loss_weights.view(
                             -1, 1, 1, 1
                         )  # Shape: (batch_size, 1, 1, 1)
-                        loss = (
-                            loss * mse_loss_weights
-                        )  # Shape: (batch_size, C, H, W)
+                        loss = loss * mse_loss_weights  # Shape: (batch_size, C, H, W)
 
                     # Mask the loss using any conditioning data
                     conditioning_type = batch.get("conditioning_type")
@@ -2514,8 +2500,7 @@ class Trainer:
                         loss.repeat(self.config.train_batch_size)
                     ).mean()
                     self.train_loss += (
-                        avg_loss.item()
-                        / self.config.gradient_accumulation_steps
+                        avg_loss.item() / self.config.gradient_accumulation_steps
                     )
                     # Backpropagate
                     grad_norm = None
