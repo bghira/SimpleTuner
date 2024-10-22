@@ -561,8 +561,11 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             raise ValueError("Each dataset needs a unique 'id' field.")
         info_log(f"Configuring data backend: {backend['id']}")
         conditioning_type = backend.get("conditioning_type")
-        if backend.get("dataset_type") == "conditioning" or conditioning_type is not None:
-            backend['dataset_type'] = 'conditioning'
+        if (
+            backend.get("dataset_type") == "conditioning"
+            or conditioning_type is not None
+        ):
+            backend["dataset_type"] = "conditioning"
         resolution_type = backend.get("resolution_type", args.resolution_type)
         if resolution_type == "pixel_area":
             pixel_edge_length = backend.get("resolution", int(args.resolution))
@@ -897,6 +900,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             ),
             instance_prompt=backend.get("instance_prompt", args.instance_prompt),
             conditioning_type=conditioning_type,
+            is_regularisation_data=is_regularisation_data,
         )
         if init_backend["sampler"].caption_strategy == "parquet":
             configure_parquet_database(backend, args, init_backend["data_backend"])

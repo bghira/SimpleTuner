@@ -1,21 +1,22 @@
 import argparse
 import os
-
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-from typing import Union, Any, Tuple, Dict
-from unittest.mock import patch
-
+import PIL
+import cv2  # Import OpenCV for image processing
 import numpy as np
 import supervision as sv
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
+from typing import Union, Any, Tuple, Dict
+from unittest.mock import patch
+
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+
 from gradio_client import handle_file
 from transformers import AutoModelForCausalLM, AutoProcessor
 from transformers.dynamic_module_utils import get_imports
 
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-
 
 # Constants
 FLORENCE_CHECKPOINT = "microsoft/Florence-2-large"
@@ -116,6 +117,23 @@ def main():
         default="person",
         help='Text prompt for masking (default: "person").',
     )
+    parser.add_argument(
+        "--invert_mask",
+        action="store_true",
+        help="Invert the mask to ignore the segmented portion instead of isolate it.",
+    )
+    parser.add_argument(
+        "--mask_padding",
+        type=int,
+        default=0,
+        help="Number of pixels to pad the mask (default: 0).",
+    )
+    parser.add_argument(
+        "--mask_blur",
+        type=int,
+        default=0,
+        help="Amount of Gaussian blur to apply to the mask edges (default: 0).",
+    )
     args = parser.parse_args()
     if args.input_dir is None or args.output_dir is None:
         import sys
@@ -171,10 +189,8 @@ def main():
             # Predict the mask
             try:
                 image_input = Image.open(full_path)
-                # cast to RGB
-                image_input = image_input.convert(
-                    "RGB", dither=None, palette=Image.ADAPTIVE
-                )
+                # Convert to RGB
+                image_input = image_input.convert("RGB")
                 _, result = run_florence_inference(
                     model=FLORENCE_MODEL,
                     processor=FLORENCE_PROCESSOR,
@@ -184,7 +200,9 @@ def main():
                     text=text_input,
                 )
                 detections = sv.Detections.from_lmm(
-                    lmm=sv.LMM.FLORENCE_2, result=result, resolution_wh=image_input.size
+                    lmm=sv.LMM.FLORENCE_2,
+                    result=result,
+                    resolution_wh=image_input.size,
                 )
                 if len(detections) == 0:
                     print(f"No objects detected in {file}.")
@@ -192,7 +210,32 @@ def main():
                 detections = run_sam_inference(SAM_IMAGE_MODEL, image_input, detections)
                 # Combine masks if multiple detections
                 combined_mask = np.any(detections.mask, axis=0)
-                mask_image = Image.fromarray(combined_mask.astype("uint8") * 255)
+
+                # Apply mask padding if specified
+                if args.mask_padding > 0:
+                    kernel = np.ones((3, 3), np.uint8)
+                    combined_mask = cv2.dilate(
+                        combined_mask.astype(np.uint8),
+                        kernel,
+                        iterations=args.mask_padding,
+                    )
+
+                # Apply mask blurring if specified
+                if args.mask_blur > 0:
+                    combined_mask = combined_mask.astype(np.float32)
+                    ksize = args.mask_blur * 2 + 1  # Kernel size must be odd
+                    combined_mask = cv2.GaussianBlur(combined_mask, (ksize, ksize), 0)
+
+                # Convert mask to image
+                if args.mask_blur > 0:
+                    mask_image = Image.fromarray((combined_mask * 255).astype(np.uint8))
+                else:
+                    mask_image = Image.fromarray(combined_mask.astype(np.uint8) * 255)
+
+                # Invert masks if necessary
+                if args.invert_mask:
+                    mask_image = ImageOps.invert(mask_image)
+
                 mask_image.save(mask_path)
                 print(f"Saved mask to {mask_path}")
             except Exception as e:

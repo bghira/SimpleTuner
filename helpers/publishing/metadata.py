@@ -257,6 +257,8 @@ def flux_schedule_info(args):
         else " (no special parameters set)"
     )
 
+    return output_str
+
 
 def save_model_card(
     repo_id: str,
@@ -281,6 +283,8 @@ def save_model_card(
     logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
     optimizer_config = StateTracker.get_args().optimizer_config
+    if optimizer_config is None:
+        optimizer_config = ""
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
     for dataset in StateTracker.get_data_backends().keys():

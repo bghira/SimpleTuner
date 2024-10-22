@@ -9,10 +9,10 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = "^2.4.1"
-torchaudio = {version = "*", source = "pytorch-rocm"}
+torch = {version = "^2.4.1+rocm6.0", source = "pytorch-rocm"}
+torchaudio = {version = "^2.4.1+rocm6.0", source = "pytorch-rocm"}
 torchmetrics = {version = "^1", source = "pytorch-rocm"}
-torchvision = {version = "*", source = "pytorch-rocm"}
+torchvision = {version = "^0.19.1+rocm6.0", source = "pytorch-rocm"}
 pytorch-triton-rocm = {version = "*", source = "pytorch-rocm"}
 accelerate = "^0.34.2"
 boto3 = "^1.35.24"
@@ -22,7 +22,7 @@ colorama = "^0.4.6"
 compel = "^2"
 datasets = "^3.0.0"
 deepspeed = "^0.15.1"
-diffusers = {git = "https://github.com/huggingface/diffusers", rev = "quantization-config"}
+diffusers = "^0.31.0"
 iterutils = "^0.1.6"
 numpy = "1.26"
 open-clip-torch = "^2.26.1"

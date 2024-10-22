@@ -9,9 +9,9 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
-torch = { version = "2.4.1+cu124", source = "pytorch" }
-torchvision = { version = ">0.19", source = "pytorch" }
-diffusers = {git = "https://github.com/huggingface/diffusers", rev = "quantization-config"}
+torch = {version = "^2.5.0+cu124", source = "pytorch"}
+torchvision = {version = "^0.20.0+cu124", source = "pytorch"}
+diffusers = "^0.31.0"
 transformers = "^4.45.1"
 datasets = "^3.0.1"
 bitsandbytes = "^0.44.1"
