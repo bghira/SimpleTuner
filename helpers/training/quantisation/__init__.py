@@ -32,7 +32,7 @@ def _quanto_type_map(model_precision: str):
                 "MPS doesn't support dtype float8, you must select another precision level such as bf16, int2, int8, or int8."
             )
 
-            return model
+            return None
         if model_precision == "fp8-quanto":
             quant_level = qfloat8
         elif model_precision == "fp8uz-quanto":
