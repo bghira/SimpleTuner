@@ -33,7 +33,7 @@ default_models = {
     "pixart_sigma": "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
     "kolors": "kwai-kolors/kolors-diffusers",
     "terminus": "ptx0/terminus-xl-velocity-v2",
-    "sd3": "stabilityai/stable-diffusion-3-medium-diffusers",
+    "sd3": "stabilityai/stable-diffusion-3.5-large",
     "legacy": "stabilityai/stable-diffusion-2-1-base",
 }
 
