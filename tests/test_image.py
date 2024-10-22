@@ -256,7 +256,11 @@ class TestMultiaspectImage(unittest.TestCase):
                     self.assertGreaterEqual(
                         intermediary_width,
                         target_width,
-                        f"Final width {target_width} is greater than the intermediary {intermediary_size}",
+                        (
+                            f"Final width {target_width} is greater than the intermediary {intermediary_size}"
+                            f", original size {original_width}x{original_height} and target megapixels {mp}"
+                            f" for aspect ratio {original_aspect_ratio}"
+                        ),
                     )
                     self.assertGreaterEqual(
                         intermediary_height,

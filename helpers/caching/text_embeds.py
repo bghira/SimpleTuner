@@ -30,6 +30,7 @@ def _encode_sd3_prompt_with_t5(
     num_images_per_prompt=1,
     device=None,
     zero_padding_tokens: bool = True,
+    max_sequence_length: int = 77,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
     batch_size = len(prompt)
@@ -37,7 +38,7 @@ def _encode_sd3_prompt_with_t5(
     text_inputs = tokenizer(
         prompt,
         padding="max_length",
-        max_length=77,
+        max_length=max_sequence_length,
         truncation=True,
         add_special_tokens=True,
         return_tensors="pt",
@@ -351,6 +352,7 @@ class TextEmbeddingCache(WebhookMixin):
             num_images_per_prompt=num_images_per_prompt,
             device=self.accelerator.device,
             zero_padding_tokens=zero_padding_tokens,
+            max_sequence_length=StateTracker.get_args().tokenizer_max_length,
         )
 
         clip_prompt_embeds = torch.nn.functional.pad(

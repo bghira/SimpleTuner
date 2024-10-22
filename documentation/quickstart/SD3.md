@@ -114,7 +114,7 @@ There, you will need to modify the following variables:
 {
   "model_type": "lora",
   "model_family": "sd3",
-  "pretrained_model_name_or_path": "stabilityai/stable-diffusion-3-medium-diffusers",
+  "pretrained_model_name_or_path": "stabilityai/stable-diffusion-3.5-large",
   "output_dir": "/home/user/outputs/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.0,
@@ -124,7 +124,8 @@ There, you will need to modify the following variables:
 ```
 
 
-- `pretrained_model_name_or_path` - Set this to `stabilityai/stable-diffusion-3-medium-diffusers`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
+- `pretrained_model_name_or_path` - Set this to `stabilityai/stable-diffusion-3.5-large`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
+  - If you prefer to train the older SD3.0 Medium (2B), use `stabilityai/stable-diffusion-3-medium-diffusers` instead.
 - `MODEL_TYPE` - Set this to `lora`.
 - `MODEL_FAMILY` - Set this to `sd3`.
 - `OUTPUT_DIR` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
@@ -260,3 +261,29 @@ bash train.sh
 This will begin the text embed and VAE output caching to disk.
 
 For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+
+## Notes & troubleshooting tips
+
+### Lowest VRAM config
+
+- OS: Ubuntu Linux 24
+- GPU: A single NVIDIA CUDA device (10G, 12G)
+- System memory: 50G of system memory approximately
+- Base model precision: `bnb-nf4`
+- Optimiser: Lion 8Bit Paged, `bnb-lion8bit-paged`
+- Resolution: 512px
+- Batch size: 1, zero gradient accumulation steps
+- DeepSpeed: disabled / unconfigured
+- PyTorch: 2.5
+
+### Masked loss
+
+If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.
+
+### Regularisation data
+
+For more information on regularisation datasets, see [this section](/documentation/DREAMBOOTH.md#prior-preservation-loss) and [this section](/documentation/DREAMBOOTH.md#regularisation-dataset-considerations) of the Dreambooth guide.
+
+### Quantised training
+
+See [this section](/documentation/DREAMBOOTH.md#quantised-model-training-loralycoris-only) of the Dreambooth guide for information on configuring quantisation for SD3 and other models.
