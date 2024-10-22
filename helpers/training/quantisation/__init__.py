@@ -32,7 +32,7 @@ def _quanto_type_map(model_precision: str):
                 "MPS doesn't support dtype float8, you must select another precision level such as bf16, int2, int8, or int8."
             )
 
-            return model
+            return None
         if model_precision == "fp8-quanto":
             quant_level = qfloat8
         elif model_precision == "fp8uz-quanto":
@@ -72,16 +72,30 @@ def _quanto_model(
     logger.info(f"Quantising {model.__class__.__name__}. Using {model_precision}.")
     weight_quant = _quanto_type_map(model_precision)
     extra_quanto_args = {}
+    extra_quanto_args["exclude"] = [
+        "*.norm",
+        "*.norm1",
+        "*.norm1_context",
+        "*.norm_q",
+        "*.norm_k",
+        "*.norm_added_q",
+        "*.norm_added_k",
+        "proj_out",
+        "pos_embed",
+        "norm_out",
+        "context_embedder",
+        "time_text_embed",
+    ]
     if quantize_activations:
         logger.info("Freezing model weights and activations")
         extra_quanto_args["activations"] = weight_quant
-        extra_quanto_args["exclude"] = [
-            "*.norm",
-            "*.norm1",
-            "*.norm2",
-            "*.norm2_context",
-            "proj_out",
-        ]
+        # extra_quanto_args["exclude"] = [
+        #     "*.norm",
+        #     "*.norm1",
+        #     "*.norm2",
+        #     "*.norm2_context",
+        #     "proj_out",
+        # ]
     else:
         logger.info("Freezing model weights only")
 

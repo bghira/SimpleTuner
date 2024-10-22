@@ -103,7 +103,7 @@ Following the [tutorial](/TUTORIAL.md) is required before you can continue into 
 
 For DeepFloyd tuning, it's recommended to visit [this page](/documentation/DEEPFLOYD.md) for specific tips related to that model's setup.
 
-### Quantised model training
+### Quantised model training (LoRA/LyCORIS only)
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements.
 
@@ -113,23 +113,20 @@ Inside your SimpleTuner venv:
 pip install optimum-quanto
 ```
 
-```bash
-# choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
-# int8-quanto was tested with a single subject dreambooth LoRA.
-# fp8-quanto does not work on Apple systems. you must use int levels.
-# int2-quanto is pretty extreme and gets the whole rank-1 LoRA down to about 13.9GB VRAM.
-# may the gods have mercy on your soul, should you push things Too Far.
-export TRAINER_EXTRA_ARGS="--base_model_precision=int8-quanto"
+Available precision levels depend on your hardware and its capabilities.
 
-# Maybe you want the text encoders to remain full precision so your text embeds are cake.
-# We unload the text encoders before training, so, that's not an issue during training time - only during pre-caching.
-# Alternatively, you can go ham on quantisation here and run them in int4 or int8 mode, because no one can stop you.
-export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_change --text_encoder_2_precision=no_change"
+- int2-quanto, int4-quanto, **int8-quanto** (recommended)
+- fp8-quanto, fp8-torchao (only for CUDA >= 8.9, eg. 4090 or H100)
+- nf4-bnb (required for low-VRAM users)
 
-# When you're quantising the model, we're not in pure bf16 anymore.
-# Since adamw_bf16 will never work with this setup, select another optimiser.
-# I know the spelling is different than everywhere else, but we're in too deep to fix it now.
-export OPTIMIZER="optimi-lion" # or maybe optimi-stableadamw
+Inside your config.json, the following values should be modified or added:
+```json
+{
+    "base_model_precision": "int8-quanto",
+    "text_encoder_1_precision": "no_change",
+    "text_encoder_2_precision": "no_change",
+    "text_encoder_3_precision": "no_change"
+}
 ```
 
 Inside our dataloader config `multidatabackend-dreambooth.json`, it will look something like this:
@@ -205,6 +202,8 @@ Some key values have been tweaked to make training a single subject easier:
 - Minimum image size is set to 192px or 768px which will allow us to upsample some smaller images, which might be needed for datasets with a few important but low resolution images.
 - `caption_strategy` is now `instanceprompt`, which means we will use `instance_prompt` value for every image in the dataset as its caption.
   - **Note:** Using the instance prompt is the traditional method of Dreambooth training, but short captions may work better. If you find the model fails to generalise, it may be worth attempting to use captions.
+
+### Regularisation dataset considerations
 
 For a regularisation dataset:
 
