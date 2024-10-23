@@ -266,30 +266,28 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ### Model instability
 
-Unlike what StabilityAI employees reported on Twitter, the SD 3.5 Large 8B model has noted instabilities during training:
+The SD 3.5 Large 8B model has potential instabilities during training:
 
-- The issue is compounded by high `--max_grad_norm` values, and hardly prevented by low values
-- Learning rates are extremely sensitive; `1e-5` works with StableAdamW but `4e-5` led to exploding gradients in no time
+- High `--max_grad_norm` values will allow the model to explore potentially dangerous weight updates
+- Learning rates can be extremely sensitive; `1e-5` works with StableAdamW but `4e-5` could explode
 - Higher batch sizes help **a lot**
-- The stability is not impacted by switching to BF16 / disabling quantisation
-- LyCORIS seems to bring this on a lot more readily than standard LoRA
-  - Reducing the model target to just Attention seemed to help, but not solve the stability issues
-- Standard LoRA did not learn the likeness of characters or styles
-  - And PEFT LoRA does not function with multiGPU when quantising
+- The stability is not impacted by disabling quantisation or training in pure fp32
 
-Official training code was not released alongside SD3.5, leaving developers to guess how to implement the training loop based on the [SD3.5 repository contents](https://github.com/stabilityai/sd3.5) which leaves us with possibly subpar results.
+Official training code was not released alongside SD3.5, leaving developers to guess how to implement the training loop based on the [SD3.5 repository contents](https://github.com/stabilityai/sd3.5).
 
-Some things were attempted to resolve the issue;
+Some changes were made to SimpleTuner's SD3.5 support:
 - Excluding more layers from quantisation
-- Zeroing T5 embed padding space vs not zeroing it
-- Zeroing embeds for dropout vs using encoded space
-- Augmenting the training loss target to mimic the SD3.5 repo method
-- Investigating schedule shift values, updating the default
-- Downgrading pytorch from 2.5 to 2.4.1
-- Upgrading all dependencies
+- No longer zeroing T5 padding space by default (`--t5_padding`)
+- Offering a switch (`--sd3_clip_uncond_behaviour` and `--sd3_t5_uncond_behaviour`) to use empty encoded blank captions for unconditional predictions (`empty_string`, **default**) or zeros (`zero`), not a recommended setting to tweak.
+- SD3.5 training loss function was updated to match that found in the upstream StabilityAI/SD3.5 repository
+- Updated default `--flux_schedule_shift` value to 3 to match the static 1024px value for SD3
+  - 512px training requires the use of `--flux_schedule_shift=1`
+- Updated the hard-coded tokeniser sequence length limit to **256** with the option to revert it to **77** tokens to save disk space or compute at the cost of output quality degradation
 
-Unfortunately, not much has helped. The resulting most stable configuration (which might end up not learning much):
 
+#### Stable configuration values
+
+These options have been known to keep SD3.5 in-tact for as long as possible:
 - optimizer=optimi-stableadamw
 - learning_rate=1e-5
 - batch_size=4 * 3 GPUs
