@@ -308,7 +308,7 @@ class TextEmbeddingCache(WebhookMixin):
         tokenizers,
         prompt: str,
         is_validation: bool = False,
-        zero_padding_tokens: bool = True,
+        zero_padding_tokens: bool = False,
     ):
         """
         Encode a prompt for an SD3 model.
@@ -507,7 +507,7 @@ class TextEmbeddingCache(WebhookMixin):
                 is_validation,
                 zero_padding_tokens=(
                     True
-                    if StateTracker.get_args().sd3_t5_mask_behaviour == "mask"
+                    if StateTracker.get_args().t5_padding == "zero"
                     else False
                 ),
             )
@@ -1307,6 +1307,11 @@ class TextEmbeddingCache(WebhookMixin):
                         self.tokenizers,
                         [prompt],
                         is_validation,
+                        zero_padding_tokens=(
+                            True
+                            if StateTracker.get_args().t5_padding == "zero"
+                            else False
+                        ),
                     )
                     logger.debug(
                         f"SD3 prompt embeds: {prompt_embeds.shape}, {pooled_prompt_embeds.shape}"
