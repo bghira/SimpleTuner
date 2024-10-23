@@ -171,7 +171,7 @@ def get_argument_parser():
     parser.add_argument(
         "--flux_schedule_shift",
         type=float,
-        default=None,
+        default=3,
         help=(
             "Shift the noise schedule. This is a value between 0 and ~4.0, where 0 disables the timestep-dependent shift,"
             " and anything greater than 0 will shift the timestep sampling accordingly. The SD3 model was trained with"
