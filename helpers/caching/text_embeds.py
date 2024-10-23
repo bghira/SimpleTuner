@@ -1313,9 +1313,11 @@ class TextEmbeddingCache(WebhookMixin):
                     )
                     add_text_embeds = pooled_prompt_embeds
                     # StabilityAI say not to zero them out.
-                    # if prompt == "":
-                    #     prompt_embeds = torch.zeros_like(prompt_embeds)
-                    #     add_text_embeds = torch.zeros_like(add_text_embeds)
+                    if prompt == "":
+                        if StateTracker.get_args().sd3_clip_uncond_behaviour == "zero":
+                            prompt_embeds = torch.zeros_like(prompt_embeds)
+                        if StateTracker.get_args().sd3_t5_uncond_behaviour == "zero":
+                            add_text_embeds = torch.zeros_like(add_text_embeds)
                     # Get the current size of the queue.
                     current_size = self.write_queue.qsize()
                     if current_size >= 2048:
