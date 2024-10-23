@@ -264,6 +264,39 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
+### Model instability
+
+Unlike what StabilityAI employees reported on Twitter, the SD 3.5 Large 8B model has noted instabilities during training:
+
+- The issue is compounded by high `--max_grad_norm` values, and hardly prevented by low values
+- Learning rates are extremely sensitive; `1e-5` works with StableAdamW but `4e-5` led to exploding gradients in no time
+- Higher batch sizes help **a lot**
+- The stability is not impacted by switching to BF16 / disabling quantisation
+- LyCORIS seems to bring this on a lot more readily than standard LoRA
+  - Reducing the model target to just Attention seemed to help, but not solve the stability issues
+- Standard LoRA did not learn the likeness of characters or styles
+  - And PEFT LoRA does not function with multiGPU when quantising
+
+Official training code was not released alongside SD3.5, leaving developers to guess how to implement the training loop based on the [SD3.5 repository contents](https://github.com/stabilityai/sd3.5) which leaves us with possibly subpar results.
+
+Some things were attempted to resolve the issue;
+- Excluding more layers from quantisation
+- Zeroing T5 embed padding space vs not zeroing it
+- Zeroing embeds for dropout vs using encoded space
+- Augmenting the training loss target to mimic the SD3.5 repo method
+- Investigating schedule shift values, updating the default
+- Downgrading pytorch from 2.5 to 2.4.1
+- Upgrading all dependencies
+
+Unfortunately, not much has helped. The resulting most stable configuration (which might end up not learning much):
+
+- optimizer=optimi-stableadamw
+- learning_rate=1e-5
+- batch_size=4 * 3 GPUs
+- max_grad_norm=0.01
+- base_model_precision=int8-quanto
+- No loss masking or dataset regularisation, as their contribution to this instability is unknown
+
 ### Lowest VRAM config
 
 - OS: Ubuntu Linux 24
