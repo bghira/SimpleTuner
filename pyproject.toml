@@ -11,7 +11,7 @@ package-mode = false
 python = ">=3.10,<3.12"
 torch = {version = "^2.4.1+cu124", source = "pytorch"}
 torchvision = {version = "^0.19.0+cu124", source = "pytorch"}
-diffusers = {git = "https://github.com/huggingface/diffusers", rev = "main"}
+diffusers = "^0.31.0"
 transformers = "^4.45.1"
 datasets = "^3.0.1"
 bitsandbytes = "^0.44.1"
@@ -20,7 +20,7 @@ requests = "^2.32.3"
 pillow = "^10.4.0"
 opencv-python = "^4.10.0.84"
 deepspeed = "^0.15.1"
-accelerate = "^1.0.1"
+accelerate = "^0.34.2"
 safetensors = "^0.4.5"
 compel = "^2.0.1"
 clip-interrogator = "^0.6.0"
@@ -37,7 +37,7 @@ torchsde = "^0.2.5"
 torchmetrics = "^1.1.1"
 colorama = "^0.4.6"
 numpy = "1.26"
-peft = "^0.13.2"
+peft = "^0.12.0"
 tensorboard = "^2.17.1"
 triton = {version = "^3.0.0", source = "pytorch"}
 sentencepiece = "^0.2.0"
@@ -50,8 +50,6 @@ torchao = {version = "^0.5.0+cu124", source = "pytorch"}
 lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "*"
 nvidia-nccl-cu12 = "*"
-psutil = "^6.1.0"
-setuptools = "^75.2.0"
 
 
 
