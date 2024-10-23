@@ -2310,6 +2310,10 @@ class Trainer:
                             target = latents
                         elif self.config.flow_matching_loss == "compatible":
                             target = noise - latents
+                        elif self.config.flow_matching_loss == "sd35":
+                            sigma_reshaped = sigmas.view(-1, 1, 1, 1)  # Ensure sigma has the correct shape
+                            target = (noisy_latents - latents) / sigma_reshaped
+
                     elif self.noise_scheduler.config.prediction_type == "epsilon":
                         target = noise
                     elif (

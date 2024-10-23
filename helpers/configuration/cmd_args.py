@@ -263,12 +263,13 @@ def get_argument_parser():
     parser.add_argument(
         "--flow_matching_loss",
         type=str,
-        choices=["diffusers", "compatible", "diffusion"],
+        choices=["diffusers", "compatible", "diffusion", "sd35"],
         default="compatible",
         help=(
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementation provided"
             " by StabilityAI. This experimental option allows switching loss calculations to be compatible with those."
             " Additionally, 'diffusion' is offered as an option to reparameterise a model to v_prediction loss."
+            " sd35 provides the ability to train on SD3.5's flow-matching target, which is the denoised sample."
         ),
     )
     parser.add_argument(
@@ -2106,6 +2107,11 @@ def parse_cmdline_args(input_args=None):
         if args.sd3_t5_uncond_behaviour is None:
             args.sd3_t5_uncond_behaviour = args.sd3_clip_uncond_behaviour
         info_log(f"SD3 embeds for unconditional captions: t5={args.sd3_t5_uncond_behaviour}, clip={args.sd3_clip_uncond_behaviour}")
+        if args.flow_matching_loss != "sd35":
+            warning_log(
+                "SD3 requires the use of the 'sd35' flow matching loss. Overriding the value of --flow_matching_loss."
+            )
+            args.flow_matching_loss = "sd35"
     elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
