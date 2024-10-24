@@ -83,7 +83,7 @@ Which brings up the next point: **you should use as much high quality training d
 
 ### Captioning
 
-SimpleTuner provides multiple [captioning](/toolkit/captioning/README.md) scripts that can be used to mass-rename files in a format that is acceptable to SimpleTuner.
+SimpleTuner provides multiple [captioning](/toolkit/README.md) scripts that can be used to mass-rename files in a format that is acceptable to SimpleTuner.
 
 Options:
 
