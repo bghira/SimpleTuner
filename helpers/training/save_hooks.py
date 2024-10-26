@@ -250,7 +250,6 @@ class SaveHookManager:
                 output_dir,
                 unet_lora_layers=unet_lora_layers_to_save,
                 text_encoder_lora_layers=text_encoder_1_lora_layers_to_save,
-                transformer_lora_layers=transformer_lora_layers_to_save,
             )
         elif self.args.model_family == "sdxl" or self.args.model_family == "kolors":
             self.pipeline_class.save_lora_weights(
