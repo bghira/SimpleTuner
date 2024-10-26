@@ -453,7 +453,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             accelerator.wait_for_everyone()
         if args.caption_dropout_probability == 0.0:
             logger.warning(
-                "Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption-dropout_probability=0.1 as a recommended value."
+                "Not using caption dropout will potentially lead to overfitting on captions, eg. CFG will not work very well. Set --caption_dropout_probability=0.1 as a recommended value."
             )
 
         # We don't compute the text embeds at this time, because we do not really have any captions available yet.
