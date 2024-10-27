@@ -107,3 +107,12 @@ def safety_check(args, accelerator):
             f"{args.model_type} tuning is not compatible with quantisation. Please set --base_model_precision to 'no_change' or train LyCORIS/LoRA."
         )
         sys.exit(1)
+
+    if (
+        args.flux_schedule_shift is not None and args.flux_schedule_shift > 0
+        and args.flux_schedule_auto_shift
+    ):
+        logger.error(
+            f"--flux_schedule_auto_shift cannot be combined with --flux_schedule_shift. Please set --flux_schedule_shift to 0 if you want to train with --flux_schedule_auto_shift."
+        )
+        sys.exit(1)
