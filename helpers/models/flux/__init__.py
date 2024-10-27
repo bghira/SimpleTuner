@@ -14,7 +14,7 @@ def apply_flux_schedule_shift(args, noise_scheduler, sigmas, noise):
     if args.flux_schedule_shift is not None and args.flux_schedule_shift > 0:
         # Static shift value for every resolution
         shift = args.flux_schedule_shift
-    elif args.flux_schedule_auto_shift:
+    if args.flux_schedule_auto_shift:
         # Resolution-dependent shift value calculation used by official Flux inference implementation
         image_seq_len = (noise.shape[-1] * noise.shape[-2]) // 4
         mu = calculate_shift_flux(
