@@ -430,7 +430,7 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
             accelerator=accelerator,
             cache_dir=init_backend.get("cache_dir", args.cache_dir_text),
             model_type=StateTracker.get_model_family(),
-            write_batch_size=backend.get("write_batch_size", 1),
+            write_batch_size=backend.get("write_batch_size", args.write_batch_size),
         )
         init_backend["text_embed_cache"].set_webhook_handler(
             StateTracker.get_webhook_handler()

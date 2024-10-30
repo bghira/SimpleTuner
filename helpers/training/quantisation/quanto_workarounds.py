@@ -104,7 +104,7 @@ def reshape_qlf_backward(ctx, gO):
         # grad(B@A.t()) = gO.t() => grad(B) = gO.t()@(A.t().t()) = gO.t()@A
         other_gO = torch.matmul(
             gO.reshape(-1, out_features).t(),
-            input.to(g0.dtype).reshape(-1, in_features),
+            input.to(gO.dtype).reshape(-1, in_features),
         )
     if ctx.needs_input_grad[2]:
         # Bias gradient is the sum on all dimensions but the last one

@@ -462,6 +462,10 @@ class PromptHandler:
                 # allow caching of multiple captions, if returned by the backend.
                 captions.extend(caption)
 
+        # Deduplicate captions
+        # TODO: Investigate why this prevents captions from processing on multigpu systems.
+        # captions = list(set(captions))
+
         return captions
 
     @staticmethod
