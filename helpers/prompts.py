@@ -5,6 +5,13 @@ from helpers.training.state_tracker import StateTracker
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training import image_file_extensions
 
+import numpy
+
+try:
+    import pandas as pd
+except ImportError:
+    raise ImportError("Pandas is required for the ParquetMetadataBackend.")
+
 prompts = {
     "alien_landscape": "Alien planet, strange rock formations, glowing plants, bizarre creatures, surreal atmosphere",
     "alien_market": "Alien marketplace, bizarre creatures, exotic goods, vibrant colors, otherworldly atmosphere",
@@ -256,8 +263,10 @@ class PromptHandler:
             )
         if type(image_caption) == bytes:
             image_caption = image_caption.decode("utf-8")
-        if image_caption:
+        if type(image_caption) == str:
             image_caption = image_caption.strip()
+        if type(image_caption) in (list, tuple, numpy.ndarray, pd.Series):
+            image_caption = [str(item).strip() for item in image_caption if item is not None]
         if prepend_instance_prompt:
             if type(image_caption) == list:
                 image_caption = [instance_prompt + " " + x for x in image_caption]
@@ -436,17 +445,14 @@ class PromptHandler:
                     data_backend=data_backend,
                 )
             elif caption_strategy == "parquet":
-                try:
-                    caption = PromptHandler.prepare_instance_prompt_from_parquet(
-                        image_path,
-                        use_captions=use_captions,
-                        prepend_instance_prompt=prepend_instance_prompt,
-                        instance_prompt=instance_prompt,
-                        data_backend=data_backend,
-                        sampler_backend_id=data_backend.id,
-                    )
-                except:
-                    continue
+                caption = PromptHandler.prepare_instance_prompt_from_parquet(
+                    image_path,
+                    use_captions=use_captions,
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
+                    data_backend=data_backend,
+                    sampler_backend_id=data_backend.id,
+                )
             elif caption_strategy == "instanceprompt":
                 return [instance_prompt]
             elif caption_strategy == "csv":
