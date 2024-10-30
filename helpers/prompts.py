@@ -463,7 +463,8 @@ class PromptHandler:
                 captions.extend(caption)
 
         # Deduplicate captions
-        captions = list(set(captions))
+        # TODO: Investigate why this prevents captions from processing on multigpu systems.
+        # captions = list(set(captions))
 
         return captions
 
