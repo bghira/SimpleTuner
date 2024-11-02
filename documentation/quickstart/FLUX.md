@@ -515,7 +515,7 @@ When you do these things (among others), some square grid artifacts **may** begi
   - However, if you're looking to improve results equally across many aspect buckets, you might have to experiment with `crop_aspect=random` which comes with its own downsides.
 - Mixing dataset configurations by defining your image directory dataset multiple times has produced really good results and a nicely generalised model.
 
-### Using Pre-Trained Flux Models
+### Training custom fine-tuned Flux models
 
 Some fine-tuned Flux models on Hugging Face Hub (such as Dev2Pro) lack the full directory structure, requiring these specific options be set.
 
