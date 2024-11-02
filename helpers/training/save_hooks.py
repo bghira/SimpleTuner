@@ -164,6 +164,12 @@ class SaveHookManager:
             elif args.model_family == "smoldit":
                 self.denoiser_class = SmolDiT2DModel
                 self.pipeline_class = SmolDiTPipeline
+            elif args.model_family == "omnigen":
+                from OmniGen import OmniGen
+                from helpers.models.omnigen.pipeline import OmniGenPipeline
+
+                self.denoiser_class = OmniGen
+                self.pipeline_class = OmniGenPipeline
             self.denoiser_subdir = "transformer"
 
         if args.controlnet:

@@ -22,6 +22,10 @@ def load_scheduler_from_args(args):
             subfolder="scheduler",
             shift=1 if args.model_family == "sd3" else 3,
         )
+    elif args.model_family == "omnigen":
+        from OmniGen import OmniGenScheduler
+
+        noise_scheduler = OmniGenScheduler()
     else:
         if args.model_family == "legacy":
             args.rescale_betas_zero_snr = True

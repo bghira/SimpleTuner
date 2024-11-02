@@ -1,5 +1,6 @@
 import torch
 import logging
+import random
 import concurrent.futures
 import numpy as np
 from os import environ
@@ -213,7 +214,12 @@ def compute_latents(filepaths, data_backend_id: str):
 
 
 def compute_single_embedding(
-    caption, text_embed_cache, is_sdxl, is_sd3: bool = False, is_flux: bool = False
+    caption,
+    text_embed_cache,
+    is_sdxl,
+    is_sd3: bool = False,
+    is_flux: bool = False,
+    is_omnigen: bool = False,
 ):
     """Worker function to compute embedding for a single caption."""
     if caption == "" or not caption:
@@ -246,6 +252,11 @@ def compute_single_embedding(
             time_ids[0],
             masks[0] if masks is not None else None,
         )
+    elif is_omnigen:
+        processed = text_embed_cache.compute_embeddings_for_omnigen_prompts(
+            prompts=[caption]
+        )
+        return processed
     else:
         prompt_embeds = text_embed_cache.compute_embeddings_for_legacy_prompts(
             [caption]
@@ -284,6 +295,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
     is_pixart_sigma = text_embed_cache.model_type == "pixart_sigma"
     is_smoldit = text_embed_cache.model_type == "smoldit"
     is_flux = text_embed_cache.model_type == "flux"
+    is_omnigen = text_embed_cache.model_type == "omnigen"
 
     # Use a thread pool to compute embeddings concurrently
     with ThreadPoolExecutor() as executor:
@@ -295,6 +307,7 @@ def compute_prompt_embeddings(captions, text_embed_cache):
                 [is_sdxl] * len(captions),
                 [is_sd3] * len(captions),
                 [is_flux] * len(captions),
+                [is_omnigen] * len(captions),
             )
         )
 
@@ -331,6 +344,9 @@ def compute_prompt_embeddings(captions, text_embed_cache):
             torch.stack(time_ids),
             torch.stack(masks) if None not in masks else None,
         )
+    elif is_omnigen:
+        embeddings = [e[0] for e in embeddings]
+        return embeddings
     else:
         # Separate the tuples
         prompt_embeds = [t[0] for t in embeddings]
@@ -426,8 +442,17 @@ def collate_fn(batch):
             "This trainer is not designed to handle multiple batches in a single collate."
         )
     debug_log("Begin collate_fn on batch")
-
-    # SDXL Dropout
+    (
+        latent_batch,
+        prompt_embeds_all,
+        add_text_embeds_all,
+        input_ids,
+        batch_time_ids,
+        batch_luminance,
+        conditioning_pixel_values,
+        attn_mask,
+        conditioning_type,
+    ) = (None, None, None, None, None, None, None, None, None)
     dropout_probability = StateTracker.get_args().caption_dropout_probability
     batch = batch[0]
     examples = batch["training_samples"]
@@ -528,11 +553,70 @@ def collate_fn(batch):
 
     attn_mask = None
     batch_time_ids = None
+    input_ids = None
+    extra_batch_inputs = {}
     if StateTracker.get_model_family() == "flux":
         debug_log("Compute and stack Flux time ids")
         prompt_embeds_all, add_text_embeds_all, batch_time_ids, attn_mask = (
             compute_prompt_embeddings(captions, text_embed_cache)
         )
+    elif StateTracker.get_model_family() == "omnigen":
+        # instruction, output_image = example['instruction'], example['input_images'], example['output_image']
+        omnigen_processed_embeddings = compute_prompt_embeddings(
+            captions, text_embed_cache
+        )
+        from OmniGen.processor import OmniGenCollator
+
+        attn_mask = [e.get("attention_mask") for e in omnigen_processed_embeddings]
+        attn_mask_len = len(attn_mask[0][0])
+        attn_mask = torch.stack(attn_mask, dim=0)
+
+        # we can use the OmniGenCollator.create_position to make positional ids
+        num_tokens_for_output_images = []
+        for img_size in [
+            [
+                latent_batch.shape[3] * 8,
+                latent_batch.shape[2] * 8,
+            ]
+            * len(latent_batch)
+        ]:
+            num_img_tokens = img_size[0] * img_size[1] // 16 // 16
+            num_text_tokens = attn_mask_len
+            total_num_tokens = num_img_tokens - num_text_tokens
+            num_tokens_for_output_images.append(total_num_tokens)
+        position_ids = OmniGenCollator.create_position(
+            attn_mask, num_tokens_for_output_images
+        )
+        # pad attn_mask to match the position_ids, eg. mask [1, 1, 1, 57] -> [1, 1, 1, 4097]
+        attn_mask = torch.cat(
+            [
+                attn_mask,
+                torch.zeros(
+                    (
+                        attn_mask.shape[0],
+                        attn_mask.shape[1],
+                        num_tokens_for_output_images[0] + 1,
+                    )
+                ),
+            ],
+            dim=-1,
+        )
+
+        # TODO: support "input images" for OmniGen which behave as conditioning images, eg. ControlNet Canny, Depth, etc.
+        # conditioning_pixel_values = torch.stack([e.get('input_pixel_values') for e in omnigen_processed_embeddings], dim=0)
+        # input_image_sizes = [e.get('input_image_size') for e in omnigen_processed_embeddings]
+        # extra_batch_inputs['conditioning_pixel_values'] = conditioning_pixel_values
+        # extra_batch_inputs['input_image_sizes'] = input_image_sizes
+        # input_ids = [e.get('input_ids') for e in omnigen_processed_embeddings]
+        # input_ids = torch.stack(input_ids, dim=0)
+        # TODO: Support instruction/conditioning image dropout for OmniGen.
+        # if random.random() < StateTracker.get_args().caption_dropout_probability:
+        #     instruction = '<cfg>'
+        #     latent_batch = None
+        padding_images = [e.get("padding_image") for e in omnigen_processed_embeddings]
+        extra_batch_inputs["position_ids"] = position_ids
+        extra_batch_inputs["padding_images"] = padding_images
+        extra_batch_inputs["input_ids"] = input_ids
     else:
         prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(
             captions, text_embed_cache
@@ -566,4 +650,5 @@ def collate_fn(batch):
         "encoder_attention_mask": attn_mask,
         "is_regularisation_data": is_regularisation_data,
         "conditioning_type": conditioning_type,
+        **extra_batch_inputs,
     }

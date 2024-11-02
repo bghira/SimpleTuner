@@ -85,7 +85,16 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--model_family",
-        choices=["pixart_sigma", "kolors", "sd3", "flux", "smoldit", "sdxl", "legacy"],
+        choices=[
+            "omnigen",
+            "pixart_sigma",
+            "kolors",
+            "sd3",
+            "flux",
+            "smoldit",
+            "sdxl",
+            "legacy",
+        ],
         default=None,
         required=True,
         help=("The model family to train. This option is required."),
@@ -2079,7 +2088,7 @@ def parse_cmdline_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3"]
+        and args.model_family in ["legacy", "flux", "sd3", "omnigen"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2109,7 +2118,6 @@ def parse_cmdline_args(input_args=None):
         info_log(
             f"SD3 embeds for unconditional captions: t5={args.sd3_t5_uncond_behaviour}, clip={args.sd3_clip_uncond_behaviour}"
         )
-
     elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:

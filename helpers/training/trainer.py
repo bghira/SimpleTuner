@@ -505,12 +505,26 @@ class Trainer:
 
     def init_text_encoder(self, move_to_accelerator: bool = True):
         self.init_text_tokenizer()
+        self.text_encoders = []
+        self.tokenizers = []
         self.text_encoder_1, self.text_encoder_2, self.text_encoder_3 = None, None, None
         self.text_encoder_cls_1, self.text_encoder_cls_2, self.text_encoder_cls_3 = (
             None,
             None,
             None,
         )
+        if self.config.model_family.lower() == "omnigen":
+            # omnigen uses a preprocessor w/ a simple tokeniser, not a text encoder.
+            from helpers.models.omnigen.processor import (
+                OmniGenTrainingProcessor as OmniGenProcessor,
+            )
+
+            self.text_encoder_1 = OmniGenProcessor.from_pretrained(
+                self.config.pretrained_transformer_model_name_or_path
+                or self.config.pretrained_model_name_or_path
+            )
+            self.text_encoders.append(self.text_encoder_1)
+            self.tokenizers.append(self.text_encoder_1.text_tokenizer)
         if self.tokenizer_1 is not None:
             self.text_encoder_cls_1 = import_model_class_from_model_name_or_path(
                 self.config.text_encoder_path,
@@ -555,8 +569,6 @@ class Trainer:
         if not move_to_accelerator:
             logger.debug("Not moving text encoders to accelerator.")
             return
-        self.text_encoders = []
-        self.tokenizers = []
         if self.tokenizer_1 is not None:
             logger.info("Moving text encoder to GPU.")
             self.text_encoder_1.to(
@@ -578,6 +590,9 @@ class Trainer:
             )
             self.tokenizers.append(self.tokenizer_3)
             self.text_encoders.append(self.text_encoder_3)
+
+        if not any(self.text_encoders):
+            logger.warning("No text encoders loaded. This may cause issues.")
 
     def init_freeze_models(self):
         # Freeze vae and text_encoders
@@ -676,6 +691,10 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_validation_prompts(self):
+        self.validation_prompts = None
+        self.validation_shortnames = None
+        self.validation_negative_prompt_embeds = None
+        self.validation_negative_pooled_embeds = None
         if self.accelerator.is_main_process:
             if self.config.model_family == "flux":
                 (
@@ -684,6 +703,14 @@ class Trainer:
                     self.validation_negative_prompt_embeds,
                     self.validation_negative_pooled_embeds,
                     self.validation_negative_time_ids,
+                ) = prepare_validation_prompt_list(
+                    args=self.config,
+                    embed_cache=StateTracker.get_default_text_embed_cache(),
+                )
+            elif self.config.model_family == "omnigen":
+                (
+                    self.validation_prompts,
+                    self.validation_shortnames,
                 ) = prepare_validation_prompt_list(
                     args=self.config,
                     embed_cache=StateTracker.get_default_text_embed_cache(),
@@ -698,11 +725,6 @@ class Trainer:
                     args=self.config,
                     embed_cache=StateTracker.get_default_text_embed_cache(),
                 )
-        else:
-            self.validation_prompts = None
-            self.validation_shortnames = None
-            self.validation_negative_prompt_embeds = None
-            self.validation_negative_pooled_embeds = None
         self.accelerator.wait_for_everyone()
 
     def stats_memory_used(self):
@@ -869,6 +891,9 @@ class Trainer:
                     target_modules=target_modules,
                     use_dora=self.config.use_dora,
                 )
+                if self.config.model_family == "omnigen":
+                    self.transformer.llm.enable_input_require_grads()
+
                 self.transformer.add_adapter(transformer_lora_config)
                 if self.config.init_lora:
                     addkeys, misskeys = load_lora_weights(
@@ -974,7 +999,11 @@ class Trainer:
                 unwrap_model(
                     self.accelerator, self.unet
                 ).enable_gradient_checkpointing()
-            if self.transformer is not None and self.config.model_family != "smoldit":
+            if (
+                self.transformer is not None
+                and self.config.model_family != "smoldit"
+                and hasattr(self.transformer, "enable_gradient_checkpointing")
+            ):
                 unwrap_model(
                     self.accelerator, self.transformer
                 ).enable_gradient_checkpointing()
@@ -1996,6 +2025,29 @@ class Trainer:
                     ),
                 }
                 model_pred = self.transformer(**inputs).sample
+            elif self.config.model_family == "omnigen":
+                inputs = {
+                    "x": noisy_latents,
+                    "timestep": timesteps,
+                    "input_ids": (
+                        batch.get("input_ids").to(self.accelerator.device)
+                        if batch.get("input_ids") is not None
+                        else None
+                    ),
+                    "input_img_latents": (
+                        batch.get("input_img_latents").to(self.accelerator.device)
+                        if batch.get("input_img_latents") is not None
+                        else None
+                    ),
+                    "input_image_sizes": batch.get("input_image_sizes"),
+                    "attention_mask": batch.get("encoder_attention_mask").to(
+                        self.accelerator.device
+                    ),
+                    "position_ids": batch.get("position_ids").to(
+                        self.accelerator.device
+                    ),
+                }
+                model_pred = self.transformer(**inputs)[0]
             elif self.unet is not None:
                 if self.config.model_family == "legacy":
                     # SD 1.5 or 2.x
@@ -2182,7 +2234,26 @@ class Trainer:
                             f"Received {bsz} latents, but expected {self.config.train_batch_size}. Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
-                    if self.config.flow_matching:
+                    if self.config.model_family == "omnigen":
+                        # x1 corresponds to your latents
+                        x1 = latents
+
+                        # Sample x0 from a standard normal distribution with the same shape as latents
+                        x0 = torch.randn_like(latents)
+
+                        # Sample t for each sample in the batch using the specified distribution
+                        u = torch.randn(bsz, device=latents.device)
+                        t = 1 / (1 + torch.exp(-u))  # t ∈ (0, 1)
+                        t = t.to(latents.device, dtype=latents.dtype)
+
+                        # Convert t to timesteps compatible with the model (scaled appropriately)
+                        timesteps = t * 999
+                        timesteps = timesteps.to(
+                            self.accelerator.device, dtype=latents.dtype
+                        )
+                        timesteps = timesteps.long()
+
+                    elif self.config.flow_matching:
                         if (
                             not self.config.flux_fast_schedule
                             and not self.config.flux_use_beta_schedule
@@ -2281,6 +2352,14 @@ class Trainer:
 
                     if self.config.flow_matching:
                         noisy_latents = (1 - sigmas) * latents + sigmas * input_noise
+                    elif self.config.model_family == "omnigen":
+                        # Reshape t to match the dimensions of latents for broadcasting
+                        dims = [1] * (latents.dim() - 1)
+                        t_reshaped = t.view(-1, *dims)
+
+                        # Compute noisy_latents (xt) using the Omnigen sampling formula
+                        noisy_latents = t_reshaped * x1 + (1 - t_reshaped) * x0
+
                     else:
                         # Add noise to the latents according to the noise magnitude at each timestep
                         # (this is the forward diffusion process)
@@ -2291,19 +2370,25 @@ class Trainer:
                             dtype=self.config.weight_dtype,
                         )
 
-                    encoder_hidden_states = batch["prompt_embeds"].to(
-                        dtype=self.config.weight_dtype, device=self.accelerator.device
-                    )
-                    training_logger.debug(
-                        f"Encoder hidden states: {encoder_hidden_states.shape}"
-                    )
+                    encoder_hidden_states = None
+                    if hasattr(batch["prompt_embeds"], "to"):
+                        encoder_hidden_states = batch["prompt_embeds"].to(
+                            dtype=self.config.weight_dtype,
+                            device=self.accelerator.device,
+                        )
+                        training_logger.debug(
+                            f"Encoder hidden states: {encoder_hidden_states.shape}"
+                        )
 
                     add_text_embeds = batch["add_text_embeds"]
                     training_logger.debug(
                         f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
                     )
                     # Get the target for loss depending on the prediction type
-                    if self.config.flow_matching:
+                    if (
+                        self.config.flow_matching
+                        or self.config.model_family == "omnigen"
+                    ):
                         # This is the flow-matching target for vanilla SD3.
                         # If self.config.flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
                         if self.config.flow_matching_loss == "diffusers":
@@ -2311,9 +2396,10 @@ class Trainer:
                         elif self.config.flow_matching_loss == "compatible":
                             target = noise - latents
                         elif self.config.flow_matching_loss == "sd35":
-                            sigma_reshaped = sigmas.view(-1, 1, 1, 1)  # Ensure sigma has the correct shape
+                            sigma_reshaped = sigmas.view(
+                                -1, 1, 1, 1
+                            )  # Ensure sigma has the correct shape
                             target = (noisy_latents - latents) / sigma_reshaped
-
                     elif self.noise_scheduler.config.prediction_type == "epsilon":
                         target = noise
                     elif (
@@ -2420,7 +2506,10 @@ class Trainer:
                     parent_loss = None
 
                     # Compute the per-pixel loss without reducing over spatial dimensions
-                    if self.config.flow_matching:
+                    if (
+                        self.config.flow_matching
+                        or self.config.model_family == "omnigen"
+                    ):
                         # For flow matching, compute the per-pixel squared differences
                         loss = (
                             model_pred.float() - target.float()

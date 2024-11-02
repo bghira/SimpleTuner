@@ -117,6 +117,7 @@ class StateTracker:
             "legacy",
             "sdxl",
             "sd3",
+            "omnigen",
             "pixart_sigma",
             "kolors",
             "smoldit",

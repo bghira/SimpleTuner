@@ -280,6 +280,8 @@ def prepare_validation_prompt_list(args, embed_cache):
                 validation_negative_pooled_embeds,
                 validation_negative_time_ids,
             )
+        elif model_type == "omnigen":
+            return (validation_prompts, validation_shortnames)
         else:
             raise ValueError(f"Unknown model type '{model_type}'")
 
@@ -590,6 +592,10 @@ class Validation:
             from helpers.models.smoldit import SmolDiTPipeline
 
             return SmolDiTPipeline
+        elif model_type == "omnigen":
+            from helpers.models.omnigen.pipeline import OmniGenPipeline
+
+            return OmniGenPipeline
         else:
             raise NotImplementedError(
                 f"Model type {model_type} not implemented for validation."
@@ -598,6 +604,9 @@ class Validation:
     def _gather_prompt_embeds(self, validation_prompt: str):
         prompt_embeds = {}
         current_validation_prompt_mask = None
+        current_validation_prompt_embeds = None
+        current_validation_pooled_embeds = None
+        current_validation_time_ids = None
         if (
             StateTracker.get_model_family() == "sdxl"
             or StateTracker.get_model_family() == "sd3"
@@ -680,25 +689,33 @@ class Validation:
             # logger.debug(
             #     f"Dtypes: {current_validation_prompt_embeds.dtype}, {self.validation_negative_prompt_embeds.dtype}"
             # )
+        elif StateTracker.get_model_family() == "omnigen":
+            # no special treatment needed here.
+            pass
         else:
             raise NotImplementedError(
                 f"Model type {StateTracker.get_model_family()} not implemented for validation."
             )
 
-        current_validation_prompt_embeds = current_validation_prompt_embeds.to(
-            device=self.inference_device, dtype=self.weight_dtype
-        )
-        self.validation_negative_prompt_embeds = (
-            self.validation_negative_prompt_embeds.to(
+        if current_validation_prompt_embeds is not None:
+            current_validation_prompt_embeds = current_validation_prompt_embeds.to(
                 device=self.inference_device, dtype=self.weight_dtype
             )
-        )
+        if self.validation_negative_prompt_embeds is not None:
+            self.validation_negative_prompt_embeds = (
+                self.validation_negative_prompt_embeds.to(
+                    device=self.inference_device, dtype=self.weight_dtype
+                )
+            )
         # when sampling unconditional guidance, you should only zero one or the other prompt, and not both.
         # we'll assume that the user has a negative prompt, so that the unconditional sampling works.
         # the positive prompt embed is zeroed out for SDXL at the time of it being placed into the cache.
         # the embeds are not zeroed out for any other model, including Stable Diffusion 3.
-        prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
-        prompt_embeds["negative_prompt_embeds"] = self.validation_negative_prompt_embeds
+        if current_validation_prompt_embeds is not None:
+            prompt_embeds["prompt_embeds"] = current_validation_prompt_embeds
+            prompt_embeds["negative_prompt_embeds"] = (
+                self.validation_negative_prompt_embeds
+            )
         if (
             StateTracker.get_model_family() == "pixart_sigma"
             or StateTracker.get_model_family() == "smoldit"
@@ -1063,6 +1080,19 @@ class Validation:
                             text_encoder=self.text_encoder_1,
                             scheduler=self.setup_scheduler(),
                         )
+                    elif self.args.model_family == "omnigen":
+                        # we use upstream processor to get negative prompting.
+                        from OmniGen import OmniGenProcessor
+
+                        self.pipeline = pipeline_cls(
+                            vae=self.vae,
+                            processor=OmniGenProcessor.from_pretrained(
+                                self.args.pretrained_transformer_model_name_or_path
+                                or self.args.pretrained_model_name_or_path
+                            ),
+                            model=self.transformer,
+                            device=self.accelerator.device,
+                        )
                     else:
                         self.pipeline = pipeline_cls.from_pretrained(**pipeline_kwargs)
                 except Exception as e:
@@ -1261,7 +1291,7 @@ class Validation:
                 for key, value in pipeline_kwargs.items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
-                for key, value in self.pipeline.components.items():
+                for key, value in getattr(self.pipeline, "components", {}).items():
                     if hasattr(value, "device"):
                         logger.debug(f"Device for {key}: {value.device}")
                 if StateTracker.get_model_family() == "flux":
@@ -1281,8 +1311,26 @@ class Validation:
                     pipeline_kwargs["negative_prompt_attention_mask"] = torch.unsqueeze(
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.inference_device, dtype=self.weight_dtype)
+                if StateTracker.get_model_family() == "omnigen":
+                    pipeline_kwargs["prompt"] = prompt
+                    del pipeline_kwargs["negative_prompt"]
+                    del pipeline_kwargs["num_images_per_prompt"]
+                    del pipeline_kwargs["generator"]
+                    del pipeline_kwargs["guidance_rescale"]
+                    if "image" in pipeline_kwargs:
+                        pipeline_kwargs["input_image"] = pipeline_kwargs.pop("image")
+                    pipeline_kwargs["seed"] = self.args.validation_seed
+                    pipeline_kwargs["use_kv_cache"] = (
+                        False if torch.backends.mps.is_available() else True
+                    )
+                    pipeline_kwargs["offload_kv_cache"] = (
+                        False if torch.backends.mps.is_available() else True
+                    )
+                    logger.debug(f"OmniGen pipeline kwargs: {pipeline_kwargs}")
 
-                validation_image_results = self.pipeline(**pipeline_kwargs).images
+                validation_image_results = self.pipeline(**pipeline_kwargs)
+                if hasattr(validation_image_results, "images"):
+                    validation_image_results = validation_image_results.images
                 if self.args.controlnet:
                     validation_image_results = self.stitch_conditioning_images(
                         validation_image_results, extra_validation_kwargs["image"]

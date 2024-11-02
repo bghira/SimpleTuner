@@ -9,8 +9,8 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
-torch = "^2.5.0"
-torchvision = "^0.20.0"
+torch = "2.4.1"
+torchvision = "*"
 diffusers = "^0.31.0"
 transformers = "^4.44.2"
 datasets = "^3.0.0"
@@ -44,7 +44,8 @@ fastapi = {extras = ["standard"], version = "^0.115.0"}
 deepspeed = "^0.15.1"
 sentencepiece = "^0.2.0"
 torchao = "^0.5.0"
-torchaudio = "^2.5.0"
+torchaudio = "*"
+omnigen = {git = "https://github.com/bghira/omnigen", rev = "dependency-update/peft"}
 
 
 [build-system]
