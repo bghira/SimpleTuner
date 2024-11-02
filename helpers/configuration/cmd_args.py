@@ -276,12 +276,12 @@ def get_argument_parser():
         "--sd3_clip_uncond_behaviour",
         type=str,
         choices=["empty_string", "zero"],
-        default='empty_string',
+        default="empty_string",
         help=(
             "SD3 can be trained using zeroed prompt embeds during unconditional dropout,"
             " or an encoded empty string may be used instead (the default). Changing this value may stabilise or"
             " destabilise training. The default is 'empty_string'."
-        )
+        ),
     )
     parser.add_argument(
         "--sd3_t5_uncond_behaviour",
@@ -291,7 +291,7 @@ def get_argument_parser():
         help=(
             "Override the value of unconditional prompts from T5 embeds."
             " The default is to follow the value of --sd3_clip_uncond_behaviour."
-        )
+        ),
     )
     parser.add_argument(
         "--lora_type",
@@ -2106,12 +2106,10 @@ def parse_cmdline_args(input_args=None):
         args.aspect_bucket_alignment = 64
         if args.sd3_t5_uncond_behaviour is None:
             args.sd3_t5_uncond_behaviour = args.sd3_clip_uncond_behaviour
-        info_log(f"SD3 embeds for unconditional captions: t5={args.sd3_t5_uncond_behaviour}, clip={args.sd3_clip_uncond_behaviour}")
-        if args.flow_matching_loss != "sd35":
-            warning_log(
-                "SD3 requires the use of the 'sd35' flow matching loss. Overriding the value of --flow_matching_loss."
-            )
-            args.flow_matching_loss = "sd35"
+        info_log(
+            f"SD3 embeds for unconditional captions: t5={args.sd3_t5_uncond_behaviour}, clip={args.sd3_clip_uncond_behaviour}"
+        )
+
     elif "deepfloyd" in args.model_type:
         deepfloyd_pixel_alignment = 8
         if args.aspect_bucket_alignment != deepfloyd_pixel_alignment:
