@@ -1351,6 +1351,14 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_guidance_skip_layers",
+        type=list,
+        default=None,
+        help=(
+            "StabilityAI recommends a value of [7, 8, 9] for Stable Diffusion 3.5 Medium."
+        ),
+    )
+    parser.add_argument(
         "--allow_tf32",
         action="store_true",
         help=(

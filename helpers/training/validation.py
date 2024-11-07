@@ -1192,6 +1192,14 @@ class Validation:
             else:
                 validation_resolution_width, validation_resolution_height = resolution
 
+            if (
+                self.args.model_family == "sd3"
+                and type(self.args.validation_guidance_skip_layers) is list
+            ):
+                extra_validation_kwargs["skip_guidance_layers"] = list(
+                    self.args.validation_guidance_skip_layers
+                )
+
             if not self.flow_matching and self.args.model_family not in [
                 "deepfloyd",
                 "pixart_sigma",
