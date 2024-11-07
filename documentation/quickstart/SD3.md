@@ -264,6 +264,26 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
+### Skip-layer guidance (SD3.5 Medium)
+
+StabilityAI recommends enabling SLG (Skip-layer guidance) on SD 3.5 Medium inference. This doesn't impact training results, only the validation sample quality.
+
+The following values are recommended for `config.json`:
+
+```json
+{
+  "--validation_guidance_skip_layers": [7, 8, 9],
+  "--validation_guidance_skip_layer_start": 0.01,
+  "--validation_guidance_skip_layer_stop": 0.2,
+  "--validation_guidance_skip_scale": 2.8,
+  "--validation_guidance_scale": 4.0
+}
+```
+
+When adding more layers (eg. increasing to [6, 7, 8, 9]) the SLG scale should be doubled from 2.8 to 5.6 or greater.
+
+**Lower CFG must be used during inference.**
+
 ### Model instability
 
 The SD 3.5 Large 8B model has potential instabilities during training:
@@ -288,12 +308,13 @@ Some changes were made to SimpleTuner's SD3.5 support:
 #### Stable configuration values
 
 These options have been known to keep SD3.5 in-tact for as long as possible:
-- optimizer=optimi-stableadamw
-- learning_rate=1e-5
+- optimizer=adamw_bf16
+- learning_rate=1e-4
 - batch_size=4 * 3 GPUs
-- max_grad_norm=0.01
+- max_grad_norm=0.1
 - base_model_precision=int8-quanto
 - No loss masking or dataset regularisation, as their contribution to this instability is unknown
+- `validation_guidance_skip_layers=[7,8,9]`
 
 ### Lowest VRAM config
 
