@@ -273,8 +273,8 @@ The following values are recommended for `config.json`:
 ```json
 {
   "--validation_guidance_skip_layers": [7, 8, 9],
-  "--validation_guidance_skip_layer_start": 0.01,
-  "--validation_guidance_skip_layer_stop": 0.2,
+  "--validation_guidance_skip_layers_start": 0.01,
+  "--validation_guidance_skip_layers_stop": 0.2,
   "--validation_guidance_skip_scale": 2.8,
   "--validation_guidance_scale": 4.0
 }
