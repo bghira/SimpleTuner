@@ -110,7 +110,7 @@ services:
               capabilities: [gpu]
 ```
 
-
+> ⚠️ Please be cautious of handling your WandB and Hugging Face tokens! It's advised not to commit them even to a private version-control repository to ensure they are not leaked. For production use-cases, key management storage is recommended, but out of scope for this guide.
 ---
 
 ## Troubleshooting
