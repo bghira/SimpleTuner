@@ -1008,15 +1008,13 @@ class StableDiffusion3Pipeline(
                 timestep = t.expand(latent_model_input.shape[0])
 
                 noise_pred = self.transformer(
-                    hidden_states=latent_model_input.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
-                    ),
+                    hidden_states=latent_model_input.to(device=self.transformer.device),
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device
                     ),
                     pooled_projections=pooled_prompt_embeds.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device
                     ),
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
