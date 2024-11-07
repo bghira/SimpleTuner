@@ -24,6 +24,8 @@ import threading
 from tqdm import tqdm
 import queue
 from math import sqrt
+import pandas as pd
+import numpy as np
 
 logger = logging.getLogger("DataBackendFactory")
 if should_log():
@@ -46,6 +48,68 @@ def prefetch_log_debug(message):
 def info_log(message):
     if StateTracker.get_accelerator().is_main_process:
         logger.info(message)
+
+
+def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False):
+    # Determine if the column contains arrays or scalar values
+    non_null_values = column_data.dropna()
+    if non_null_values.empty:
+        # All values are null
+        raise ValueError(
+            f"Parquet file {parquet_path} contains only null values in the '{column_name}' column."
+        )
+
+    first_non_null = non_null_values.iloc[0]
+    if isinstance(first_non_null, (list, tuple, np.ndarray, pd.Series)):
+        # Column contains arrays
+        # Check for null arrays
+        if column_data.isnull().any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains null arrays in the '{column_name}' column."
+            )
+
+        # Check for empty arrays
+        empty_arrays = column_data.apply(lambda x: len(x) == 0)
+        if empty_arrays.any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains empty arrays in the '{column_name}' column."
+            )
+
+        # Check for null elements within arrays
+        null_elements_in_arrays = column_data.apply(
+            lambda arr: any(pd.isnull(s) for s in arr)
+        )
+        if null_elements_in_arrays.any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains null values within arrays in the '{column_name}' column."
+            )
+
+        # Check for empty strings within arrays
+        empty_strings_in_arrays = column_data.apply(
+            lambda arr: any(s == "" for s in arr)
+        )
+        if empty_strings_in_arrays.all() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains only empty strings within arrays in the '{column_name}' column."
+            )
+
+    elif isinstance(first_non_null, str):
+        # Column contains scalar strings
+        # Check for null values
+        if column_data.isnull().any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains null values in the '{column_name}' column."
+            )
+
+        # Check for empty strings
+        if (column_data == "").any() and not fallback_caption_column:
+            raise ValueError(
+                f"Parquet file {parquet_path} contains empty strings in the '{column_name}' column."
+            )
+    else:
+        raise TypeError(
+            f"Unsupported data type in column '{column_name}'. Expected strings or arrays of strings."
+        )
 
 
 def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
@@ -292,24 +356,23 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
         raise ValueError(
             f"Parquet file {parquet_path} does not contain a column named '{filename_column}'."
         )
-    # Check for null values
-    if df[caption_column].isnull().values.any() and not fallback_caption_column:
-        raise ValueError(
-            f"Parquet file {parquet_path} contains null values in the '{caption_column}' column, but no fallback_caption_column was set."
-        )
-    if df[filename_column].isnull().values.any():
-        raise ValueError(
-            f"Parquet file {parquet_path} contains null values in the '{filename_column}' column."
-        )
-    # Check for empty strings
-    if (df[caption_column] == "").sum() > 0 and not fallback_caption_column:
-        raise ValueError(
-            f"Parquet file {parquet_path} contains empty strings in the '{caption_column}' column."
-        )
-    if (df[filename_column] == "").sum() > 0:
-        raise ValueError(
-            f"Parquet file {parquet_path} contains empty strings in the '{filename_column}' column."
-        )
+
+    # Apply the function to the caption_column.
+    check_column_values(
+        df[caption_column],
+        caption_column,
+        parquet_path,
+        fallback_caption_column=fallback_caption_column
+    )
+
+    # Apply the function to the filename_column.
+    check_column_values(
+        df[filename_column],
+        filename_column,
+        parquet_path,
+        fallback_caption_column=False  # Always check filename_column
+    )
+
     # Store the database in StateTracker
     StateTracker.set_parquet_database(
         backend["id"],

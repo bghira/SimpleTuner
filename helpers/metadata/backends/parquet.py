@@ -150,11 +150,13 @@ class ParquetMetadataBackend(MetadataBackend):
                 if len(caption_column) > 0:
                     caption = [row[c] for c in caption_column]
             else:
-                caption = row[caption_column]
+                caption = row.get(caption_column)
+                if isinstance(caption, (numpy.ndarray, pd.Series)):
+                    caption = [str(item) for item in caption if item is not None]
 
-            if not caption and fallback_caption_column:
-                caption = row[fallback_caption_column]
-            if not caption:
+            if caption is None and fallback_caption_column:
+                caption = row.get(fallback_caption_column, None)
+            if caption is None or caption == "" or caption == []:
                 raise ValueError(
                     f"Could not locate caption for image {filename} in sampler_backend {self.id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(self.parquet_database)} entries."
                 )
@@ -162,7 +164,7 @@ class ParquetMetadataBackend(MetadataBackend):
                 caption = caption.decode("utf-8")
             elif type(caption) == list:
                 caption = [c.strip() for c in caption if c.strip()]
-            if caption:
+            elif type(caption) == str:
                 caption = caption.strip()
             captions[filename] = caption
         return captions

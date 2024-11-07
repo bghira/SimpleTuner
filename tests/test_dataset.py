@@ -1,10 +1,12 @@
 import unittest
+import pandas as pd
 from unittest.mock import patch, Mock, MagicMock
 from PIL import Image
 from pathlib import Path
 from helpers.multiaspect.dataset import MultiAspectDataset
 from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from helpers.data_backend.base import BaseDataBackend
+from helpers.data_backend.factory import check_column_values
 
 
 class TestMultiAspectDataset(unittest.TestCase):
@@ -80,6 +82,63 @@ class TestMultiAspectDataset(unittest.TestCase):
         with self.assertRaises(Exception):
             with self.assertLogs("MultiAspectDataset", level="ERROR") as cm:
                 self.dataset.__getitem__(self.image_metadata)
+
+
+class TestDataBackendFactory(unittest.TestCase):
+    def test_all_null(self):
+        column_data = pd.Series([None, None, None])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains only null values", str(context.exception))
+
+    def test_arrays_with_nulls(self):
+        column_data = pd.Series([[1, 2], None, [3, 4]])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains null arrays", str(context.exception))
+
+    def test_empty_arrays(self):
+        column_data = pd.Series([[1, 2], [], [3, 4]])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains empty arrays", str(context.exception))
+
+    def test_null_elements_in_arrays(self):
+        column_data = pd.Series([[1, None], [2, 3], [3, 4]])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains null values within arrays", str(context.exception))
+
+    def test_empty_strings_in_arrays(self):
+        column_data = pd.Series([["", ""], ["", ""], ["", ""]])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains only empty strings within arrays", str(context.exception))
+
+    def test_scalar_strings_with_nulls(self):
+        column_data = pd.Series(["a", None, "b"])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains null values", str(context.exception))
+
+    def test_scalar_strings_with_empty(self):
+        column_data = pd.Series(["a", "", "b"])
+        with self.assertRaises(ValueError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("contains empty strings", str(context.exception))
+
+    def test_with_fallback_caption(self):
+        column_data = pd.Series([None, "", [None], [""]])
+        try:
+            check_column_values(column_data, "test_column", "test_file.parquet", fallback_caption_column=True)
+        except ValueError:
+            self.fail("check_column_values() raised ValueError unexpectedly with fallback_caption_column=True")
+
+    def test_invalid_data_type(self):
+        column_data = pd.Series([1, 2, 3])
+        with self.assertRaises(TypeError) as context:
+            check_column_values(column_data, "test_column", "test_file.parquet")
+        self.assertIn("Unsupported data type in column", str(context.exception))
 
 
 if __name__ == "__main__":
