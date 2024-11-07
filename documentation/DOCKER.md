@@ -11,7 +11,7 @@ This Docker configuration provides a comprehensive environment for running the S
 
 ## Getting Started
 
-### 0. Things to keep in mind when running on windows (WSL)
+### Windows OS support via WSL (Experimental)
 
 The following guide was tested in a WSL2 Distro that has the Dockerengine installed and  also contained the SimpleTuner repository.
 
