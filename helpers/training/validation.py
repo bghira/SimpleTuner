@@ -1196,13 +1196,13 @@ class Validation:
                 self.args.model_family == "sd3"
                 and type(self.args.validation_guidance_skip_layers) is list
             ):
-                extra_validation_kwargs["validation_guidance_skip_layers_start"] = (
-                    float(self.args.validation_guidance_skip_layers_start)
+                extra_validation_kwargs["skip_layer_guidance_start"] = float(
+                    self.args.validation_guidance_skip_layers_start
                 )
-                extra_validation_kwargs["validation_guidance_skip_layers_stop"] = float(
+                extra_validation_kwargs["skip_layer_guidance_stop"] = float(
                     self.args.validation_guidance_skip_layers_stop
                 )
-                extra_validation_kwargs["validation_guidance_skip_scale"] = float(
+                extra_validation_kwargs["skip_layer_guidance_scale"] = float(
                     self.args.validation_guidance_skip_scale
                 )
                 extra_validation_kwargs["skip_guidance_layers"] = list(
