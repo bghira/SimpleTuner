@@ -3,6 +3,7 @@
 For users that wish to make use of Docker or another container orchestration platform, see [this document](/documentation/DOCKER.md) first.
 
 ### Installation
+For  users operating on windows. An Installation guide based on Docker and WSL is found here [this document](/documentation/DOCKER.md).
 
 Clone the SimpleTuner repository and set up the python venv:
 

@@ -11,6 +11,11 @@ This Docker configuration provides a comprehensive environment for running the S
 
 ## Getting Started
 
+### 0. Things to keep in mind when running on windows (WSL)
+
+The following guide was tested in a WSL2 Distro that has the Dockerengine installed and was also contained the SimpleTuner repository.
+
+
 ### 1. Building the Container
 
 Clone the repository and navigate to the directory containing the Dockerfile. Build the Docker image using:
@@ -67,6 +72,43 @@ Run training scripts or other provided utilities directly within this environmen
 If you want to add custom startup scripts or modify configurations, extend the entry script (`docker-start.sh`) to fit your specific needs.
 
 If any capabilities cannot be achieved through this setup, please open a new issue.
+
+### Docker Compose
+If you want to use a `docker-compose.yaml` feel free to oriantate on the following template.
+
+Once the stack is deployed you can connect to the container and start operating in it as mentioned in the steps above.
+
+```bash
+docker compose up -d
+
+docker exec -it simpletuner /bin/bash
+```
+
+```docker-compose.yaml
+services:
+  simpletuner:
+    container_name: simpletuner
+    build:
+      context: [Path to the repository]/SimpleTuner
+      dockerfile: Dockerfile
+    ports:
+      - "[port to connect to the container]:22"
+    volumes:
+      - "[path to your datasets]:/datasets"
+      - "[path to your configs]:/workspace/SimpleTuner/config"
+    environment:
+      HUGGING_FACE_HUB_TOKEN: [your hugging face token]
+      WANDB_TOKEN: [your wanddb token]
+    command: ["tail", "-f", "/dev/null"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+```
+
 
 ---
 
