@@ -1360,6 +1360,29 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_guidance_skip_layers_start",
+        type=float,
+        default=0.01,
+        help=("StabilityAI recommends a value of 0.01 for SLG start."),
+    )
+    parser.add_argument(
+        "--validation_guidance_skip_layers_stop",
+        type=float,
+        default=0.01,
+        help=("StabilityAI recommends a value of 0.2 for SLG start."),
+    )
+    parser.add_argument(
+        "--validation_guidance_skip_scale",
+        type=float,
+        default=2.8,
+        help=(
+            "StabilityAI recommends a value of 2.8 for SLG guidance skip scaling."
+            " When adding more layers, you must increase the scale, eg. adding one more layer requires doubling"
+            " the value given."
+        ),
+    )
+
+    parser.add_argument(
         "--allow_tf32",
         action="store_true",
         help=(
