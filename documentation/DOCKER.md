@@ -74,7 +74,8 @@ If you want to add custom startup scripts or modify configurations, extend the e
 If any capabilities cannot be achieved through this setup, please open a new issue.
 
 ### Docker Compose
-If you want to use a `docker-compose.yaml` feel free to oriantate on the following template.
+
+For users who prefer `docker-compose.yaml`, this template is provided for you to extend and customise for your needs.
 
 Once the stack is deployed you can connect to the container and start operating in it as mentioned in the steps above.
 
