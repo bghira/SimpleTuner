@@ -139,6 +139,7 @@ class TestTrainer(unittest.TestCase):
             output_dir="output_dir",
             flux_schedule_shift=3,
             flux_schedule_auto_shift=False,
+            validation_guidance_skip_layers=None,
         ),
     )
     def test_misc_init(

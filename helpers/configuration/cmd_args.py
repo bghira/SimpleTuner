@@ -6,6 +6,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 import random
 import time
+import json
 import logging
 import sys
 import torch
@@ -1352,7 +1353,7 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--validation_guidance_skip_layers",
-        type=list,
+        type=str,
         default=None,
         help=(
             "StabilityAI recommends a value of [7, 8, 9] for Stable Diffusion 3.5 Medium."
@@ -2398,5 +2399,16 @@ def parse_cmdline_args(input_args=None):
         raise ValueError(
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
+
+    if args.validation_guidance_skip_layers is not None:
+        try:
+            import json
+
+            args.validation_guidance_skip_layers = json.loads(
+                args.validation_guidance_skip_layers
+            )
+        except Exception as e:
+            logger.error(f"Could not load skip layers: {e}")
+            raise
 
     return args
