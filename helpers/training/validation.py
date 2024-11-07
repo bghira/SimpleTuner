@@ -1197,13 +1197,13 @@ class Validation:
                 and type(self.args.validation_guidance_skip_layers) is list
             ):
                 extra_validation_kwargs["validation_guidance_skip_layers_start"] = (
-                    float(args.validation_guidance_skip_layers_start)
+                    float(self.args.validation_guidance_skip_layers_start)
                 )
                 extra_validation_kwargs["validation_guidance_skip_layers_stop"] = float(
-                    args.validation_guidance_skip_layers_stop
+                    self.args.validation_guidance_skip_layers_stop
                 )
                 extra_validation_kwargs["validation_guidance_skip_scale"] = float(
-                    args.validation_guidance_skip_scale
+                    self.args.validation_guidance_skip_scale
                 )
                 extra_validation_kwargs["skip_guidance_layers"] = list(
                     self.args.validation_guidance_skip_layers
