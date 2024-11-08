@@ -107,7 +107,11 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
     missing_keys = set(
         [x + ".lora_A.weight" for x in lora_layers.keys()]
         + [x + ".lora_B.weight" for x in lora_layers.keys()]
-        + ([x + ".lora_magnitude_vector.weight"] if use_dora else [])
+        + (
+            [x + ".lora_magnitude_vector.weight" for x in lora_layers.keys()]
+            if use_dora
+            else []
+        )
     )
     for k, v in state_dict.items():
         if "lora_A" in k:
