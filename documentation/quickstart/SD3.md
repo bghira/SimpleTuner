@@ -276,11 +276,18 @@ The following values are recommended for `config.json`:
   "--validation_guidance_skip_layers_start": 0.01,
   "--validation_guidance_skip_layers_stop": 0.2,
   "--validation_guidance_skip_scale": 2.8,
-  "--validation_guidance_scale": 4.0
+  "--validation_guidance": 4.0
 }
 ```
 
-When adding more layers (eg. increasing to [6, 7, 8, 9]) the SLG scale should be doubled from 2.8 to 5.6 or greater.
+- `..skip_scale` determines how much to scale the positive prompt prediction during skip-layer guidance. The default value of 2.8 is safe for the base model's skip value of `7, 8, 9` but will need to be increased if more layers are skipped, doubling it for each additional layer.
+- `..skip_layers` tells which layers to skip during the negative prompt prediction.
+- `..skip_layers_start` determine the fraction of the inference pipeline during which skip-layer guidance should begin to be applied.
+- `..skip_layers_stop` will set the fraction of the total number of inference steps after which SLG will no longer be applied.
+
+SLG can be applied for fewer steps for a weaker effect or less reduction of inference speed.
+
+It seems that extensive training of a LoRA or LyCORIS model will require modification to these values, though it's not clear how exactly it changes.
 
 **Lower CFG must be used during inference.**
 
