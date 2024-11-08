@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 import os
 import json
 
-# Assuming the functions are in a module named 'metadata.py'
 from helpers.publishing.metadata import (
     _negative_prompt,
     _torch_device,
@@ -14,9 +13,6 @@ from helpers.publishing.metadata import (
     _guidance_rescale,
 )
 from helpers.publishing.metadata import *
-
-# For demonstration purposes, I'll redefine the functions here.
-# In your actual test file, import them from your module as shown above.
 
 
 class TestMetadataFunctions(unittest.TestCase):
