@@ -309,6 +309,7 @@ Some changes were made to SimpleTuner's SD3.5 support:
 
 These options have been known to keep SD3.5 in-tact for as long as possible:
 - optimizer=adamw_bf16
+- flux_schedule_shift=1
 - learning_rate=1e-4
 - batch_size=4 * 3 GPUs
 - max_grad_norm=0.1
