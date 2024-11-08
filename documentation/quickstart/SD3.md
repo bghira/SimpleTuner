@@ -264,6 +264,33 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 
 ## Notes & troubleshooting tips
 
+### Skip-layer guidance (SD3.5 Medium)
+
+StabilityAI recommends enabling SLG (Skip-layer guidance) on SD 3.5 Medium inference. This doesn't impact training results, only the validation sample quality.
+
+The following values are recommended for `config.json`:
+
+```json
+{
+  "--validation_guidance_skip_layers": [7, 8, 9],
+  "--validation_guidance_skip_layers_start": 0.01,
+  "--validation_guidance_skip_layers_stop": 0.2,
+  "--validation_guidance_skip_scale": 2.8,
+  "--validation_guidance": 4.0
+}
+```
+
+- `..skip_scale` determines how much to scale the positive prompt prediction during skip-layer guidance. The default value of 2.8 is safe for the base model's skip value of `7, 8, 9` but will need to be increased if more layers are skipped, doubling it for each additional layer.
+- `..skip_layers` tells which layers to skip during the negative prompt prediction.
+- `..skip_layers_start` determine the fraction of the inference pipeline during which skip-layer guidance should begin to be applied.
+- `..skip_layers_stop` will set the fraction of the total number of inference steps after which SLG will no longer be applied.
+
+SLG can be applied for fewer steps for a weaker effect or less reduction of inference speed.
+
+It seems that extensive training of a LoRA or LyCORIS model will require modification to these values, though it's not clear how exactly it changes.
+
+**Lower CFG must be used during inference.**
+
 ### Model instability
 
 The SD 3.5 Large 8B model has potential instabilities during training:
@@ -288,12 +315,14 @@ Some changes were made to SimpleTuner's SD3.5 support:
 #### Stable configuration values
 
 These options have been known to keep SD3.5 in-tact for as long as possible:
-- optimizer=optimi-stableadamw
-- learning_rate=1e-5
+- optimizer=adamw_bf16
+- flux_schedule_shift=1
+- learning_rate=1e-4
 - batch_size=4 * 3 GPUs
-- max_grad_norm=0.01
+- max_grad_norm=0.1
 - base_model_precision=int8-quanto
 - No loss masking or dataset regularisation, as their contribution to this instability is unknown
+- `validation_guidance_skip_layers=[7,8,9]`
 
 ### Lowest VRAM config
 

@@ -95,12 +95,16 @@ class OmniGenPipeline:
                 os.path.join(pretrained_model_name_or_path, "vae")
             )
         elif vae_path is not None:
-            vae = AutoencoderKL.from_pretrained(vae_path).to(device)
+            vae = AutoencoderKL.from_pretrained(vae_path).to(
+                StateTracker.get_accelerator().device
+            )
         else:
             logger.info(
                 f"No VAE found in {pretrained_model_name_or_path}, downloading stabilityai/sdxl-vae from HF"
             )
-            vae = AutoencoderKL.from_pretrained("stabilityai/sdxl-vae").to(device)
+            vae = AutoencoderKL.from_pretrained("stabilityai/sdxl-vae").to(
+                StateTracker.get_accelerator().device
+            )
 
         print(f"OmniGenPipeline received unexpected arguments: {kwargs.keys()}")
 

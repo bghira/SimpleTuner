@@ -11,6 +11,7 @@ from peft.utils import get_peft_model_state_dict
 from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from helpers.training.state_tracker import StateTracker
 from helpers.models.smoldit import SmolDiT2DModel, SmolDiTPipeline
+from helpers.models.sd3.transformer import SD3Transformer2DModel
 import os
 import logging
 import shutil
@@ -27,7 +28,6 @@ try:
     from diffusers import (
         UNet2DConditionModel,
         StableDiffusion3Pipeline,
-        SD3Transformer2DModel,
         StableDiffusionPipeline,
         FluxPipeline,
         PixArtSigmaPipeline,
