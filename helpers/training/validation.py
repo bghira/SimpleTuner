@@ -642,7 +642,9 @@ class Validation:
                     device=self.inference_device, dtype=self.weight_dtype
                 )
             )
-            prompt_embeds["pooled_prompt_embeds"] = current_validation_pooled_embeds
+            prompt_embeds["pooled_prompt_embeds"] = current_validation_pooled_embeds.to(
+                device=self.inference_device, dtype=self.weight_dtype
+            )
             prompt_embeds["negative_pooled_prompt_embeds"] = (
                 self.validation_negative_pooled_embeds
             )
@@ -662,7 +664,9 @@ class Validation:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
-                current_validation_prompt_embeds = current_validation_prompt_embeds[0]
+                current_validation_prompt_embeds = current_validation_prompt_embeds[
+                    0
+                ].to(device=self.inference_device, dtype=self.weight_dtype)
                 if (
                     type(self.validation_negative_prompt_embeds) is tuple
                     or type(self.validation_negative_prompt_embeds) is list
@@ -672,7 +676,9 @@ class Validation:
                         self.validation_negative_prompt_mask,
                     ) = self.validation_negative_prompt_embeds[0]
             else:
-                current_validation_prompt_embeds = current_validation_prompt_embeds[0]
+                current_validation_prompt_embeds = current_validation_prompt_embeds[
+                    0
+                ].to(device=self.inference_device, dtype=self.weight_dtype)
             # logger.debug(
             #     f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
             #     f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
