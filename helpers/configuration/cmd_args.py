@@ -150,6 +150,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--flux_use_uniform_schedule",
+        action="store_true",
+        help=(
+            "Whether or not to use a uniform schedule with Flux instead of sigmoid."
+            " Using uniform sampling may help preserve more capabilities from the base model."
+            " Some tasks may not benefit from this."
+        ),
+    )
+    parser.add_argument(
         "--flux_use_beta_schedule",
         action="store_true",
         help=(
