@@ -968,6 +968,8 @@ class Validation:
                 "tokenizer": self.tokenizer_1,
                 "vae": self.vae,
                 "safety_checker": None,
+                "text_encoder_2": None,
+                "text_encoder_3": None,
             }
             if type(pipeline_cls) is StableDiffusionXLPipeline:
                 del extra_pipeline_kwargs["safety_checker"]
@@ -1071,7 +1073,7 @@ class Validation:
                     logger.error(e)
                     logger.error(traceback.format_exc())
                     continue
-                return None
+                break
             if self.args.validation_torch_compile:
                 if self.unet is not None and not is_compiled_module(self.unet):
                     logger.warning(
