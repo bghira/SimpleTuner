@@ -249,9 +249,13 @@ class TextEmbeddingCache(WebhookMixin):
                     if len(batch) > 0:
                         self.process_write_batch(batch)
                         self.write_thread_bar.update(len(batch))
-                    logger.debug(f"Exiting batch write thread, no more work to do after writing {written_elements} elements")
+                    logger.debug(
+                        f"Exiting batch write thread, no more work to do after writing {written_elements} elements"
+                    )
                     break
-                logger.debug(f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}")
+                logger.debug(
+                    f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}"
+                )
                 pass
             except Exception:
                 logger.exception("An error occurred while writing embeddings to disk.")
@@ -525,9 +529,7 @@ class TextEmbeddingCache(WebhookMixin):
                 prompt,
                 is_validation,
                 zero_padding_tokens=(
-                    True
-                    if StateTracker.get_args().t5_padding == "zero"
-                    else False
+                    True if StateTracker.get_args().t5_padding == "zero" else False
                 ),
             )
         else:
@@ -1320,7 +1322,9 @@ class TextEmbeddingCache(WebhookMixin):
                         )
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    self.debug_log(f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}")
+                    self.debug_log(
+                        f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}"
+                    )
                     prompt_embeds, pooled_prompt_embeds = self.encode_sd3_prompt(
                         self.text_encoders,
                         self.tokenizers,

@@ -80,7 +80,10 @@ class TrainingSample:
         self.resolution = self.data_backend_config.get("resolution")
         self.resolution_type = self.data_backend_config.get("resolution_type")
         self.target_size_calculator = resize_helpers.get(self.resolution_type)
-        if self.target_size_calculator is None and conditioning_type not in ["mask", "controlnet"]:
+        if self.target_size_calculator is None and conditioning_type not in [
+            "mask",
+            "controlnet",
+        ]:
             raise ValueError(f"Unknown resolution type: {self.resolution_type}")
         self._set_resolution()
         self.target_downsample_size = self.data_backend_config.get(
