@@ -276,7 +276,9 @@ The following values are recommended for `config.json`:
   "--validation_guidance_skip_layers_start": 0.01,
   "--validation_guidance_skip_layers_stop": 0.2,
   "--validation_guidance_skip_scale": 2.8,
-  "--validation_guidance": 4.0
+  "--validation_guidance": 4.0,
+  "--flux_use_uniform_schedule": true,
+  "--flux_schedule_auto_shift": true
 }
 ```
 
@@ -308,7 +310,8 @@ Some changes were made to SimpleTuner's SD3.5 support:
 - Offering a switch (`--sd3_clip_uncond_behaviour` and `--sd3_t5_uncond_behaviour`) to use empty encoded blank captions for unconditional predictions (`empty_string`, **default**) or zeros (`zero`), not a recommended setting to tweak.
 - SD3.5 training loss function was updated to match that found in the upstream StabilityAI/SD3.5 repository
 - Updated default `--flux_schedule_shift` value to 3 to match the static 1024px value for SD3
-  - 512px training requires the use of `--flux_schedule_shift=1`
+  - StabilityAI followed-up with documentation to use `--flux_schedule_shift=1` with `--flux_use_uniform_schedule`
+  - Community members have reported that `--flux_schedule_auto_shift` works better when using mult-aspect or multi-resolution training
 - Updated the hard-coded tokeniser sequence length limit to **256** with the option to revert it to **77** tokens to save disk space or compute at the cost of output quality degradation
 
 

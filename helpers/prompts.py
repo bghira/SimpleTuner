@@ -266,7 +266,9 @@ class PromptHandler:
         if type(image_caption) == str:
             image_caption = image_caption.strip()
         if type(image_caption) in (list, tuple, numpy.ndarray, pd.Series):
-            image_caption = [str(item).strip() for item in image_caption if item is not None]
+            image_caption = [
+                str(item).strip() for item in image_caption if item is not None
+            ]
         if prepend_instance_prompt:
             if type(image_caption) == list:
                 image_caption = [instance_prompt + " " + x for x in image_caption]
