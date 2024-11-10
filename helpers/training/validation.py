@@ -969,6 +969,10 @@ class Validation:
                 "vae": self.vae,
                 "safety_checker": None,
             }
+            if self.args.model_family in ["sd3", "sdxl", "flux"]:
+                extra_pipeline_kwargs["text_encoder_2"] = None
+            if self.args.model_family in ["sd3"]:
+                extra_pipeline_kwargs["text_encoder_3"] = None
             if type(pipeline_cls) is StableDiffusionXLPipeline:
                 del extra_pipeline_kwargs["safety_checker"]
                 del extra_pipeline_kwargs["text_encoder"]
@@ -1071,7 +1075,7 @@ class Validation:
                     logger.error(e)
                     logger.error(traceback.format_exc())
                     continue
-                return None
+                break
             if self.args.validation_torch_compile:
                 if self.unet is not None and not is_compiled_module(self.unet):
                     logger.warning(
