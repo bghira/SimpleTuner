@@ -4,6 +4,8 @@ For users that wish to make use of Docker or another container orchestration pla
 
 ### Installation
 
+For  users operating on Windows 10 or newer, an installation guide based on Docker and WSL is available here [this document](/documentation/DOCKER.md).
+
 Clone the SimpleTuner repository and set up the python venv:
 
 ```bash

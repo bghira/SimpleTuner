@@ -11,6 +11,12 @@ RUN apt-get update -y
 # on user input during build
 ENV DEBIAN_FRONTEND noninteractive
 
+# Install libg dependencies
+RUN apt install libgl1-mesa-glx -y
+RUN apt-get install 'ffmpeg'\
+    'libsm6'\
+    'libxext6'  -y
+
 # Install misc unix libraries
 RUN apt-get install -y --no-install-recommends openssh-server \
                                                openssh-client \

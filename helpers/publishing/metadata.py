@@ -153,6 +153,15 @@ def _guidance_rescale(args):
     return f"\n    guidance_rescale={args.validation_guidance_rescale},"
 
 
+def _skip_layers(args):
+    if (
+        args.model_family.lower() not in ["sd3"]
+        or args.validation_guidance_skip_layers is None
+    ):
+        return ""
+    return f"\n    skip_guidance_layers={args.validation_guidance_skip_layers},"
+
+
 def _validation_resolution(args):
     if args.validation_resolution == "" or args.validation_resolution is None:
         return f"width=1024,\n" f"    height=1024,"
@@ -185,7 +194,7 @@ image = pipeline(
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
     {_validation_resolution(args)}
-    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(args)},{_skip_layers(args)}
 ).images[0]
 image.save("output.png", format="PNG")
 ```
@@ -249,15 +258,50 @@ def flux_schedule_info(args):
         output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
     if args.flux_attention_masked_training:
         output_args.append("flux_attention_masked_training")
-    if args.model_type == "lora" and args.lora_type == "standard":
+    if (
+        args.model_type == "lora"
+        and args.lora_type == "standard"
+        and args.flux_lora_target is not None
+    ):
         output_args.append(f"flux_lora_target={args.flux_lora_target}")
     output_str = (
-        f" (flux parameters={output_args})"
+        f" (extra parameters={output_args})"
         if output_args
         else " (no special parameters set)"
     )
 
     return output_str
+
+
+def sd3_schedule_info(args):
+    if args.model_family.lower() != "sd3":
+        return ""
+    output_args = []
+    if args.flux_schedule_auto_shift:
+        output_args.append("flux_schedule_auto_shift")
+    if args.flux_schedule_shift is not None:
+        output_args.append(f"shift={args.flux_schedule_shift}")
+    if args.flux_use_beta_schedule:
+        output_args.append(f"flux_beta_schedule_alpha={args.flux_beta_schedule_alpha}")
+        output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
+    if args.flux_use_uniform_schedule:
+        output_args.append(f"flux_use_uniform_schedule")
+    # if args.model_type == "lora" and args.lora_type == "standard":
+    #     output_args.append(f"flux_lora_target={args.flux_lora_target}")
+    output_str = (
+        f" (extra parameters={output_args})"
+        if output_args
+        else " (no special parameters set)"
+    )
+
+    return output_str
+
+
+def model_schedule_info(args):
+    if args.model_family == "flux":
+        return flux_schedule_info(args)
+    if args.model_family == "sd3":
+        return sd3_schedule_info(args)
 
 
 def save_model_card(
@@ -384,7 +428,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{flux_schedule_info(args=StateTracker.get_args())}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}

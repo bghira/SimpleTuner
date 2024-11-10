@@ -38,7 +38,7 @@ def load_diffusion_model(args, weight_dtype):
         # Stable Diffusion 3 uses a Diffusion transformer.
         logger.info("Loading Stable Diffusion 3 diffusion transformer..")
         try:
-            from diffusers import SD3Transformer2DModel
+            from helpers.models.sd3.transformer import SD3Transformer2DModel
         except Exception as e:
             logger.error(
                 f"Can not load SD3 model class. This release requires the latest version of Diffusers: {e}"

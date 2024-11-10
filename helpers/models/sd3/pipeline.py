@@ -29,9 +29,12 @@ from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.models.transformers import SD3Transformer2DModel
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import (
+    USE_PEFT_BACKEND,
     is_torch_xla_available,
     logging,
     replace_example_docstring,
+    scale_lora_layers,
+    unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
@@ -39,6 +42,7 @@ from diffusers.pipelines.stable_diffusion_3.pipeline_output import (
     StableDiffusion3PipelineOutput,
 )
 
+from diffusers.image_processor import PipelineImageInput
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -76,7 +80,7 @@ def retrieve_timesteps(
     sigmas: Optional[List[float]] = None,
     **kwargs,
 ):
-    """
+    r"""
     Calls the scheduler's `set_timesteps` method and retrieves timesteps from the scheduler after the call. Handles
     custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
 
@@ -221,11 +225,17 @@ class StableDiffusion3Pipeline(
             if hasattr(self, "transformer") and self.transformer is not None
             else 128
         )
+        self.patch_size = (
+            self.transformer.config.patch_size
+            if hasattr(self, "transformer") and self.transformer is not None
+            else 2
+        )
 
     def _get_t5_prompt_embeds(
         self,
         prompt: Union[str, List[str]] = None,
         num_images_per_prompt: int = 1,
+        max_sequence_length: int = 256,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -238,7 +248,7 @@ class StableDiffusion3Pipeline(
         if self.text_encoder_3 is None:
             return torch.zeros(
                 (
-                    batch_size,
+                    batch_size * num_images_per_prompt,
                     self.tokenizer_max_length,
                     self.transformer.config.joint_attention_dim,
                 ),
@@ -249,7 +259,7 @@ class StableDiffusion3Pipeline(
         text_inputs = self.tokenizer_3(
             prompt,
             padding="max_length",
-            max_length=self.tokenizer_max_length,
+            max_length=max_sequence_length,
             truncation=True,
             add_special_tokens=True,
             return_tensors="pt",
@@ -266,8 +276,8 @@ class StableDiffusion3Pipeline(
                 untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
             )
             logger.warning(
-                "The following part of your input was truncated because CLIP can only handle sequences up to"
-                f" {self.tokenizer_max_length} tokens: {removed_text}"
+                "The following part of your input was truncated because `max_sequence_length` is set to "
+                f" {max_sequence_length} tokens: {removed_text}"
             )
 
         prompt_embeds = self.text_encoder_3(text_input_ids.to(device))[0]
@@ -368,6 +378,8 @@ class StableDiffusion3Pipeline(
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         clip_skip: Optional[int] = None,
+        max_sequence_length: int = 256,
+        lora_scale: Optional[float] = None,
     ):
         r"""
 
@@ -413,8 +425,21 @@ class StableDiffusion3Pipeline(
             clip_skip (`int`, *optional*):
                 Number of layers to be skipped from CLIP while computing the prompt embeddings. A value of 1 means that
                 the output of the pre-final layer will be used for computing the prompt embeddings.
+            lora_scale (`float`, *optional*):
+                A lora scale that will be applied to all LoRA layers of the text encoder if LoRA layers are loaded.
         """
         device = device or self._execution_device
+
+        # set lora scale so that monkey patched LoRA
+        # function of text encoder can correctly access it
+        if lora_scale is not None and isinstance(self, SD3LoraLoaderMixin):
+            self._lora_scale = lora_scale
+
+            # dynamically adjust the LoRA scale
+            if self.text_encoder is not None and USE_PEFT_BACKEND:
+                scale_lora_layers(self.text_encoder, lora_scale)
+            if self.text_encoder_2 is not None and USE_PEFT_BACKEND:
+                scale_lora_layers(self.text_encoder_2, lora_scale)
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
         if prompt is not None:
@@ -448,6 +473,7 @@ class StableDiffusion3Pipeline(
             t5_prompt_embed = self._get_t5_prompt_embeds(
                 prompt=prompt_3,
                 num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
                 device=device,
             )
 
@@ -520,6 +546,7 @@ class StableDiffusion3Pipeline(
             t5_negative_prompt_embed = self._get_t5_prompt_embeds(
                 prompt=negative_prompt_3,
                 num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
                 device=device,
             )
 
@@ -538,6 +565,16 @@ class StableDiffusion3Pipeline(
             negative_pooled_prompt_embeds = torch.cat(
                 [negative_pooled_prompt_embed, negative_pooled_prompt_2_embed], dim=-1
             )
+
+        if self.text_encoder is not None:
+            if isinstance(self, SD3LoraLoaderMixin) and USE_PEFT_BACKEND:
+                # Retrieve the original scale by scaling back the LoRA layers
+                unscale_lora_layers(self.text_encoder, lora_scale)
+
+        if self.text_encoder_2 is not None:
+            if isinstance(self, SD3LoraLoaderMixin) and USE_PEFT_BACKEND:
+                # Retrieve the original scale by scaling back the LoRA layers
+                unscale_lora_layers(self.text_encoder_2, lora_scale)
 
         return (
             prompt_embeds,
@@ -561,10 +598,15 @@ class StableDiffusion3Pipeline(
         pooled_prompt_embeds=None,
         negative_pooled_prompt_embeds=None,
         callback_on_step_end_tensor_inputs=None,
+        max_sequence_length=None,
     ):
-        if height % 8 != 0 or width % 8 != 0:
+        if (
+            height % (self.vae_scale_factor * self.patch_size) != 0
+            or width % (self.vae_scale_factor * self.patch_size) != 0
+        ):
             raise ValueError(
-                f"`height` and `width` have to be divisible by 8 but are {height} and {width}."
+                f"`height` and `width` have to be divisible by {self.vae_scale_factor * self.patch_size} but are {height} and {width}."
+                f"You can use height {height - height % (self.vae_scale_factor * self.patch_size)} and width {width - width % (self.vae_scale_factor * self.patch_size)}."
             )
 
         if callback_on_step_end_tensor_inputs is not None and not all(
@@ -645,6 +687,11 @@ class StableDiffusion3Pipeline(
         if negative_prompt_embeds is not None and negative_pooled_prompt_embeds is None:
             raise ValueError(
                 "If `negative_prompt_embeds` are provided, `negative_pooled_prompt_embeds` also have to be passed. Make sure to generate `negative_pooled_prompt_embeds` from the same text encoder that was used to generate `negative_prompt_embeds`."
+            )
+
+        if max_sequence_length is not None and max_sequence_length > 512:
+            raise ValueError(
+                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
             )
 
     def prepare_latents(
@@ -733,6 +780,11 @@ class StableDiffusion3Pipeline(
         clip_skip: Optional[int] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        max_sequence_length: int = 256,
+        skip_guidance_layers: List[int] = None,
+        skip_layer_guidance_scale: int = 2.8,
+        skip_layer_guidance_stop: int = 0.2,
+        skip_layer_guidance_start: int = 0.01,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -758,7 +810,7 @@ class StableDiffusion3Pipeline(
                 Custom timesteps to use for the denoising process with schedulers which support a `timesteps` argument
                 in their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is
                 passed will be used. Must be in descending order.
-            guidance_scale (`float`, *optional*, defaults to 5.0):
+            guidance_scale (`float`, *optional*, defaults to 7.0):
                 Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
                 `guidance_scale` is defined as `w` of equation 2. of [Imagen
                 Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
@@ -801,8 +853,8 @@ class StableDiffusion3Pipeline(
                 The output format of the generate image. Choose between
                 [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] instead
-                of a plain tuple.
+                Whether or not to return a [`~pipelines.stable_diffusion_3.StableDiffusion3PipelineOutput`] instead of
+                a plain tuple.
             joint_attention_kwargs (`dict`, *optional*):
                 A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
                 `self.processor` in
@@ -816,12 +868,29 @@ class StableDiffusion3Pipeline(
                 The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
                 will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
                 `._callback_tensor_inputs` attribute of your pipeline class.
+            max_sequence_length (`int` defaults to 256): Maximum sequence length to use with the `prompt`.
+            skip_guidance_layers (`List[int]`, *optional*): A list of integers that specify layers to skip during guidance.
+                If not provided, all layers will be used for guidance. If provided, the guidance will only be applied
+                to the layers specified in the list. Recommended value by StabiltyAI for Stable Diffusion 3.5 Medium is
+                [7, 8, 9].
+            skip_layer_guidance_scale (`int`, *optional*): The scale of the guidance for the layers specified in
+                `skip_guidance_layers`. The guidance will be applied to the layers specified in `skip_guidance_layers`
+                with a scale of `skip_layer_guidance_scale`. The guidance will be applied to the rest of the layers with
+                a scale of `1`.
+            skip_layer_guidance_stop (`int`, *optional*): The step at which the guidance for the layers specified in
+                `skip_guidance_layers` will stop. The guidance will be applied to the layers specified in
+                `skip_guidance_layers` until the fraction specified in `skip_layer_guidance_stop`. Recommended value by
+                StabiltyAI for Stable Diffusion 3.5 Medium is 0.2.
+            skip_layer_guidance_start (`int`, *optional*): The step at which the guidance for the layers specified in
+                `skip_guidance_layers` will start. The guidance will be applied to the layers specified in
+                `skip_guidance_layers` from the fraction specified in `skip_layer_guidance_start`. Recommended value by
+                StabiltyAI for Stable Diffusion 3.5 Medium is 0.01.
 
         Examples:
 
         Returns:
-            [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] or `tuple`:
-            [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] if `return_dict` is True, otherwise a
+            [`~pipelines.stable_diffusion_3.StableDiffusion3PipelineOutput`] or `tuple`:
+            [`~pipelines.stable_diffusion_3.StableDiffusion3PipelineOutput`] if `return_dict` is True, otherwise a
             `tuple`. When returning a tuple, the first element is a list with the generated images.
         """
 
@@ -843,9 +912,11 @@ class StableDiffusion3Pipeline(
             pooled_prompt_embeds=pooled_prompt_embeds,
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+            max_sequence_length=max_sequence_length,
         )
 
         self._guidance_scale = guidance_scale
+        self._skip_layer_guidance_scale = skip_layer_guidance_scale
         self._clip_skip = clip_skip
         self._joint_attention_kwargs = joint_attention_kwargs
         self._interrupt = False
@@ -860,6 +931,11 @@ class StableDiffusion3Pipeline(
 
         device = self._execution_device
 
+        lora_scale = (
+            self.joint_attention_kwargs.get("scale", None)
+            if self.joint_attention_kwargs is not None
+            else None
+        )
         (
             prompt_embeds,
             negative_prompt_embeds,
@@ -880,9 +956,15 @@ class StableDiffusion3Pipeline(
             device=device,
             clip_skip=self.clip_skip,
             num_images_per_prompt=num_images_per_prompt,
+            max_sequence_length=max_sequence_length,
+            lora_scale=lora_scale,
         )
 
         if self.do_classifier_free_guidance:
+            if skip_guidance_layers is not None:
+                original_prompt_embeds = prompt_embeds
+                original_pooled_prompt_embeds = pooled_prompt_embeds
+            # we do not combine the inference if we skip guidance layers.
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
             pooled_prompt_embeds = torch.cat(
                 [negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0
@@ -909,8 +991,6 @@ class StableDiffusion3Pipeline(
             generator,
             latents,
         )
-        latents = latents.to(self.transformer.device)
-        timesteps = timesteps.to(self.transformer.device)
 
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -921,22 +1001,20 @@ class StableDiffusion3Pipeline(
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = (
                     torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance
+                    if self.do_classifier_free_guidance and skip_guidance_layers is None
                     else latents
                 )
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
                 noise_pred = self.transformer(
-                    hidden_states=latent_model_input.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
-                    ),
+                    hidden_states=latent_model_input.to(device=self.transformer.device),
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device
                     ),
                     pooled_projections=pooled_prompt_embeds.to(
-                        device=self.transformer.device, dtype=self.transformer.dtype
+                        device=self.transformer.device
                     ),
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
@@ -948,6 +1026,33 @@ class StableDiffusion3Pipeline(
                     noise_pred = noise_pred_uncond + self.guidance_scale * (
                         noise_pred_text - noise_pred_uncond
                     )
+                    should_skip_layers = (
+                        True
+                        if i > num_inference_steps * skip_layer_guidance_start
+                        and i < num_inference_steps * skip_layer_guidance_stop
+                        else False
+                    )
+                    if skip_guidance_layers is not None and should_skip_layers:
+                        noise_pred_skip_layers = self.transformer(
+                            hidden_states=latent_model_input.to(
+                                device=self.transformer.device,
+                            ),
+                            timestep=timestep,
+                            encoder_hidden_states=original_prompt_embeds.to(
+                                device=self.transformer.device,
+                            ),
+                            pooled_projections=original_pooled_prompt_embeds.to(
+                                device=self.transformer.device,
+                            ),
+                            joint_attention_kwargs=self.joint_attention_kwargs,
+                            return_dict=False,
+                            skip_layers=skip_guidance_layers,
+                        )[0]
+                        noise_pred = (
+                            noise_pred
+                            + (noise_pred_text - noise_pred_skip_layers)
+                            * self._skip_layer_guidance_scale
+                        )
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
@@ -1004,84 +1109,9 @@ class StableDiffusion3Pipeline(
         return StableDiffusion3PipelineOutput(images=image)
 
 
-# Copyright 2024 Stability AI and The HuggingFace Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from typing import Callable, Dict, List, Optional, Union
-
-import PIL.Image
-import torch
-from transformers import (
-    CLIPTextModelWithProjection,
-    CLIPTokenizer,
-    T5EncoderModel,
-    T5TokenizerFast,
-)
-
-from diffusers.image_processor import PipelineImageInput
-
-
-if is_torch_xla_available():
-    import torch_xla.core.xla_model as xm
-
-    XLA_AVAILABLE = True
-else:
-    XLA_AVAILABLE = False
-
-
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
-EXAMPLE_DOC_STRING = """
-    Examples:
-        ```py
-        >>> import torch
-
-        >>> from diffusers import AutoPipelineForImage2Image
-        >>> from diffusers.utils import load_image
-
-        >>> device = "cuda"
-        >>> model_id_or_path = "stabilityai/stable-diffusion-3-medium-diffusers"
-        >>> pipe = AutoPipelineForImage2Image.from_pretrained(model_id_or_path, torch_dtype=torch.float16)
-        >>> pipe = pipe.to(device)
-
-        >>> url = "https://raw.githubusercontent.com/CompVis/stable-diffusion/main/assets/stable-samples/img2img/sketch-mountains-input.jpg"
-        >>> init_image = load_image(url).resize((512, 512))
-
-        >>> prompt = "cat wizard, gandalf, lord of the rings, detailed, fantasy, cute, adorable, Pixar, Disney, 8k"
-
-        >>> images = pipe(prompt=prompt, image=init_image, strength=0.95, guidance_scale=7.5).images[0]
-        ```
-"""
-
-
-# Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
-def retrieve_latents(
-    encoder_output: torch.Tensor,
-    generator: Optional[torch.Generator] = None,
-    sample_mode: str = "sample",
+class StableDiffusion3Img2ImgPipeline(
+    DiffusionPipeline, SD3LoraLoaderMixin, FromSingleFileMixin
 ):
-    if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
-        return encoder_output.latent_dist.sample(generator)
-    elif hasattr(encoder_output, "latent_dist") and sample_mode == "argmax":
-        return encoder_output.latent_dist.mode()
-    elif hasattr(encoder_output, "latents"):
-        return encoder_output.latents
-    else:
-        raise AttributeError("Could not access latents of provided encoder_output")
-
-
-class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
     r"""
     Args:
         transformer ([`SD3Transformer2DModel`]):
@@ -1164,6 +1194,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         self,
         prompt: Union[str, List[str]] = None,
         num_images_per_prompt: int = 1,
+        max_sequence_length: int = 256,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -1176,7 +1207,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         if self.text_encoder_3 is None:
             return torch.zeros(
                 (
-                    batch_size,
+                    batch_size * num_images_per_prompt,
                     self.tokenizer_max_length,
                     self.transformer.config.joint_attention_dim,
                 ),
@@ -1187,7 +1218,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         text_inputs = self.tokenizer_3(
             prompt,
             padding="max_length",
-            max_length=self.tokenizer_max_length,
+            max_length=max_sequence_length,
             truncation=True,
             add_special_tokens=True,
             return_tensors="pt",
@@ -1204,8 +1235,8 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
                 untruncated_ids[:, self.tokenizer_max_length - 1 : -1]
             )
             logger.warning(
-                "The following part of your input was truncated because CLIP can only handle sequences up to"
-                f" {self.tokenizer_max_length} tokens: {removed_text}"
+                "The following part of your input was truncated because `max_sequence_length` is set to "
+                f" {max_sequence_length} tokens: {removed_text}"
             )
 
         prompt_embeds = self.text_encoder_3(text_input_ids.to(device))[0]
@@ -1308,6 +1339,8 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         clip_skip: Optional[int] = None,
+        max_sequence_length: int = 256,
+        lora_scale: Optional[float] = None,
     ):
         r"""
 
@@ -1353,8 +1386,21 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             clip_skip (`int`, *optional*):
                 Number of layers to be skipped from CLIP while computing the prompt embeddings. A value of 1 means that
                 the output of the pre-final layer will be used for computing the prompt embeddings.
+            lora_scale (`float`, *optional*):
+                A lora scale that will be applied to all LoRA layers of the text encoder if LoRA layers are loaded.
         """
         device = device or self._execution_device
+
+        # set lora scale so that monkey patched LoRA
+        # function of text encoder can correctly access it
+        if lora_scale is not None and isinstance(self, SD3LoraLoaderMixin):
+            self._lora_scale = lora_scale
+
+            # dynamically adjust the LoRA scale
+            if self.text_encoder is not None and USE_PEFT_BACKEND:
+                scale_lora_layers(self.text_encoder, lora_scale)
+            if self.text_encoder_2 is not None and USE_PEFT_BACKEND:
+                scale_lora_layers(self.text_encoder_2, lora_scale)
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
         if prompt is not None:
@@ -1388,6 +1434,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             t5_prompt_embed = self._get_t5_prompt_embeds(
                 prompt=prompt_3,
                 num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
                 device=device,
             )
 
@@ -1460,6 +1507,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             t5_negative_prompt_embed = self._get_t5_prompt_embeds(
                 prompt=negative_prompt_3,
                 num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
                 device=device,
             )
 
@@ -1478,6 +1526,16 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             negative_pooled_prompt_embeds = torch.cat(
                 [negative_pooled_prompt_embed, negative_pooled_prompt_2_embed], dim=-1
             )
+
+        if self.text_encoder is not None:
+            if isinstance(self, SD3LoraLoaderMixin) and USE_PEFT_BACKEND:
+                # Retrieve the original scale by scaling back the LoRA layers
+                unscale_lora_layers(self.text_encoder, lora_scale)
+
+        if self.text_encoder_2 is not None:
+            if isinstance(self, SD3LoraLoaderMixin) and USE_PEFT_BACKEND:
+                # Retrieve the original scale by scaling back the LoRA layers
+                unscale_lora_layers(self.text_encoder_2, lora_scale)
 
         return (
             prompt_embeds,
@@ -1500,6 +1558,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         pooled_prompt_embeds=None,
         negative_pooled_prompt_embeds=None,
         callback_on_step_end_tensor_inputs=None,
+        max_sequence_length=None,
     ):
         if strength < 0 or strength > 1:
             raise ValueError(
@@ -1586,6 +1645,11 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
                 "If `negative_prompt_embeds` are provided, `negative_pooled_prompt_embeds` also have to be passed. Make sure to generate `negative_pooled_prompt_embeds` from the same text encoder that was used to generate `negative_prompt_embeds`."
             )
 
+        if max_sequence_length is not None and max_sequence_length > 512:
+            raise ValueError(
+                f"`max_sequence_length` cannot be greater than 512 but is {max_sequence_length}"
+            )
+
     def get_timesteps(self, num_inference_steps, strength, device):
         # get the original timestep using init_timestep
         init_timestep = min(num_inference_steps * strength, num_inference_steps)
@@ -1613,8 +1677,6 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             )
 
         image = image.to(device=device, dtype=dtype)
-        if image.shape[1] == self.vae.config.latent_channels:
-            init_latents = image
 
         batch_size = batch_size * num_images_per_prompt
         if image.shape[1] == self.vae.config.latent_channels:
@@ -1677,6 +1739,10 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         return self._guidance_scale
 
     @property
+    def joint_attention_kwargs(self):
+        return self._joint_attention_kwargs
+
+    @property
     def clip_skip(self):
         return self._clip_skip
 
@@ -1719,9 +1785,11 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         clip_skip: Optional[int] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        max_sequence_length: int = 256,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -1747,7 +1815,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
                 Custom timesteps to use for the denoising process with schedulers which support a `timesteps` argument
                 in their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is
                 passed will be used. Must be in descending order.
-            guidance_scale (`float`, *optional*, defaults to 5.0):
+            guidance_scale (`float`, *optional*, defaults to 7.0):
                 Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
                 `guidance_scale` is defined as `w` of equation 2. of [Imagen
                 Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
@@ -1790,8 +1858,12 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
                 The output format of the generate image. Choose between
                 [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] instead
-                of a plain tuple.
+                Whether or not to return a [`~pipelines.stable_diffusion_3.StableDiffusion3PipelineOutput`] instead of
+                a plain tuple.
+            joint_attention_kwargs (`dict`, *optional*):
+               A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
+                `self.processor` in
+                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
             callback_on_step_end (`Callable`, *optional*):
                 A function that calls at the end of each denoising steps during the inference. The function is called
                 with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
@@ -1801,12 +1873,13 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
                 The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
                 will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
                 `._callback_tensor_inputs` attribute of your pipeline class.
+            max_sequence_length (`int` defaults to 256): Maximum sequence length to use with the `prompt`.
 
         Examples:
 
         Returns:
-            [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] or `tuple`:
-            [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] if `return_dict` is True, otherwise a
+            [`~pipelines.stable_diffusion_3.StableDiffusion3PipelineOutput`] or `tuple`:
+            [`~pipelines.stable_diffusion_3.StableDiffusion3PipelineOutput`] if `return_dict` is True, otherwise a
             `tuple`. When returning a tuple, the first element is a list with the generated images.
         """
 
@@ -1824,10 +1897,12 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             pooled_prompt_embeds=pooled_prompt_embeds,
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+            max_sequence_length=max_sequence_length,
         )
 
         self._guidance_scale = guidance_scale
         self._clip_skip = clip_skip
+        self._joint_attention_kwargs = joint_attention_kwargs
         self._interrupt = False
 
         # 2. Define call parameters
@@ -1839,6 +1914,12 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             batch_size = prompt_embeds.shape[0]
 
         device = self._execution_device
+
+        lora_scale = (
+            self.joint_attention_kwargs.get("scale", None)
+            if self.joint_attention_kwargs is not None
+            else None
+        )
 
         (
             prompt_embeds,
@@ -1860,6 +1941,8 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
             device=device,
             clip_skip=self.clip_skip,
             num_images_per_prompt=num_images_per_prompt,
+            max_sequence_length=max_sequence_length,
+            lora_scale=lora_scale,
         )
 
         if self.do_classifier_free_guidance:
@@ -1878,7 +1961,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
         timesteps, num_inference_steps = self.get_timesteps(
             num_inference_steps, strength, device
         )
-        latent_timestep = timesteps[:1].repeat(batch_size * num_inference_steps)
+        latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
 
         # 5. Prepare latent variables
         if latents is None:
@@ -1916,6 +1999,7 @@ class StableDiffusion3Img2ImgPipeline(DiffusionPipeline):
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
                     pooled_projections=pooled_prompt_embeds,
+                    joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
                 )[0]
 
