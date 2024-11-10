@@ -194,7 +194,7 @@ image = pipeline(
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
     {_validation_resolution(args)}
-    guidance_scale={args.validation_guidance},{_guidance_rescale(args)},{_skip_layers(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
 ).images[0]
 image.save("output.png", format="PNG")
 ```
