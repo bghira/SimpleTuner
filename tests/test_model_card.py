@@ -235,6 +235,10 @@ class TestMetadataFunctions(unittest.TestCase):
 
     def test_save_model_card(self):
         # Mocking StateTracker methods
+        self.args.model_family = "flux"
+        self.args.model_type = "lora"
+        self.args.lora_type = "lycoris"
+        self.args.base_model_precision = "int8-quanto"
         with patch(
             "helpers.publishing.metadata.StateTracker.get_model_family",
             return_value="sdxl",
@@ -251,32 +255,98 @@ class TestMetadataFunctions(unittest.TestCase):
                         return_value=1000,
                     ):
                         with patch(
-                            "helpers.publishing.metadata.StateTracker.get_accelerator",
-                            return_value=MagicMock(num_processes=1),
+                            "helpers.publishing.metadata.StateTracker.get_weight_dtype",
+                            return_value=torch.bfloat16,
                         ):
                             with patch(
-                                "helpers.publishing.metadata.code_example",
-                                return_value="code example",
+                                "helpers.publishing.metadata.StateTracker.get_accelerator",
+                                return_value=MagicMock(num_processes=1),
                             ):
                                 with patch(
-                                    "builtins.open", unittest.mock.mock_open()
-                                ) as mock_file:
-                                    save_model_card(
-                                        repo_id="test-repo",
-                                        images=None,
-                                        base_model="test-base-model",
-                                        train_text_encoder=True,
-                                        prompt="Test prompt",
-                                        validation_prompts=["Test prompt"],
-                                        validation_shortnames=["shortname"],
-                                        repo_folder="test-folder",
-                                    )
-                                    # Ensure the README.md was written
-                                    mock_file.assert_called_with(
-                                        os.path.join("test-folder", "README.md"),
-                                        "w",
-                                        encoding="utf-8",
-                                    )
+                                    "helpers.training.state_tracker.StateTracker.get_args",
+                                    return_value=self.args,
+                                ):
+                                    with patch(
+                                        "builtins.open", unittest.mock.mock_open()
+                                    ) as mock_file:
+                                        save_model_card(
+                                            repo_id="test-repo",
+                                            images=None,
+                                            base_model="test-base-model",
+                                            train_text_encoder=True,
+                                            prompt="Test prompt",
+                                            validation_prompts=["Test prompt"],
+                                            validation_shortnames=["shortname"],
+                                            repo_folder="test-folder",
+                                        )
+                                        # Ensure the README.md was written
+                                        mock_file.assert_called_with(
+                                            os.path.join("test-folder", "README.md"),
+                                            "w",
+                                            encoding="utf-8",
+                                        )
+
+    def test_adapter_download_fn(self):
+        with patch("huggingface_hub.hf_hub_download", return_value="path/to/adapter"):
+            from helpers.publishing.metadata import lycoris_download_info
+
+            output = lycoris_download_info()
+            self.assertIn("hf_hub_download", output)
+
+    def test_pipeline_move_full_bf16(self):
+        from helpers.publishing.metadata import _pipeline_move_to
+
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_weight_dtype",
+            return_value=torch.bfloat16,
+        ):
+            output = _pipeline_move_to(args=self.args)
+
+        self.assertNotIn("torch.bfloat16", output)
+
+    def test_pipeline_move_lycoris_bf16(self):
+        from helpers.publishing.metadata import _pipeline_move_to
+
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_weight_dtype",
+            return_value=torch.bfloat16,
+        ):
+            self.args.model_type = "lora"
+            self.args.lora_type = "lycoris"
+            self.args.base_model_precision = "no_change"
+            output = _pipeline_move_to(args=self.args)
+        self.assertNotIn("torch.bfloat16", output)
+
+    def test_pipeline_move_lycoris_int8(self):
+        from helpers.publishing.metadata import _pipeline_move_to
+
+        with patch(
+            "helpers.training.state_tracker.StateTracker.get_weight_dtype",
+            return_value=torch.bfloat16,
+        ):
+            self.args.model_type = "lora"
+            self.args.lora_type = "lycoris"
+            self.args.base_model_precision = "int8-quanto"
+            output = _pipeline_move_to(args=self.args)
+        self.assertNotIn("torch.bfloat16", output)
+
+    def test_pipeline_quanto_hint_unet(self):
+        from helpers.publishing.metadata import _pipeline_quanto
+
+        output = _pipeline_quanto(args=self.args)
+
+        self.assertIn("quantize", output)
+        self.assertIn("optimum.quanto", output)
+        self.assertIn("pipeline.unet", output)
+
+    def test_pipeline_quanto_hint_transformer(self):
+        from helpers.publishing.metadata import _pipeline_quanto
+
+        self.args.model_family = "flux"
+        output = _pipeline_quanto(args=self.args)
+        self.assertIn("quantize", output)
+        self.assertIn("optimum.quanto", output)
+        self.assertIn("pipeline.transformer", output)
 
 
 if __name__ == "__main__":

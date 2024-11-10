@@ -109,7 +109,8 @@ def safety_check(args, accelerator):
         sys.exit(1)
 
     if (
-        args.flux_schedule_shift is not None and args.flux_schedule_shift > 0
+        args.flux_schedule_shift is not None
+        and args.flux_schedule_shift > 0
         and args.flux_schedule_auto_shift
     ):
         logger.error(
