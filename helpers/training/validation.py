@@ -1085,7 +1085,7 @@ class Validation:
             if self.args.validation_torch_compile:
                 if self.deepspeed:
                     logger.warning("DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning.")
-                elif self.lora_type.lower() == "lycoris":
+                elif self.args.lora_type.lower() == "lycoris":
                     logger.warning("LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning.")
                 else:
                     if self.unet is not None and not is_compiled_module(self.unet):
