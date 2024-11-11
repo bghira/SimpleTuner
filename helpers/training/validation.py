@@ -651,7 +651,9 @@ class Validation:
                     device=self.inference_device, dtype=self.weight_dtype
                 )
             )
-            prompt_embeds["pooled_prompt_embeds"] = current_validation_pooled_embeds
+            prompt_embeds["pooled_prompt_embeds"] = current_validation_pooled_embeds.to(
+                device=self.inference_device, dtype=self.weight_dtype
+            )
             prompt_embeds["negative_pooled_prompt_embeds"] = (
                 self.validation_negative_pooled_embeds
             )
@@ -671,7 +673,9 @@ class Validation:
                 current_validation_prompt_embeds, current_validation_prompt_mask = (
                     current_validation_prompt_embeds
                 )
-                current_validation_prompt_embeds = current_validation_prompt_embeds[0]
+                current_validation_prompt_embeds = current_validation_prompt_embeds[
+                    0
+                ].to(device=self.inference_device, dtype=self.weight_dtype)
                 if (
                     type(self.validation_negative_prompt_embeds) is tuple
                     or type(self.validation_negative_prompt_embeds) is list
@@ -681,7 +685,9 @@ class Validation:
                         self.validation_negative_prompt_mask,
                     ) = self.validation_negative_prompt_embeds[0]
             else:
-                current_validation_prompt_embeds = current_validation_prompt_embeds[0]
+                current_validation_prompt_embeds = current_validation_prompt_embeds[
+                    0
+                ].to(device=self.inference_device, dtype=self.weight_dtype)
             # logger.debug(
             #     f"Validations received the prompt embed: ({type(current_validation_prompt_embeds)}) positive={current_validation_prompt_embeds.shape if type(current_validation_prompt_embeds) is not list else current_validation_prompt_embeds[0].shape},"
             #     f" ({type(self.validation_negative_prompt_embeds)}) negative={self.validation_negative_prompt_embeds.shape if type(self.validation_negative_prompt_embeds) is not list else self.validation_negative_prompt_embeds[0].shape}"
@@ -986,6 +992,10 @@ class Validation:
                 "vae": self.vae,
                 "safety_checker": None,
             }
+            if self.args.model_family in ["sd3", "sdxl", "flux"]:
+                extra_pipeline_kwargs["text_encoder_2"] = None
+            if self.args.model_family in ["sd3"]:
+                extra_pipeline_kwargs["text_encoder_3"] = None
             if type(pipeline_cls) is StableDiffusionXLPipeline:
                 del extra_pipeline_kwargs["safety_checker"]
                 del extra_pipeline_kwargs["text_encoder"]
@@ -1101,28 +1111,33 @@ class Validation:
                     logger.error(e)
                     logger.error(traceback.format_exc())
                     continue
-                return None
+                break
             if self.args.validation_torch_compile:
-                if self.unet is not None and not is_compiled_module(self.unet):
-                    logger.warning(
-                        f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
-                    )
-                    self.pipeline.unet = torch.compile(
-                        self.pipeline.unet,
-                        mode=self.args.validation_torch_compile_mode,
-                        fullgraph=False,
-                    )
-                if self.transformer is not None and not is_compiled_module(
-                    self.transformer
-                ):
-                    logger.warning(
-                        f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
-                    )
-                    self.pipeline.transformer = torch.compile(
-                        self.pipeline.transformer,
-                        mode=self.args.validation_torch_compile_mode,
-                        fullgraph=False,
-                    )
+                if self.deepspeed:
+                    logger.warning("DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning.")
+                elif self.lora_type.lower() == "lycoris":
+                    logger.warning("LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning.")
+                else:
+                    if self.unet is not None and not is_compiled_module(self.unet):
+                        logger.warning(
+                            f"Compiling the UNet for validation ({self.args.validation_torch_compile})"
+                        )
+                        self.pipeline.unet = torch.compile(
+                            self.pipeline.unet,
+                            mode=self.args.validation_torch_compile_mode,
+                            fullgraph=False,
+                        )
+                    if self.transformer is not None and not is_compiled_module(
+                        self.transformer
+                    ):
+                        logger.warning(
+                            f"Compiling the transformer for validation ({self.args.validation_torch_compile})"
+                        )
+                        self.pipeline.transformer = torch.compile(
+                            self.pipeline.transformer,
+                            mode=self.args.validation_torch_compile_mode,
+                            fullgraph=False,
+                        )
 
         self.pipeline = self.pipeline.to(self.inference_device)
         self.pipeline.set_progress_bar_config(disable=True)

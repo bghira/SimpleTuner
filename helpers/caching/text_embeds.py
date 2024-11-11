@@ -234,7 +234,17 @@ class TextEmbeddingCache(WebhookMixin):
 
             except queue.Empty:
                 # Timeout occurred, no items were ready
-                pass
+                if not self.process_write_batches:
+                    if len(batch) > 0:
+                        self.process_write_batch(batch)
+                        self.write_thread_bar.update(len(batch))
+                    logger.debug(
+                        f"Exiting batch write thread, no more work to do after writing {written_elements} elements"
+                    )
+                    break
+                logger.debug(
+                    f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}"
+                )
             except Exception:
                 logger.exception("An error occurred while writing embeddings to disk.")
         logger.debug("Exiting background batch write thread.")
@@ -1488,7 +1498,9 @@ class TextEmbeddingCache(WebhookMixin):
                         )
                 if should_encode:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    self.debug_log(f"Encoding prompt: {prompt}")
+                    self.debug_log(
+                        f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}"
+                    )
                     prompt_embeds, pooled_prompt_embeds = self.encode_sd3_prompt(
                         self.text_encoders,
                         self.tokenizers,

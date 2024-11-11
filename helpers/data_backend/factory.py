@@ -50,7 +50,9 @@ def info_log(message):
         logger.info(message)
 
 
-def check_column_values(column_data, column_name, parquet_path, fallback_caption_column=False):
+def check_column_values(
+    column_data, column_name, parquet_path, fallback_caption_column=False
+):
     # Determine if the column contains arrays or scalar values
     non_null_values = column_data.dropna()
     if non_null_values.empty:
@@ -362,7 +364,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
         df[caption_column],
         caption_column,
         parquet_path,
-        fallback_caption_column=fallback_caption_column
+        fallback_caption_column=fallback_caption_column,
     )
 
     # Apply the function to the filename_column.
@@ -370,7 +372,7 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
         df[filename_column],
         filename_column,
         parquet_path,
-        fallback_caption_column=False  # Always check filename_column
+        fallback_caption_column=False,  # Always check filename_column
     )
 
     # Store the database in StateTracker

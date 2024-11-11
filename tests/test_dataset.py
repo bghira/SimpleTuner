@@ -113,7 +113,9 @@ class TestDataBackendFactory(unittest.TestCase):
         column_data = pd.Series([["", ""], ["", ""], ["", ""]])
         with self.assertRaises(ValueError) as context:
             check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn("contains only empty strings within arrays", str(context.exception))
+        self.assertIn(
+            "contains only empty strings within arrays", str(context.exception)
+        )
 
     def test_scalar_strings_with_nulls(self):
         column_data = pd.Series(["a", None, "b"])
@@ -130,9 +132,16 @@ class TestDataBackendFactory(unittest.TestCase):
     def test_with_fallback_caption(self):
         column_data = pd.Series([None, "", [None], [""]])
         try:
-            check_column_values(column_data, "test_column", "test_file.parquet", fallback_caption_column=True)
+            check_column_values(
+                column_data,
+                "test_column",
+                "test_file.parquet",
+                fallback_caption_column=True,
+            )
         except ValueError:
-            self.fail("check_column_values() raised ValueError unexpectedly with fallback_caption_column=True")
+            self.fail(
+                "check_column_values() raised ValueError unexpectedly with fallback_caption_column=True"
+            )
 
     def test_invalid_data_type(self):
         column_data = pd.Series([1, 2, 3])

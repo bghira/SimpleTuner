@@ -105,7 +105,38 @@ def _model_imports(args):
     return f"{output}"
 
 
+def lycoris_download_info():
+    """output a function to download the adapter"""
+    output_fn = """
+def download_adapter(repo_id: str):
+    import os
+    from huggingface_hub import hf_hub_download
+    adapter_filename = "pytorch_lora_weights.safetensors"
+    cache_dir = os.environ.get('HF_PATH', os.path.expanduser('~/.cache/huggingface/hub/models'))
+    cleaned_adapter_path = repo_id.replace("/", "_").replace("\\\\", "_").replace(":", "_")
+    path_to_adapter = os.path.join(cache_dir, cleaned_adapter_path)
+    path_to_adapter_file = os.path.join(path_to_adapter, adapter_filename)
+    os.makedirs(path_to_adapter, exist_ok=True)
+    hf_hub_download(
+        repo_id=repo_id, filename=adapter_filename, local_dir=path_to_adapter
+    )
+
+    return path_to_adapter_file
+    """
+
+    return output_fn
+
+
+def _model_component_name(args):
+    model_component_name = "pipeline.transformer"
+    if args.model_family in ["sdxl", "kolors", "legacy", "deepfloyd"]:
+        model_component_name = "pipeline.unet"
+
+    return model_component_name
+
+
 def _model_load(args, repo_id: str = None):
+    model_component_name = _model_component_name(args)
     hf_user_name = StateTracker.get_hf_username()
     if hf_user_name is not None:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
@@ -114,22 +145,26 @@ def _model_load(args, repo_id: str = None):
             output = (
                 f"model_id = '{args.pretrained_model_name_or_path}'"
                 f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
-                f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
+                f"\npipeline = DiffusionPipeline.from_pretrained(model_id), torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
                 f"\npipeline.load_lora_weights(adapter_id)"
             )
         elif args.lora_type.lower() == "lycoris":
             output = (
-                f"model_id = '{args.pretrained_model_name_or_path}'"
-                f"\nadapter_id = 'pytorch_lora_weights.safetensors' # you will have to download this manually"
+                f"{lycoris_download_info()}"
+                f"\nmodel_id = '{args.pretrained_model_name_or_path}'"
+                f"\nadapter_repo_id = '{repo_id if repo_id is not None else args.output_dir}'"
+                f"\nadapter_filename = 'pytorch_lora_weights.safetensors'"
+                f"\nadapter_file_path = download_adapter(repo_id=adapter_repo_id)"
+                f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
                 "\nlora_scale = 1.0"
             )
     else:
         output = (
             f"model_id = '{repo_id if repo_id else os.path.join(args.output_dir, 'pipeline')}'"
-            f"\npipeline = DiffusionPipeline.from_pretrained(model_id)"
+            f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
         )
     if args.model_type == "lora" and args.lora_type.lower() == "lycoris":
-        output += f"\nwrapper, _ = create_lycoris_from_weights(lora_scale, adapter_id, pipeline.transformer)"
+        output += f"\nwrapper, _ = create_lycoris_from_weights(lora_scale, adapter_file_path, {model_component_name})"
         output += "\nwrapper.merge_to()"
 
     return output
@@ -151,6 +186,42 @@ def _guidance_rescale(args):
     if args.model_family.lower() in ["sd3", "flux", "pixart_sigma"]:
         return ""
     return f"\n    guidance_rescale={args.validation_guidance_rescale},"
+
+
+def _skip_layers(args):
+    if (
+        args.model_family.lower() not in ["sd3"]
+        or args.validation_guidance_skip_layers is None
+    ):
+        return ""
+    return f"\n    skip_guidance_layers={args.validation_guidance_skip_layers},"
+
+
+def _pipeline_move_to(args):
+    output = f"pipeline.to({_torch_device()}) # the pipeline is already in its target precision level"
+
+    return output
+
+
+def _pipeline_quanto(args):
+    # return some optional lines to run Quanto on the model pipeline
+    if args.model_type == "full":
+        return ""
+    model_component_name = _model_component_name(args)
+    comment_character = ""
+    was_quantised = "The model was quantised during training, and so it is recommended to do the same during inference time."
+    if args.base_model_precision == "no_change":
+        comment_character = "#"
+        was_quantised = "The model was not quantised during training, so it is not necessary to quantise it during inference time."
+    output = f"""
+## Optional: quantise the model to save on vram.
+## Note: {was_quantised}
+{comment_character}from optimum.quanto import quantize, freeze, qint8
+{comment_character}quantize({model_component_name}, weights=qint8)
+{comment_character}freeze({model_component_name})
+    """
+
+    return output
 
 
 def _validation_resolution(args):
@@ -179,13 +250,14 @@ def code_example(args, repo_id: str = None):
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
 {_negative_prompt(args)}
-pipeline.to({_torch_device()})
+{_pipeline_quanto(args)}
+{_pipeline_move_to(args)}
 image = pipeline(
     prompt=prompt,{_negative_prompt(args, in_call=True) if args.model_family.lower() != 'flux' else ''}
     num_inference_steps={args.validation_num_inference_steps},
     generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
     {_validation_resolution(args)}
-    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}
+    guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
 ).images[0]
 image.save("output.png", format="PNG")
 ```
@@ -217,7 +289,10 @@ def lora_info(args):
         lycoris_config_file = args.lycoris_config
         # read the json file
         with open(lycoris_config_file, "r") as file:
-            lycoris_config = json.load(file)
+            try:
+                lycoris_config = json.load(file)
+            except:
+                lycoris_config = {"error": "could not locate or load LyCORIS config."}
         return f"""- LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
 
 
@@ -249,15 +324,50 @@ def flux_schedule_info(args):
         output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
     if args.flux_attention_masked_training:
         output_args.append("flux_attention_masked_training")
-    if args.model_type == "lora" and args.lora_type == "standard":
+    if (
+        args.model_type == "lora"
+        and args.lora_type == "standard"
+        and args.flux_lora_target is not None
+    ):
         output_args.append(f"flux_lora_target={args.flux_lora_target}")
     output_str = (
-        f" (flux parameters={output_args})"
+        f" (extra parameters={output_args})"
         if output_args
         else " (no special parameters set)"
     )
 
     return output_str
+
+
+def sd3_schedule_info(args):
+    if args.model_family.lower() != "sd3":
+        return ""
+    output_args = []
+    if args.flux_schedule_auto_shift:
+        output_args.append("flux_schedule_auto_shift")
+    if args.flux_schedule_shift is not None:
+        output_args.append(f"shift={args.flux_schedule_shift}")
+    if args.flux_use_beta_schedule:
+        output_args.append(f"flux_beta_schedule_alpha={args.flux_beta_schedule_alpha}")
+        output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
+    if args.flux_use_uniform_schedule:
+        output_args.append(f"flux_use_uniform_schedule")
+    # if args.model_type == "lora" and args.lora_type == "standard":
+    #     output_args.append(f"flux_lora_target={args.flux_lora_target}")
+    output_str = (
+        f" (extra parameters={output_args})"
+        if output_args
+        else " (no special parameters set)"
+    )
+
+    return output_str
+
+
+def model_schedule_info(args):
+    if args.model_family == "flux":
+        return flux_schedule_info(args)
+    if args.model_family == "sd3":
+        return sd3_schedule_info(args)
 
 
 def save_model_card(
@@ -384,7 +494,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
-- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{flux_schedule_info(args=StateTracker.get_args())}
+- Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
 - Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
