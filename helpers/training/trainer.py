@@ -468,6 +468,9 @@ class Trainer:
             )
             self.config.vae_kwargs["subfolder"] = None
             self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+            if self.vae is not None and self.config.vae_enable_tiling and hasattr(self.vae, 'enable_tiling'):
+                logger.warning("Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents.")
+                self.vae.enable_tiling()
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
             return
