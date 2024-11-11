@@ -593,6 +593,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--vae_enable_tiling",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will enable tiling for VAE caching. This is useful for very large images when VRAM is limited."
+            " This may be required for 2048px VAE caching on 24G accelerators, in addition to reducing --vae_batch_size."
+        ),
+    )
+    parser.add_argument(
         "--vae_cache_scan_behaviour",
         type=str,
         choices=["recreate", "sync"],
