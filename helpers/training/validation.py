@@ -1159,13 +1159,14 @@ class Validation:
                 )
             self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
+            stitched_validation_images, original_validation_images = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(
-                self.validate_prompt(prompt, shortname, validation_input_image)
+                stitched_validation_images
             )
             self._save_images(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
             self.validation_images = validation_images
-            self.evaluation_result = self.evaluate_images()
+            self.evaluation_result = self.evaluate_images(original_validation_images)
             self._log_validations_to_webhook(validation_images, shortname, prompt)
         try:
             self._log_validations_to_trackers(validation_images)
@@ -1199,7 +1200,10 @@ class Validation:
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
         logger.debug(f"Validating prompt: {prompt}")
+        # benchmarked / stitched validation images
         validation_images = {}
+        # untouched / un-stitched validation images
+        original_validation_images = {}
         for resolution in self.validation_resolutions:
             extra_validation_kwargs = {}
             if not self.args.validation_randomize:
@@ -1265,6 +1269,7 @@ class Validation:
             )
             if validation_shortname not in validation_images:
                 validation_images[validation_shortname] = []
+                original_validation_images[validation_shortname] = []
             try:
                 extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
             except Exception as e:
@@ -1331,10 +1336,11 @@ class Validation:
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.inference_device, dtype=self.weight_dtype)
 
-                validation_image_results = self.pipeline(**pipeline_kwargs).images
+                original_validation_image_results = self.pipeline(**pipeline_kwargs).images
+                validation_image_results = original_validation_image_results.copy()
                 if self.args.controlnet:
                     validation_image_results = self.stitch_conditioning_images(
-                        validation_image_results, extra_validation_kwargs["image"]
+                        original_validation_image_results, extra_validation_kwargs["image"]
                     )
                 elif not self.args.disable_benchmark and self.benchmark_exists(
                     "base_model"
@@ -1348,6 +1354,7 @@ class Validation:
                             validation_image_results[0], benchmark_image
                         )
                 validation_images[validation_shortname].extend(validation_image_results)
+                original_validation_images[validation_shortname].extend(original_validation_image_results)
             except Exception as e:
                 import traceback
 
@@ -1356,7 +1363,7 @@ class Validation:
                 )
                 continue
 
-        return validation_images
+        return validation_images, original_validation_images
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
@@ -1491,10 +1498,10 @@ class Validation:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def evaluate_images(self):
+    def evaluate_images(self, images: list = None):
         if self.model_evaluator is None:
             return None
-        for shortname, image_list in self.validation_images.items():
+        for shortname, image_list in images.items():
             if shortname in self.eval_scores:
                 continue
             prompt = self.validation_prompt_dict.get(shortname, '')
