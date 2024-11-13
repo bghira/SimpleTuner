@@ -260,3 +260,7 @@ bash train.sh
 This will begin the text embed and VAE output caching to disk.
 
 For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+
+### CLIP score tracking
+
+If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
