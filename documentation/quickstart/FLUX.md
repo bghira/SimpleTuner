@@ -191,6 +191,10 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 > ℹ️ Flux is a flow-matching model and shorter prompts that have strong similarities will result in practically the same image being produced by the model. Be sure to use longer, more descriptive prompts.
 
+#### CLIP score tracking
+
+If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+
 #### Flux time schedule shifting
 
 Flow-matching models such as Flux and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
@@ -409,6 +413,7 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - Batch size: 1, zero gradient accumulation steps
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.6 Nightly (Sept 29th build)
+- Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
 
 Speed was approximately 1.4 iterations per second on a 4090.
 

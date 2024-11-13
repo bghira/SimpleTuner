@@ -602,6 +602,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--vae_enable_tiling",
+        action="store_true",
+        default=False,
+        help=(
+            "If set, will enable tiling for VAE caching. This is useful for very large images when VRAM is limited."
+            " This may be required for 2048px VAE caching on 24G accelerators, in addition to reducing --vae_batch_size."
+        ),
+    )
+    parser.add_argument(
         "--vae_cache_scan_behaviour",
         type=str,
         choices=["recreate", "sync"],
@@ -1329,6 +1338,26 @@ def get_argument_parser():
             "By default, the model will be benchmarked on the first batch of the first epoch."
             " This can be disabled with this option."
         ),
+    )
+    parser.add_argument(
+        "--evaluation_type",
+        type=str,
+        default=None,
+        choices=["clip", "none"],
+        help=(
+            "Validations must be enabled for model evaluation to function. The default is to use no evaluator,"
+            " and 'clip' will use a CLIP model to evaluate the resulting model's performance during validations."
+        )
+    )
+    parser.add_argument(
+        "--pretrained_evaluation_model_name_or_path",
+        type=str,
+        default="openai/clip-vit-large-patch14-336",
+        help=(
+            "Optionally provide a custom model to use for ViT evaluations."
+            " The default is currently clip-vit-large-patch14-336, allowing for lower patch sizes (greater accuracy)"
+            " and an input resolution of 336x336."
+        )
     )
     parser.add_argument(
         "--validation_on_startup",

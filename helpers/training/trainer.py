@@ -21,6 +21,7 @@ from helpers.configuration.loader import load_config
 from helpers.caching.memory import reclaim_memory
 from helpers.training.multi_process import _get_rank as get_rank
 from helpers.training.validation import Validation, prepare_validation_prompt_list
+from helpers.training.evaluation import ModelEvaluator
 from helpers.training.state_tracker import StateTracker
 from helpers.training.schedulers import load_scheduler_from_args
 from helpers.training.custom_schedule import get_lr_scheduler
@@ -468,6 +469,9 @@ class Trainer:
             )
             self.config.vae_kwargs["subfolder"] = None
             self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+            if self.vae is not None and self.config.vae_enable_tiling and hasattr(self.vae, 'enable_tiling'):
+                logger.warning("Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents.")
+                self.vae.enable_tiling()
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
             return
@@ -1379,6 +1383,7 @@ class Trainer:
         ):
             logger.error("Cannot run validations with DeepSpeed ZeRO stage 3.")
             return
+        model_evaluator = ModelEvaluator.from_config(args=self.config)
         self.validation = Validation(
             accelerator=self.accelerator,
             unet=self.unet,
@@ -1400,6 +1405,7 @@ class Trainer:
             ema_model=self.ema_model,
             vae=self.vae,
             controlnet=self.controlnet if self.config.controlnet else None,
+            model_evaluator=model_evaluator
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
@@ -2673,6 +2679,13 @@ class Trainer:
                         self.guidance_values_list = []
                     if grad_norm is not None:
                         wandb_logs["grad_norm"] = grad_norm
+                    if self.validation is not None and hasattr(self.validation, 'evaluation_result'):
+                        eval_result = self.validation.get_eval_result()
+                        if eval_result is not None and type(eval_result) == dict:
+                            # add the dict to wandb_logs
+                            self.validation.clear_eval_result()
+                            wandb_logs.update(eval_result)
+                            
                     progress_bar.update(1)
                     self.state["global_step"] += 1
                     current_epoch_step += 1
