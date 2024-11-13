@@ -222,6 +222,10 @@ Alternatively, one might use the real name of their subject, or a 'similar enoug
 
 After a number of training experiments, it seems as though a 'similar enough' celebrity is the best choice, especially if prompting the model for the person's real name ends up looking dissimilar.
 
+# CLIP score tracking
+
+If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+
 # Refiner tuning
 
 If you're a fan of the SDXL refiner, you may find that it causes your generations to "ruin" the results of your Dreamboothed model.

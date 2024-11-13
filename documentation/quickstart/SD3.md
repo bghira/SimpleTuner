@@ -350,3 +350,7 @@ For more information on regularisation datasets, see [this section](/documentati
 ### Quantised training
 
 See [this section](/documentation/DREAMBOOTH.md#quantised-model-training-loralycoris-only) of the Dreambooth guide for information on configuring quantisation for SD3 and other models.
+
+### CLIP score tracking
+
+If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
