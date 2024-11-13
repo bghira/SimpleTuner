@@ -1331,7 +1331,7 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
-        "--validation_model_evaluator",
+        "--evaluation_type",
         type=str,
         default=None,
         choices=["clip", "none"],
@@ -1341,7 +1341,7 @@ def get_argument_parser():
         )
     )
     parser.add_argument(
-        "--pretrained_validation_model_name_or_path",
+        "--pretrained_evaluation_model_name_or_path",
         type=str,
         default="openai/clip-vit-large-patch14-336",
         help=(

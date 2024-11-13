@@ -413,6 +413,7 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - Batch size: 1, zero gradient accumulation steps
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.6 Nightly (Sept 29th build)
+- Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
 
 Speed was approximately 1.4 iterations per second on a 4090.
 
