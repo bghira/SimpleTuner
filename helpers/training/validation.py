@@ -398,6 +398,7 @@ class Validation:
         text_encoder_3=None,
         tokenizer_3=None,
         is_deepspeed: bool = False,
+        model_evaluator=None,
     ):
         self.accelerator = accelerator
         self.prompt_handler = None
@@ -453,8 +454,11 @@ class Validation:
             if not is_deepspeed
             else "cuda" if torch.cuda.is_available() else "cpu"
         )
-
+        self.model_evaluator = model_evaluator
+        if self.model_evaluator is not None:
+            logger.info(f"Using model evaluator: {self.model_evaluator}")
         self._update_state()
+        self.eval_scores = {}
 
     def _validation_seed_source(self):
         if self.args.validation_seed_source == "gpu":
@@ -897,6 +901,8 @@ class Validation:
             self.setup_scheduler()
             self.process_prompts()
             self.finalize_validation(validation_type)
+            if self.evaluation_result is not None:
+                logger.info(f"Evaluation result: {self.evaluation_result}")
             logger.debug("Validation process completed.")
             self.clean_pipeline()
 
@@ -1085,7 +1091,7 @@ class Validation:
             if self.args.validation_torch_compile:
                 if self.deepspeed:
                     logger.warning("DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning.")
-                elif self.lora_type.lower() == "lycoris":
+                elif self.args.lora_type.lower() == "lycoris":
                     logger.warning("LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning.")
                 else:
                     if self.unet is not None and not is_compiled_module(self.unet):
@@ -1120,6 +1126,8 @@ class Validation:
 
     def process_prompts(self):
         """Processes each validation prompt and logs the result."""
+        self.validation_prompt_dict = {}
+        self.evaluation_result = None
         validation_images = {}
         _content = zip(self.validation_shortnames, self.validation_prompts)
         total_samples = (
@@ -1127,6 +1135,7 @@ class Validation:
             if self.validation_shortnames is not None
             else 0
         )
+        self.eval_scores = {}
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
@@ -1148,18 +1157,27 @@ class Validation:
                 raise ValueError(
                     f"Validation content is not in the correct format: {content}"
                 )
+            self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
+            stitched_validation_images, original_validation_images = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(
-                self.validate_prompt(prompt, shortname, validation_input_image)
+                stitched_validation_images
             )
             self._save_images(validation_images, shortname, prompt)
-            self._log_validations_to_webhook(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
-        self.validation_images = validation_images
+            self.validation_images = validation_images
+            self.evaluation_result = self.evaluate_images(original_validation_images)
+            self._log_validations_to_webhook(validation_images, shortname, prompt)
         try:
             self._log_validations_to_trackers(validation_images)
         except Exception as e:
             logger.error(f"Error logging validation images: {e}")
+
+    def get_eval_result(self):
+        return self.evaluation_result or {}
+    
+    def clear_eval_result(self):
+        self.evaluation_result = None
 
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
@@ -1182,7 +1200,10 @@ class Validation:
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
         logger.debug(f"Validating prompt: {prompt}")
+        # benchmarked / stitched validation images
         validation_images = {}
+        # untouched / un-stitched validation images
+        original_validation_images = {}
         for resolution in self.validation_resolutions:
             extra_validation_kwargs = {}
             if not self.args.validation_randomize:
@@ -1248,6 +1269,7 @@ class Validation:
             )
             if validation_shortname not in validation_images:
                 validation_images[validation_shortname] = []
+                original_validation_images[validation_shortname] = []
             try:
                 extra_validation_kwargs.update(self._gather_prompt_embeds(prompt))
             except Exception as e:
@@ -1314,10 +1336,11 @@ class Validation:
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.inference_device, dtype=self.weight_dtype)
 
-                validation_image_results = self.pipeline(**pipeline_kwargs).images
+                original_validation_image_results = self.pipeline(**pipeline_kwargs).images
+                validation_image_results = original_validation_image_results.copy()
                 if self.args.controlnet:
                     validation_image_results = self.stitch_conditioning_images(
-                        validation_image_results, extra_validation_kwargs["image"]
+                        original_validation_image_results, extra_validation_kwargs["image"]
                     )
                 elif not self.args.disable_benchmark and self.benchmark_exists(
                     "base_model"
@@ -1331,6 +1354,7 @@ class Validation:
                             validation_image_results[0], benchmark_image
                         )
                 validation_images[validation_shortname].extend(validation_image_results)
+                original_validation_images[validation_shortname].extend(original_validation_image_results)
             except Exception as e:
                 import traceback
 
@@ -1339,7 +1363,7 @@ class Validation:
                 )
                 continue
 
-        return validation_images
+        return validation_images, original_validation_images
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
@@ -1364,8 +1388,11 @@ class Validation:
     ):
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
-                f"Validation image for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
-                f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`",
+                (
+                    f"Validation image for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
+                    f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
+                    f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
+                ),
                 images=validation_images[validation_shortname],
             )
 
@@ -1470,3 +1497,23 @@ class Validation:
         self.pipeline = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def evaluate_images(self, images: list = None):
+        if self.model_evaluator is None:
+            return None
+        for shortname, image_list in images.items():
+            if shortname in self.eval_scores:
+                continue
+            prompt = self.validation_prompt_dict.get(shortname, '')
+            for image in image_list:
+                evaluation_score = self.model_evaluator.evaluate([image], [prompt])
+                self.eval_scores[shortname] = round(float(evaluation_score), 4)
+        # Log the scores into dict: {"min", "max", "mean", "std"}
+        result = {
+            "clip/min": min(self.eval_scores.values()),
+            "clip/max": max(self.eval_scores.values()),
+            "clip/mean": np.mean(list(self.eval_scores.values())),
+            "clip/std": np.std(list(self.eval_scores.values())),
+        }
+
+        return result
