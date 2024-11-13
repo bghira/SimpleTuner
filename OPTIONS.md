@@ -203,7 +203,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
-### `--validation_model_evaluator`
+### `--evaluation_type`
 
 - **What**: Enable CLIP evaluation of generated images during validations.
 - **Why**: CLIP scores calculate the distance of the generated image features to the provided validation prompt. This can give an idea of whether prompt adherence is improving, though it requires a large number of validation prompts to have any meaningful value.
@@ -472,8 +472,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
                 [--benchmark_base_model] [--disable_benchmark]
-                [--validation_model_evaluator {clip,none}]
-                [--pretrained_validation_model_name_or_path PRETRAINED_VALIDATION_MODEL_NAME_OR_PATH]
+                [--evaluation_type {clip,none}]
+                [--pretrained_evaluation_model_name_or_path pretrained_evaluation_model_name_or_path]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
                 [--validation_torch_compile]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
@@ -1243,12 +1243,12 @@ options:
   --disable_benchmark   By default, the model will be benchmarked on the first
                         batch of the first epoch. This can be disabled with
                         this option.
-  --validation_model_evaluator {clip,none}
+  --evaluation_type {clip,none}
                         Validations must be enabled for model evaluation to
                         function. The default is to use no evaluator, and
                         'clip' will use a CLIP model to evaluate the resulting
                         model's performance during validations.
-  --pretrained_validation_model_name_or_path PRETRAINED_VALIDATION_MODEL_NAME_OR_PATH
+  --pretrained_evaluation_model_name_or_path pretrained_evaluation_model_name_or_path
                         Optionally provide a custom model to use for ViT
                         evaluations. The default is currently clip-vit-large-
                         patch14-336, allowing for lower patch sizes (greater
