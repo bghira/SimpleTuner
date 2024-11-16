@@ -255,7 +255,7 @@ prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut i
 image = pipeline(
     prompt=prompt,{_negative_prompt(args, in_call=True) if args.model_family.lower() != 'flux' else ''}
     num_inference_steps={args.validation_num_inference_steps},
-    generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
+    generator=torch.Generator(device={_torch_device()}).manual_seed({args.validation_seed or args.seed or 42}),
     {_validation_resolution(args)}
     guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
 ).images[0]
@@ -293,7 +293,7 @@ def lora_info(args):
                 lycoris_config = json.load(file)
             except:
                 lycoris_config = {"error": "could not locate or load LyCORIS config."}
-        return f"""- LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
+        return f"""### LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
 
 
 def model_card_note(args):
@@ -516,16 +516,19 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Training epochs: {StateTracker.get_epoch() - 1}
 - Training steps: {StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
+  - Learning rate schedule: {StateTracker.get_args().lr_scheduler}
+  - Warmup steps: {StateTracker.get_args().lr_warmup_steps}
 - Max grad norm: {StateTracker.get_args().max_grad_norm}
 - Effective batch size: {StateTracker.get_args().train_batch_size * StateTracker.get_args().gradient_accumulation_steps * StateTracker.get_accelerator().num_processes}
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
+- Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
 - Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
-- Quantised base model: {f'Yes ({StateTracker.get_args().base_model_precision})' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
-- Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
+- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability * 100}%
+{'- Xformers: Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else ''}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets
