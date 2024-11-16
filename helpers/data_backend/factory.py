@@ -1053,6 +1053,13 @@ def configure_multi_databackend(args: dict, accelerator, text_encoders, tokenize
                 raise ValueError(
                     f"VAE image embed cache directory {backend.get('cache_dir_vae')} is the same as the text embed cache directory. This is not allowed, the trainer will get confused."
                 )
+
+            if backend["type"] == "local" and (
+                vae_cache_dir is None or vae_cache_dir == ""
+            ):
+                raise ValueError(
+                    f"VAE image embed cache directory {backend.get('cache_dir_vae')} is not set. This is required for the VAE image embed cache."
+                )
             init_backend["vaecache"] = VAECache(
                 id=init_backend["id"],
                 vae=StateTracker.get_vae(),
