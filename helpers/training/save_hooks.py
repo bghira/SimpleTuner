@@ -325,7 +325,7 @@ class SaveHookManager:
                 shutil.copy2(s, d)
 
         # Remove the temporary directory
-        shutil.rmtree(temporary_dir)
+        shutil.rmtree(temporary_dir, ignore_errors=True)
 
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state

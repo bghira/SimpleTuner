@@ -2717,7 +2717,7 @@ class Trainer:
                                             self.config.output_dir, removing_checkpoint
                                         )
                                         try:
-                                            shutil.rmtree(removing_checkpoint)
+                                            shutil.rmtree(removing_checkpoint, ignore_errors=True)
                                         except Exception as e:
                                             logger.error(
                                                 f"Failed to remove directory: {removing_checkpoint}"

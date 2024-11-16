@@ -255,7 +255,7 @@ prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut i
 image = pipeline(
     prompt=prompt,{_negative_prompt(args, in_call=True) if args.model_family.lower() != 'flux' else ''}
     num_inference_steps={args.validation_num_inference_steps},
-    generator=torch.Generator(device={_torch_device()}).manual_seed(1641421826),
+    generator=torch.Generator(device={_torch_device()}).manual_seed({args.validation_seed or args.seed or 42}),
     {_validation_resolution(args)}
     guidance_scale={args.validation_guidance},{_guidance_rescale(args)}{_skip_layers(args)}
 ).images[0]
@@ -293,13 +293,15 @@ def lora_info(args):
                 lycoris_config = json.load(file)
             except:
                 lycoris_config = {"error": "could not locate or load LyCORIS config."}
-        return f"""- LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
+        return f"""### LyCORIS Config:\n```json\n{json.dumps(lycoris_config, indent=4)}\n```"""
 
 
 def model_card_note(args):
     """Return a string with the model card note."""
     note_contents = args.model_card_note if args.model_card_note else ""
-    return f"\n{note_contents}\n"
+    if note_contents is None or note_contents == "":
+        return ""
+    return f"\n**Note:** {note_contents}\n"
 
 
 def flux_schedule_info(args):
@@ -312,6 +314,7 @@ def flux_schedule_info(args):
         output_args.append("flux_schedule_auto_shift")
     if args.flux_schedule_shift is not None:
         output_args.append(f"shift={args.flux_schedule_shift}")
+    output_args.append(f"flux_guidance_mode={args.flux_guidance_mode}")
     if args.flux_guidance_value:
         output_args.append(f"flux_guidance_value={args.flux_guidance_value}")
     if args.flux_guidance_min:
@@ -324,6 +327,9 @@ def flux_schedule_info(args):
         output_args.append(f"flux_beta_schedule_beta={args.flux_beta_schedule_beta}")
     if args.flux_attention_masked_training:
         output_args.append("flux_attention_masked_training")
+    if args.t5_padding != "unmodified":
+        output_args.append(f"t5_padding={args.t5_padding}")
+    output_args.append(f"flow_matching_loss={args.flow_matching_loss}")
     if (
         args.model_type == "lora"
         and args.lora_type == "standard"
@@ -363,11 +369,45 @@ def sd3_schedule_info(args):
     return output_str
 
 
+def ddpm_schedule_info(args):
+    """Information about DDPM schedules, eg. rescaled betas or offset noise"""
+    output_args = []
+    if args.snr_gamma:
+        output_args.append(f"snr_gamma={args.snr_gamma}")
+    if args.use_soft_min_snr:
+        output_args.append(f"use_soft_min_snr")
+        if args.soft_min_snr_sigma_data:
+            output_args.append(
+                f"soft_min_snr_sigma_data={args.soft_min_snr_sigma_data}"
+            )
+    if args.rescale_betas_zero_snr:
+        output_args.append(f"rescale_betas_zero_snr")
+    if args.offset_noise:
+        output_args.append(f"offset_noise")
+        output_args.append(f"noise_offset={args.noise_offset}")
+        output_args.append(f"noise_offset_probability={args.noise_offset_probability}")
+    output_args.append(
+        f"training_scheduler_timestep_spacing={args.training_scheduler_timestep_spacing}"
+    )
+    output_args.append(
+        f"validation_scheduler_timestep_spacing={args.validation_scheduler_timestep_spacing}"
+    )
+    output_str = (
+        f" (extra parameters={output_args})"
+        if output_args
+        else " (no special parameters set)"
+    )
+
+    return output_str
+
+
 def model_schedule_info(args):
     if args.model_family == "flux":
         return flux_schedule_info(args)
     if args.model_family == "sd3":
         return sd3_schedule_info(args)
+    else:
+        return ddpm_schedule_info(args)
 
 
 def save_model_card(
@@ -461,18 +501,19 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 
 {'This is a **diffusion** model trained using DDPM objective instead of Flow matching. **Be sure to set the appropriate scheduler configuration.**' if args.model_family == "sd3" and args.flow_matching_loss == "diffusion" else ''}
 {'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
-{model_card_note(args)}
 {'```' if prompt else ''}
 {prompt}
 {'```' if prompt else ''}
 
+{model_card_note(args)}
 ## Validation settings
 - CFG: `{StateTracker.get_args().validation_guidance}`
 - CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
-- Sampler: `{StateTracker.get_args().validation_noise_scheduler}`
+- Sampler: `{'FlowMatchEulerDiscreteScheduler' if args.model_family in ['sd3', 'flux'] else StateTracker.get_args().validation_noise_scheduler}`
 - Seed: `{StateTracker.get_args().validation_seed}`
 - Resolution{'s' if ',' in StateTracker.get_args().validation_resolution else ''}: `{StateTracker.get_args().validation_resolution}`
+{f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
 
 Note: The validation settings are not necessarily the same as the [training settings](#training-settings).
 
@@ -489,17 +530,19 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Training epochs: {StateTracker.get_epoch() - 1}
 - Training steps: {StateTracker.get_global_step()}
 - Learning rate: {StateTracker.get_args().learning_rate}
+  - Learning rate schedule: {StateTracker.get_args().lr_scheduler}
+  - Warmup steps: {StateTracker.get_args().lr_warmup_steps}
 - Max grad norm: {StateTracker.get_args().max_grad_norm}
 - Effective batch size: {StateTracker.get_args().train_batch_size * StateTracker.get_args().gradient_accumulation_steps * StateTracker.get_accelerator().num_processes}
   - Micro-batch size: {StateTracker.get_args().train_batch_size}
   - Gradient accumulation steps: {StateTracker.get_args().gradient_accumulation_steps}
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
+- Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
 - Prediction type: {'flow-matching' if (StateTracker.get_args().model_family in ["sd3", "flux"]) else StateTracker.get_args().prediction_type}{model_schedule_info(args=StateTracker.get_args())}
-- Rescaled betas zero SNR: {StateTracker.get_args().rescale_betas_zero_snr}
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
-- Precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
-- Quantised: {f'Yes: {StateTracker.get_args().base_model_precision}' if StateTracker.get_args().base_model_precision != "no_change" else 'No'}
-- Xformers: {'Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else 'Not used'}
+- Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
+- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability * 100}%
+{'- Xformers: Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else ''}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets

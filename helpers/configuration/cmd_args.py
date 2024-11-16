@@ -1370,6 +1370,15 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--validation_lycoris_strength",
+        type=float,
+        default=1.0,
+        help=(
+            "When inferencing for validations, the Lycoris model will by default be run at its training strength, 1.0."
+            " However, this value can be increased to a value of around 1.3 or 1.5 to get a stronger effect from the model."
+        ),
+    )
+    parser.add_argument(
         "--validation_torch_compile",
         action="store_true",
         default=False,
