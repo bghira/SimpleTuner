@@ -958,9 +958,9 @@ class Validation:
 
     def setup_pipeline(self, validation_type, enable_ema_model: bool = True):
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
-            self.accelerator._lycoris_wrapped_network.multiplier = getattr(
+            self.accelerator._lycoris_wrapped_network.set_multiplier(float(getattr(
                 self.args, "validation_lycoris_strength", 1.0
-            )
+            )))
         if validation_type == "intermediary" and self.args.use_ema:
             if enable_ema_model:
                 if self.unet is not None:
@@ -1125,7 +1125,7 @@ class Validation:
     def clean_pipeline(self):
         """Remove the pipeline."""
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
-            self.accelerator._lycoris_wrapped_network.multiplier = 1.0
+            self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
         if self.pipeline is not None:
             del self.pipeline
             self.pipeline = None
