@@ -176,6 +176,7 @@ class Trainer:
         self.text_encoder_2 = None
         self.text_encoder_3 = None
         self.controlnet = None
+        self.ema_model = None
         self.validation = None
 
     def _config_to_obj(self, config):
@@ -350,11 +351,7 @@ class Trainer:
             self.config.is_torchao = True
         elif "bnb" in self.config.base_model_precision:
             self.config.is_bnb = True
-        if self.config.is_quanto:
-            from helpers.training.quantisation import quantise_model
-
-            self.quantise_model = quantise_model
-        elif self.config.is_torchao:
+        if self.config.is_quanto or self.config.is_torchao:
             from helpers.training.quantisation import quantise_model
 
             self.quantise_model = quantise_model
@@ -756,7 +753,9 @@ class Trainer:
             " The real memories were the friends we trained a model on along the way."
         )
 
-    def init_precision(self, preprocessing_models_only: bool = False):
+    def init_precision(
+        self, preprocessing_models_only: bool = False, ema_only: bool = False
+    ):
         self.config.enable_adamw_bf16 = (
             True if self.config.weight_dtype == torch.bfloat16 else False
         )
@@ -765,7 +764,7 @@ class Trainer:
         )
 
         if "bnb" in self.config.base_model_precision:
-            # can't cast or move bitsandbytes modelsthis
+            # can't cast or move bitsandbytes models
             return
 
         if not self.config.disable_accelerator and self.config.is_quantized:
@@ -793,6 +792,10 @@ class Trainer:
 
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
+                if ema_only:
+                    self.quantise_model(ema=self.ema_model, args=self.config)
+
+                    return
                 self.quantise_model(
                     unet=self.unet if not preprocessing_models_only else None,
                     transformer=(
@@ -802,10 +805,17 @@ class Trainer:
                     text_encoder_2=self.text_encoder_2,
                     text_encoder_3=self.text_encoder_3,
                     controlnet=None,
+                    ema=self.ema_model,
                     args=self.config,
                 )
         elif self.config.is_torchao:
             with self.accelerator.local_main_process_first():
+                if ema_only:
+                    self.ema_model = self.quantise_model(
+                        ema=self.ema_model, args=self.config, return_dict=True
+                    )["ema"]
+
+                    return
                 (
                     self.unet,
                     self.transformer,
@@ -813,6 +823,7 @@ class Trainer:
                     self.text_encoder_2,
                     self.text_encoder_3,
                     self.controlnet,
+                    self.ema_model,
                 ) = self.quantise_model(
                     unet=self.unet if not preprocessing_models_only else None,
                     transformer=(
@@ -822,6 +833,7 @@ class Trainer:
                     text_encoder_2=self.text_encoder_2,
                     text_encoder_3=self.text_encoder_3,
                     controlnet=None,
+                    ema=self.ema_model,
                     args=self.config,
                 )
 
@@ -1010,6 +1022,22 @@ class Trainer:
                     self.accelerator, self.text_encoder_2
                 ).gradient_checkpointing_enable()
 
+    def _get_trainable_parameters(self):
+        # Return just a list of the currently trainable parameters.
+        if self.config.model_type == "lora":
+            if self.config.lora_type == "lycoris":
+                return self.lycoris_wrapped_network.parameters()
+        if self.config.controlnet:
+            return [
+                param for param in self.controlnet.parameters() if param.requires_grad
+            ]
+        if self.unet is not None:
+            return [param for param in self.unet.parameters() if param.requires_grad]
+        if self.transformer is not None:
+            return [
+                param for param in self.transformer.parameters() if param.requires_grad
+            ]
+
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.
         if not hasattr(self.config, "overrode_max_train_steps"):
@@ -1190,37 +1218,33 @@ class Trainer:
             logger.info("Using EMA. Creating EMAModel.")
 
             ema_model_cls = None
-            if self.unet is not None:
-                ema_model_cls = UNet2DConditionModel
-            elif self.config.model_family == "pixart_sigma":
-                ema_model_cls = PixArtTransformer2DModel
-            elif self.config.model_family == "flux":
-                ema_model_cls = FluxTransformer2DModel
+            ema_model_config = None
+            if self.config.controlnet:
+                ema_model_cls = self.controlnet.__class__
+                ema_model_config = self.controlnet.config
+            elif self.unet is not None:
+                ema_model_cls = self.unet.__class__
+                ema_model_config = self.unet.config
+            elif self.transformer is not None:
+                ema_model_cls = self.transformer.__class__
+                ema_model_config = self.transformer.config
             else:
                 raise ValueError(
                     f"Please open a bug report or disable EMA. Unknown EMA model family: {self.config.model_family}"
                 )
 
-            ema_model_config = None
-            if self.unet is not None:
-                ema_model_config = self.unet.config
-            elif self.transformer is not None:
-                ema_model_config = self.transformer.config
-
             self.ema_model = EMAModel(
                 self.config,
                 self.accelerator,
-                parameters=(
-                    self.unet.parameters()
-                    if self.unet is not None
-                    else self.transformer.parameters()
-                ),
+                parameters=self._get_trainable_parameters(),
                 model_cls=ema_model_cls,
                 model_config=ema_model_config,
                 decay=self.config.ema_decay,
                 foreach=not self.config.ema_foreach_disable,
             )
-            logger.info("EMA model creation complete.")
+            logger.info(
+                f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters"
+            )
 
         self.accelerator.wait_for_everyone()
 
@@ -1296,6 +1320,7 @@ class Trainer:
         if self.config.use_ema and self.ema_model is not None:
             if self.config.ema_device == "accelerator":
                 logger.info("Moving EMA model weights to accelerator...")
+            print(f"EMA model: {self.ema_model}")
             self.ema_model.to(
                 (
                     self.accelerator.device
@@ -2624,11 +2649,7 @@ class Trainer:
                         if self.ema_model is not None:
                             training_logger.debug("Stepping EMA forward")
                             self.ema_model.step(
-                                parameters=(
-                                    self.unet.parameters()
-                                    if self.unet is not None
-                                    else self.transformer.parameters()
-                                ),
+                                parameters=self._get_trainable_parameters(),
                                 global_step=self.state["global_step"],
                             )
                             wandb_logs["ema_decay_value"] = self.ema_model.get_decay()

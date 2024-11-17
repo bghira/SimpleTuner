@@ -1338,7 +1338,7 @@ def get_argument_parser():
         help=(
             "Validations must be enabled for model evaluation to function. The default is to use no evaluator,"
             " and 'clip' will use a CLIP model to evaluate the resulting model's performance during validations."
-        )
+        ),
     )
     parser.add_argument(
         "--pretrained_evaluation_model_name_or_path",
@@ -1348,7 +1348,7 @@ def get_argument_parser():
             "Optionally provide a custom model to use for ViT evaluations."
             " The default is currently clip-vit-large-patch14-336, allowing for lower patch sizes (greater accuracy)"
             " and an input resolution of 336x336."
-        )
+        ),
     )
     parser.add_argument(
         "--validation_on_startup",
@@ -2351,13 +2351,9 @@ def parse_cmdline_args(input_args=None):
             )
             args.gradient_precision = "fp32"
 
-    if args.use_ema:
-        if args.model_family == "sd3":
-            raise ValueError(
-                "Using EMA is not currently supported for Stable Diffusion 3 training."
-            )
-        if "lora" in args.model_type:
-            raise ValueError("Using EMA is not currently supported for LoRA training.")
+    # if args.use_ema:
+    #     if "lora" in args.model_type:
+    #         raise ValueError("Using EMA is not currently supported for LoRA training.")
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
     args.accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=args.logging_dir

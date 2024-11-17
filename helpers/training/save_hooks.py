@@ -1,4 +1,5 @@
-from diffusers.training_utils import EMAModel, _set_state_dict_into_text_encoder
+from diffusers.training_utils import _set_state_dict_into_text_encoder
+from helpers.training.ema import EMAModel
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank as get_rank
 from diffusers.utils import (
@@ -22,7 +23,7 @@ from tqdm import tqdm
 
 
 logger = logging.getLogger("SaveHookManager")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))
 
 try:
     from diffusers import (
@@ -176,13 +177,10 @@ class SaveHookManager:
         self.ema_model_subdir = None
         if unet is not None:
             self.ema_model_subdir = "unet_ema"
-            self.ema_model_cls = UNet2DConditionModel
+            self.ema_model_cls = unet.__class__
         if transformer is not None:
             self.ema_model_subdir = "transformer_ema"
-            if self.args.model_family == "sd3":
-                self.ema_model_cls = SD3Transformer2DModel
-            elif self.args.model_family == "pixart_sigma":
-                self.ema_model_cls = PixArtTransformer2DModel
+            self.ema_model_cls = transformer.__class__
         self.training_state_path = "training_state.json"
         if self.accelerator is not None:
             rank = get_rank()
@@ -295,11 +293,14 @@ class SaveHookManager:
         os.makedirs(temporary_dir, exist_ok=True)
 
         if self.args.use_ema:
-            tqdm.write("Saving EMA model")
-            self.ema_model.save_pretrained(
-                os.path.join(temporary_dir, self.ema_model_subdir),
-                max_shard_size="10GB",
+            ema_model_path = os.path.join(
+                temporary_dir, self.ema_model_subdir, "ema_model.pt"
             )
+            logger.info(f"Saving EMA model to {ema_model_path}")
+            try:
+                self.ema_model.save_state_dict(ema_model_path)
+            except Exception as e:
+                logger.error(f"Error saving EMA model: {e}")
 
         if self.unet is not None:
             sub_dir = "unet"
@@ -334,6 +335,15 @@ class SaveHookManager:
         )
         if not self.accelerator.is_main_process:
             return
+        if self.args.use_ema:
+            ema_model_path = os.path.join(
+                output_dir, self.ema_model_subdir, "ema_model.pt"
+            )
+            logger.info(f"Saving EMA model to {ema_model_path}")
+            try:
+                self.ema_model.save_state_dict(ema_model_path)
+            except Exception as e:
+                logger.error(f"Error saving EMA model: {e}")
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._save_lora(models=models, weights=weights, output_dir=output_dir)
             return
@@ -455,13 +465,6 @@ class SaveHookManager:
         lycoris_logger.setLevel(logging.ERROR)
 
     def _load_full_model(self, models, input_dir):
-        if self.args.use_ema:
-            load_model = EMAModel.from_pretrained(
-                os.path.join(input_dir, self.ema_model_subdir), self.ema_model_cls
-            )
-            self.ema_model.load_state_dict(load_model.state_dict())
-            self.ema_model.to(self.accelerator.device)
-            del load_model
         if self.args.model_type == "full":
             return_exception = False
             for i in range(len(models)):
@@ -508,6 +511,14 @@ class SaveHookManager:
             logger.warning(
                 f"Could not find {training_state_path} in checkpoint dir {input_dir}"
             )
+        if self.args.use_ema:
+            try:
+                self.ema_model.load_state_dict(
+                    os.path.join(input_dir, self.ema_model_subdir, "ema_model.pt")
+                )
+                # self.ema_model.to(self.accelerator.device)
+            except Exception as e:
+                logger.error(f"Could not load EMA model: {e}")
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
