@@ -10,6 +10,7 @@ from regex import regex
 import fcntl
 import tempfile
 import shutil
+from helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger("LocalDataBackend")
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -40,7 +41,7 @@ class LocalDataBackend(BaseDataBackend):
         """Write the provided data to the specified filepath."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         temp_dir = os.path.dirname(filepath)
-        temp_file_path = os.path.join(temp_dir, f".{os.path.basename(filepath)}.tmp")
+        temp_file_path = os.path.join(temp_dir, f".{os.path.basename(filepath)}.tmp{_get_rank()}")
 
         # Open the temporary file for writing
         with open(temp_file_path, "wb") as temp_file:
@@ -51,6 +52,7 @@ class LocalDataBackend(BaseDataBackend):
                 if isinstance(data, torch.Tensor):
                     # Use the torch_save method, passing the temp file
                     self.torch_save(data, temp_file)
+                    os.rename(temp_file_path, filepath)
                     return  # torch_save handles closing the file
                 elif isinstance(data, str):
                     data = data.encode("utf-8")
@@ -239,7 +241,7 @@ class LocalDataBackend(BaseDataBackend):
             filepath = original_location
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             temp_dir = os.path.dirname(filepath)
-            temp_file_path = os.path.join(temp_dir, f".{os.path.basename(filepath)}.tmp")
+            temp_file_path = os.path.join(temp_dir, f".{os.path.basename(filepath)}.tmp{_get_rank()}")
 
             with open(temp_file_path, "wb") as temp_file:
                 # Acquire an exclusive lock on the temporary file
