@@ -469,8 +469,14 @@ class Trainer:
             )
             self.config.vae_kwargs["subfolder"] = None
             self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
-            if self.vae is not None and self.config.vae_enable_tiling and hasattr(self.vae, 'enable_tiling'):
-                logger.warning("Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents.")
+            if (
+                self.vae is not None
+                and self.config.vae_enable_tiling
+                and hasattr(self.vae, "enable_tiling")
+            ):
+                logger.warning(
+                    "Enabling VAE tiling for greatly reduced memory consumption due to --vae_enable_tiling which may result in VAE tiling artifacts in encoded latents."
+                )
                 self.vae.enable_tiling()
         if not move_to_accelerator:
             logger.debug("Not moving VAE to accelerator.")
@@ -750,7 +756,7 @@ class Trainer:
             " The real memories were the friends we trained a model on along the way."
         )
 
-    def init_precision(self):
+    def init_precision(self, preprocessing_models_only: bool = False):
         self.config.enable_adamw_bf16 = (
             True if self.config.weight_dtype == torch.bfloat16 else False
         )
@@ -769,24 +775,29 @@ class Trainer:
             elif self.config.base_model_default_dtype == "bf16":
                 self.config.base_weight_dtype = torch.bfloat16
                 self.config.enable_adamw_bf16 = True
-            if self.unet is not None:
-                logger.info(
-                    f"Moving U-net to dtype={self.config.base_weight_dtype}, device={quantization_device}"
-                )
-                self.unet.to(quantization_device, dtype=self.config.base_weight_dtype)
-            elif self.transformer is not None:
-                logger.info(
-                    f"Moving transformer to dtype={self.config.base_weight_dtype}, device={quantization_device}"
-                )
-                self.transformer.to(
-                    quantization_device, dtype=self.config.base_weight_dtype
-                )
+            if not preprocessing_models_only:
+                if self.unet is not None:
+                    logger.info(
+                        f"Moving U-net to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                    )
+                    self.unet.to(
+                        quantization_device, dtype=self.config.base_weight_dtype
+                    )
+                elif self.transformer is not None:
+                    logger.info(
+                        f"Moving transformer to dtype={self.config.base_weight_dtype}, device={quantization_device}"
+                    )
+                    self.transformer.to(
+                        quantization_device, dtype=self.config.base_weight_dtype
+                    )
 
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 self.quantise_model(
-                    unet=self.unet,
-                    transformer=self.transformer,
+                    unet=self.unet if not preprocessing_models_only else None,
+                    transformer=(
+                        self.transformer if not preprocessing_models_only else None
+                    ),
                     text_encoder_1=self.text_encoder_1,
                     text_encoder_2=self.text_encoder_2,
                     text_encoder_3=self.text_encoder_3,
@@ -803,8 +814,10 @@ class Trainer:
                     self.text_encoder_3,
                     self.controlnet,
                 ) = self.quantise_model(
-                    unet=self.unet,
-                    transformer=self.transformer,
+                    unet=self.unet if not preprocessing_models_only else None,
+                    transformer=(
+                        self.transformer if not preprocessing_models_only else None
+                    ),
                     text_encoder_1=self.text_encoder_1,
                     text_encoder_2=self.text_encoder_2,
                     text_encoder_3=self.text_encoder_3,
@@ -1376,7 +1389,7 @@ class Trainer:
             ema_model=self.ema_model,
             vae=self.vae,
             controlnet=self.controlnet if self.config.controlnet else None,
-            model_evaluator=model_evaluator
+            model_evaluator=model_evaluator,
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
@@ -2592,13 +2605,15 @@ class Trainer:
                         self.guidance_values_list = []
                     if grad_norm is not None:
                         wandb_logs["grad_norm"] = grad_norm
-                    if self.validation is not None and hasattr(self.validation, 'evaluation_result'):
+                    if self.validation is not None and hasattr(
+                        self.validation, "evaluation_result"
+                    ):
                         eval_result = self.validation.get_eval_result()
                         if eval_result is not None and type(eval_result) == dict:
                             # add the dict to wandb_logs
                             self.validation.clear_eval_result()
                             wandb_logs.update(eval_result)
-                            
+
                     progress_bar.update(1)
                     self.state["global_step"] += 1
                     current_epoch_step += 1
@@ -2717,7 +2732,9 @@ class Trainer:
                                             self.config.output_dir, removing_checkpoint
                                         )
                                         try:
-                                            shutil.rmtree(removing_checkpoint, ignore_errors=True)
+                                            shutil.rmtree(
+                                                removing_checkpoint, ignore_errors=True
+                                            )
                                         except Exception as e:
                                             logger.error(
                                                 f"Failed to remove directory: {removing_checkpoint}"
