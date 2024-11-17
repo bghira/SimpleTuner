@@ -399,7 +399,9 @@ class Validation:
         tokenizer_3=None,
         is_deepspeed: bool = False,
         model_evaluator=None,
+        trainable_parameters=None,
     ):
+        self.trainable_parameters = trainable_parameters
         self.accelerator = accelerator
         self.prompt_handler = None
         self.unet = unet
@@ -958,17 +960,13 @@ class Validation:
 
     def setup_pipeline(self, validation_type, enable_ema_model: bool = True):
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
-            self.accelerator._lycoris_wrapped_network.set_multiplier(float(getattr(
-                self.args, "validation_lycoris_strength", 1.0
-            )))
+            self.accelerator._lycoris_wrapped_network.set_multiplier(
+                float(getattr(self.args, "validation_lycoris_strength", 1.0))
+            )
         if validation_type == "intermediary" and self.args.use_ema:
             if enable_ema_model:
-                if self.unet is not None:
-                    self.ema_model.store(self.unet.parameters())
-                    self.ema_model.copy_to(self.unet.parameters())
-                if self.transformer is not None:
-                    self.ema_model.store(self.transformer.parameters())
-                    self.ema_model.copy_to(self.transformer.parameters())
+                self.ema_model.store(self.trainable_parameters)
+                self.ema_model.copy_to(self.trainable_parameters)
                 if self.args.ema_device != "accelerator":
                     logger.info("Moving EMA weights to GPU for inference.")
                     self.ema_model.to(self.inference_device)
@@ -1094,9 +1092,13 @@ class Validation:
                 break
             if self.args.validation_torch_compile:
                 if self.deepspeed:
-                    logger.warning("DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning.")
+                    logger.warning(
+                        "DeepSpeed does not support torch compile. Disabling. Set --validation_torch_compile=False to suppress this warning."
+                    )
                 elif self.args.lora_type.lower() == "lycoris":
-                    logger.warning("LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning.")
+                    logger.warning(
+                        "LyCORIS does not support torch compile for validation due to graph compile breaks. Disabling. Set --validation_torch_compile=False to suppress this warning."
+                    )
                 else:
                     if self.unet is not None and not is_compiled_module(self.unet):
                         logger.warning(
@@ -1165,10 +1167,10 @@ class Validation:
                 )
             self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
-            stitched_validation_images, original_validation_images = self.validate_prompt(prompt, shortname, validation_input_image)
-            validation_images.update(
-                stitched_validation_images
+            stitched_validation_images, original_validation_images = (
+                self.validate_prompt(prompt, shortname, validation_input_image)
             )
+            validation_images.update(stitched_validation_images)
             self._save_images(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
             self.validation_images = validation_images
@@ -1181,7 +1183,7 @@ class Validation:
 
     def get_eval_result(self):
         return self.evaluation_result or {}
-    
+
     def clear_eval_result(self):
         self.evaluation_result = None
 
@@ -1342,11 +1344,14 @@ class Validation:
                         pipeline_kwargs.pop("negative_mask")[0], dim=0
                     ).to(device=self.inference_device, dtype=self.weight_dtype)
 
-                original_validation_image_results = self.pipeline(**pipeline_kwargs).images
+                original_validation_image_results = self.pipeline(
+                    **pipeline_kwargs
+                ).images
                 validation_image_results = original_validation_image_results.copy()
                 if self.args.controlnet:
                     validation_image_results = self.stitch_conditioning_images(
-                        original_validation_image_results, extra_validation_kwargs["image"]
+                        original_validation_image_results,
+                        extra_validation_kwargs["image"],
                     )
                 elif not self.args.disable_benchmark and self.benchmark_exists(
                     "base_model"
@@ -1360,7 +1365,9 @@ class Validation:
                             validation_image_results[0], benchmark_image
                         )
                 validation_images[validation_shortname].extend(validation_image_results)
-                original_validation_images[validation_shortname].extend(original_validation_image_results)
+                original_validation_images[validation_shortname].extend(
+                    original_validation_image_results
+                )
             except Exception as e:
                 import traceback
 
@@ -1510,7 +1517,7 @@ class Validation:
         for shortname, image_list in images.items():
             if shortname in self.eval_scores:
                 continue
-            prompt = self.validation_prompt_dict.get(shortname, '')
+            prompt = self.validation_prompt_dict.get(shortname, "")
             for image in image_list:
                 evaluation_score = self.model_evaluator.evaluate([image], [prompt])
                 self.eval_scores[shortname] = round(float(evaluation_score), 4)

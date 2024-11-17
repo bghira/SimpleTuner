@@ -1394,6 +1394,7 @@ class Trainer:
             return
         model_evaluator = ModelEvaluator.from_config(args=self.config)
         self.validation = Validation(
+            trainable_parameters=self._get_trainable_parameters(),
             accelerator=self.accelerator,
             unet=self.unet,
             transformer=self.transformer,
