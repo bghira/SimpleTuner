@@ -346,7 +346,6 @@ class EMAModel:
             )
         else:
             for s_param, param in zip(self.shadow_params, parameters):
-                print(f"From shape: {s_param.shape}, to shape: {param.shape}")
                 param.data.copy_(s_param.to(param.device).data)
 
     def pin_memory(self) -> None:

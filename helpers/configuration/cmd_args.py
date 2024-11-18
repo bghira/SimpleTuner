@@ -1123,6 +1123,17 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--ema_validation",
+        choices=["none", "ema_only", "comparison"],
+        default="comparison",
+        help=(
+            "When 'none' is set, no EMA validation will be done."
+            " When using 'ema_only', the validations will rely mostly on the EMA weights."
+            " When using 'comparison' (default) mode, the validations will first run on the checkpoint before also running for"
+            " the EMA weights. In comparison mode, the resulting images will be provided side-by-side."
+        )
+    )
+    parser.add_argument(
         "--ema_cpu_only",
         action="store_true",
         default=False,

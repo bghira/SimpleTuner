@@ -511,7 +511,7 @@ class SaveHookManager:
             logger.warning(
                 f"Could not find {training_state_path} in checkpoint dir {input_dir}"
             )
-        if self.args.use_ema:
+        if self.args.use_ema and self.accelerator.is_main_process:
             try:
                 self.ema_model.load_state_dict(
                     os.path.join(input_dir, self.ema_model_subdir, "ema_model.pt")

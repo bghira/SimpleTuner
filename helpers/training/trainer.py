@@ -2654,6 +2654,7 @@ class Trainer:
                                 global_step=self.state["global_step"],
                             )
                             wandb_logs["ema_decay_value"] = self.ema_model.get_decay()
+                            ema_decay_value = wandb_logs["ema_decay_value"]
                         self.accelerator.wait_for_everyone()
 
                     # Log scatter plot to wandb
