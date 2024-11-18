@@ -1364,6 +1364,8 @@ class Validation:
                 # retrieve the default image result for stitching to controlnet inputs.
                 ema_image_results = all_validation_type_results.get("ema")
                 validation_image_results = all_validation_type_results.get("checkpoint", ema_image_results)
+                print(f"ema image results: {ema_image_results}")
+                print(f"validation_image_results: {validation_image_results}")
                 original_validation_image_results = validation_image_results
                 benchmark_image = None
                 if self.args.controlnet:
@@ -1379,6 +1381,7 @@ class Validation:
                     )
                     if benchmark_image is not None:
                         for idx, validation_image in enumerate(validation_image_results):
+                            print(f"stitching benchmark image {benchmark_image} to {validation_image}")
                             validation_image_results[idx] = self.stitch_benchmark_image(
                                 validation_image_result=validation_image,
                                 benchmark_image=benchmark_image,
@@ -1389,6 +1392,7 @@ class Validation:
                 )
                 stitched_validation_images[validation_shortname].extend(validation_image_results)
                 ema_validation_images[validation_shortname].extend(ema_image_results)
+                print(f"Generated {len(validation_image_results)} images, {len(ema_validation_images[validation_shortname])} EMA images, {len(stitched_validation_images[validation_shortname])} for {validation_shortname}")
 
 
             except Exception as e:
@@ -1400,6 +1404,7 @@ class Validation:
                 continue
         if self.args.use_ema and self.args.ema_validation == "comparison" and benchmark_image is not None:
             for idx, validation_image in enumerate(stitched_validation_images[validation_shortname]):
+                print(f"idx={idx} stitching EMA image {ema_validation_images[validation_shortname][idx]} to {stitched_validation_images[validation_shortname][idx]}")
                 stitched_validation_images[validation_shortname][idx] = self.stitch_benchmark_image(
                     validation_image_result=ema_validation_images[validation_shortname][idx],
                     benchmark_image=stitched_validation_images[validation_shortname][idx],
@@ -1522,39 +1527,52 @@ class Validation:
 
     def enable_ema_for_inference(self):
         if self.ema_enabled:
-            logger.info("EMA already on GPU.")
+            logger.info("EMA already enabled. Not enabling EMA.")
             return
         if self.args.use_ema:
+            logger.info("Enabling EMA.")
             self.ema_enabled = True
             if self.args.model_type == "lora" and self.args.lora_type.lower() == "lycoris":
+                logger.info("Setting Lycoris multiplier to 1.0")
                 self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+                logger.info("Storing Lycoris weights for later recovery.")
                 self.ema_model.store(self.accelerator._lycoris_wrapped_network.parameters())
+                logger.info("Storing the EMA weights into the Lycoris adapter for inference.")
                 self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
             else:
+                logger.info("Storing EMA weights for later recovery.")
                 self.ema_model.store(self.trainable_parameters)
+                logger.info("Storing the EMA weights into the model for inference.")
                 self.ema_model.copy_to(self.trainable_parameters)
             if self.args.ema_device != "accelerator":
                 logger.info("Moving EMA weights to GPU for inference.")
                 self.ema_model.to(self.inference_device)
         else:
-            logger.debug(
-                "Skipping EMA model setup for validation, as enable_ema_model=False."
+            logger.info(
+                "Skipping EMA model setup for validation, as we are not using EMA."
             )
 
     def disable_ema_for_inference(self):
         if not self.ema_enabled:
+            logger.info("EMA was not enabled. Not disabling EMA.")
             return
         if self.args.use_ema:
-            if self.args.model_type == "lora" and self.args.lora_type.lower() == "lycoris":
-                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+            logger.info("Disabling EMA.")
             self.ema_enabled = False
-            self.ema_model.restore(self.trainable_parameters)
+            if self.args.model_type == "lora" and self.args.lora_type.lower() == "lycoris":
+                logger.info("Setting Lycoris network multiplier to 1.0.")
+                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+                logger.info("Restoring Lycoris weights.")
+                self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
+            else:
+                logger.info("Restoring trainable parameters.")
+                self.ema_model.restore(self.trainable_parameters)
             if self.args.ema_device != "accelerator":
                 logger.info("Moving EMA weights to CPU for storage.")
                 self.ema_model.to(self.args.ema_device)
         else:
-            logger.debug(
-                "Skipping EMA model restoration for validation, as enable_ema_model=False."
+            logger.info(
+                "Skipping EMA model restoration for validation, as we are not using EMA."
             )
 
 
