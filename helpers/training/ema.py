@@ -201,7 +201,7 @@ class EMAModel:
             )
 
         model = self.model_cls.from_config(self.model_config)
-        state_dict = self.state_dict()
+        state_dict = self.state_dict(exclude_params=True)
         state_dict.pop("shadow_params", None)
 
         model.register_to_config(**state_dict)
@@ -374,7 +374,7 @@ class EMAModel:
     def cpu(self):
         return self.to(device="cpu")
 
-    def state_dict(self, destination=None, prefix="", keep_vars=False):
+    def state_dict(self, destination=None, prefix="", keep_vars=False, exclude_params: bool = False):
         r"""
         Returns a dictionary containing a whole state of the EMA model.
         """
@@ -387,6 +387,8 @@ class EMAModel:
             "inv_gamma": self.inv_gamma,
             "power": self.power,
         }
+        if exclude_params:
+            return state_dict
         for idx, param in enumerate(self.shadow_params):
             state_dict[f"{prefix}shadow_params.{idx}"] = (
                 param if keep_vars else param.detach()

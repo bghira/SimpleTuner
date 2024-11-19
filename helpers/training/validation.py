@@ -2,6 +2,7 @@ import torch
 import os
 import wandb
 import logging
+import sys
 import numpy as np
 from tqdm import tqdm
 from helpers.training.wrappers import unwrap_model
@@ -452,6 +453,14 @@ class Validation:
             and self.args.flow_matching_loss != "diffusion"
         ) or self.args.model_family == "flux"
         self.deepspeed = is_deepspeed
+        if is_deepspeed:
+            if args.use_ema:
+                if args.ema_validation != "none":
+                    logger.error(
+                        "EMA validation is not supported via DeepSpeed."
+                        " Please use --ema_validation=none or disable DeepSpeed."
+                    )
+                    sys.exit(1)
         self.inference_device = (
             accelerator.device
             if not is_deepspeed
@@ -1549,19 +1558,24 @@ class Validation:
                     logger.info("Storing the EMA weights into the Lycoris adapter for inference.")
                     self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
                 elif self.args.lora_type.lower() == "standard":
-                    self.trainable_parameters = [
+                    _trainable_parameters = [
                         x for x in self._primary_model().parameters() if x.requires_grad
                     ]
-                    self.ema_model.store(self.trainable_parameters)
-                    self.ema_model.copy_to(self.trainable_parameters)
+                    self.ema_model.store(_trainable_parameters)
+                    self.ema_model.copy_to(_trainable_parameters)
             else:
+                # if self.args.ema_device != "accelerator":
+                #     logger.info("Moving checkpoint to CPU for storage.")
+                #     self._primary_model().to("cpu")
                 logger.info("Storing EMA weights for later recovery.")
-                self.ema_model.store(self.trainable_parameters)
+                self.ema_model.store(self.trainable_parameters())
                 logger.info("Storing the EMA weights into the model for inference.")
-                self.ema_model.copy_to(self.trainable_parameters)
-            if self.args.ema_device != "accelerator":
-                logger.info("Moving EMA weights to GPU for inference.")
-                self.ema_model.to(self.inference_device)
+                self.ema_model.copy_to(self.trainable_parameters())
+            # if self.args.ema_device != "accelerator":
+            #     logger.info("Moving checkpoint to CPU for storage.")
+            #     self._primary_model().to("cpu")
+            #     logger.info("Moving EMA weights to GPU for inference.")
+            #     self.ema_model.to(self.inference_device)
         else:
             logger.info(
                 "Skipping EMA model setup for validation, as we are not using EMA."
@@ -1581,11 +1595,12 @@ class Validation:
                 self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
             else:
                 logger.info("Restoring trainable parameters.")
-                self.ema_model.restore(self.trainable_parameters)
-                self.trainable_parameters = None
+                self.ema_model.restore(self.trainable_parameters())
             if self.args.ema_device != "accelerator":
                 logger.info("Moving EMA weights to CPU for storage.")
                 self.ema_model.to(self.args.ema_device)
+                self._primary_model().to(self.inference_device)
+
         else:
             logger.info(
                 "Skipping EMA model restoration for validation, as we are not using EMA."

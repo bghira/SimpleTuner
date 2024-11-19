@@ -404,7 +404,7 @@ def ddpm_schedule_info(args):
         f"training_scheduler_timestep_spacing={args.training_scheduler_timestep_spacing}"
     )
     output_args.append(
-        f"validation_scheduler_timestep_spacing={args.validation_scheduler_timestep_spacing}"
+        f"inference_scheduler_timestep_spacing={args.inference_scheduler_timestep_spacing}"
     )
     output_str = (
         f" (extra parameters={output_args})"

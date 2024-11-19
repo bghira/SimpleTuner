@@ -1394,7 +1394,7 @@ class Trainer:
             return
         model_evaluator = ModelEvaluator.from_config(args=self.config)
         self.validation = Validation(
-            trainable_parameters=self._get_trainable_parameters(),
+            trainable_parameters=self._get_trainable_parameters,
             accelerator=self.accelerator,
             unet=self.unet,
             transformer=self.transformer,
@@ -1416,6 +1416,7 @@ class Trainer:
             vae=self.vae,
             controlnet=self.controlnet if self.config.controlnet else None,
             model_evaluator=model_evaluator,
+            is_deepspeed=self.config.use_deepspeed_optimizer,
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
@@ -1533,7 +1534,7 @@ class Trainer:
         logger.debug(f"Training state inside checkpoint: {training_state_in_ckpt}")
         if hasattr(lr_scheduler, "last_step"):
             lr_scheduler.last_step = self.state["global_resume_step"]
-        logger.info(f"Resuming from global_step {self.state['global_resume_step']}).")
+        logger.info(f"Resuming from global_step {self.state['global_resume_step']}.")
 
         # Log the current state of each data backend.
         for _, backend in StateTracker.get_data_backends().items():
@@ -2648,7 +2649,6 @@ class Trainer:
                     ema_decay_value = "None (EMA not in use)"
                     if self.config.use_ema:
                         if self.ema_model is not None:
-                            training_logger.debug("Stepping EMA forward")
                             self.ema_model.step(
                                 parameters=self._get_trainable_parameters(),
                                 global_step=self.state["global_step"],

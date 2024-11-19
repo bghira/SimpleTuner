@@ -331,7 +331,8 @@ class SaveHookManager:
         temporary_dir = output_dir.replace("checkpoint", "temporary")
         os.makedirs(temporary_dir, exist_ok=True)
 
-        if self.args.use_ema:
+        if self.args.use_ema and self.accelerator.is_main_process:
+            # even with deepspeed, EMA should only save on the main process.
             ema_model_path = os.path.join(
                 temporary_dir, self.ema_model_subdir, "ema_model.pt"
             )
@@ -340,7 +341,11 @@ class SaveHookManager:
                 self.ema_model.save_state_dict(ema_model_path)
             except Exception as e:
                 logger.error(f"Error saving EMA model: {e}")
-
+            logger.info(f"Saving EMA safetensors variant.")
+            self.ema_model.save_pretrained(
+                os.path.join(temporary_dir, self.ema_model_subdir),
+                max_shard_size="10GB",
+            )
         if self.unet is not None:
             sub_dir = "unet"
         if self.transformer is not None:
