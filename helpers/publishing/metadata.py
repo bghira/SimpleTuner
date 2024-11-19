@@ -105,6 +105,20 @@ def _model_imports(args):
     return f"{output}"
 
 
+def ema_info(args):
+    if args.use_ema:
+        ema_information = """
+## Elastic Moving Average (EMA)
+
+SimpleTuner generates a safetensors variant of the EMA weights and a pt file.
+
+The safetensors file is intended to be used for inference, and the pt file is for continuing finetuning.
+
+The EMA model may provide a more well-rounded result, but typically will feel undertrained compared to the full model as it is a running decayed average of the model weights.
+"""
+        return ema_information
+    return ""
+
 def lycoris_download_info():
     """output a function to download the adapter"""
     output_fn = """
@@ -145,7 +159,7 @@ def _model_load(args, repo_id: str = None):
             output = (
                 f"model_id = '{args.pretrained_model_name_or_path}'"
                 f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
-                f"\npipeline = DiffusionPipeline.from_pretrained(model_id), torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
+                f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
                 f"\npipeline.load_lora_weights(adapter_id)"
             )
         elif args.lora_type.lower() == "lycoris":
@@ -558,3 +572,5 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
     logger.debug(f"Model Card:\n{model_card_content}")
     with open(os.path.join(repo_folder, "README.md"), "w", encoding="utf-8") as f:
         f.write(yaml_content + model_card_content)
+
+{ema_info(args=StateTracker.get_args())}
