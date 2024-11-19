@@ -117,12 +117,3 @@ def safety_check(args, accelerator):
             f"--flux_schedule_auto_shift cannot be combined with --flux_schedule_shift. Please set --flux_schedule_shift to 0 if you want to train with --flux_schedule_auto_shift."
         )
         sys.exit(1)
-
-    if args.use_ema and args.model_type == "lora" and args.lora_type.lower() == "standard":
-        if args.ema_validation != "none":
-            logger.error(
-                "EMA validation is only supported via full rank training or Lycoris."
-                " To continue with Standard PEFT LoRA, set --ema_validation=none in your config file."
-                " You can still use EMA with Standard PEFT LoRA, but will be unable to see its outputs during training."
-            )
-            sys.exit(1)
