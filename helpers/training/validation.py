@@ -1373,8 +1373,6 @@ class Validation:
                 # retrieve the default image result for stitching to controlnet inputs.
                 ema_image_results = all_validation_type_results.get("ema")
                 validation_image_results = all_validation_type_results.get("checkpoint", ema_image_results)
-                print(f"ema image results: {ema_image_results}")
-                print(f"validation_image_results: {validation_image_results}")
                 original_validation_image_results = validation_image_results
                 benchmark_image = None
                 if self.args.controlnet:
@@ -1390,7 +1388,6 @@ class Validation:
                     )
                     if benchmark_image is not None:
                         for idx, validation_image in enumerate(validation_image_results):
-                            print(f"stitching benchmark image {benchmark_image} to {validation_image}")
                             validation_image_results[idx] = self.stitch_benchmark_image(
                                 validation_image_result=validation_image,
                                 benchmark_image=benchmark_image,
@@ -1400,9 +1397,8 @@ class Validation:
                     original_validation_image_results
                 )
                 stitched_validation_images[validation_shortname].extend(validation_image_results)
-                ema_validation_images[validation_shortname].extend(ema_image_results)
-                print(f"Generated {len(validation_image_results)} images, {len(ema_validation_images[validation_shortname])} EMA images, {len(stitched_validation_images[validation_shortname])} for {validation_shortname}")
-
+                if self.args.use_ema:
+                    ema_validation_images[validation_shortname].extend(ema_image_results)
 
             except Exception as e:
                 import traceback
@@ -1413,7 +1409,6 @@ class Validation:
                 continue
         if self.args.use_ema and self.args.ema_validation == "comparison" and benchmark_image is not None:
             for idx, validation_image in enumerate(stitched_validation_images[validation_shortname]):
-                print(f"idx={idx} stitching EMA image {ema_validation_images[validation_shortname][idx]} to {stitched_validation_images[validation_shortname][idx]}")
                 stitched_validation_images[validation_shortname][idx] = self.stitch_benchmark_image(
                     validation_image_result=ema_validation_images[validation_shortname][idx],
                     benchmark_image=stitched_validation_images[validation_shortname][idx],

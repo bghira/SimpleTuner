@@ -1111,7 +1111,7 @@ def get_argument_parser():
     parser.add_argument(
         "--use_ema",
         action="store_true",
-        help="Whether to use EMA (exponential moving average) model.",
+        help="Whether to use EMA (exponential moving average) model. Works with LoRA, Lycoris, and full training.",
     )
     parser.add_argument(
         "--ema_device",
