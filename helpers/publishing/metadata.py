@@ -566,11 +566,11 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 ## Inference
 
 {code_example(args=StateTracker.get_args(), repo_id=repo_id)}
+
+{ema_info(args=StateTracker.get_args())}
 """
 
     logger.debug(f"YAML:\n{yaml_content}")
     logger.debug(f"Model Card:\n{model_card_content}")
     with open(os.path.join(repo_folder, "README.md"), "w", encoding="utf-8") as f:
         f.write(yaml_content + model_card_content)
-
-{ema_info(args=StateTracker.get_args())}
