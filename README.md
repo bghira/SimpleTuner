@@ -51,7 +51,7 @@ For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md)
   - LoRA/LyCORIS training for PixArt, SDXL, SD3, and SD 2.x that uses less than 16G VRAM
 - DeepSpeed integration allowing for [training SDXL's full u-net on 12G of VRAM](/documentation/DEEPSPEED.md), albeit very slowly.
 - Quantised NF4/INT8/FP8 LoRA training, using low-precision base model to reduce VRAM consumption.
-- Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability. **Note:** This does not apply to LoRA.
+- Optional EMA (Exponential moving average) weight network to counteract model overfitting and improve training stability.
 - Train directly from an S3-compatible storage provider, eliminating the requirement for expensive local storage. (Tested with Cloudflare R2 and Wasabi S3)
 - For only SDXL and SD 1.x/2.x, full [ControlNet model training](/documentation/CONTROLNET.md) (not ControlLoRA or ControlLite)
 - Training [Mixture of Experts](/documentation/MIXTURE_OF_EXPERTS.md) for lightweight, high-quality diffusion models
@@ -137,8 +137,8 @@ Flux prefers being trained with multiple large GPUs but a single 16G card should
 
 - A100-80G (EMA, large batches, LoRA @ insane batch sizes)
 - A6000-48G (EMA@768px, no EMA@1024px, LoRA @ high batch sizes)
-- A100-40G (no EMA@1024px, no EMA@768px, EMA@512px, LoRA @ high batch sizes)
-- 4090-24G (no EMA@1024px, batch size 1-4, LoRA @ medium-high batch sizes)
+- A100-40G (EMA@1024px, EMA@768px, EMA@512px, LoRA @ high batch sizes)
+- 4090-24G (EMA@1024px, batch size 1-4, LoRA @ medium-high batch sizes)
 - 4080-12G (LoRA @ low-medium batch sizes)
 
 ### Stable Diffusion 2.x, 768px

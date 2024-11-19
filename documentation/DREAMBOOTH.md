@@ -222,6 +222,12 @@ Alternatively, one might use the real name of their subject, or a 'similar enoug
 
 After a number of training experiments, it seems as though a 'similar enough' celebrity is the best choice, especially if prompting the model for the person's real name ends up looking dissimilar.
 
+# Exponential moving average (EMA)
+
+A second model can be trained in parallel to your checkpoint, nearly for free - only the resulting system memory (by default) is consumed, rather than more VRAM.
+
+Applying `use_ema=true` in your config file will enable this feature.
+
 # CLIP score tracking
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
