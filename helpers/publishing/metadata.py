@@ -108,7 +108,7 @@ def _model_imports(args):
 def ema_info(args):
     if args.use_ema:
         ema_information = """
-## Elastic Moving Average (EMA)
+## Exponential Moving Average (EMA)
 
 SimpleTuner generates a safetensors variant of the EMA weights and a pt file.
 
