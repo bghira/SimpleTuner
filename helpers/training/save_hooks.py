@@ -187,6 +187,14 @@ class SaveHookManager:
             if rank > 0:
                 self.training_state_path = f"training_state-rank{rank}.json"
 
+    def _primary_model(self):
+        if self.args.controlnet:
+            return self.controlnet
+        if self.unet is not None:
+            return self.unet
+        if self.transformer is not None:
+            return self.transformer
+
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
@@ -196,6 +204,24 @@ class SaveHookManager:
         text_encoder_2_lora_layers_to_save = None
         # Diffusers does not train the third text encoder.
         # text_encoder_3_lora_layers_to_save = None
+
+        if self.args.use_ema:
+            # we'll temporarily overwrite teh LoRA parameters with the EMA parameters to save it.
+            logger.info("Saving EMA model to disk.")
+            trainable_parameters = [
+                p
+                for p in self.ema_model.parameters()
+                if p.requires_grad
+            ]
+            self.ema_model.store(trainable_parameters)
+            self.ema_model.copy_to(trainable_parameters)
+            self.pipeline_class.save_lora_weights(
+                os.path.join(output_dir, "ema"),
+                transformer_lora_layers=convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(self._primary_model())
+                ),
+            )
+            self.ema_model.restore(trainable_parameters)
 
         for model in models:
             if isinstance(model, type(unwrap_model(self.accelerator, self.unet))):
@@ -264,7 +290,7 @@ class SaveHookManager:
         save wrappers for lycoris. For now, text encoders are not trainable
         via lycoris.
         """
-        from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+        from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME, EMA_SAFETENSORS_FILENAME
 
         for _ in models:
             if weights:
@@ -279,6 +305,19 @@ class SaveHookManager:
             list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
             {"lycoris_config": json.dumps(lycoris_config)},  # metadata
         )
+        if self.args.use_ema:
+            # we'll store lycoris weights.
+            self.ema_model.store(self.accelerator._lycoris_wrapped_network.parameters())
+            # we'll write EMA to the lycoris adapter temporarily.
+            self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
+            # now we can write the lycoris weights using the EMA_SAFETENSORS_FILENAME instead.
+            os.makedirs(os.path.join(output_dir, "ema"), exist_ok=True)
+            self.accelerator._lycoris_wrapped_network.save_weights(
+                os.path.join(output_dir, "ema", EMA_SAFETENSORS_FILENAME),
+                list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
+                {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+            )
+            self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
 
         # copy the config into the repo
         shutil.copy2(
@@ -336,6 +375,7 @@ class SaveHookManager:
         if not self.accelerator.is_main_process:
             return
         if self.args.use_ema:
+            # we'll save this EMA checkpoint for restoring the state easier.
             ema_model_path = os.path.join(
                 output_dir, self.ema_model_subdir, "ema_model.pt"
             )
