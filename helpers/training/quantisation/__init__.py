@@ -206,7 +206,15 @@ def get_quant_fn(base_model_precision):
 
 
 def quantise_model(
-    unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet, args
+    unet=None,
+    transformer=None,
+    text_encoder_1=None,
+    text_encoder_2=None,
+    text_encoder_3=None,
+    controlnet=None,
+    ema=None,
+    args=None,
+    return_dict: bool = False,
 ):
     """
     Quantizes the provided models using the specified precision settings.
@@ -218,6 +226,7 @@ def quantise_model(
         text_encoder_2: The second text encoder to quantize.
         text_encoder_3: The third text encoder to quantize.
         controlnet: The ControlNet model to quantize.
+        ema: An EMAModel to quantize.
         args: An object containing precision settings and other arguments.
 
     Returns:
@@ -273,6 +282,14 @@ def quantise_model(
                 "base_model_precision": args.base_model_precision,
             },
         ),
+        (
+            ema,
+            {
+                "quant_fn": get_quant_fn(args.base_model_precision),
+                "model_precision": args.base_model_precision,
+                "quantize_activations": args.quantize_activations,
+            },
+        ),
     ]
 
     # Iterate over the models and apply quantization if the model is not None
@@ -293,8 +310,33 @@ def quantise_model(
             models[i] = (quant_fn(model, **quant_args_combined), quant_args)
 
     # Unpack the quantized models
-    transformer, unet, controlnet, text_encoder_1, text_encoder_2, text_encoder_3 = [
-        model for model, _ in models
-    ]
+    (
+        transformer,
+        unet,
+        controlnet,
+        text_encoder_1,
+        text_encoder_2,
+        text_encoder_3,
+        ema,
+    ) = [model for model, _ in models]
 
-    return unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet
+    if return_dict:
+        return {
+            "unet": unet,
+            "transformer": transformer,
+            "text_encoder_1": text_encoder_1,
+            "text_encoder_2": text_encoder_2,
+            "text_encoder_3": text_encoder_3,
+            "controlnet": controlnet,
+            "ema": ema,
+        }
+
+    return (
+        unet,
+        transformer,
+        text_encoder_1,
+        text_encoder_2,
+        text_encoder_3,
+        controlnet,
+        ema,
+    )
