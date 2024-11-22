@@ -484,6 +484,107 @@ class Sine(LRScheduler):
                 f"Epoch {epoch_str}: adjusting learning rate of group {group} to {lr:.8e}."
             )
 
+import json
+from torch.optim.lr_scheduler import LRScheduler
+
+class FileDrivenLRScheduler(LRScheduler):
+    """
+    Custom learning rate scheduler that adjusts learning rate based on 
+    initial, target values, and fixed step-wise change read from a JSON file.
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        file_path (str): Path to the JSON file containing initial LR, target LR, and value change per step.
+        last_step (int, optional): The index of the last step. Default: -1.
+        verbose (bool): If True, prints a message to stdout for each update. Default: False.
+    """
+
+    def __init__(self, optimizer, file_path, last_step=-1, verbose=False):
+        self.file_path = file_path
+        self.initial_lr = None
+        self.target_lr = None
+        self.change_per_step = None  # Fixed value change per step
+        self.current_lr = None
+        self.last_step = last_step  # Explicitly initialize last_step
+        self._read_file()
+        super().__init__(optimizer, self.last_step, verbose)
+
+        # Set initial LR explicitly for all parameter groups
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = self.initial_lr
+        self.current_lr = self.initial_lr  # Start with the initial learning rate
+
+    def _read_file(self):
+        """Reads the initial learning rate, target learning rate, and value change per step from the JSON file."""
+        try:
+            with open(self.file_path, "r") as f:
+                config = json.load(f)
+                self.initial_lr = config.get("initial_lr")
+                self.target_lr = config.get("target_lr")
+                self.change_per_step = config.get("change_per_step")
+                
+                # Validate required fields
+                if self.initial_lr is None or self.target_lr is None or self.change_per_step is None:
+                    raise ValueError("Invalid JSON: Missing required keys (initial_lr, target_lr, change_per_step).")
+                
+                # Validate change_per_step
+                if self.change_per_step <= 0:
+                    raise ValueError(f"Invalid change_per_step: Expected positive value, but got {self.change_per_step}.")
+        except Exception as e:
+            print(f"Error reading JSON file: {e}.")
+            raise ValueError("Invalid or missing lr_config.json file.")
+
+    def get_lr(self):
+        """Adjust the learning rates for all parameter groups."""
+        if self.change_per_step is None:
+            return self.base_lrs  # Fallback to the base LR if something goes wrong
+
+        try:
+            # Calculate the step-wise adjustment
+            diff = self.target_lr - self.current_lr
+
+            # Stop adjusting if close to the target
+            if abs(diff) <= self.change_per_step:
+                self.current_lr = self.target_lr
+            else:
+                # Move towards the target by change_per_step
+                step_change = self.change_per_step if diff > 0 else -self.change_per_step
+                self.current_lr += step_change
+
+        except Exception as e:
+            print(f"Error calculating learning rate at step {self.last_step}: {e}")
+            raise
+
+        return [self.current_lr] * len(self.optimizer.param_groups)
+
+    def step(self, step=None):
+        """Updates the learning rate and optionally reads the file again."""
+        if step is None:
+            step = self.last_step + 1
+        self.last_step = step
+
+        # Read the file at each step to allow dynamic adjustments
+        self._read_file()
+
+        # Apply the calculated learning rates
+        with _enable_get_lr_call(self):
+            for i, data in enumerate(zip(self.optimizer.param_groups, self.get_lr())):
+                param_group, lr = data
+                param_group["lr"] = lr
+                self.print_lr(self.verbose, i, lr, step)
+
+        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+
+    def print_lr(self, is_verbose, group, lr, step=None):
+        """Display the current learning rate."""
+        if is_verbose:
+            if step is None:
+                print(f"Adjusting learning rate of group {group} to {lr:.8e}.")
+            else:
+                print(f"Step {step}: Adjusting learning rate of group {group} to {lr:.8e}.")
+
+
+
 
 from diffusers.optimization import get_scheduler
 
@@ -498,6 +599,7 @@ def get_lr_scheduler(
             total_num_steps=args.max_train_steps,
             warmup_num_steps=args.lr_warmup_steps,
         )
+    
     elif args.lr_scheduler == "cosine_with_restarts":
         logger.info("Using Cosine with Restarts learning rate scheduler.")
         logger.warning(
@@ -551,6 +653,23 @@ def get_lr_scheduler(
             lr_end=args.lr_end,
             power=args.lr_power,
             last_epoch=StateTracker.get_global_step() - 1,
+        )
+    elif args.lr_scheduler == "file_driven":
+        logger.info("Using File Driven learning rate scheduler.")
+        from helpers.training.custom_schedule import FileDrivenLRScheduler
+
+        # Validate that the JSON configuration path is provided
+        if not hasattr(args, "lr_config_file") or not args.lr_config_file:
+            raise ValueError(
+                "For the 'file_driven' scheduler, you must provide a valid 'lr_config_file'."
+            )
+
+        lr_scheduler = FileDrivenLRScheduler(
+            optimizer=optimizer,
+            file_path=args.lr_config_file,
+            last_step=-1,
+            verbose=os.environ.get("SIMPLETUNER_SCHEDULER_VERBOSE", "false").lower()
+            == "true",
         )
     else:
         logger.info(f"Using generic '{args.lr_scheduler}' learning rate scheduler.")

@@ -1068,8 +1068,15 @@ def get_argument_parser():
             "polynomial",
             "constant",
             "constant_with_warmup",
+            "file_driven",
         ],
         help=("The scheduler type to use. Default: sine"),
+    )
+    parser.add_argument(
+        "--lr_config_file",
+        type=str,
+        default="config/lr_config.json",
+        help="change LR on the fly",
     )
     parser.add_argument(
         "--lr_warmup_steps",
