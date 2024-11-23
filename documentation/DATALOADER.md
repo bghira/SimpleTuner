@@ -239,7 +239,7 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 
 #### Example filter list
 
-A complete example list can be found [here](/caption_filter_list.example.txt). It contains common repetitive and negative strings that would be returned by BLIP (all common variety), LLaVA, and CogVLM.
+A complete example list can be found [here](/config/caption_filter_list.example.txt). It contains common repetitive and negative strings that would be returned by BLIP (all common variety), LLaVA, and CogVLM.
 
 This is a shortened example, which will be explained below:
 
