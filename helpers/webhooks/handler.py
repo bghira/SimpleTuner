@@ -100,6 +100,10 @@ class WebhookHandler:
     def _prepare_images(self, images: list):
         """Convert images to file objects for Discord uploads."""
         files = {}
+        if not images:
+            return files
+        if type(images) is not list:
+            raise ValueError(f"Images must be a list of PIL images. Received: {images}")
         if images:
             for index, img in enumerate(images):
                 img_byte_array = BytesIO()
