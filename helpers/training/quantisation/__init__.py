@@ -174,56 +174,169 @@ def _torchao_model(
         )
 
     else:
-        raise ValueError(f"Invalid quantisation level: {base_model_precision}")
+        raise ValueError(
+            f"Invalid quantisation level. model_precision={model_precision}, base_model_precision={base_model_precision}"
+        )
 
     return model
 
 
+def get_quant_fn(base_model_precision):
+    """
+    Determine the quantization function based on the base model precision.
+
+    Args:
+        base_model_precision (str): The precision specification for the base model.
+
+    Returns:
+        function: The corresponding quantization function.
+
+    Raises:
+        ValueError: If the precision specification is unsupported.
+    """
+    precision = base_model_precision.lower()
+    if precision == "no_change":
+        return None
+    if "quanto" in precision:
+        return _quanto_model
+    elif "torchao" in precision:
+        return _torchao_model
+    else:
+        return None
+
+
 def quantise_model(
-    unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet, args
+    unet=None,
+    transformer=None,
+    text_encoder_1=None,
+    text_encoder_2=None,
+    text_encoder_3=None,
+    controlnet=None,
+    ema=None,
+    args=None,
+    return_dict: bool = False,
 ):
-    if "quanto" in args.base_model_precision.lower():
-        logger.info("Loading Quanto. This may take a few minutes.")
-        quant_fn = _quanto_model
-    elif "torchao" in args.base_model_precision.lower():
-        logger.info("Loading TorchAO. This may take a few minutes.")
-        quant_fn = _torchao_model
-    if transformer is not None:
-        transformer = quant_fn(
+    """
+    Quantizes the provided models using the specified precision settings.
+
+    Args:
+        unet: The UNet model to quantize.
+        transformer: The Transformer model to quantize.
+        text_encoder_1: The first text encoder to quantize.
+        text_encoder_2: The second text encoder to quantize.
+        text_encoder_3: The third text encoder to quantize.
+        controlnet: The ControlNet model to quantize.
+        ema: An EMAModel to quantize.
+        args: An object containing precision settings and other arguments.
+
+    Returns:
+        tuple: A tuple containing the quantized models in the order:
+               (unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet)
+    """
+    models = [
+        (
             transformer,
-            model_precision=args.base_model_precision,
-            quantize_activations=args.quantize_activations,
-        )
-    if unet is not None:
-        unet = quant_fn(
+            {
+                "quant_fn": get_quant_fn(args.base_model_precision),
+                "model_precision": args.base_model_precision,
+                "quantize_activations": args.quantize_activations,
+            },
+        ),
+        (
             unet,
-            model_precision=args.base_model_precision,
-            quantize_activations=args.quantize_activations,
-        )
-    if controlnet is not None:
-        controlnet = quant_fn(
+            {
+                "quant_fn": get_quant_fn(args.base_model_precision),
+                "model_precision": args.base_model_precision,
+                "quantize_activations": args.quantize_activations,
+            },
+        ),
+        (
             controlnet,
-            model_precision=args.base_model_precision,
-            quantize_activations=args.quantize_activations,
-        )
-
-    if text_encoder_1 is not None:
-        text_encoder_1 = quant_fn(
+            {
+                "quant_fn": get_quant_fn(args.base_model_precision),
+                "model_precision": args.base_model_precision,
+                "quantize_activations": args.quantize_activations,
+            },
+        ),
+        (
             text_encoder_1,
-            model_precision=args.text_encoder_1_precision,
-            base_model_precision=args.base_model_precision,
-        )
-    if text_encoder_2 is not None:
-        text_encoder_2 = quant_fn(
+            {
+                "quant_fn": get_quant_fn(args.text_encoder_1_precision),
+                "model_precision": args.text_encoder_1_precision,
+                "base_model_precision": args.base_model_precision,
+            },
+        ),
+        (
             text_encoder_2,
-            model_precision=args.text_encoder_2_precision,
-            base_model_precision=args.base_model_precision,
-        )
-    if text_encoder_3 is not None:
-        text_encoder_3 = quant_fn(
+            {
+                "quant_fn": get_quant_fn(args.text_encoder_2_precision),
+                "model_precision": args.text_encoder_2_precision,
+                "base_model_precision": args.base_model_precision,
+            },
+        ),
+        (
             text_encoder_3,
-            model_precision=args.text_encoder_3_precision,
-            base_model_precision=args.base_model_precision,
-        )
+            {
+                "quant_fn": get_quant_fn(args.text_encoder_3_precision),
+                "model_precision": args.text_encoder_3_precision,
+                "base_model_precision": args.base_model_precision,
+            },
+        ),
+        (
+            ema,
+            {
+                "quant_fn": get_quant_fn(args.base_model_precision),
+                "model_precision": args.base_model_precision,
+                "quantize_activations": args.quantize_activations,
+            },
+        ),
+    ]
 
-    return unet, transformer, text_encoder_1, text_encoder_2, text_encoder_3, controlnet
+    # Iterate over the models and apply quantization if the model is not None
+    for i, (model, quant_args) in enumerate(models):
+        quant_fn = quant_args["quant_fn"]
+        if quant_fn is None:
+            continue
+        if model is not None:
+            quant_args_combined = {
+                "model_precision": quant_args["model_precision"],
+                "base_model_precision": quant_args.get(
+                    "base_model_precision", args.base_model_precision
+                ),
+                "quantize_activations": quant_args.get(
+                    "quantize_activations", args.quantize_activations
+                ),
+            }
+            models[i] = (quant_fn(model, **quant_args_combined), quant_args)
+
+    # Unpack the quantized models
+    (
+        transformer,
+        unet,
+        controlnet,
+        text_encoder_1,
+        text_encoder_2,
+        text_encoder_3,
+        ema,
+    ) = [model for model, _ in models]
+
+    if return_dict:
+        return {
+            "unet": unet,
+            "transformer": transformer,
+            "text_encoder_1": text_encoder_1,
+            "text_encoder_2": text_encoder_2,
+            "text_encoder_3": text_encoder_3,
+            "controlnet": controlnet,
+            "ema": ema,
+        }
+
+    return (
+        unet,
+        transformer,
+        text_encoder_1,
+        text_encoder_2,
+        text_encoder_3,
+        controlnet,
+        ema,
+    )

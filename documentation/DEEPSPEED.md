@@ -162,6 +162,4 @@ While EMA is a great way to smooth out gradients and improve generalisation abil
 
 EMA holds a shadow copy of the model parameters in memory, essentially doubling the footprint of the model. For SimpleTuner, EMA is not passed through the Accelerator module, which means it is not impacted by DeepSpeed. This means the memory savings that we saw with the base U-net, are not realised with the EMA model.
 
-That said, any memory savings that applied to the base U-net could possibly allow EMA weights to load and operate effectively.
-
-Future work is planned to allow EMA to run on the CPU only.
+However, by default, the EMA model is kept on CPU.

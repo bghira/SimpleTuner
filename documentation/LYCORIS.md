@@ -6,12 +6,17 @@
 
 ## Using LyCORIS
 
-To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/lycoris_config.json`, where `config/lycoris_config.json` is the location of your LyCORIS configuration file:
+To use LyCORIS, set `--lora_type=lycoris` and then set `--lycoris_config=config/lycoris_config.json`, where `config/lycoris_config.json` is the location of your LyCORIS configuration file.
 
-```bash
-MODEL_TYPE=lora
-# We use trainer_extra_args for now, as Lycoris support is so new.
-TRAINER_EXTRA_ARGS+=" --lora_type=lycoris --lycoris_config=config/lycoris_config.json"
+The following will go into your `config.json`:
+```json
+{
+    "model_type": "lora",
+    "lora_type": "lycoris",
+    "lycoris_config": "config/lycoris_config.json",
+    "validation_lycoris_strength": 1.0,
+    ...the rest of your settings...
+}
 ```
 
 
@@ -48,7 +53,7 @@ Optional fields:
 - any keyword arguments specific to the selected algorithm, at the end.
 
 Mandatory fields:
-- multiplier
+- multiplier, which should be set to 1.0 only unless you know what to expect
 - linear_dim
 - linear_alpha
 
@@ -81,7 +86,8 @@ vae = AutoencoderKL.from_pretrained(bfl_repo, subfolder="vae", torch_dtype=dtype
 transformer = FluxTransformer2DModel.from_pretrained(bfl_repo, subfolder="transformer")
 
 lycoris_safetensors_path = 'pytorch_lora_weights.safetensors'
-wrapper, _ = create_lycoris_from_weights(1.0, lycoris_safetensors_path, transformer)
+lycoris_strength = 1.0
+wrapper, _ = create_lycoris_from_weights(lycoris_strength, lycoris_safetensors_path, transformer)
 wrapper.merge_to() # using apply_to() will be slower.
 
 transformer.to(device, dtype=dtype)

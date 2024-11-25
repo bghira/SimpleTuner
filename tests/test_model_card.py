@@ -36,7 +36,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.lora_init_type = "kaiming_uniform"
         self.args.model_card_note = "Test note"
         self.args.validation_using_datasets = False
-        self.args.flow_matching_loss = "flow-matching"
+        self.args.flow_matching_loss = "compatible"
         self.args.flux_fast_schedule = False
         self.args.flux_schedule_auto_shift = False
         self.args.flux_schedule_shift = None
@@ -61,6 +61,9 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.optimizer_config = ""
         self.args.mixed_precision = "fp16"
         self.args.base_model_precision = "no_change"
+        self.args.flux_guidance_mode = "constant"
+        self.args.flux_guidance_value = 1.0
+        self.args.t5_padding = "unmodified"
         self.args.enable_xformers_memory_efficient_attention = False
 
     def test_model_imports(self):
@@ -203,7 +206,10 @@ class TestMetadataFunctions(unittest.TestCase):
     def test_flux_schedule_info(self):
         self.args.model_family = "flux"
         output = flux_schedule_info(self.args)
-        self.assertIn("(no special parameters set)", output)
+        self.assertEqual(
+            " (extra parameters=['flux_guidance_mode=constant', 'flux_guidance_value=1.0', 'flow_matching_loss=compatible'])",
+            output,
+        )
 
         self.args.flux_fast_schedule = True
         output = flux_schedule_info(self.args)
