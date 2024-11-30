@@ -9,6 +9,9 @@ def determine_adapter_target_modules(args, unet, transformer):
     elif transformer is not None:
         target_modules = ["to_k", "to_q", "to_v", "to_out.0"]
 
+        if args.model_family.lower() == "omnigen":
+            target_modules = ["qkv_proj", "o_proj"]
+
         if args.model_family.lower() == "flux" and args.flux_lora_target == "all":
             # target_modules = mmdit layers here
             target_modules = [

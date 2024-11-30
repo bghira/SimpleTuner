@@ -15,6 +15,19 @@ def import_model_class_from_model_name_or_path(
     args,
     subfolder: str = "text_encoder",
 ):
+    if args.model_family.lower() == "omnigen":
+        try:
+            from helpers.models.omnigen.processor import (
+                OmniGenTrainingProcessor as OmniGenProcessor,
+            )
+        except ImportError:
+            logger.error(
+                "Could not import Omnigen. Please install omnigen to use this model."
+            )
+            raise
+
+        return OmniGenProcessor
+
     if args.model_family.lower() == "smoldit":
         from transformers import AutoModelForSeq2SeqLM
 
@@ -51,6 +64,9 @@ def import_model_class_from_model_name_or_path(
 def get_tokenizers(args):
     tokenizer_1, tokenizer_2, tokenizer_3 = None, None, None
     try:
+        if args.model_family.lower() == "omnigen":
+            return None, None, None
+
         if args.model_family.lower() == "smoldit":
             from transformers import AutoTokenizer
 
@@ -225,6 +241,11 @@ def load_tes(
                 f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
             )
             text_encoder_variant = "fp16"
+        elif args.model_family.lower() == "omnigen":
+            logger.info(f"Loading OmniGen processor from {text_encoder_path}..")
+            text_encoder_1 = text_encoder_cls_1.from_pretrained(text_encoder_path)
+
+            return text_encoder_variant, text_encoder_1, text_encoder_2, text_encoder_3
         else:
             logger.info(
                 f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."

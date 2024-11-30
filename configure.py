@@ -18,12 +18,13 @@ model_classes = {
     "full": [
         "flux",
         "sdxl",
+        "omnigen",
         "pixart_sigma",
         "kolors",
         "sd3",
         "legacy",
     ],
-    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy"],
+    "lora": ["flux", "sdxl", "kolors", "sd3", "legacy", "omnigen"],
     "controlnet": ["sdxl", "legacy"],
 }
 
@@ -34,6 +35,7 @@ default_models = {
     "kolors": "kwai-kolors/kolors-diffusers",
     "terminus": "ptx0/terminus-xl-velocity-v2",
     "sd3": "stabilityai/stable-diffusion-3.5-large",
+    "omnigen": "Shitao/OmniGen-v1",
     "legacy": "stabilityai/stable-diffusion-2-1-base",
 }
 
@@ -43,12 +45,14 @@ default_cfg = {
     "pixart_sigma": 3.4,
     "kolors": 5.0,
     "terminus": 8.0,
-    "sd3": 5.0,
+    "omnigen": 3.0,
+    "sd3": 6.0,
 }
 
 model_labels = {
     "sd3": "Stable Diffusion 3",
     "flux": "FLUX",
+    "omnigen": "OmniGen",
     "pixart_sigma": "PixArt Sigma",
     "kolors": "Kwai Kolors",
     "terminus": "Terminus",

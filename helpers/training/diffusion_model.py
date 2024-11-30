@@ -34,7 +34,24 @@ def load_diffusion_model(args, weight_dtype):
             bnb_4bit_compute_dtype=weight_dtype,
         )
 
-    if args.model_family == "sd3":
+    if args.model_family == "omnigen":
+        try:
+            from OmniGen import OmniGen
+        except ImportError:
+            logger.error(
+                "Could not import Omnigen. Please install Omnigen to use this model."
+            )
+            raise
+        logger.info("Loading OmniGen model..")
+        transformer = OmniGen.from_pretrained(
+            args.pretrained_transformer_model_name_or_path
+            or args.pretrained_model_name_or_path
+        )
+        transformer.llm.config.use_cache = False
+        logger.info(f"Enabling gradient checkpointing..")
+        transformer.llm.gradient_checkpointing_enable()
+
+    elif args.model_family == "sd3":
         # Stable Diffusion 3 uses a Diffusion transformer.
         logger.info("Loading Stable Diffusion 3 diffusion transformer..")
         try:
