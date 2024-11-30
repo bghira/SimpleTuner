@@ -47,6 +47,15 @@ try:
 except:
     pass
 
+is_sage_attn_available = False
+try:
+    from sageattention import sageattn
+
+    is_sage_attn_available = True
+
+except:
+    pass
+
 from helpers.models.flux.attention import (
     FluxSingleAttnProcessor3_0,
     FluxAttnProcessor3_0,
@@ -217,7 +226,11 @@ class FluxSingleTransformerBlock(nn.Module):
             )
             primary_device = torch.cuda.get_device_properties(rank)
             if primary_device.major == 9 and primary_device.minor == 0:
-                if is_flash_attn_available:
+                if is_sage_attn_available:
+                    if rank == 0:
+                        print("Using SageAttention for H100 GPU (Single block)")
+                    processor = FluxSingleSageAttnProcessor()
+                elif is_flash_attn_available:
                     if rank == 0:
                         print("Using FlashAttention3_0 for H100 GPU (Single block)")
                     processor = FluxSingleAttnProcessor3_0()
