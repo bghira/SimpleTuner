@@ -615,7 +615,7 @@ def collate_fn(batch):
         #     latent_batch = None
         padding_images = [e.get("padding_image") for e in omnigen_processed_embeddings]
         extra_batch_inputs["position_ids"] = position_ids
-        extra_batch_inputs["padding_images"] = padding_images
+        extra_batch_inputs["padding_images"] = None
         extra_batch_inputs["input_ids"] = input_ids
     else:
         prompt_embeds_all, add_text_embeds_all = compute_prompt_embeddings(

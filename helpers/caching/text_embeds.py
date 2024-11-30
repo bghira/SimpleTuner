@@ -238,9 +238,7 @@ class TextEmbeddingCache(WebhookMixin):
                     if len(batch) > 0:
                         self.process_write_batch(batch)
                         self.write_thread_bar.update(len(batch))
-                    logger.debug(
-                        f"Exiting batch write thread, no more work to do after writing {written_elements} elements"
-                    )
+                    logger.debug(f"Exiting batch write thread, no more work to do")
                     break
                 logger.debug(
                     f"Queue is empty. Retrieving new entries. Should retrieve? {self.process_write_batches}"

@@ -2073,19 +2073,19 @@ class Trainer:
                 model_pred = self.transformer(**inputs).sample
             elif self.config.model_family == "omnigen":
                 inputs = {
-                    "x": noisy_latents,
+                    "x": noisy_latents.to(
+                        self.accelerator.device, dtype=self.config.weight_dtype
+                    ),
                     "timestep": timesteps,
-                    "input_ids": (
-                        batch.get("input_ids").to(self.accelerator.device)
-                        if batch.get("input_ids") is not None
-                        else None
-                    ),
-                    "input_img_latents": (
-                        batch.get("input_img_latents").to(self.accelerator.device)
-                        if batch.get("input_img_latents") is not None
-                        else None
-                    ),
-                    "input_image_sizes": batch.get("input_image_sizes"),
+                    "input_ids": batch.get("input_ids").to(self.accelerator.device),
+                    "input_img_latents": None,
+                    "input_image_sizes": None,
+                    # "input_img_latents": (
+                    #     batch.get("input_img_latents").to(self.accelerator.device)
+                    #     if batch.get("input_img_latents") is not None
+                    #     else None
+                    # ),
+                    # "input_image_sizes": batch.get("input_image_sizes"),
                     "attention_mask": batch.get("encoder_attention_mask").to(
                         self.accelerator.device
                     ),
@@ -2280,26 +2280,7 @@ class Trainer:
                             f"Received {bsz} latents, but expected {self.config.train_batch_size}. Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
-                    if self.config.model_family == "omnigen":
-                        # x1 corresponds to your latents
-                        x1 = latents
-
-                        # Sample x0 from a standard normal distribution with the same shape as latents
-                        x0 = torch.randn_like(latents)
-
-                        # Sample t for each sample in the batch using the specified distribution
-                        u = torch.randn(bsz, device=latents.device)
-                        t = 1 / (1 + torch.exp(-u))  # t ∈ (0, 1)
-                        t = t.to(latents.device, dtype=latents.dtype)
-
-                        # Convert t to timesteps compatible with the model (scaled appropriately)
-                        timesteps = t * 999
-                        timesteps = timesteps.to(
-                            self.accelerator.device, dtype=latents.dtype
-                        )
-                        timesteps = timesteps.long()
-
-                    elif self.config.flow_matching:
+                    if self.config.flow_matching:
                         if not self.config.flux_fast_schedule and not any(
                             [
                                 self.config.flux_use_beta_schedule,
@@ -2405,14 +2386,6 @@ class Trainer:
 
                     if self.config.flow_matching:
                         noisy_latents = (1 - sigmas) * latents + sigmas * input_noise
-                    elif self.config.model_family == "omnigen":
-                        # Reshape t to match the dimensions of latents for broadcasting
-                        dims = [1] * (latents.dim() - 1)
-                        t_reshaped = t.view(-1, *dims)
-
-                        # Compute noisy_latents (xt) using the Omnigen sampling formula
-                        noisy_latents = t_reshaped * x1 + (1 - t_reshaped) * x0
-
                     else:
                         # Add noise to the latents according to the noise magnitude at each timestep
                         # (this is the forward diffusion process)
@@ -2438,10 +2411,7 @@ class Trainer:
                         f"Pooled embeds: {add_text_embeds.shape if add_text_embeds is not None else None}"
                     )
                     # Get the target for loss depending on the prediction type
-                    if (
-                        self.config.flow_matching
-                        or self.config.model_family == "omnigen"
-                    ):
+                    if self.config.flow_matching:
                         # This is the flow-matching target for vanilla SD3.
                         # If self.config.flow_matching_loss == "diffusion", we will instead use v_prediction (see below)
                         if self.config.flow_matching_loss == "diffusers":
@@ -2559,10 +2529,7 @@ class Trainer:
                     parent_loss = None
 
                     # Compute the per-pixel loss without reducing over spatial dimensions
-                    if (
-                        self.config.flow_matching
-                        or self.config.model_family == "omnigen"
-                    ):
+                    if self.config.flow_matching:
                         # For flow matching, compute the per-pixel squared differences
                         loss = (
                             model_pred.float() - target.float()

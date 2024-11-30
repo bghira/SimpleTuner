@@ -11,21 +11,24 @@ logger.setLevel(target_level)
 def load_scheduler_from_args(args):
     flow_matching = False
     if (
-        args.model_family == "sd3" and args.flow_matching_loss != "diffusion"
-    ) or args.model_family == "flux":
+        (args.model_family == "sd3" and args.flow_matching_loss != "diffusion")
+        or args.model_family == "flux"
+        or args.model_family == "omnigen"
+    ):
         # Stable Diffusion 3 uses rectified flow.
         flow_matching = True
-        from diffusers import FlowMatchEulerDiscreteScheduler
+        if args.model_family == "omnigen":
+            from OmniGen import OmniGenScheduler
 
-        noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            shift=1 if args.model_family == "sd3" else 3,
-        )
-    elif args.model_family == "omnigen":
-        from OmniGen import OmniGenScheduler
+            noise_scheduler = OmniGenScheduler()
+        else:
+            from diffusers import FlowMatchEulerDiscreteScheduler
 
-        noise_scheduler = OmniGenScheduler()
+            noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="scheduler",
+                shift=1 if args.model_family == "sd3" else 3,
+            )
     else:
         if args.model_family == "legacy":
             args.rescale_betas_zero_snr = True
