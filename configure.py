@@ -429,7 +429,20 @@ def configure_env():
         ).lower()
         == "y"
     )
-    report_to_str = ""
+
+    env_contents["--attention_mechanism"] = "diffusers"
+    use_sageattention = (
+        prompt_user(
+            "Would you like to use SageAttention? This is an experimental option that can greatly speed up training. (y/[n])",
+            "n",
+        ).lower()
+        == "y"
+    )
+    if use_sageattention:
+        env_contents["--attention_mechanism"] = "sageattention"
+
+    # properly disable wandb/tensorboard/comet_ml etc by default
+    report_to_str = "none"
     if report_to_wandb or report_to_tensorboard:
         tracker_project_name = prompt_user(
             "Enter the name of your Weights & Biases project", f"{model_type}-training"
@@ -440,17 +453,17 @@ def configure_env():
             f"simpletuner-{model_type}",
         )
         env_contents["--tracker_run_name"] = tracker_run_name
-        report_to_str = None
         if report_to_wandb:
             report_to_str = "wandb"
         if report_to_tensorboard:
-            if report_to_wandb:
+            if report_to_str != "none":
+                # report to both WandB and Tensorboard if the user wanted.
                 report_to_str += ","
             else:
+                # remove 'none' from the option
                 report_to_str = ""
             report_to_str += "tensorboard"
-        if report_to_str:
-            env_contents["--report_to"] = report_to_str
+    env_contents["--report_to"] = report_to_str
 
     print_config(env_contents, extra_args)
 
