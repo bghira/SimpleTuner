@@ -8,12 +8,6 @@ try:
     from flash_attn_interface import flash_attn_func
 except:
     pass
-try:
-    from sageattention import sageattn
-
-    F.scaled_dot_product_attention = sageattn
-except:
-    pass
 
 
 def fa3_sdpa(
