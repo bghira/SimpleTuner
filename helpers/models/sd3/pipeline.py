@@ -999,11 +999,14 @@ class StableDiffusion3Pipeline(
                     continue
 
                 # expand the latents if we are doing classifier free guidance
+                # added fix from: https://github.com/huggingface/diffusers/pull/10086/files
+                # to allow for num_images_per_prompt > 1
                 latent_model_input = (
                     torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance and skip_guidance_layers is None
+                    if self.do_classifier_free_guidance
                     else latents
                 )
+
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
@@ -1033,6 +1036,8 @@ class StableDiffusion3Pipeline(
                         else False
                     )
                     if skip_guidance_layers is not None and should_skip_layers:
+                        timestep = t.expand(latents.shape[0])
+                        latent_model_input = latents
                         noise_pred_skip_layers = self.transformer(
                             hidden_states=latent_model_input.to(
                                 device=self.transformer.device,
