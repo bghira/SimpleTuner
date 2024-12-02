@@ -2447,11 +2447,11 @@ def parse_cmdline_args(input_args=None):
     elif "standard" == args.lora_type.lower():
         if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
             if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
-                logger.error(
+                error_log(
                     "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
                 )
             elif args.is_quantized and args.lora_init_type == "loftq":
-                logger.error(
+                error_log(
                     "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
                 )
             else:
@@ -2460,7 +2460,7 @@ def parse_cmdline_args(input_args=None):
                 )
         if args.use_dora:
             if "quanto" in args.base_model_precision:
-                logger.error(
+                error_log(
                     "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
                 )
                 args.use_dora = False
@@ -2496,5 +2496,17 @@ def parse_cmdline_args(input_args=None):
         except Exception as e:
             logger.error(f"Could not load skip layers: {e}")
             raise
+
+    if args.enable_xformers_memory_efficient_attention:
+        if args.attention_mechanism != "xformers":
+            warning_log(
+                "The option --enable_xformers_memory_efficient_attention is deprecated. Please use --attention_mechanism=xformers instead."
+            )
+            args.attention_mechanism = "xformers"
+
+    if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
+        warning_log(
+            "For non-CUDA systems, only Diffusers attention mechanism is officially supported."
+        )
 
     return args

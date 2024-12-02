@@ -1652,7 +1652,7 @@ class Trainer:
                 )
                 sys.exit(1)
         elif (
-            self.config.enable_xformers_memory_efficient_attention
+            self.config.attention_mechanism == "xformers"
             and self.config.model_family
             not in [
                 "sd3",
@@ -1676,11 +1676,14 @@ class Trainer:
                 raise ValueError(
                     "xformers is not available. Make sure it is installed correctly"
                 )
-        elif self.config.enable_xformers_memory_efficient_attention:
+        elif self.config.attention_mechanism == "xformers":
             logger.warning(
                 "xformers is not enabled, as it is incompatible with this model type."
+                " Falling back to diffusers attention mechanism (Pytorch SDPA)."
+                " Alternatively, provide --attention_mechanism=sageattention for a more efficient option on CUDA systems."
             )
             self.config.enable_xformers_memory_efficient_attention = False
+            self.config.attention_mechanism = "diffusers"
 
         if self.config.controlnet:
             self.controlnet.train()
