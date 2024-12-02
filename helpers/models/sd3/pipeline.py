@@ -1097,7 +1097,22 @@ class StableDiffusion3Pipeline(
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents.to(self.vae.dtype), return_dict=False)[0]
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # we have SageAttention loaded. fallback to SDPA for decode.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sdpa
+                )
+
+            image = self.vae.decode(
+                latents.to(dtype=self.vae.dtype), return_dict=False
+            )[0]
+
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # reenable SageAttention for training.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sage
+                )
+
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
@@ -2053,7 +2068,22 @@ class StableDiffusion3Img2ImgPipeline(
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents.to(self.vae.dtype), return_dict=False)[0]
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # we have SageAttention loaded. fallback to SDPA for decode.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sdpa
+                )
+
+            image = self.vae.decode(
+                latents.to(dtype=self.vae.dtype), return_dict=False
+            )[0]
+
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # reenable SageAttention for training.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sage
+                )
+
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
