@@ -1160,18 +1160,27 @@ class StableDiffusionPipeline(
                         step_idx = i // getattr(self.scheduler, "order", 1)
                         callback(step_idx, t, latents)
 
+        has_nsfw_concept = None
         if not output_type == "latent":
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # we have SageAttention loaded. fallback to SDPA for decode.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sdpa
+                )
+
             image = self.vae.decode(
-                latents.to(self.vae.dtype) / self.vae.config.scaling_factor,
+                latents.to(dtype=self.vae.dtype) / self.vae.config.scaling_factor,
                 return_dict=False,
                 generator=generator,
             )[0]
-            image, has_nsfw_concept = self.run_safety_checker(
-                image, device, prompt_embeds.dtype
-            )
+
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # reenable SageAttention for training.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sage
+                )
         else:
             image = latents
-            has_nsfw_concept = None
 
         if has_nsfw_concept is None:
             do_denormalize = [True] * image.shape[0]
