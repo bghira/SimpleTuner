@@ -109,6 +109,14 @@ Carefully answer the questions and use bf16 mixed precision training when prompt
 
 Note that the first several steps of training will be slower than usual because of compilation occuring in the background.
 
+### `--attention_mechanism`
+
+Setting `sageattention` or `xformers` here will allow the use of other memory-efficient attention mechanisms for the forward pass during training and inference, potentially resulting in major performance improvement.
+
+Using `sageattention` enables the use of [SageAttention](https://github.com/thu-ml/SageAttention) on NVIDIA CUDA equipment (sorry, AMD and Apple users).
+
+In simple terms, this will quantise the attention calculations for lower compute and memory overhead, **massively** speeding up training while minimally impacting quality.
+
 ---
 
 ## 📰 Publishing
