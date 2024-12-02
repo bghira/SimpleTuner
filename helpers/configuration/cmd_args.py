@@ -1721,7 +1721,13 @@ def get_argument_parser():
         ],
         default="diffusers",
         help=(
-            "On NVIDIA CUDA devices, we can use Xformers or SageAttention as an alternative to Pytorch SDPA (Diffusers)."
+            "On NVIDIA CUDA devices, alternative flash attention implementations are offered, with the default being native pytorch SDPA."
+            " SageAttention has multiple backends to select from."
+            " The recommended value, 'sageattention', guesses what would be the 'best' option for SageAttention on your hardware"
+            " (usually this is the int8-fp16-cuda backend). However, manually setting this value to int8-fp16-triton"
+            " may provide better averages for per-step training and inference performance while the cuda backend"
+            " may provide the highest maximum speed (with also a lower minimum speed). NOTE: SageAttention training quality"
+            " has not been validated."
         ),
     )
     parser.add_argument(
