@@ -117,3 +117,12 @@ def safety_check(args, accelerator):
             f"--flux_schedule_auto_shift cannot be combined with --flux_schedule_shift. Please set --flux_schedule_shift to 0 if you want to train with --flux_schedule_auto_shift."
         )
         sys.exit(1)
+
+    if (
+        args.enable_xformers_memory_efficient_attention
+        and args.attention_mechanism == "sageattention"
+    ):
+        logger.error(
+            f"--enable_xformers_memory_efficient_attention is only compatible with --attention_mechanism=diffusers. Please set --attention_mechanism=diffusers to enable this feature or disable xformers to use alternative attention mechanisms."
+        )
+        sys.exit(1)
