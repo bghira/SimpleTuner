@@ -1131,7 +1131,7 @@ def get_argument_parser():
             " When using 'ema_only', the validations will rely mostly on the EMA weights."
             " When using 'comparison' (default) mode, the validations will first run on the checkpoint before also running for"
             " the EMA weights. In comparison mode, the resulting images will be provided side-by-side."
-        )
+        ),
     )
     parser.add_argument(
         "--ema_cpu_only",
@@ -1707,6 +1707,15 @@ def get_argument_parser():
         type=int,
         default=-1,
         help="For distributed training: local_rank",
+    )
+    parser.add_argument(
+        "--attention_mechanism",
+        type=str,
+        choices=["diffusers", "xformers", "sageattention"],
+        default="diffusers",
+        help=(
+            "On NVIDIA CUDA devices, we can use Xformers or SageAttention as an alternative to Pytorch SDPA (Diffusers)."
+        ),
     )
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention",
