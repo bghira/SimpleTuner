@@ -65,6 +65,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.flux_guidance_value = 1.0
         self.args.t5_padding = "unmodified"
         self.args.enable_xformers_memory_efficient_attention = False
+        self.args.attention_mechanism = "diffusers"
 
     def test_model_imports(self):
         self.args.lora_type = "standard"
