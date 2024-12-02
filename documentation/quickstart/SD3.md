@@ -339,6 +339,14 @@ These options have been known to keep SD3.5 in-tact for as long as possible:
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.5
 
+### SageAttention
+
+When using `--attention_mechanism=sageattention`, quantised operations are performed during SDPA calculations.
+
+In simpler terms, this can very slightly improve VRAM usage while substantially speeding up training.
+
+**Note**: This isn't compatible with _every_ configuration, but it's worth trying.
+
 ### Masked loss
 
 If you are training a subject or style and would like to mask one or the other, see the [masked loss training](/documentation/DREAMBOOTH.md#masked-loss) section of the Dreambooth guide.

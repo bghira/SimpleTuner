@@ -414,8 +414,17 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.6 Nightly (Sept 29th build)
 - Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
+- With `--attention_mechanism=sageattention` to further reduce VRAM by 0.1GB and improve training speed.
 
 Speed was approximately 1.4 iterations per second on a 4090.
+
+### SageAttention
+
+When using `--attention_mechanism=sageattention`, quantised operations are performed during SDPA calculations.
+
+In simpler terms, this can very slightly improve VRAM usage while substantially speeding up training.
+
+**Note**: This isn't compatible with _every_ configuration, but it's worth trying.
 
 ### NF4-quantised training
 
@@ -428,6 +437,7 @@ In early tests, the following holds true:
 - NF4, AdamW8bit, and a higher batch size all help to overcome the stability issues, at the cost of more time spent training or VRAM used
 - Upping the resolution from 512px to 1024px slows training down from, for example, 1.4 seconds per step to 3.5 seconds per step (batch size of 1, 4090)
 - Anything that's difficult to train on int8 or bf16 becomes harder in NF4
+- It's less compatible with options like SageAttention
 
 NF4 does not work with torch.compile, so whatever you get for speed is what you get.
 

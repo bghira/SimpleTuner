@@ -109,6 +109,14 @@ Carefully answer the questions and use bf16 mixed precision training when prompt
 
 Note that the first several steps of training will be slower than usual because of compilation occuring in the background.
 
+### `--attention_mechanism`
+
+Setting `sageattention` or `xformers` here will allow the use of other memory-efficient attention mechanisms for the forward pass during training and inference, potentially resulting in major performance improvement.
+
+Using `sageattention` enables the use of [SageAttention](https://github.com/thu-ml/SageAttention) on NVIDIA CUDA equipment (sorry, AMD and Apple users).
+
+In simple terms, this will quantise the attention calculations for lower compute and memory overhead, **massively** speeding up training while minimally impacting quality.
+
 ---
 
 ## 📰 Publishing
@@ -452,7 +460,8 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--lr_scheduler {linear,sine,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
                 [--lr_warmup_steps LR_WARMUP_STEPS]
                 [--lr_num_cycles LR_NUM_CYCLES] [--lr_power LR_POWER]
-                [--use_ema] [--ema_device {cpu,accelerator}] [--ema_cpu_only]
+                [--use_ema] [--ema_device {cpu,accelerator}]
+                [--ema_validation {none,ema_only,comparison}] [--ema_cpu_only]
                 [--ema_foreach_disable]
                 [--ema_update_interval EMA_UPDATE_INTERVAL]
                 [--ema_decay EMA_DECAY] [--non_ema_revision NON_EMA_REVISION]
@@ -473,8 +482,9 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--model_card_safe_for_work] [--logging_dir LOGGING_DIR]
                 [--benchmark_base_model] [--disable_benchmark]
                 [--evaluation_type {clip,none}]
-                [--pretrained_evaluation_model_name_or_path pretrained_evaluation_model_name_or_path]
+                [--pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH]
                 [--validation_on_startup] [--validation_seed_source {gpu,cpu}]
+                [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
                 [--validation_torch_compile]
                 [--validation_torch_compile_mode {max-autotune,reduce-overhead,default}]
                 [--validation_guidance_skip_layers VALIDATION_GUIDANCE_SKIP_LAYERS]
@@ -509,6 +519,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
                 [--local_rank LOCAL_RANK]
+                [--attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                 [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
@@ -1137,12 +1148,21 @@ options:
                         cosine_with_restarts scheduler.
   --lr_power LR_POWER   Power factor of the polynomial scheduler.
   --use_ema             Whether to use EMA (exponential moving average) model.
+                        Works with LoRA, Lycoris, and full training.
   --ema_device {cpu,accelerator}
                         The device to use for the EMA model. If set to
                         'accelerator', the EMA model will be placed on the
                         accelerator. This provides the fastest EMA update
                         times, but is not ultimately necessary for EMA to
                         function.
+  --ema_validation {none,ema_only,comparison}
+                        When 'none' is set, no EMA validation will be done.
+                        When using 'ema_only', the validations will rely
+                        mostly on the EMA weights. When using 'comparison'
+                        (default) mode, the validations will first run on the
+                        checkpoint before also running for the EMA weights. In
+                        comparison mode, the resulting images will be provided
+                        side-by-side.
   --ema_cpu_only        When using EMA, the shadow model is moved to the
                         accelerator before we update its parameters. When
                         provided, this option will disable the moving of the
@@ -1248,7 +1268,7 @@ options:
                         function. The default is to use no evaluator, and
                         'clip' will use a CLIP model to evaluate the resulting
                         model's performance during validations.
-  --pretrained_evaluation_model_name_or_path pretrained_evaluation_model_name_or_path
+  --pretrained_evaluation_model_name_or_path PRETRAINED_EVALUATION_MODEL_NAME_OR_PATH
                         Optionally provide a custom model to use for ViT
                         evaluations. The default is currently clip-vit-large-
                         patch14-336, allowing for lower patch sizes (greater
@@ -1264,6 +1284,12 @@ options:
                         validation errors. If so, please set
                         SIMPLETUNER_LOG_LEVEL=DEBUG and submit debug.log to a
                         new Github issue report.
+  --validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH
+                        When inferencing for validations, the Lycoris model
+                        will by default be run at its training strength, 1.0.
+                        However, this value can be increased to a value of
+                        around 1.3 or 1.5 to get a stronger effect from the
+                        model.
   --validation_torch_compile
                         Supply `--validation_torch_compile=true` to enable the
                         use of torch.compile() on the validation pipeline. For
@@ -1453,6 +1479,20 @@ options:
                         quantisation (Apple Silicon, NVIDIA, AMD).
   --local_rank LOCAL_RANK
                         For distributed training: local_rank
+  --attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+                        On NVIDIA CUDA devices, alternative flash attention
+                        implementations are offered, with the default being
+                        native pytorch SDPA. SageAttention has multiple
+                        backends to select from. The recommended value,
+                        'sageattention', guesses what would be the 'best'
+                        option for SageAttention on your hardware (usually
+                        this is the int8-fp16-cuda backend). However, manually
+                        setting this value to int8-fp16-triton may provide
+                        better averages for per-step training and inference
+                        performance while the cuda backend may provide the
+                        highest maximum speed (with also a lower minimum
+                        speed). NOTE: SageAttention training quality has not
+                        been validated.
   --enable_xformers_memory_efficient_attention
                         Whether or not to use xformers.
   --set_grads_to_none   Save more memory by using setting grads to None

@@ -1131,7 +1131,7 @@ def get_argument_parser():
             " When using 'ema_only', the validations will rely mostly on the EMA weights."
             " When using 'comparison' (default) mode, the validations will first run on the checkpoint before also running for"
             " the EMA weights. In comparison mode, the resulting images will be provided side-by-side."
-        )
+        ),
     )
     parser.add_argument(
         "--ema_cpu_only",
@@ -1707,6 +1707,28 @@ def get_argument_parser():
         type=int,
         default=-1,
         help="For distributed training: local_rank",
+    )
+    parser.add_argument(
+        "--attention_mechanism",
+        type=str,
+        choices=[
+            "diffusers",
+            "xformers",
+            "sageattention",
+            "sageattention-int8-fp16-triton",
+            "sageattention-int8-fp16-cuda",
+            "sageattention-int8-fp8-cuda",
+        ],
+        default="diffusers",
+        help=(
+            "On NVIDIA CUDA devices, alternative flash attention implementations are offered, with the default being native pytorch SDPA."
+            " SageAttention has multiple backends to select from."
+            " The recommended value, 'sageattention', guesses what would be the 'best' option for SageAttention on your hardware"
+            " (usually this is the int8-fp16-cuda backend). However, manually setting this value to int8-fp16-triton"
+            " may provide better averages for per-step training and inference performance while the cuda backend"
+            " may provide the highest maximum speed (with also a lower minimum speed). NOTE: SageAttention training quality"
+            " has not been validated."
+        ),
     )
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention",
@@ -2418,7 +2440,7 @@ def parse_cmdline_args(input_args=None):
             args.lycoris_config, os.R_OK
         ):
             raise ValueError(
-                f"Could not find the JSON configuration file at {args.lycoris_config}"
+                f"Could not find the JSON configuration file at '{args.lycoris_config}'"
             )
         import json
 
@@ -2438,11 +2460,11 @@ def parse_cmdline_args(input_args=None):
     elif "standard" == args.lora_type.lower():
         if hasattr(args, "lora_init_type") and args.lora_init_type is not None:
             if torch.backends.mps.is_available() and args.lora_init_type == "loftq":
-                logger.error(
+                error_log(
                     "Apple MPS cannot make use of LoftQ initialisation. Overriding to 'default'."
                 )
             elif args.is_quantized and args.lora_init_type == "loftq":
-                logger.error(
+                error_log(
                     "LoftQ initialisation is not supported with quantised models. Overriding to 'default'."
                 )
             else:
@@ -2451,7 +2473,7 @@ def parse_cmdline_args(input_args=None):
                 )
         if args.use_dora:
             if "quanto" in args.base_model_precision:
-                logger.error(
+                error_log(
                     "Quanto does not yet support DoRA training in PEFT. Disabling DoRA. 😴"
                 )
                 args.use_dora = False
@@ -2487,5 +2509,17 @@ def parse_cmdline_args(input_args=None):
         except Exception as e:
             logger.error(f"Could not load skip layers: {e}")
             raise
+
+    if args.enable_xformers_memory_efficient_attention:
+        if args.attention_mechanism != "xformers":
+            warning_log(
+                "The option --enable_xformers_memory_efficient_attention is deprecated. Please use --attention_mechanism=xformers instead."
+            )
+            args.attention_mechanism = "xformers"
+
+    if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
+        warning_log(
+            "For non-CUDA systems, only Diffusers attention mechanism is officially supported."
+        )
 
     return args

@@ -1231,11 +1231,24 @@ class PixArtSigmaPipeline(DiffusionPipeline):
                         callback(step_idx, t, latents)
 
         if not output_type == "latent":
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # we have SageAttention loaded. fallback to SDPA for decode.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sdpa
+                )
+
             image = self.vae.decode(
-                latents.to(device=self.vae.device, dtype=self.vae.dtype)
-                / self.vae.config.scaling_factor,
+                latents.to(dtype=self.vae.dtype) / self.vae.config.scaling_factor,
                 return_dict=False,
+                generator=generator,
             )[0]
+
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # reenable SageAttention for training.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sage
+                )
+
             if use_resolution_binning:
                 image = self.image_processor.resize_and_crop_tensor(
                     image, orig_width, orig_height

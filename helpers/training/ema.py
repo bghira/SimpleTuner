@@ -267,7 +267,7 @@ class EMAModel:
         context_manager = contextlib.nullcontext
         if (
             is_transformers_available()
-            and transformers.deepspeed.is_deepspeed_zero3_enabled()
+            and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled()
         ):
             import deepspeed
 
@@ -309,7 +309,7 @@ class EMAModel:
             for s_param, param in zip(self.shadow_params, parameters):
                 if (
                     is_transformers_available()
-                    and transformers.deepspeed.is_deepspeed_zero3_enabled()
+                    and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled()
                 ):
                     context_manager = deepspeed.zero.GatheredParameters(
                         param, modifier_rank=None
@@ -374,7 +374,9 @@ class EMAModel:
     def cpu(self):
         return self.to(device="cpu")
 
-    def state_dict(self, destination=None, prefix="", keep_vars=False, exclude_params: bool = False):
+    def state_dict(
+        self, destination=None, prefix="", keep_vars=False, exclude_params: bool = False
+    ):
         r"""
         Returns a dictionary containing a whole state of the EMA model.
         """

@@ -345,9 +345,20 @@ class OmniGenPipeline:
             )
         else:
             samples = samples / self.vae.config.scaling_factor
-        samples = self.vae.decode(
-            samples.to(dtype=self.vae.dtype, device=self.vae.device)
-        ).sample
+
+        if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+            # we have SageAttention loaded. fallback to SDPA for decode.
+            torch.nn.functional.scaled_dot_product_attention = (
+                torch.nn.functional.scaled_dot_product_attention_sdpa
+            )
+
+        image = self.vae.decode(latents.to(dtype=self.vae.dtype), return_dict=False)[0]
+
+        if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+            # reenable SageAttention for training.
+            torch.nn.functional.scaled_dot_product_attention = (
+                torch.nn.functional.scaled_dot_product_attention_sage
+            )
 
         if self.model_cpu_offload:
             self.vae.to("cpu")
