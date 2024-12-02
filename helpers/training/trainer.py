@@ -1637,19 +1637,47 @@ class Trainer:
                 )
             )
 
-        if self.config.attention_mechanism == "sageattention":
+        if "sageattention" in self.config.attention_mechanism:
             # we'll try and load SageAttention and overload pytorch's sdpa function.
             try:
-                from sageattention import sageattn
+                from sageattention import (
+                    sageattn,
+                    sageattn_qk_int8_pv_fp16_triton,
+                    sageattn_qk_int8_pv_fp16_cuda,
+                    sageattn_qk_int8_pv_fp8_cuda,
+                )
 
-                torch.nn.functional.scaled_dot_product_attention = sageattn
+                sageattn_functions = {
+                    "sageattention": sageattn,
+                    "sageattention-int8-fp16-triton": sageattn_qk_int8_pv_fp16_triton,
+                    "sageattention-int8-fp16-cuda": sageattn_qk_int8_pv_fp16_cuda,
+                    "sageattention-int8-fp8-cuda": sageattn_qk_int8_pv_fp8_cuda,
+                }
+                # store the old SDPA for validations to use during VAE decode
+                setattr(
+                    torch.nn.functional,
+                    "scaled_dot_product_attention_sdpa",
+                    torch.nn.functional.scaled_dot_product_attention,
+                )
+                torch.nn.functional.scaled_dot_product_attention = (
+                    sageattn_functions.get(
+                        self.config.attention_mechanism, "sageattention"
+                    )
+                )
+                setattr(
+                    torch.nn.functional,
+                    "scaled_dot_product_attention_sage",
+                    torch.nn.functional.scaled_dot_product_attention,
+                )
+
                 logger.warning(
-                    "Using SageAttention for flash attention mechanism. This is an experimental option, and you may receive unexpected or poor results. To disable SageAttention, remove or set --attention_mechanism to a different value."
+                    f"Using {self.config.attention_mechanism} for flash attention mechanism. This is an experimental option, and you may receive unexpected or poor results. To disable SageAttention, remove or set --attention_mechanism to a different value."
                 )
-            except ImportError:
+            except ImportError as e:
                 logger.error(
-                    "Could not import SageAttention. Please install it to use this --attention_mechanism=sageattention"
+                    "Could not import SageAttention. Please install it to use this --attention_mechanism=sageattention."
                 )
+                logger.error(repr(e))
                 sys.exit(1)
         elif (
             self.config.attention_mechanism == "xformers"

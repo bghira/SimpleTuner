@@ -1711,7 +1711,14 @@ def get_argument_parser():
     parser.add_argument(
         "--attention_mechanism",
         type=str,
-        choices=["diffusers", "xformers", "sageattention"],
+        choices=[
+            "diffusers",
+            "xformers",
+            "sageattention",
+            "sageattention-int8-fp16-triton",
+            "sageattention-int8-fp16-cuda",
+            "sageattention-int8-fp8-cuda",
+        ],
         default="diffusers",
         help=(
             "On NVIDIA CUDA devices, we can use Xformers or SageAttention as an alternative to Pytorch SDPA (Diffusers)."
@@ -2427,7 +2434,7 @@ def parse_cmdline_args(input_args=None):
             args.lycoris_config, os.R_OK
         ):
             raise ValueError(
-                f"Could not find the JSON configuration file at {args.lycoris_config}"
+                f"Could not find the JSON configuration file at '{args.lycoris_config}'"
             )
         import json
 
