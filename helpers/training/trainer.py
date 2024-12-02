@@ -1636,7 +1636,22 @@ class Trainer:
                     target_device, dtype=self.config.weight_dtype
                 )
             )
-        if (
+
+        if self.config.attention_mechanism == "sageattention":
+            # we'll try and load SageAttention and overload pytorch's sdpa function.
+            try:
+                from sageattention import sageattn
+
+                torch.nn.functional.scaled_dot_product_attention = sageattn
+                logger.warning(
+                    "Using SageAttention for flash attention mechanism. This is an experimental option, and you may receive unexpected or poor results. To disable SageAttention, remove or set --attention_mechanism to a different value."
+                )
+            except ImportError:
+                logger.error(
+                    "Could not import SageAttention. Please install it to use this --attention_mechanism=sageattention"
+                )
+                sys.exit(1)
+        elif (
             self.config.enable_xformers_memory_efficient_attention
             and self.config.model_family
             not in [
