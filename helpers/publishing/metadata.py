@@ -119,6 +119,7 @@ The EMA model may provide a more well-rounded result, but typically will feel un
         return ema_information
     return ""
 
+
 def lycoris_download_info():
     """output a function to download the adapter"""
     output_fn = """
@@ -556,7 +557,8 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Optimizer: {StateTracker.get_args().optimizer}{optimizer_config if optimizer_config is not None else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability * 100}%
-{'- Xformers: Enabled' if StateTracker.get_args().enable_xformers_memory_efficient_attention else ''}
+{'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
+{f'- SageAttention: Enabled {StateTracker.get_args().sageattention_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets

@@ -220,3 +220,9 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 ### CLIP score tracking
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
+
+### SageAttention
+
+When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
+
+**Note**: This isn't compatible with _every_ model configuration, but it's worth trying.

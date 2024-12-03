@@ -52,7 +52,9 @@ def load_diffusion_model(args, weight_dtype):
     elif (
         args.model_family.lower() == "flux" and not args.flux_attention_masked_training
     ):
-        from diffusers.models import FluxTransformer2DModel
+        from helpers.models.flux.transformer import (
+            FluxTransformer2DModelWithMasking as FluxTransformer2DModel,
+        )
         import torch
 
         if torch.cuda.is_available():
@@ -92,6 +94,10 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
+        if args.gradient_checkpointing_interval is not None:
+            transformer.set_gradient_checkpointing_interval(
+                int(args.gradient_checkpointing_interval)
+            )
     elif args.model_family.lower() == "flux" and args.flux_attention_masked_training:
         from helpers.models.flux.transformer import (
             FluxTransformer2DModelWithMasking,
@@ -103,6 +109,10 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_transformer_subfolder),
             **pretrained_load_args,
         )
+        if args.gradient_checkpointing_interval is not None:
+            transformer.set_gradient_checkpointing_interval(
+                int(args.gradient_checkpointing_interval)
+            )
     elif args.model_family == "pixart_sigma":
         from diffusers.models import PixArtTransformer2DModel
 
@@ -145,5 +155,22 @@ def load_diffusion_model(args, weight_dtype):
             subfolder=determine_subfolder(args.pretrained_unet_subfolder),
             **pretrained_load_args,
         )
+        if (
+            args.gradient_checkpointing_interval is not None
+            and args.gradient_checkpointing_interval > 0
+        ):
+            logger.warning(
+                "Using experimental gradient checkpointing monkeypatch for a checkpoint interval of {}".format(
+                    args.gradient_checkpointing_interval
+                )
+            )
+            # monkey-patch the gradient checkpointing function for pytorch to run every nth call only.
+            # definitely one of the more awful things I've ever done while programming, but it's easier than
+            # modifying every one of the unet blocks' forward calls in Diffusers to make it work properly.
+            from helpers.training.gradient_checkpointing_interval import (
+                set_checkpoint_interval,
+            )
+
+            set_checkpoint_interval(int(args.gradient_checkpointing_interval))
 
     return unet, transformer

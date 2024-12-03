@@ -997,8 +997,11 @@ class Trainer:
                 self.transformer = apply_bitfit_freezing(
                     unwrap_model(self.accelerator, self.transformer), self.config
                 )
+        self.enable_gradient_checkpointing()
 
+    def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
+            logger.info("Enabling gradient checkpointing.")
             if self.unet is not None:
                 unwrap_model(
                     self.accelerator, self.unet
@@ -1021,6 +1024,32 @@ class Trainer:
                 unwrap_model(
                     self.accelerator, self.text_encoder_2
                 ).gradient_checkpointing_enable()
+
+    def disable_gradient_checkpointing(self):
+        if self.config.gradient_checkpointing:
+            logger.info("Disabling gradient checkpointing.")
+            if self.unet is not None:
+                unwrap_model(
+                    self.accelerator, self.unet
+                ).disable_gradient_checkpointing()
+            if self.transformer is not None and self.config.model_family != "smoldit":
+                unwrap_model(
+                    self.accelerator, self.transformer
+                ).disable_gradient_checkpointing()
+            if self.config.controlnet:
+                unwrap_model(
+                    self.accelerator, self.controlnet
+                ).disable_gradient_checkpointing()
+            if (
+                hasattr(self.config, "train_text_encoder")
+                and self.config.train_text_encoder
+            ):
+                unwrap_model(
+                    self.accelerator, self.text_encoder_1
+                ).gradient_checkpointing_disable()
+                unwrap_model(
+                    self.accelerator, self.text_encoder_2
+                ).gradient_checkpointing_disable()
 
     def _get_trainable_parameters(self):
         # Return just a list of the currently trainable parameters.
@@ -1613,6 +1642,98 @@ class Trainer:
         lr_scheduler = self.init_resume_checkpoint(lr_scheduler=lr_scheduler)
         self.init_post_load_freeze()
 
+    def enable_sageattention_inference(self):
+        # if the sageattention is inference-only, we'll enable it.
+        # if it's training only, we'll disable it.
+        # if it's inference+training, we leave it alone.
+        if (
+            "sageattention" not in self.config.attention_mechanism
+            or self.config.sageattention_usage == "training+inference"
+        ):
+            return
+        if self.config.sageattention_usage == "inference":
+            self.enable_sageattention()
+        if self.config.sageattention_usage == "training":
+            self.disable_sageattention()
+
+    def disable_sageattention_inference(self):
+        # if the sageattention is inference-only, we'll disable it.
+        # if it's training only, we'll enable it.
+        # if it's inference+training, we leave it alone.
+        if (
+            "sageattention" not in self.config.attention_mechanism
+            or self.config.sageattention_usage == "training+inference"
+        ):
+            return
+        if self.config.sageattention_usage == "inference":
+            self.disable_sageattention()
+        if self.config.sageattention_usage == "training":
+            self.enable_sageattention()
+
+    def disable_sageattention(self):
+        if "sageattention" not in self.config.attention_mechanism:
+            return
+
+        if (
+            hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa")
+            and torch.nn.functional
+            != torch.nn.functional.scaled_dot_product_attention_sdpa
+        ):
+            logger.info("Disabling SageAttention.")
+            setattr(
+                torch.nn.functional,
+                "scaled_dot_product_attention",
+                torch.nn.functional.scaled_dot_product_attention_sdpa,
+            )
+
+    def enable_sageattention(self):
+        if "sageattention" not in self.config.attention_mechanism:
+            return
+
+        # we'll try and load SageAttention and overload pytorch's sdpa function.
+        try:
+            logger.info("Enabling SageAttention.")
+            from sageattention import (
+                sageattn,
+                sageattn_qk_int8_pv_fp16_triton,
+                sageattn_qk_int8_pv_fp16_cuda,
+                sageattn_qk_int8_pv_fp8_cuda,
+            )
+
+            sageattn_functions = {
+                "sageattention": sageattn,
+                "sageattention-int8-fp16-triton": sageattn_qk_int8_pv_fp16_triton,
+                "sageattention-int8-fp16-cuda": sageattn_qk_int8_pv_fp16_cuda,
+                "sageattention-int8-fp8-cuda": sageattn_qk_int8_pv_fp8_cuda,
+            }
+            # store the old SDPA for validations to use during VAE decode
+            if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                setattr(
+                    torch.nn.functional,
+                    "scaled_dot_product_attention_sdpa",
+                    torch.nn.functional.scaled_dot_product_attention,
+                )
+            torch.nn.functional.scaled_dot_product_attention = sageattn_functions.get(
+                self.config.attention_mechanism, "sageattention"
+            )
+            if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sage"):
+                setattr(
+                    torch.nn.functional,
+                    "scaled_dot_product_attention_sage",
+                    torch.nn.functional.scaled_dot_product_attention,
+                )
+
+            if "training" in self.config.sageattention_usage:
+                logger.warning(
+                    f"Using {self.config.attention_mechanism} for attention calculations during training. Your attention layers will not be trained. To disable SageAttention, remove or set --attention_mechanism to a different value."
+                )
+        except ImportError as e:
+            logger.error(
+                "Could not import SageAttention. Please install it to use this --attention_mechanism=sageattention."
+            )
+            logger.error(repr(e))
+            sys.exit(1)
+
     def move_models(self, destination: str = "accelerator"):
         target_device = "cpu"
         if destination == "accelerator":
@@ -1636,8 +1757,17 @@ class Trainer:
                     target_device, dtype=self.config.weight_dtype
                 )
             )
+
         if (
-            self.config.enable_xformers_memory_efficient_attention
+            "sageattention" in self.config.attention_mechanism
+            and "training" in self.config.sageattention_usage
+        ):
+            logger.info(
+                "Using SageAttention for training. This is an unsupported, experimental configuration."
+            )
+            self.enable_sageattention()
+        elif (
+            self.config.attention_mechanism == "xformers"
             and self.config.model_family
             not in [
                 "sd3",
@@ -1661,11 +1791,14 @@ class Trainer:
                 raise ValueError(
                     "xformers is not available. Make sure it is installed correctly"
                 )
-        elif self.config.enable_xformers_memory_efficient_attention:
+        elif self.config.attention_mechanism == "xformers":
             logger.warning(
                 "xformers is not enabled, as it is incompatible with this model type."
+                " Falling back to diffusers attention mechanism (Pytorch SDPA)."
+                " Alternatively, provide --attention_mechanism=sageattention for a more efficient option on CUDA systems."
             )
             self.config.enable_xformers_memory_efficient_attention = False
+            self.config.attention_mechanism = "diffusers"
 
         if self.config.controlnet:
             self.controlnet.train()
@@ -2083,7 +2216,11 @@ class Trainer:
             self.mark_optimizer_eval()
             # normal run-of-the-mill validation on startup.
             if self.validation is not None:
+                self.enable_sageattention_inference()
+                self.disable_gradient_checkpointing()
                 self.validation.run_validations(validation_type="base_model", step=0)
+                self.disable_sageattention_inference()
+                self.enable_gradient_checkpointing()
 
         self.mark_optimizer_train()
 
@@ -2805,9 +2942,15 @@ class Trainer:
                 progress_bar.set_postfix(**logs)
                 self.mark_optimizer_eval()
                 if self.validation is not None:
+                    if self.validation.would_validate():
+                        self.enable_sageattention_inference()
+                        self.disable_gradient_checkpointing()
                     self.validation.run_validations(
                         validation_type="intermediary", step=step
                     )
+                    if self.validation.would_validate():
+                        self.disable_sageattention_inference()
+                        self.enable_gradient_checkpointing()
                 self.mark_optimizer_train()
                 if (
                     self.config.push_to_hub
@@ -2856,12 +2999,16 @@ class Trainer:
         if self.accelerator.is_main_process:
             self.mark_optimizer_eval()
             if self.validation is not None:
+                self.enable_sageattention_inference()
+                self.disable_gradient_checkpointing()
                 validation_images = self.validation.run_validations(
                     validation_type="final",
                     step=self.state["global_step"],
                     force_evaluation=True,
                     skip_execution=True,
                 ).validation_images
+                # we don't have to do this but we will anyway.
+                self.disable_sageattention_inference()
             if self.unet is not None:
                 self.unet = unwrap_model(self.accelerator, self.unet)
             if self.transformer is not None:

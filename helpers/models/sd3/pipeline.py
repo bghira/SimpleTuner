@@ -999,11 +999,14 @@ class StableDiffusion3Pipeline(
                     continue
 
                 # expand the latents if we are doing classifier free guidance
+                # added fix from: https://github.com/huggingface/diffusers/pull/10086/files
+                # to allow for num_images_per_prompt > 1
                 latent_model_input = (
                     torch.cat([latents] * 2)
-                    if self.do_classifier_free_guidance and skip_guidance_layers is None
+                    if self.do_classifier_free_guidance
                     else latents
                 )
+
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
@@ -1033,6 +1036,8 @@ class StableDiffusion3Pipeline(
                         else False
                     )
                     if skip_guidance_layers is not None and should_skip_layers:
+                        timestep = t.expand(latents.shape[0])
+                        latent_model_input = latents
                         noise_pred_skip_layers = self.transformer(
                             hidden_states=latent_model_input.to(
                                 device=self.transformer.device,
@@ -1097,7 +1102,22 @@ class StableDiffusion3Pipeline(
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents.to(self.vae.dtype), return_dict=False)[0]
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # we have SageAttention loaded. fallback to SDPA for decode.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sdpa
+                )
+
+            image = self.vae.decode(
+                latents.to(dtype=self.vae.dtype), return_dict=False
+            )[0]
+
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # reenable SageAttention for training.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sage
+                )
+
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
@@ -2053,7 +2073,22 @@ class StableDiffusion3Img2ImgPipeline(
                 latents / self.vae.config.scaling_factor
             ) + self.vae.config.shift_factor
 
-            image = self.vae.decode(latents.to(self.vae.dtype), return_dict=False)[0]
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # we have SageAttention loaded. fallback to SDPA for decode.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sdpa
+                )
+
+            image = self.vae.decode(
+                latents.to(dtype=self.vae.dtype), return_dict=False
+            )[0]
+
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
+                # reenable SageAttention for training.
+                torch.nn.functional.scaled_dot_product_attention = (
+                    torch.nn.functional.scaled_dot_product_attention_sage
+                )
+
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
