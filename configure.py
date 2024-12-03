@@ -433,13 +433,29 @@ def configure_env():
     env_contents["--attention_mechanism"] = "diffusers"
     use_sageattention = (
         prompt_user(
-            "Would you like to use SageAttention? This is an experimental option that can greatly speed up training. (y/[n])",
+            "Would you like to use SageAttention for image validation generation? (y/[n])",
             "n",
         ).lower()
         == "y"
     )
     if use_sageattention:
         env_contents["--attention_mechanism"] = "sageattention"
+        env_contents["--sageattention_usage"] = "inference"
+        use_sageattention_training = (
+            prompt_user(
+                (
+                    "Would you like to use SageAttention to cover the forward and backward pass during training?"
+                    " This has the undesirable consequence of leaving the attention layers untrained,"
+                    " as SageAttention lacks the capability to fully track gradients through quantisation."
+                    " If you are not training the attention layers for some reason, this may not matter and"
+                    " you can safely enable this. For all other use-cases, reconsideration and caution are warranted."
+                ),
+                "n",
+            ).lower()
+            == "y"
+        )
+        if use_sageattention_training:
+            env_contents["--sageattention_usage"] = "both"
 
     # properly disable wandb/tensorboard/comet_ml etc by default
     report_to_str = "none"

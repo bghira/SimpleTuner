@@ -1744,7 +1744,7 @@ def get_argument_parser():
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention",
         action="store_true",
-        help="Whether or not to use xformers. Deprecated and slated for future removal.",
+        help="Whether or not to use xformers. Deprecated and slated for future removal. Use --attention_mechanism.",
     )
     parser.add_argument(
         "--set_grads_to_none",
