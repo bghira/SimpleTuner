@@ -111,11 +111,15 @@ Note that the first several steps of training will be slower than usual because 
 
 ### `--attention_mechanism`
 
-Setting `sageattention` or `xformers` here will allow the use of other memory-efficient attention mechanisms for the forward pass during training and inference, potentially resulting in major performance improvement.
+Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs;
 
-Using `sageattention` enables the use of [SageAttention](https://github.com/thu-ml/SageAttention) on NVIDIA CUDA equipment (sorry, AMD and Apple users).
+- `diffusers` uses the native Pytorch SDPA functions and is the default attention mechanism
+- `xformers` allows the use of Meta's [xformers](https://github.com/facebook/xformers) attention implementation which supports both training and inference fully
+- `sageattention` is an inference-focused attention mechanism which does not fully support being used for training ([SageAttention](https://github.com/thu-ml/SageAttention) project page)
+  - In simplest terms, SageAttention reduces compute requirement for inference
 
-In simple terms, this will quantise the attention calculations for lower compute and memory overhead, **massively** speeding up training while minimally impacting quality.
+Using `--sageattention_usage` to enable training with SageAttention should be enabled with care, as it does not track or propagate gradients from its custom CUDA implementations for the QKV linears.
+  - This results in these layers being completely untrained, which might cause model collapse or, slight improvements in short training runs.
 
 ---
 
@@ -520,6 +524,7 @@ usage: train.py [-h] [--snr_gamma SNR_GAMMA] [--use_soft_min_snr]
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,fp8-quanto,fp8uz-quanto}]
                 [--local_rank LOCAL_RANK]
                 [--attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--sageattention_usage {training,inference,training+inference}]
                 [--enable_xformers_memory_efficient_attention]
                 [--set_grads_to_none] [--noise_offset NOISE_OFFSET]
                 [--noise_offset_probability NOISE_OFFSET_PROBABILITY]
@@ -1493,8 +1498,18 @@ options:
                         highest maximum speed (with also a lower minimum
                         speed). NOTE: SageAttention training quality has not
                         been validated.
+  --sageattention_usage {training,inference,training+inference}
+                        SageAttention breaks gradient tracking through the
+                        backward pass, leading to untrained QKV layers. This
+                        can result in substantial problems for training, so it
+                        is recommended to use SageAttention only for inference
+                        (default behaviour). If you are confident in your
+                        training setup or do not wish to train QKV layers, you
+                        may use 'training' to enable SageAttention for
+                        training.
   --enable_xformers_memory_efficient_attention
-                        Whether or not to use xformers.
+                        Whether or not to use xformers. Deprecated and slated
+                        for future removal. Use --attention_mechanism.
   --set_grads_to_none   Save more memory by using setting grads to None
                         instead of zero. Be aware, that this changes certain
                         behaviors, so disable this argument if it causes any

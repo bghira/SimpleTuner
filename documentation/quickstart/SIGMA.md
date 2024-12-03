@@ -223,8 +223,6 @@ If you wish to enable evaluations to score the model's performance, see [this do
 
 ### SageAttention
 
-When using `--attention_mechanism=sageattention`, quantised operations are performed during SDPA calculations.
+When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
 
-In simpler terms, this can very slightly improve VRAM usage while substantially speeding up training.
-
-**Note**: This isn't compatible with _every_ configuration, but it's worth trying.
+**Note**: This isn't compatible with _every_ model configuration, but it's worth trying.

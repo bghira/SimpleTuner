@@ -341,11 +341,9 @@ These options have been known to keep SD3.5 in-tact for as long as possible:
 
 ### SageAttention
 
-When using `--attention_mechanism=sageattention`, quantised operations are performed during SDPA calculations.
+When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
 
-In simpler terms, this can very slightly improve VRAM usage while substantially speeding up training.
-
-**Note**: This isn't compatible with _every_ configuration, but it's worth trying.
+**Note**: This isn't compatible with _every_ model configuration, but it's worth trying.
 
 ### Masked loss
 
