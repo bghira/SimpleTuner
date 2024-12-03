@@ -133,3 +133,21 @@ def safety_check(args, accelerator):
                 f"{args.base_model_precision} is not supported with SageAttention. Please select from int8 or fp8, or, disable quantisation to use SageAttention."
             )
             sys.exit(1)
+
+    gradient_checkpointing_interval_supported_models = [
+        "flux",
+        "sdxl",
+    ]
+    if args.gradient_checkpointing_interval is not None:
+        if (
+            args.model_family.lower()
+            not in gradient_checkpointing_interval_supported_models
+        ):
+            logger.error(
+                f"Gradient checkpointing is not supported with {args.model_family} models. Please disable --gradient_checkpointing_interval by setting it to None, or remove it from your configuration. Currently supported models: {gradient_checkpointing_interval_supported_models}"
+            )
+            sys.exit(1)
+        if args.gradient_checkpointing_interval == 0:
+            raise ValueError(
+                "Gradient checkpointing interval must be greater than 0. Please set it to a positive integer."
+            )
