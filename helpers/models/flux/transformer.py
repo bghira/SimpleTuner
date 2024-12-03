@@ -588,10 +588,6 @@ class FluxTransformer2DModelWithMasking(
                 )
             ):
 
-                print(
-                    f"checkpointing index {index_block} at interval: {self.gradient_checkpointing_interval}"
-                )
-
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
                         if return_dict is not None:
