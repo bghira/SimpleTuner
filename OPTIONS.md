@@ -40,6 +40,15 @@ The script `configure.py` in the project root can be used via `python configure.
 - **What**: Path to the pretrained T5 model or its identifier from https://huggingface.co/models.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
+### `--gradient_checkpointing`
+
+- **What**: During training, gradients will be calculated layerwise and accumulated to save on peak VRAM requirements at the cost of slower training.
+
+### `--gradient_checkpointing_interval`
+
+- **What**: Checkpoint only every _n_ blocks, where _n_ is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 will checkpoint every other block.
+- **Note**: SDXL and Flux are currently the only models supporting this option. SDXL uses a hackish implementation.
+
 ### `--refiner_training`
 
 - **What**: Enables training a custom mixture-of-experts model series. See [Mixture-of-Experts](/documentation/MIXTURE_OF_EXPERTS.md) for more information on these options.

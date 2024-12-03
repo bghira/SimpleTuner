@@ -144,6 +144,8 @@ There, you will possibly need to modify the following variables:
   - This option causes update steps to be accumulated over several steps. This will increase the training runtime linearly, such that a value of 2 will make your training run half as quickly, and take twice as long.
 - `optimizer` - Beginners are recommended to stick with adamw_bf16, though optimi-lion and optimi-stableadamw are also good choices.
 - `mixed_precision` - Beginners should keep this in `bf16`
+- `gradient_checkpointing` - set this to true in practically every situation on every device
+- `gradient_checkpointing_interval` - this could be set to a value of 2 or higher on larger GPUs to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
 
 Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
@@ -415,6 +417,9 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - PyTorch: 2.6 Nightly (Sept 29th build)
 - Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
 - With `--attention_mechanism=sageattention` to further reduce VRAM by 0.1GB and improve training validation image generation speed.
+- Be sure to enable `--gradient_checkpointing` or nothing you do will stop it from OOMing
+
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation and VAE tiling can be enabled.
 
 Speed was approximately 1.4 iterations per second on a 4090.
 
