@@ -140,6 +140,7 @@ class TestTrainer(unittest.TestCase):
             flux_schedule_shift=3,
             flux_schedule_auto_shift=False,
             validation_guidance_skip_layers=None,
+            gradient_checkpointing_interval=None,
         ),
     )
     def test_misc_init(

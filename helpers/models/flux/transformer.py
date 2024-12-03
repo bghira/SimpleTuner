@@ -489,10 +489,15 @@ class FluxTransformer2DModelWithMasking(
         )
 
         self.gradient_checkpointing = False
+        # added for users to disable checkpointing every nth step
+        self.gradient_checkpointing_interval = None
 
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
+
+    def set_gradient_checkpointing_interval(self, value: int):
+        self.gradient_checkpointing_interval = value
 
     def forward(
         self,
@@ -574,7 +579,18 @@ class FluxTransformer2DModelWithMasking(
         image_rotary_emb = self.pos_embed(ids)
 
         for index_block, block in enumerate(self.transformer_blocks):
-            if self.training and self.gradient_checkpointing:
+            if (
+                self.training
+                and self.gradient_checkpointing
+                and (
+                    self.gradient_checkpointing_interval is None
+                    or index_block % self.gradient_checkpointing_interval == 0
+                )
+            ):
+
+                print(
+                    f"checkpointing index {index_block} at interval: {self.gradient_checkpointing_interval}"
+                )
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -614,7 +630,14 @@ class FluxTransformer2DModelWithMasking(
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
         for index_block, block in enumerate(self.single_transformer_blocks):
-            if self.training and self.gradient_checkpointing:
+            if (
+                self.training
+                and self.gradient_checkpointing
+                or (
+                    self.gradient_checkpointing_interval is not None
+                    and index_block % self.gradient_checkpointing_interval == 0
+                )
+            ):
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):

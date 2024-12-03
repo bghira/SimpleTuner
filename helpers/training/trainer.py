@@ -997,8 +997,11 @@ class Trainer:
                 self.transformer = apply_bitfit_freezing(
                     unwrap_model(self.accelerator, self.transformer), self.config
                 )
+        self.enable_gradient_checkpointing()
 
+    def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
+            logger.info("Enabling gradient checkpointing.")
             if self.unet is not None:
                 unwrap_model(
                     self.accelerator, self.unet
@@ -1021,6 +1024,32 @@ class Trainer:
                 unwrap_model(
                     self.accelerator, self.text_encoder_2
                 ).gradient_checkpointing_enable()
+
+    def disable_gradient_checkpointing(self):
+        if self.config.gradient_checkpointing:
+            logger.info("Disabling gradient checkpointing.")
+            if self.unet is not None:
+                unwrap_model(
+                    self.accelerator, self.unet
+                ).disable_gradient_checkpointing()
+            if self.transformer is not None and self.config.model_family != "smoldit":
+                unwrap_model(
+                    self.accelerator, self.transformer
+                ).disable_gradient_checkpointing()
+            if self.config.controlnet:
+                unwrap_model(
+                    self.accelerator, self.controlnet
+                ).disable_gradient_checkpointing()
+            if (
+                hasattr(self.config, "train_text_encoder")
+                and self.config.train_text_encoder
+            ):
+                unwrap_model(
+                    self.accelerator, self.text_encoder_1
+                ).gradient_checkpointing_disable()
+                unwrap_model(
+                    self.accelerator, self.text_encoder_2
+                ).gradient_checkpointing_disable()
 
     def _get_trainable_parameters(self):
         # Return just a list of the currently trainable parameters.
@@ -2188,8 +2217,10 @@ class Trainer:
             # normal run-of-the-mill validation on startup.
             if self.validation is not None:
                 self.enable_sageattention_inference()
+                self.disable_gradient_checkpointing()
                 self.validation.run_validations(validation_type="base_model", step=0)
                 self.disable_sageattention_inference()
+                self.enable_gradient_checkpointing()
 
         self.mark_optimizer_train()
 
@@ -2913,11 +2944,13 @@ class Trainer:
                 if self.validation is not None:
                     if self.validation.would_validate():
                         self.enable_sageattention_inference()
+                        self.disable_gradient_checkpointing()
                     self.validation.run_validations(
                         validation_type="intermediary", step=step
                     )
                     if self.validation.would_validate():
                         self.disable_sageattention_inference()
+                        self.enable_gradient_checkpointing()
                 self.mark_optimizer_train()
                 if (
                     self.config.push_to_hub
@@ -2967,6 +3000,7 @@ class Trainer:
             self.mark_optimizer_eval()
             if self.validation is not None:
                 self.enable_sageattention_inference()
+                self.disable_gradient_checkpointing()
                 validation_images = self.validation.run_validations(
                     validation_type="final",
                     step=self.state["global_step"],

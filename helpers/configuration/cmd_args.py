@@ -1055,6 +1055,15 @@ def get_argument_parser():
         help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",
     )
     parser.add_argument(
+        "--gradient_checkpointing_interval",
+        default=None,
+        type=int,
+        help=(
+            "Some models (Flux, SDXL, SD1.x/2.x) can have their gradient checkpointing limited to every nth block."
+            " This can speed up training but will use more memory with larger intervals."
+        ),
+    )
+    parser.add_argument(
         "--learning_rate",
         type=float,
         default=4e-7,
