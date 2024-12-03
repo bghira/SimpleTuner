@@ -745,7 +745,11 @@ class Validation:
         return os.path.join(self.args.output_dir, "benchmarks", benchmark)
 
     def stitch_benchmark_image(
-        self, validation_image_result, benchmark_image, separator_width=5, labels=["base model", "checkpoint"]
+        self,
+        validation_image_result,
+        benchmark_image,
+        separator_width=5,
+        labels=["base model", "checkpoint"],
     ):
         """
         For each image, make a new canvas and place it side by side with its equivalent from {self.validation_image_inputs}
@@ -754,7 +758,9 @@ class Validation:
         """
 
         # Calculate new dimensions
-        new_width = benchmark_image.size[0] + validation_image_result.size[0] + separator_width
+        new_width = (
+            benchmark_image.size[0] + validation_image_result.size[0] + separator_width
+        )
         new_height = benchmark_image.size[1]
 
         # Create a new image with a white background
@@ -876,6 +882,18 @@ class Validation:
         """Updates internal state with the latest from StateTracker."""
         self.global_step = StateTracker.get_global_step()
         self.global_resume_step = StateTracker.get_global_resume_step() or 1
+
+    def would_validate(
+        self,
+        step: int = 0,
+        validation_type="intermediary",
+        force_evaluation: bool = False,
+    ):
+        # a wrapper for should_perform_validation that can run in the training loop
+        self._update_state()
+        return self.should_perform_validation(
+            step, self.validation_prompts, validation_type
+        ) or (step == 0 and validation_type == "base_model")
 
     def run_validations(
         self,
@@ -1168,9 +1186,11 @@ class Validation:
                 )
             self.validation_prompt_dict[shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
-            stitched_validation_images, checkpoint_validation_images, ema_validation_images = (
-                self.validate_prompt(prompt, shortname, validation_input_image)
-            )
+            (
+                stitched_validation_images,
+                checkpoint_validation_images,
+                ema_validation_images,
+            ) = self.validate_prompt(prompt, shortname, validation_input_image)
             validation_images.update(stitched_validation_images)
             self._save_images(validation_images, shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
@@ -1364,15 +1384,17 @@ class Validation:
                         )
                     if current_validation_type == "ema":
                         self.enable_ema_for_inference()
-                    all_validation_type_results[current_validation_type] = self.pipeline(
-                        **pipeline_kwargs
-                    ).images
+                    all_validation_type_results[current_validation_type] = (
+                        self.pipeline(**pipeline_kwargs).images
+                    )
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
 
                 # retrieve the default image result for stitching to controlnet inputs.
                 ema_image_results = all_validation_type_results.get("ema")
-                validation_image_results = all_validation_type_results.get("checkpoint", ema_image_results)
+                validation_image_results = all_validation_type_results.get(
+                    "checkpoint", ema_image_results
+                )
                 original_validation_image_results = validation_image_results
                 benchmark_image = None
                 if self.args.controlnet:
@@ -1387,7 +1409,9 @@ class Validation:
                         validation_shortname, resolution
                     )
                     if benchmark_image is not None:
-                        for idx, validation_image in enumerate(validation_image_results):
+                        for idx, validation_image in enumerate(
+                            validation_image_results
+                        ):
                             validation_image_results[idx] = self.stitch_benchmark_image(
                                 validation_image_result=validation_image,
                                 benchmark_image=benchmark_image,
@@ -1396,9 +1420,13 @@ class Validation:
                 checkpoint_validation_images[validation_shortname].extend(
                     original_validation_image_results
                 )
-                stitched_validation_images[validation_shortname].extend(validation_image_results)
+                stitched_validation_images[validation_shortname].extend(
+                    validation_image_results
+                )
                 if self.args.use_ema:
-                    ema_validation_images[validation_shortname].extend(ema_image_results)
+                    ema_validation_images[validation_shortname].extend(
+                        ema_image_results
+                    )
 
             except Exception as e:
                 import traceback
@@ -1407,15 +1435,31 @@ class Validation:
                     f"Error generating validation image: {e}, {traceback.format_exc()}"
                 )
                 continue
-        if self.args.use_ema and self.args.ema_validation == "comparison" and benchmark_image is not None:
-            for idx, validation_image in enumerate(stitched_validation_images[validation_shortname]):
-                stitched_validation_images[validation_shortname][idx] = self.stitch_benchmark_image(
-                    validation_image_result=ema_validation_images[validation_shortname][idx],
-                    benchmark_image=stitched_validation_images[validation_shortname][idx],
-                    labels=[None, "EMA"]
+        if (
+            self.args.use_ema
+            and self.args.ema_validation == "comparison"
+            and benchmark_image is not None
+        ):
+            for idx, validation_image in enumerate(
+                stitched_validation_images[validation_shortname]
+            ):
+                stitched_validation_images[validation_shortname][idx] = (
+                    self.stitch_benchmark_image(
+                        validation_image_result=ema_validation_images[
+                            validation_shortname
+                        ][idx],
+                        benchmark_image=stitched_validation_images[
+                            validation_shortname
+                        ][idx],
+                        labels=[None, "EMA"],
+                    )
                 )
 
-        return stitched_validation_images, checkpoint_validation_images, ema_validation_images
+        return (
+            stitched_validation_images,
+            checkpoint_validation_images,
+            ema_validation_images,
+        )
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
@@ -1549,9 +1593,15 @@ class Validation:
                     logger.info("Setting Lycoris multiplier to 1.0")
                     self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
                     logger.info("Storing Lycoris weights for later recovery.")
-                    self.ema_model.store(self.accelerator._lycoris_wrapped_network.parameters())
-                    logger.info("Storing the EMA weights into the Lycoris adapter for inference.")
-                    self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
+                    self.ema_model.store(
+                        self.accelerator._lycoris_wrapped_network.parameters()
+                    )
+                    logger.info(
+                        "Storing the EMA weights into the Lycoris adapter for inference."
+                    )
+                    self.ema_model.copy_to(
+                        self.accelerator._lycoris_wrapped_network.parameters()
+                    )
                 elif self.args.lora_type.lower() == "standard":
                     _trainable_parameters = [
                         x for x in self._primary_model().parameters() if x.requires_grad
@@ -1583,11 +1633,16 @@ class Validation:
         if self.args.use_ema:
             logger.info("Disabling EMA.")
             self.ema_enabled = False
-            if self.args.model_type == "lora" and self.args.lora_type.lower() == "lycoris":
+            if (
+                self.args.model_type == "lora"
+                and self.args.lora_type.lower() == "lycoris"
+            ):
                 logger.info("Setting Lycoris network multiplier to 1.0.")
                 self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
                 logger.info("Restoring Lycoris weights.")
-                self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
+                self.ema_model.restore(
+                    self.accelerator._lycoris_wrapped_network.parameters()
+                )
             else:
                 logger.info("Restoring trainable parameters.")
                 self.ema_model.restore(self.trainable_parameters())
@@ -1600,7 +1655,6 @@ class Validation:
             logger.info(
                 "Skipping EMA model restoration for validation, as we are not using EMA."
             )
-
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""

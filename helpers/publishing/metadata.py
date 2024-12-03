@@ -558,7 +558,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else 'FP32'}
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
-{'- SageAttention: Enabled' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
+{f'- SageAttention: Enabled {StateTracker.get_args().sageattention_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets
