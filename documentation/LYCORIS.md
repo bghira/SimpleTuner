@@ -63,7 +63,7 @@ For more information on LyCORIS, please refer to the [documentation in the libra
 
 When using Lycoris on SDXL, it's noted that training the FeedForward modules may break the model and send loss into `NaN` (Not-a-Number) territory.
 
-This seems to be potentially exacerbated when using SageAttention, making it all but guaranteed that the model will immediately fail.
+This seems to be potentially exacerbated when using SageAttention (with `--sageattention_usage=training`), making it all but guaranteed that the model will immediately fail.
 
 The solution is to remove the `FeedForward` modules from the lycoris config and train only the `Attention` blocks.
 

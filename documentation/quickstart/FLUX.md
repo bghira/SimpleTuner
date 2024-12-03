@@ -414,17 +414,15 @@ Currently, the lowest VRAM utilisation (9090M) can be attained with:
 - DeepSpeed: disabled / unconfigured
 - PyTorch: 2.6 Nightly (Sept 29th build)
 - Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
-- With `--attention_mechanism=sageattention` to further reduce VRAM by 0.1GB and improve training speed.
+- With `--attention_mechanism=sageattention` to further reduce VRAM by 0.1GB and improve training validation image generation speed.
 
 Speed was approximately 1.4 iterations per second on a 4090.
 
 ### SageAttention
 
-When using `--attention_mechanism=sageattention`, quantised operations are performed during SDPA calculations.
+When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
 
-In simpler terms, this can very slightly improve VRAM usage while substantially speeding up training.
-
-**Note**: This isn't compatible with _every_ configuration, but it's worth trying.
+**Note**: This isn't compatible with _every_ model configuration, but it's worth trying.
 
 ### NF4-quantised training
 

@@ -1731,9 +1731,20 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--sageattention_usage",
+        type=str,
+        choices=["training", "inference", "training+inference"],
+        default="inference",
+        help=(
+            "SageAttention breaks gradient tracking through the backward pass, leading to untrained QKV layers."
+            " This can result in substantial problems for training, so it is recommended to use SageAttention only for inference (default behaviour)."
+            " If you are confident in your training setup or do not wish to train QKV layers, you may use 'training' to enable SageAttention for training."
+        ),
+    )
+    parser.add_argument(
         "--enable_xformers_memory_efficient_attention",
         action="store_true",
-        help="Whether or not to use xformers.",
+        help="Whether or not to use xformers. Deprecated and slated for future removal.",
     )
     parser.add_argument(
         "--set_grads_to_none",
