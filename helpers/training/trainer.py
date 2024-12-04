@@ -96,7 +96,6 @@ from helpers.models.sdxl.pipeline import StableDiffusionXLPipeline
 from diffusers import StableDiffusion3Pipeline
 
 from diffusers import (
-    AutoencoderKL,
     ControlNetModel,
     DDIMScheduler,
     DDPMScheduler,
@@ -157,12 +156,20 @@ diffusers.utils.logging.set_verbosity_warning()
 
 class Trainer:
     def __init__(
-        self, config: dict = None, disable_accelerator: bool = False, job_id: str = None
+        self,
+        config: dict = None,
+        disable_accelerator: bool = False,
+        job_id: str = None,
+        exit_on_error: bool = False,
     ):
         self.accelerator = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
-        self.parse_arguments(args=config, disable_accelerator=disable_accelerator)
+        self.parse_arguments(
+            args=config,
+            disable_accelerator=disable_accelerator,
+            exit_on_error=exit_on_error,
+        )
         self._misc_init()
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
@@ -184,8 +191,10 @@ class Trainer:
             return None
         return type("Config", (object,), config)
 
-    def parse_arguments(self, args=None, disable_accelerator: bool = False):
-        self.config = load_config(args)
+    def parse_arguments(
+        self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False
+    ):
+        self.config = load_config(args, exit_on_error=exit_on_error)
         report_to = (
             None if self.config.report_to.lower() == "none" else self.config.report_to
         )
@@ -458,14 +467,19 @@ class Trainer:
             "force_upcast": False,
             "variant": self.config.variant,
         }
+        if StateTracker.get_args().model_family == "sana":
+            from diffusers import DCAE as AutoencoderClass
+        else:
+            from diffusers import AutoencoderKL as AutoencoderClass
+
         try:
-            self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+            self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
         except:
             logger.warning(
                 "Couldn't load VAE with default path. Trying without a subfolder.."
             )
             self.config.vae_kwargs["subfolder"] = None
-            self.vae = AutoencoderKL.from_pretrained(**self.config.vae_kwargs)
+            self.vae = AutoencoderClass.from_pretrained(**self.config.vae_kwargs)
             if (
                 self.vae is not None
                 and self.config.vae_enable_tiling
@@ -768,7 +782,11 @@ class Trainer:
             return
 
         if not self.config.disable_accelerator and self.config.is_quantized:
-            if self.config.base_model_default_dtype == "fp32":
+            if self.config.model_family == "sana":
+                # sana hurts, sana pain. sana is a special case.
+                self.config.base_weight_dtype = torch.float16
+                self.config.enable_adamw_bf16 = False
+            elif self.config.base_model_default_dtype == "fp32":
                 self.config.base_weight_dtype = torch.float32
                 self.config.enable_adamw_bf16 = False
             elif self.config.base_model_default_dtype == "bf16":
@@ -1001,7 +1019,7 @@ class Trainer:
 
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
-            logger.info("Enabling gradient checkpointing.")
+            logger.debug("Enabling gradient checkpointing.")
             if self.unet is not None:
                 unwrap_model(
                     self.accelerator, self.unet
@@ -1027,7 +1045,7 @@ class Trainer:
 
     def disable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
-            logger.info("Disabling gradient checkpointing.")
+            logger.debug("Disabling gradient checkpointing.")
             if self.unet is not None:
                 unwrap_model(
                     self.accelerator, self.unet
@@ -1870,7 +1888,7 @@ class Trainer:
         initial_msg += f"\n-  Total optimization steps = {self.config.max_train_steps}"
         if self.state["global_step"] > 1:
             initial_msg += f"\n  - Steps completed: {self.state['global_step']}"
-        initial_msg += f"\n-  Total optimization steps remaining = {max(0, self.config.total_steps_remaining_at_start)}"
+        initial_msg += f"\n-  Total optimization steps remaining = {max(0, getattr(self.config, 'total_steps_remaining_at_start', self.config.max_train_steps))}"
         logger.info(initial_msg)
         self._send_webhook_msg(message=initial_msg)
         structured_data = {
@@ -1881,7 +1899,14 @@ class Trainer:
             "total_batch_size": self.config.total_batch_size,
             "micro_batch_size": self.config.train_batch_size,
             "current_step": self.state["global_step"],
-            "remaining_num_steps": max(0, self.config.total_steps_remaining_at_start),
+            "remaining_num_steps": max(
+                0,
+                getattr(
+                    self.config,
+                    "total_steps_remaining_at_start",
+                    self.config.max_train_steps,
+                ),
+            ),
         }
         self._send_webhook_raw(
             structured_data=structured_data, message_type="_train_initial_msg"
@@ -2142,7 +2167,21 @@ class Trainer:
                     ),
                     return_dict=False,
                 )[0]
+            elif self.config.model_family == "sana":
+                with torch.amp.autocast(device_type=self.accelerator.device.type):
+                    model_pred = self.transformer(
+                        noisy_latents,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=batch["encoder_attention_mask"],
+                        timestep=timesteps,
+                        added_cond_kwargs={"resolution": None, "aspect_ratio": None},
+                        return_dict=False,
+                    )[0]
             elif self.config.model_family == "pixart_sigma":
+                if noisy_latents.shape[1] != 4:
+                    raise ValueError(
+                        "Pixart Sigma models require a latent size of 4 channels. Ensure you are using the correct VAE cache path."
+                    )
                 model_pred = self.transformer(
                     noisy_latents,
                     encoder_hidden_states=encoder_hidden_states,
@@ -2210,18 +2249,6 @@ class Trainer:
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
-
-        if self.config.validation_on_startup and self.state["global_step"] <= 1:
-            # Just in Case.
-            self.mark_optimizer_eval()
-            # normal run-of-the-mill validation on startup.
-            if self.validation is not None:
-                self.enable_sageattention_inference()
-                self.disable_gradient_checkpointing()
-                self.validation.run_validations(validation_type="base_model", step=0)
-                self.disable_sageattention_inference()
-                self.enable_gradient_checkpointing()
-
         self.mark_optimizer_train()
 
         # Only show the progress bar once on each machine.
