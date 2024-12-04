@@ -11,7 +11,7 @@
 - [Features](#features)
   - [Flux](#flux1)
   - [PixArt Sigma](#pixart-sigma)
-  - [NVLabs Sana](#sana)
+  - [NVLabs Sana](#nvlabs-sana)
   - [Stable Diffusion 2.0/2.1](#stable-diffusion-20--21)
   - [Stable Diffusion 3.0](#stable-diffusion-3)
   - [Kwai Kolors](#kwai-kolors)
