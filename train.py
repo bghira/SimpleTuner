@@ -19,7 +19,9 @@ if __name__ == "__main__":
             f"\nError: {e}"
         )
     try:
-        trainer = Trainer()
+        trainer = Trainer(
+            exit_on_error=True,
+        )
         trainer.configure_webhook()
         trainer.init_noise_schedule()
         trainer.init_seed()
