@@ -86,7 +86,16 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--model_family",
-        choices=["pixart_sigma", "kolors", "sd3", "flux", "smoldit", "sdxl", "legacy"],
+        choices=[
+            "pixart_sigma",
+            "sana",
+            "kolors",
+            "sd3",
+            "flux",
+            "smoldit",
+            "sdxl",
+            "legacy",
+        ],
         default=None,
         required=True,
         help=("The model family to train. This option is required."),
@@ -1642,6 +1651,7 @@ def get_argument_parser():
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
             " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
+            " Sana requires a value of 'no'."
         ),
     )
     parser.add_argument(
@@ -2066,8 +2076,9 @@ def get_default_config():
     return default_config
 
 
-def parse_cmdline_args(input_args=None):
+def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser = get_argument_parser()
+    args = None
     if input_args is not None:
         for key_val in input_args:
             print_on_main_thread(f"{key_val}")
@@ -2080,6 +2091,9 @@ def parse_cmdline_args(input_args=None):
             logger.error(traceback.format_exc())
     else:
         args = parser.parse_args()
+
+    if args is None and exit_on_error:
+        sys.exit(1)
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
@@ -2211,7 +2225,7 @@ def parse_cmdline_args(input_args=None):
 
     if (
         args.pretrained_vae_model_name_or_path is not None
-        and args.model_family in ["legacy", "flux", "sd3"]
+        and args.model_family in ["legacy", "flux", "sd3", "sana"]
         and "sdxl" in args.pretrained_vae_model_name_or_path
         and "deepfloyd" not in args.model_type
     ):
@@ -2391,18 +2405,6 @@ def parse_cmdline_args(input_args=None):
     if args.gradient_checkpointing:
         # enable torch compile w/ activation checkpointing :[ slows us down.
         torch._dynamo.config.optimize_ddp = False
-    if args.gradient_accumulation_steps > 1:
-        if args.gradient_precision == "unmodified" or args.gradient_precision is None:
-            warning_log(
-                "Gradient accumulation steps are enabled, but gradient precision is set to 'unmodified'."
-                " This may lead to numeric instability. Consider disabling gradient accumulation steps. Continuing in 10 seconds.."
-            )
-            time.sleep(10)
-        elif args.gradient_precision == "fp32":
-            info_log(
-                "Gradient accumulation steps are enabled, and gradient precision is set to 'fp32'."
-            )
-            args.gradient_precision = "fp32"
 
     # if args.use_ema:
     #     if "lora" in args.model_type:
@@ -2445,6 +2447,9 @@ def parse_cmdline_args(input_args=None):
         )
         else torch.float32
     )
+    if args.model_family == "sana":
+        # god fucking help us, but bf16 does not work with Sana
+        args.weight_dtype = torch.float16
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
     if "lycoris" == args.lora_type.lower():
