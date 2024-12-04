@@ -44,6 +44,10 @@ def import_model_class_from_model_name_or_path(
         from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 
         return ChatGLMModel
+    elif model_class == "Gemma2Model":
+        from transformers import Gemma2Model
+
+        return Gemma2Model
     else:
         raise ValueError(f"{model_class} is not supported.")
 
@@ -70,6 +74,17 @@ def get_tokenizers(args):
 
             tokenizer_cls = T5Tokenizer
             is_t5_model = True
+        elif args.model_family == "sana":
+            from transformers import Gemma2Model, GemmaTokenizerFast
+
+            tokenizer_cls = GemmaTokenizerFast
+            is_t5_model = False
+            tokenizer_1 = tokenizer_cls.from_pretrained(
+                args.pretrained_model_name_or_path,
+                subfolder="tokenizer",
+                revision=args.revision,
+                use_fast=False,
+            )
         elif args.model_family.lower() == "kolors":
             from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
@@ -121,9 +136,10 @@ def get_tokenizers(args):
         )
         if args.model_family in ["sd3"]:
             raise e
+
     from transformers import T5TokenizerFast
 
-    if args.model_family not in ["pixart_sigma", "kolors"]:
+    if args.model_family not in ["pixart_sigma", "kolors", "sana"]:
         try:
             tokenizer_2_cls = CLIPTokenizer
             if args.model_family.lower() == "flux":
@@ -225,6 +241,10 @@ def load_tes(
                 f"Loading ChatGLM language model from {text_encoder_path}/{text_encoder_subfolder}.."
             )
             text_encoder_variant = "fp16"
+        elif args.model_family.lower() == "sana":
+            logger.info(
+                f"Loading Gemma2 language model from {text_encoder_path}/{text_encoder_subfolder}.."
+            )
         else:
             logger.info(
                 f"Loading CLIP text encoder from {text_encoder_path}/{text_encoder_subfolder}.."
