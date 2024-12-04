@@ -22,6 +22,7 @@ model_classes = {
         "kolors",
         "sd3",
         "legacy",
+        "sana",
     ],
     "lora": ["flux", "sdxl", "kolors", "sd3", "legacy"],
     "controlnet": ["sdxl", "legacy"],
@@ -35,6 +36,7 @@ default_models = {
     "terminus": "ptx0/terminus-xl-velocity-v2",
     "sd3": "stabilityai/stable-diffusion-3.5-large",
     "legacy": "stabilityai/stable-diffusion-2-1-base",
+    "sana": "Efficient-Large-Model/Sana_1600M_1024px_diffusers",
 }
 
 default_cfg = {
@@ -44,6 +46,7 @@ default_cfg = {
     "kolors": 5.0,
     "terminus": 8.0,
     "sd3": 5.0,
+    "sana": 3.8,
 }
 
 model_labels = {
@@ -54,6 +57,7 @@ model_labels = {
     "terminus": "Terminus",
     "sdxl": "Stable Diffusion XL",
     "legacy": "Stable Diffusion",
+    "sana": "Sana",
 }
 
 lora_ranks = [1, 16, 64, 128, 256]
