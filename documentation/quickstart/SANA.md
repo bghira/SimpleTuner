@@ -18,6 +18,10 @@ Sana is a strange architecture relative to other models that are trainable by Si
 - SageAttention does not work with Sana due to the shapes inside the model
 - The loss value when training Sana is very high, and it might need a much lower learning rate than other models (eg. `1e-5` or thereabouts)
 
+Gradient checkpointing can free VRAM, but slows down training. A chart of test results from a 4090 with 5800X3D:
+
+![image](https://github.com/user-attachments/assets/310bf099-a077-4378-acf4-f60b4b82fdc4)
+
 ### Prerequisites
 
 Make sure that you have python installed; SimpleTuner does well with 3.10 or 3.11. **Python 3.12 should not be used**.
