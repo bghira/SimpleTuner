@@ -11,8 +11,10 @@ logger.setLevel(target_level)
 def load_scheduler_from_args(args):
     flow_matching = False
     if (
-        args.model_family == "sd3" and args.flow_matching_loss != "diffusion"
-    ) or args.model_family == "flux":
+        (args.model_family == "sd3" and args.flow_matching_loss != "diffusion")
+        or args.model_family == "flux"
+        or args.model_family == "sana"
+    ):
         # Stable Diffusion 3 uses rectified flow.
         flow_matching = True
         from diffusers import FlowMatchEulerDiscreteScheduler
