@@ -118,7 +118,7 @@ def safety_check(args, accelerator):
         )
         sys.exit(1)
 
-    if args.attention_mechanism == "sageattention":
+    if "sageattention" in args.attention_mechanism:
         if args.sageattention_usage != "inference":
             logger.error(
                 f"SageAttention usage is set to '{args.sageattention_usage}' instead of 'inference'. This is not an officially supported configuration, please be sure you understand the implications. It is recommended to set this value to 'inference' for safety."
@@ -133,6 +133,11 @@ def safety_check(args, accelerator):
                 f"{args.base_model_precision} is not supported with SageAttention. Please select from int8 or fp8, or, disable quantisation to use SageAttention."
             )
             sys.exit(1)
+        if args.model_family == "sana":
+            logger.error(
+                f"{args.model_family} is not supported with SageAttention at this point. Disabling SageAttention."
+            )
+            args.attention_mechanism = "diffusers"
 
     gradient_checkpointing_interval_supported_models = [
         "flux",
@@ -151,3 +156,6 @@ def safety_check(args, accelerator):
             raise ValueError(
                 "Gradient checkpointing interval must be greater than 0. Please set it to a positive integer."
             )
+
+    if args.model_family == "sana":
+        args.mixed_precision == "no"
