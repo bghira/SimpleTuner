@@ -1,4 +1,3 @@
-from diffusers.training_utils import _set_state_dict_into_text_encoder
 from helpers.training.ema import EMAModel
 from helpers.training.wrappers import unwrap_model
 from helpers.training.multi_process import _get_rank as get_rank
@@ -165,6 +164,11 @@ class SaveHookManager:
             elif args.model_family == "smoldit":
                 self.denoiser_class = SmolDiT2DModel
                 self.pipeline_class = SmolDiTPipeline
+            elif args.model_family == "sana":
+                from diffusers import SanaPipeline, SanaTransformer2D
+
+                self.denoiser_class = SanaTransformer2DModel
+                self.pipeline_class = SanaPipeline
             self.denoiser_subdir = "transformer"
 
         if args.controlnet:
@@ -209,9 +213,7 @@ class SaveHookManager:
             # we'll temporarily overwrite teh LoRA parameters with the EMA parameters to save it.
             logger.info("Saving EMA model to disk.")
             trainable_parameters = [
-                p
-                for p in self._primary_model().parameters()
-                if p.requires_grad
+                p for p in self._primary_model().parameters() if p.requires_grad
             ]
             self.ema_model.store(trainable_parameters)
             self.ema_model.copy_to(trainable_parameters)
@@ -298,7 +300,10 @@ class SaveHookManager:
         save wrappers for lycoris. For now, text encoders are not trainable
         via lycoris.
         """
-        from helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME, EMA_SAFETENSORS_FILENAME
+        from helpers.publishing.huggingface import (
+            LORA_SAFETENSORS_FILENAME,
+            EMA_SAFETENSORS_FILENAME,
+        )
 
         for _ in models:
             if weights:
@@ -317,7 +322,9 @@ class SaveHookManager:
             # we'll store lycoris weights.
             self.ema_model.store(self.accelerator._lycoris_wrapped_network.parameters())
             # we'll write EMA to the lycoris adapter temporarily.
-            self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
+            self.ema_model.copy_to(
+                self.accelerator._lycoris_wrapped_network.parameters()
+            )
             # now we can write the lycoris weights using the EMA_SAFETENSORS_FILENAME instead.
             os.makedirs(os.path.join(output_dir, "ema"), exist_ok=True)
             self.accelerator._lycoris_wrapped_network.save_weights(
@@ -325,7 +332,9 @@ class SaveHookManager:
                 list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
                 {"lycoris_config": json.dumps(lycoris_config)},  # metadata
             )
-            self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
+            self.ema_model.restore(
+                self.accelerator._lycoris_wrapped_network.parameters()
+            )
 
         # copy the config into the repo
         shutil.copy2(
@@ -474,6 +483,8 @@ class SaveHookManager:
 
         if self.args.train_text_encoder:
             # Do we need to call `scale_lora_layers()` here?
+            from diffusers.training_utils import _set_state_dict_into_text_encoder
+
             _set_state_dict_into_text_encoder(
                 lora_state_dict,
                 prefix="text_encoder.",
