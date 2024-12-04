@@ -2178,7 +2178,6 @@ class Trainer:
                     added_cond_kwargs={"resolution": None, "aspect_ratio": None},
                     return_dict=False,
                 )[0]
-                print(f"model prediction: {model_pred}")
             elif self.config.model_family == "pixart_sigma":
                 if noisy_latents.shape[1] != 4:
                     raise ValueError(
