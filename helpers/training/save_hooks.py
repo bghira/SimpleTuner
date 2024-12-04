@@ -165,7 +165,7 @@ class SaveHookManager:
                 self.denoiser_class = SmolDiT2DModel
                 self.pipeline_class = SmolDiTPipeline
             elif args.model_family == "sana":
-                from diffusers import SanaPipeline, SanaTransformer2D
+                from diffusers import SanaPipeline, SanaTransformer2DModel
 
                 self.denoiser_class = SanaTransformer2DModel
                 self.pipeline_class = SanaPipeline
