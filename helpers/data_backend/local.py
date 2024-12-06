@@ -68,7 +68,10 @@ class LocalDataBackend(BaseDataBackend):
                 fcntl.flock(temp_file, fcntl.LOCK_UN)
 
         # Atomically replace the target file with the temporary file
-        os.rename(temp_file_path, filepath)
+        try:
+            os.rename(temp_file_path, filepath)
+        except FileNotFoundError:
+            pass
 
 
     def delete(self, filepath):
@@ -258,7 +261,10 @@ class LocalDataBackend(BaseDataBackend):
                     # Release the lock
                     fcntl.flock(temp_file, fcntl.LOCK_UN)
             # Atomically replace the target file with the temporary file
-            os.rename(temp_file_path, filepath)
+            try:
+                os.rename(temp_file_path, filepath)
+            except FileNotFoundError:
+                pass
         else:
             # Handle the case where original_location is a file object
             temp_file = original_location
