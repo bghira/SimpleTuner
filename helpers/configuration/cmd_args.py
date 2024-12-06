@@ -2314,7 +2314,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         args.pretrained_vae_model_name_or_path = None
         args.disable_compel = True
 
-    t5_max_length = 256
+    t5_max_length = 154
     if args.model_family == "sd3" and (
         args.tokenizer_max_length is None
         or int(args.tokenizer_max_length) > t5_max_length
