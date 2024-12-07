@@ -10,6 +10,11 @@ from diffusers import (
 from argparse import Namespace
 from helpers.training.state_tracker import StateTracker
 
+import logging
+
+hf_logger = logging.getLogger("diffusers.models.modeling_utils")
+hf_logger.disabled = True
+
 
 class TestSaveHookManager(unittest.TestCase):
     def setUp(self):
