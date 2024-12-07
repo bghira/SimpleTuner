@@ -11,8 +11,8 @@ package-mode = false
 python = ">=3.10,<3.13"
 torch = "^2.5.0"
 torchvision = "^0.20.0"
-diffusers = "^0.31.0"
-transformers = "^4.44.2"
+diffusers = {git = "https://github.com/lawrence-cj/diffusers", rev = "Sana"}
+transformers = "^4.46.3"
 datasets = "^3.0.0"
 wandb = "^0.18.1"
 requests = "^2.32.3"
