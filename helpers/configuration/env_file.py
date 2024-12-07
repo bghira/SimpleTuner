@@ -71,9 +71,11 @@ env_to_args_map = {
 import os
 import subprocess
 import logging
+from helpers.training.multi_process import should_log
 
 logger = logging.getLogger("SimpleTuner")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
 
 def load_env():
@@ -131,7 +133,7 @@ def load_env():
                     continue
                 config_file_contents[key] = " ".join(value)
 
-        print(f"[CONFIG.ENV] Loaded environment variables from {config_env_path}")
+        logger.info(f"[CONFIG.ENV] Loaded environment variables from {config_env_path}")
     else:
         logger.error(f"Cannot find config file: {config_env_path}")
 
