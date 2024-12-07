@@ -2,7 +2,24 @@ from helpers.training.trainer import Trainer
 from helpers.training.state_tracker import StateTracker
 from helpers import log_format
 import logging
+import logging
+
+# Quiet down, you.
+ds_logger1 = logging.getLogger("DeepSpeed")
+ds_logger2 = logging.getLogger("torch.distributed.elastic.multiprocessing.redirects")
+ds_logger1.setLevel("ERROR")
+ds_logger2.setLevel("ERROR")
+import logging.config
+
+logging.config.dictConfig(
+    {
+        "version": 1,
+        "disable_existing_loggers": True,
+    }
+)
 from os import environ
+
+environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 logger = logging.getLogger("SimpleTuner")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))

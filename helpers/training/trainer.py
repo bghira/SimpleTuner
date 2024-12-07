@@ -1,3 +1,4 @@
+import logging, os
 import huggingface_hub
 from helpers.training.default_settings.safety_check import safety_check
 from helpers.publishing.huggingface import HubManager
@@ -7,15 +8,12 @@ import hashlib
 import json
 import copy
 import random
-import logging
 import math
-import os
 import sys
 import glob
 import wandb
 
-# Quiet down, you.
-os.environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
+
 from helpers import log_format  # noqa
 from helpers.configuration.loader import load_config
 from helpers.caching.memory import reclaim_memory
