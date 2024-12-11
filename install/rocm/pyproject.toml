@@ -44,6 +44,7 @@ lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
 bitsandbytes = "^0.44.1"
+atomicwrites = "^1.4.1"
 
 
 [build-system]
