@@ -2406,10 +2406,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         sys.exit(1)
 
     if not args.i_know_what_i_am_doing:
-        if args.model_family == "pixart_sigma" or args.model_family == "sd3":
+        if args.model_family == "pixart_sigma":
             if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
                 warning_log(
-                    f"{'PixArt Sigma' if args.model_family == 'pixart_sigma' else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
+                    f"PixArt Sigma requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
                 )
                 args.max_grad_norm = 0.01
     if args.gradient_checkpointing:
