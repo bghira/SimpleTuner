@@ -1,7 +1,3 @@
-from helpers.training.trainer import Trainer
-from helpers.training.state_tracker import StateTracker
-from helpers import log_format
-import logging
 import logging
 
 # Quiet down, you.
@@ -20,6 +16,10 @@ logging.config.dictConfig(
 from os import environ
 
 environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
+
+from helpers.training.trainer import Trainer
+from helpers.training.state_tracker import StateTracker
+from helpers import log_format
 
 logger = logging.getLogger("SimpleTuner")
 logger.setLevel(environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))

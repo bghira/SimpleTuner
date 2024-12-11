@@ -1297,6 +1297,16 @@ def get_argument_parser():
         ),
     )
     parser.add_argument(
+        "--grad_clip_method",
+        default="norm",
+        choices=["value", "norm"],
+        help=(
+            "When applying --max_grad_norm, the method to use for clipping the gradients."
+            " The default value 'norm' will clip gradient values such that the entire vector is normalised to this value."
+            " The 'value' method will clip the gradient values to this value, which may result in a less uniform gradient."
+        ),
+    )
+    parser.add_argument(
         "--push_to_hub",
         action="store_true",
         help="Whether or not to push the model to the Hub.",
