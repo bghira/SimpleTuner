@@ -2245,6 +2245,14 @@ class Trainer:
 
         return model_pred
 
+    def _max_grad_value(self):
+        max_grad_value = float("-inf")  # Start with a very small number
+        for param in self._get_trainable_parameters():
+            if param.grad is not None:
+                max_grad_value = max(max_grad_value, param.grad.abs().max().item())
+
+        return max_grad_value
+
     def train(self):
         self.init_trackers()
         self._train_initial_msg()
@@ -2725,7 +2733,7 @@ class Trainer:
                         avg_loss.item() / self.config.gradient_accumulation_steps
                     )
                     # Backpropagate
-                    grad_norm = None
+                    self.grad_norm = None
                     if not self.config.disable_accelerator:
                         training_logger.debug("Backwards pass.")
                         self.accelerator.backward(loss)
@@ -2745,9 +2753,21 @@ class Trainer:
                             and self.config.max_grad_norm > 0
                         ):
                             # StableAdamW does not need clipping, similar to Adafactor.
-                            grad_norm = self.accelerator.clip_grad_norm_(
-                                self.params_to_optimize, self.config.max_grad_norm
-                            )
+                            if self.config.grad_clip_method == "norm":
+                                self.grad_norm = self.accelerator.clip_grad_norm_(
+                                    self._get_trainable_parameters(),
+                                    self.config.max_grad_norm,
+                                )
+                            elif self.config.grad_clip_method == "value":
+                                self.grad_norm = self._max_grad_value()
+                                self.accelerator.clip_grad_value_(
+                                    self._get_trainable_parameters(),
+                                    self.config.max_grad_norm,
+                                )
+                            else:
+                                raise ValueError(
+                                    f"Unknown grad clip method: {self.config.grad_clip_method}. Supported methods: value, norm"
+                                )
                         training_logger.debug("Stepping components forward.")
                         if self.config.optimizer_release_gradients:
                             step_offset = 0  # simpletuner indexes steps from 1.
@@ -2793,8 +2813,11 @@ class Trainer:
                         guidance_values = torch.tensor(self.guidance_values_list).mean()
                         wandb_logs["mean_cfg"] = guidance_values.item()
                         self.guidance_values_list = []
-                    if grad_norm is not None:
-                        wandb_logs["grad_norm"] = grad_norm
+                    if self.grad_norm is not None:
+                        if self.config.grad_clip_method == "norm":
+                            wandb_logs["grad_norm"] = self.grad_norm
+                        elif self.config.grad_clip_method == "value":
+                            wandb_logs["grad_absmax"] = self.grad_norm
                     if self.validation is not None and hasattr(
                         self.validation, "evaluation_result"
                     ):
@@ -2962,8 +2985,11 @@ class Trainer:
                     "step_loss": loss.detach().item(),
                     "lr": float(self.lr),
                 }
-                if "mean_cfg" in wandb_logs:
-                    logs["mean_cfg"] = wandb_logs["mean_cfg"]
+                if self.grad_norm is not None:
+                    if self.config.grad_clip_method == "norm":
+                        logs["grad_norm"] = self.grad_norm
+                    elif self.config.grad_clip_method == "value":
+                        logs["grad_absmax"] = self.grad_norm
 
                 progress_bar.set_postfix(**logs)
                 self.mark_optimizer_eval()
