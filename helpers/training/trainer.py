@@ -2987,7 +2987,7 @@ class Trainer:
                 }
                 if self.grad_norm is not None:
                     if self.config.grad_clip_method == "norm":
-                        logs["grad_norm"] = self.grad_norm
+                        logs["grad_norm"] = float(self.grad_norm.clone().detach())
                     elif self.config.grad_clip_method == "value":
                         logs["grad_absmax"] = self.grad_norm
 
