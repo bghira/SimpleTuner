@@ -1298,12 +1298,14 @@ def get_argument_parser():
     )
     parser.add_argument(
         "--grad_clip_method",
-        default="norm",
+        default="value",
         choices=["value", "norm"],
         help=(
             "When applying --max_grad_norm, the method to use for clipping the gradients."
-            " The default value 'norm' will clip gradient values such that the entire vector is normalised to this value."
-            " The 'value' method will clip the gradient values to this value, which may result in a less uniform gradient."
+            " The previous default option 'norm' will scale ALL gradient values when any outliers in the gradient are encountered, which can reduce training precision."
+            " The new default option 'value' will clip individual gradient values using this value as a maximum, which may preserve precision while avoiding outliers, enhancing convergence."
+            " In simple terms, the default will help the model learn faster without blowing up (SD3.5 Medium was the main test model)."
+            " Use 'norm' to return to the old behaviour."
         ),
     )
     parser.add_argument(
@@ -2416,9 +2418,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         # enable torch compile w/ activation checkpointing :[ slows us down.
         torch._dynamo.config.optimize_ddp = False
 
-    # if args.use_ema:
-    #     if "lora" in args.model_type:
-    #         raise ValueError("Using EMA is not currently supported for LoRA training.")
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
     args.accelerator_project_config = ProjectConfiguration(
         project_dir=args.output_dir, logging_dir=args.logging_dir
