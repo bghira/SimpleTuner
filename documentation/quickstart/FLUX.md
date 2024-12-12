@@ -135,7 +135,7 @@ There, you will possibly need to modify the following variables:
 - `validation_resolution` - As Flux is a 1024px model, you can set this to `1024x1024`.
   - Additionally, Flux was fine-tuned on multi-aspect buckets, and other resolutions may be specified using commas to separate them: `1024x1024,1280x768,2048x2048`
 - `validation_guidance` - Use whatever you are used to selecting at inference time for Flux.
-- `validation_guidance_real` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
+- `validation_guidance_rescale` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
 - `validation_num_inference_steps` - Use somewhere around 20 to save time while still seeing decent quality. Flux isn't very diverse, and more steps might just waste time.
 - `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
 - If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule=true` manually here as well.
