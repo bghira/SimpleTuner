@@ -22,7 +22,7 @@ colorama = "^0.4.6"
 compel = "^2"
 datasets = "^3.0.0"
 deepspeed = "^0.15.1"
-diffusers = "^0.31.0"
+diffusers = {git = "https://github.com/lawrence-cj/diffusers", rev = "Sana"}
 iterutils = "^0.1.6"
 numpy = "1.26"
 open-clip-torch = "^2.26.1"

@@ -36,7 +36,7 @@ default_models = {
     "terminus": "ptx0/terminus-xl-velocity-v2",
     "sd3": "stabilityai/stable-diffusion-3.5-large",
     "legacy": "stabilityai/stable-diffusion-2-1-base",
-    "sana": "Efficient-Large-Model/Sana_1600M_1024px_diffusers",
+    "sana": "terminusresearch/sana-1.6b-1024px",
 }
 
 default_cfg = {

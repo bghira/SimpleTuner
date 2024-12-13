@@ -1657,13 +1657,13 @@ def get_argument_parser():
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16", "no"],
+        choices=["bf16", "fp16", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
             " Default to the value of accelerate config of the current system or the"
             " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
-            " Sana requires a value of 'no'."
+            " fp16 is offered as an experimental option, but is not recommended as it is less-tested and you will likely encounter errors."
         ),
     )
     parser.add_argument(
@@ -2451,14 +2451,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     args.weight_dtype = (
         torch.bfloat16
         if (
-            (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+            args.mixed_precision == "bf16"
             or (args.base_model_default_dtype == "bf16" and args.is_quantized)
         )
-        else torch.float32
+        else torch.float16 if args.mixed_precision == "fp16" else torch.float32
     )
-    if args.model_family == "sana":
-        # god fucking help us, but bf16 does not work with Sana
-        args.weight_dtype = torch.float16
     args.disable_accelerator = os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False)
 
     if "lycoris" == args.lora_type.lower():

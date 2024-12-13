@@ -141,6 +141,7 @@ def safety_check(args, accelerator):
 
     gradient_checkpointing_interval_supported_models = [
         "flux",
+        "sana",
         "sdxl",
     ]
     if args.gradient_checkpointing_interval is not None:
@@ -156,6 +157,3 @@ def safety_check(args, accelerator):
             raise ValueError(
                 "Gradient checkpointing interval must be greater than 0. Please set it to a positive integer."
             )
-
-    if args.model_family == "sana":
-        args.mixed_precision == "no"

@@ -518,7 +518,7 @@ class Validation:
             f"Was the VAE loaded? {precached_vae if precached_vae is None else 'Yes'}"
         )
         if self.args.model_family == "sana":
-            from diffusers import DCAE as AutoencoderClass
+            from diffusers import AutoencoderDC as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
         self.vae = precached_vae
@@ -1317,6 +1317,7 @@ class Validation:
                 "kolors",
                 "flux",
                 "sd3",
+                "sana",
             ]:
                 extra_validation_kwargs["guidance_rescale"] = (
                     self.args.validation_guidance_rescale

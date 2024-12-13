@@ -575,7 +575,7 @@ training = ["Jinja2", "accelerate (>=0.31.0)", "datasets", "peft (>=0.6.0)", "pr
 type = "git"
 url = "https://github.com/lawrence-cj/diffusers"
 reference = "Sana"
-resolved_reference = "bd13e36902d0be89aa3111bab5f7fb5c1dbb6646"
+resolved_reference = "b4af50d67f83a893420496ad1382186df8e91688"
 
 [[package]]
 name = "dill"

@@ -254,7 +254,7 @@ class VAECache(WebhookMixin):
 
     def init_vae(self):
         if StateTracker.get_args().model_family == "sana":
-            from diffusers import DCAE as AutoencoderClass
+            from diffusers import AutoencoderDC as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
 
