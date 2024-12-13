@@ -606,6 +606,7 @@ class TextEmbeddingCache(WebhookMixin):
             device=self.accelerator.device,
             clean_caption=False,
             max_sequence_length=300,
+            complex_human_instruction=StateTracker.get_args().sana_complex_human_instruction,
         )
 
         return prompt_embeds, prompt_attention_mask

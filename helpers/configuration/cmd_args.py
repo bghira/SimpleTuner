@@ -1469,7 +1469,24 @@ def get_argument_parser():
             " the value given."
         ),
     )
-
+    parser.add_argument(
+        "--sana_complex_human_instruction",
+        type=str,
+        default=[
+            "Given a user prompt, generate an 'Enhanced prompt' that provides detailed visual descriptions suitable for image generation. Evaluate the level of detail in the user prompt:",
+            "- If the prompt is simple, focus on adding specifics about colors, shapes, sizes, textures, and spatial relationships to create vivid and concrete scenes.",
+            "- If the prompt is already detailed, refine and enhance the existing details slightly without overcomplicating.",
+            "Here are examples of how to transform or refine prompts:",
+            "- User Prompt: A cat sleeping -> Enhanced: A small, fluffy white cat curled up in a round shape, sleeping peacefully on a warm sunny windowsill, surrounded by pots of blooming red flowers.",
+            "- User Prompt: A busy city street -> Enhanced: A bustling city street scene at dusk, featuring glowing street lamps, a diverse crowd of people in colorful clothing, and a double-decker bus passing by towering glass skyscrapers.",
+            "Please generate only the enhanced description for the prompt below and avoid including any additional commentary or evaluations:",
+            "User Prompt: ",
+        ],
+        help=(
+            "When generating embeds for Sana, a complex human instruction will be attached to your prompt by default."
+            " This is required for the Gemma model to produce meaningful image caption embeds."
+        ),
+    )
     parser.add_argument(
         "--allow_tf32",
         action="store_true",
@@ -2539,6 +2556,20 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
         except Exception as e:
             logger.error(f"Could not load skip layers: {e}")
+            raise
+
+    if (
+        args.sana_complex_human_instruction is not None
+        and type(args.sana_complex_human_instruction) is str
+    ):
+        try:
+            import json
+
+            args.sana_complex_human_instruction = json.loads(
+                args.sana_complex_human_instruction
+            )
+        except Exception as e:
+            logger.error(f"Could not load complex human instruction: {e}")
             raise
 
     if args.enable_xformers_memory_efficient_attention:
