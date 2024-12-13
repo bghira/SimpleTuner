@@ -466,7 +466,7 @@ class Trainer:
             "variant": self.config.variant,
         }
         if StateTracker.get_args().model_family == "sana":
-            from diffusers import DCAE as AutoencoderClass
+            from diffusers import AutoencoderDC as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
 
@@ -780,11 +780,7 @@ class Trainer:
             return
 
         if not self.config.disable_accelerator and self.config.is_quantized:
-            if self.config.model_family == "sana":
-                # sana hurts, sana pain. sana is a special case.
-                self.config.base_weight_dtype = torch.float16
-                self.config.enable_adamw_bf16 = False
-            elif self.config.base_model_default_dtype == "fp32":
+            if self.config.base_model_default_dtype == "fp32":
                 self.config.base_weight_dtype = torch.float32
                 self.config.enable_adamw_bf16 = False
             elif self.config.base_model_default_dtype == "bf16":
@@ -2173,7 +2169,6 @@ class Trainer:
                     ),
                     encoder_attention_mask=batch["encoder_attention_mask"],
                     timestep=timesteps,
-                    added_cond_kwargs={"resolution": None, "aspect_ratio": None},
                     return_dict=False,
                 )[0]
             elif self.config.model_family == "pixart_sigma":
@@ -2758,6 +2753,9 @@ class Trainer:
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,
                                 )
+                            elif self.config.use_deepspeed_optimizer:
+                                # deepspeed can only do norm clipping (internally)
+                                pass
                             elif self.config.grad_clip_method == "value":
                                 self.grad_norm = self._max_grad_value()
                                 self.accelerator.clip_grad_value_(

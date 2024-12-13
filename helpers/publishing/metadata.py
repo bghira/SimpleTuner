@@ -493,7 +493,7 @@ def save_model_card(
             shortname_idx += 1
     args = StateTracker.get_args()
     yaml_content = f"""---
-license: {licenses[model_family]}
+license: {licenses.get(model_family, "other")}
 base_model: "{base_model}"
 tags:
   - {model_family}
