@@ -532,7 +532,9 @@ class VAECache(WebhookMixin):
                         latents_uncached - self.vae.config.shift_factor
                     ) * self.vae.config.scaling_factor
                 else:
-                    latents_uncached = latents_uncached * self.vae.config.scaling_factor
+                    latents_uncached = (
+                        latents_uncached.latent * self.vae.config.scaling_factor
+                    )
                 logger.debug(f"Latents shape: {latents_uncached.shape}")
 
             # Prepare final latents list by combining cached and newly computed latents
