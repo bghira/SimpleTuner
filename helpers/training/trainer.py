@@ -3338,6 +3338,27 @@ class Trainer:
                         scheduler=None,
                     )
 
+                elif self.config.model_family == "sana":
+                    from diffusers import SanaPipeline
+
+                    self.pipeline = SanaPipeline.from_pretrained(
+                        self.config.pretrained_model_name_or_path,
+                        text_encoder=self.text_encoder_1
+                        or (
+                            self.text_encoder_cls_1.from_pretrained(
+                                self.config.pretrained_model_name_or_path,
+                                subfolder="text_encoder",
+                                revision=self.config.revision,
+                                variant=self.config.variant,
+                            )
+                            if self.config.save_text_encoder
+                            else None
+                        ),
+                        tokenizer=self.tokenizer_1,
+                        vae=self.vae,
+                        transformer=self.transformer,
+                    )
+
                 else:
                     sdxl_pipeline_cls = StableDiffusionXLPipeline
                     if self.config.model_family == "kolors":
