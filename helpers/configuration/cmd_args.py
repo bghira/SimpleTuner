@@ -2561,6 +2561,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if (
         args.sana_complex_human_instruction is not None
         and type(args.sana_complex_human_instruction) is str
+        and args.sana_complex_human_instruction not in ["", "None"]
     ):
         try:
             import json
@@ -2569,8 +2570,12 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 args.sana_complex_human_instruction
             )
         except Exception as e:
-            logger.error(f"Could not load complex human instruction: {e}")
+            logger.error(
+                f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {e}"
+            )
             raise
+    elif args.sana_complex_human_instruction == "None":
+        args.sana_complex_human_instruction = None
 
     if args.enable_xformers_memory_efficient_attention:
         if args.attention_mechanism != "xformers":

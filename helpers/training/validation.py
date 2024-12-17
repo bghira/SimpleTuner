@@ -258,11 +258,10 @@ def prepare_validation_prompt_list(args, embed_cache):
             or model_type == "sana"
         ):
             # we use the legacy encoder but we return no pooled embeds.
-            validation_negative_prompt_embeds = (
-                embed_cache.compute_embeddings_for_prompts(
-                    [StateTracker.get_args().validation_negative_prompt],
-                    load_from_cache=False,
-                )
+            validation_negative_prompt_embeds = embed_cache.compute_embeddings_for_prompts(
+                [StateTracker.get_args().validation_negative_prompt],
+                load_from_cache=False,
+                is_negative_prompt=True,  # sana needs this to disable Complex Human Instruction on negative embed generation
             )
 
             return (
@@ -1388,6 +1387,11 @@ class Validation:
                 if StateTracker.get_model_family() == "flux":
                     if "negative_prompt" in pipeline_kwargs:
                         del pipeline_kwargs["negative_prompt"]
+                if self.args.model_family == "sana":
+                    pipeline_kwargs["complex_human_instruction"] = (
+                        self.args.sana_complex_human_instruction
+                    )
+
                 if (
                     StateTracker.get_model_family() == "pixart_sigma"
                     or StateTracker.get_model_family() == "smoldit"
