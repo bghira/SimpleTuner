@@ -599,13 +599,18 @@ class TextEmbeddingCache(WebhookMixin):
 
         return result, attn_mask
 
-    def compute_gemma_prompt(self, prompt: str):
+    def compute_gemma_prompt(self, prompt: str, is_negative_prompt: bool):
         prompt_embeds, prompt_attention_mask, _, _ = self.pipeline.encode_prompt(
             prompt=prompt,
             do_classifier_free_guidance=False,
             device=self.accelerator.device,
             clean_caption=False,
             max_sequence_length=300,
+            complex_human_instruction=(
+                StateTracker.get_args().sana_complex_human_instruction
+                if not is_negative_prompt
+                else None
+            ),
         )
 
         return prompt_embeds, prompt_attention_mask
@@ -616,6 +621,7 @@ class TextEmbeddingCache(WebhookMixin):
         return_concat: bool = True,
         is_validation: bool = False,
         load_from_cache: bool = True,
+        is_negative_prompt: bool = False,
     ):
         logger.debug("Initialising text embed calculator...")
         if not self.batch_write_thread.is_alive():
@@ -694,6 +700,7 @@ class TextEmbeddingCache(WebhookMixin):
                 raw_prompts,
                 return_concat=return_concat,
                 load_from_cache=load_from_cache,
+                is_negative_prompt=is_negative_prompt,
             )
         else:
             raise ValueError(
@@ -1073,6 +1080,7 @@ class TextEmbeddingCache(WebhookMixin):
         prompts: list = None,
         return_concat: bool = True,
         load_from_cache: bool = True,
+        is_negative_prompt: bool = False,
     ):
         logger.debug(
             f"compute_embeddings_for_sana_prompts arguments: prompts={prompts}, return_concat={return_concat}, load_from_cache={load_from_cache}"
@@ -1171,7 +1179,7 @@ class TextEmbeddingCache(WebhookMixin):
                             time.sleep(5)
                     # TODO: Batch this
                     prompt_embeds, attention_mask = self.compute_gemma_prompt(
-                        prompt=prompt,
+                        prompt=prompt, is_negative_prompt=is_negative_prompt
                     )
                     if "deepfloyd" not in StateTracker.get_args().model_type:
                         # we have to store the attn mask with the embed for pixart.
