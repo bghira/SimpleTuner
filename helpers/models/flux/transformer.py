@@ -210,11 +210,8 @@ class FluxSingleTransformerBlock(nn.Module):
 
         processor = FluxAttnProcessor2_0()
         if torch.cuda.is_available():
-            rank = (
-                torch.distributed.get_rank()
-                if torch.distributed.is_initialized()
-                else 0
-            )
+            # let's assume that the box only ever has H100s.
+            rank = 0
             primary_device = torch.cuda.get_device_properties(rank)
             if primary_device.major == 9 and primary_device.minor == 0:
                 if is_flash_attn_available:
