@@ -46,7 +46,7 @@ lycoris-lora = {git = "https://github.com/kohakublueleaf/lycoris", rev = "dev"}
 torch-optimi = "^0.2.1"
 toml = "^0.10.2"
 fastapi = {extras = ["standard"], version = "^0.115.0"}
-torchao = {version = "^0.5.0+cu124", source = "pytorch"}
+torchao = "^0.7.0"
 lm-eval = "^0.4.4"
 nvidia-cudnn-cu12 = "*"
 nvidia-nccl-cu12 = "*"

@@ -4319,25 +4319,20 @@ test = ["numpy (>=1.23)", "pytest (>=8.1.1)", "pytest-md (>=0.2.0)", "ruff (>=0.
 
 [[package]]
 name = "torchao"
-version = "0.5.0+cu124"
+version = "0.7.0"
 description = "Package for applying ao techniques to GPU models"
 optional = false
 python-versions = "*"
 files = [
-    {file = "torchao-0.5.0+cu124-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6228f96a3f6ecf26faa5694b86263bdc82df64cfcd4892cd3b62155706d733ae"},
-    {file = "torchao-0.5.0+cu124-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ef9557f8ab51967e94e06b59d71147116621fcee5602f2a0c88ffb8dce02aaad"},
-    {file = "torchao-0.5.0+cu124-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f8400ac2770cb5d63f5b84347258995baecbdc6d35116016ecd90fa3f4eacc70"},
-    {file = "torchao-0.5.0+cu124-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0f18b7cd527b09172093deb22f04143c514f01fdbc7f17bc9d7860d11292fcae"},
-    {file = "torchao-0.5.0+cu124-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fec93047847214fe351cda7032f237770c00d4e4b5f519c817e8532033915410"},
+    {file = "torchao-0.7.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:08dacdd58c4f4cdec7c7c3494503423caa26f43972cf2bf2c15e9a6b95953b6c"},
+    {file = "torchao-0.7.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8b0bfda3c7d9ab797eb6f419bc160e55d2b378da1dbb4565e8dc84999be190d3"},
+    {file = "torchao-0.7.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c94b293f4250db032f4f7a2947658edd50586d172bc6fa1c5e8354101bd4438e"},
+    {file = "torchao-0.7.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e075811a5e8efcc22372de6bd26cc7152544311348e2c3052a6139dde4c37798"},
+    {file = "torchao-0.7.0-py3-none-any.whl", hash = "sha256:49ba10d9d42eb9d698958d9e49e1943ada0f6b9493f6b13eab3a979e3db85b9d"},
 ]
 
 [package.extras]
-dev = ["bitsandbytes", "expecttest", "fire", "hypothesis", "matplotlib", "ninja", "packaging", "pandas", "parameterized", "pre-commit", "pytest (==7.4.0)", "ruff", "sentencepiece", "tabulate", "transformers", "unittest-xml-reporting"]
-
-[package.source]
-type = "legacy"
-url = "https://download.pytorch.org/whl/cu124"
-reference = "pytorch"
+dev = ["bitsandbytes", "expecttest", "fire", "hypothesis", "matplotlib", "ninja", "packaging", "pandas", "parameterized", "pre-commit", "pytest (==7.4.0)", "ruff (==0.6.8)", "sentencepiece", "tabulate", "transformers", "unittest-xml-reporting"]
 
 [[package]]
 name = "torchaudio"
@@ -5396,4 +5391,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "4f66d0ead6d6a9a573f5e1e5495d5ec38f523cc68e1a4914f3a24843e630ee81"
+content-hash = "173b71a0cdb540b16e35017f831fe48a072ba0aa5757c3f087bf852b0f5fd14c"
