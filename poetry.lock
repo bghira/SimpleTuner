@@ -655,15 +655,16 @@ vision = ["Pillow (>=9.4.0)"]
 
 [[package]]
 name = "deepspeed"
-version = "0.15.3"
+version = "0.16.1"
 description = "DeepSpeed library"
 optional = false
 python-versions = "*"
 files = [
-    {file = "deepspeed-0.15.3.tar.gz", hash = "sha256:d7f9821e4d6fc7c52191362c8338ea29fc435d81d4bf1a37bf87d72db32ff42a"},
+    {file = "deepspeed-0.16.1.tar.gz", hash = "sha256:058cb748d1c39f88580343fb69633fe45586225025522c1cf9f64b608a71820c"},
 ]
 
 [package.dependencies]
+einops = "*"
 hjson = "*"
 msgpack = "*"
 ninja = "*"
@@ -5391,4 +5392,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "173b71a0cdb540b16e35017f831fe48a072ba0aa5757c3f087bf852b0f5fd14c"
+content-hash = "bb88f1cc4909dbfb7ac3e4db3c3c2cd96f9f5707c910c8f10338867e041db849"
