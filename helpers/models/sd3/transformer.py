@@ -140,6 +140,16 @@ class SD3Transformer2DModel(
         )
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        """
+        Sets the interval for gradient checkpointing.
+
+        Parameters:
+            interval (`int`): The interval for gradient checkpointing.
+        """
+        self.gradient_checkpointing_interval = interval
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
     def enable_forward_chunking(
@@ -384,7 +394,14 @@ class SD3Transformer2DModel(
                     )
                 continue
 
-            if self.training and self.gradient_checkpointing:
+            if (
+                self.training
+                and self.gradient_checkpointing
+                and (
+                    self.gradient_checkpointing_interval is None
+                    or index_block % self.gradient_checkpointing_interval == 0
+                )
+            ):
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):

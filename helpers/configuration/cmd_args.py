@@ -1068,7 +1068,7 @@ def get_argument_parser():
         default=None,
         type=int,
         help=(
-            "Some models (Flux, SDXL, SD1.x/2.x) can have their gradient checkpointing limited to every nth block."
+            "Some models (Flux, SDXL, SD1.x/2.x, SD3) can have their gradient checkpointing limited to every nth block."
             " This can speed up training but will use more memory with larger intervals."
         ),
     )
