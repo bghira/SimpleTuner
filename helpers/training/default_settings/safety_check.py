@@ -139,11 +139,7 @@ def safety_check(args, accelerator):
             )
             args.attention_mechanism = "diffusers"
 
-    gradient_checkpointing_interval_supported_models = [
-        "flux",
-        "sana",
-        "sdxl",
-    ]
+    gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3"]
     if args.gradient_checkpointing_interval is not None:
         if (
             args.model_family.lower()

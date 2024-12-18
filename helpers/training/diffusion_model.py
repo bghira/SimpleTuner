@@ -179,7 +179,10 @@ def load_diffusion_model(args, weight_dtype):
 
             set_checkpoint_interval(int(args.gradient_checkpointing_interval))
 
-    if args.gradient_checkpointing_interval is not None:
+    if (
+        args.gradient_checkpointing_interval is not None
+        and args.gradient_checkpointing_interval > 1
+    ):
         if transformer is not None and hasattr(
             transformer, "set_gradient_checkpointing_interval"
         ):
