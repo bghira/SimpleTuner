@@ -21,7 +21,7 @@ clip-interrogator = "^0.6.0"
 colorama = "^0.4.6"
 compel = "^2"
 datasets = "^3.0.0"
-deepspeed = "^0.15.1"
+deepspeed = "^0.16.1"
 diffusers = {git = "https://github.com/huggingface/diffusers"}
 iterutils = "^0.1.6"
 numpy = "1.26"
