@@ -2415,7 +2415,7 @@ examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "to
 type = "git"
 url = "https://github.com/huggingface/optimum-quanto"
 reference = "HEAD"
-resolved_reference = "852bb9cb6fb707a6fcebff7e068dc6bbdda779cb"
+resolved_reference = "66dca87bc7e61ffbf1a06da9fd324469592e17e9"
 
 [[package]]
 name = "packaging"

@@ -1691,7 +1691,7 @@ numpy = [
 
 [[package]]
 name = "optimum-quanto"
-version = "0.2.5.dev0"
+version = "0.2.6.dev0"
 description = "A pytorch quantization backend for optimum."
 optional = false
 python-versions = ">=3.9.0"
@@ -1706,14 +1706,14 @@ safetensors = "*"
 torch = ">=2.4.0"
 
 [package.extras]
-dev = ["black", "pytest", "ruff"]
+dev = ["pytest", "ruff"]
 examples = ["accelerate", "datasets", "diffusers", "scipy", "sentencepiece", "torchvision", "transformers"]
 
 [package.source]
 type = "git"
 url = "https://github.com/huggingface/optimum-quanto"
 reference = "HEAD"
-resolved_reference = "194150f384ae9244dd4eb86994f6c510200663f9"
+resolved_reference = "66dca87bc7e61ffbf1a06da9fd324469592e17e9"
 
 [[package]]
 name = "packaging"
