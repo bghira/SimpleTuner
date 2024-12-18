@@ -3131,6 +3131,23 @@ docs = ["black (>=24.2.0)", "mkdocs-caption (>=1.0.0)", "mkdocs-material (>=9.4.
 test = ["numpy (>=1.23)", "pytest (>=8.1.1)", "pytest-md (>=0.2.0)", "ruff (>=0.3.2)"]
 
 [[package]]
+name = "torchao"
+version = "0.7.0"
+description = "Package for applying ao techniques to GPU models"
+optional = false
+python-versions = "*"
+files = [
+    {file = "torchao-0.7.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:08dacdd58c4f4cdec7c7c3494503423caa26f43972cf2bf2c15e9a6b95953b6c"},
+    {file = "torchao-0.7.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8b0bfda3c7d9ab797eb6f419bc160e55d2b378da1dbb4565e8dc84999be190d3"},
+    {file = "torchao-0.7.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c94b293f4250db032f4f7a2947658edd50586d172bc6fa1c5e8354101bd4438e"},
+    {file = "torchao-0.7.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e075811a5e8efcc22372de6bd26cc7152544311348e2c3052a6139dde4c37798"},
+    {file = "torchao-0.7.0-py3-none-any.whl", hash = "sha256:49ba10d9d42eb9d698958d9e49e1943ada0f6b9493f6b13eab3a979e3db85b9d"},
+]
+
+[package.extras]
+dev = ["bitsandbytes", "expecttest", "fire", "hypothesis", "matplotlib", "ninja", "packaging", "pandas", "parameterized", "pre-commit", "pytest (==7.4.0)", "ruff (==0.6.8)", "sentencepiece", "tabulate", "transformers", "unittest-xml-reporting"]
+
+[[package]]
 name = "torchaudio"
 version = "2.4.1+rocm6.0"
 description = "An audio package for PyTorch"
@@ -3952,4 +3969,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.13"
-content-hash = "32edefc68774d99e42a449ab508798127dc1e1a4370197a1c3777ddd4ef203ef"
+content-hash = "2228f1d1cdabf90e36ef61700375e37f97555eb482c0842999cb5e0127c88d21"
